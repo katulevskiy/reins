@@ -414,6 +414,7 @@ private fun TabContent(
             viewModel = settings,
             onSounds = { app.open(Route.Sounds) },
             onAppearance = { app.open(Route.Appearance) },
+            onWallpaper = { app.open(Route.Wallpaper) },
             onTour = app::replaySetup,
             onVaultPasskeys = { app.open(Route.VaultPasskeys) },
             onDevices = { app.open(Route.Devices) },
@@ -455,6 +456,7 @@ private fun PageContent(
         Route.ConnectComputer -> ConnectComputerScreen(app, onBack = { app.back() })
         Route.Sounds -> SoundsScreen(container.feedback, onBack = { app.back() })
         Route.Appearance -> AppearanceScreen(onBack = { app.back() })
+        Route.Wallpaper -> dev.reins.android.ui.settings.WallpaperScreen(onBack = { app.back() })
         Route.SignalGallery -> if (dev.reins.android.BuildConfig.DEBUG) dev.reins.android.ui.signal.SignalGallery(onBack = { app.back() })
         Route.EndedGrants -> EndedGrantsScreen(
             state,

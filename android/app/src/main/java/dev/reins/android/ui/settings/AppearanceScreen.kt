@@ -63,7 +63,7 @@ fun AppearanceScreen(onBack: () -> Unit) {
     val choice by Appearance.state(context)
     Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).testTag("appearance")) {
         Box(Modifier.windowInsetsPadding(HeaderInsets).padding(start = 24.dp, top = 8.dp)) {
-            RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+            dev.reins.android.design.BackArrow(onBack, Modifier)
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 14.dp)) {
             RText("Appearance", RType.title, c.ink, maxLines = 1)

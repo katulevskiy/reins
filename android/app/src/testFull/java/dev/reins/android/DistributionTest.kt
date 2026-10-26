@@ -47,7 +47,7 @@ class DistributionTest : FlowHarness() {
         core.serviceAdded.clear()
         launch()
         tap("tabConnections")
-        tap("service:sms")
+        openService("sms")
         awaitTag("allowDevice")
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "sms").addDevice() }
         awaitCore { core.serviceAdded.isNotEmpty() }

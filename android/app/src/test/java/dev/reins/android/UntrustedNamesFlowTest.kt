@@ -85,7 +85,7 @@ class UntrustedNamesFlowTest : FlowHarness() {
         rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("Computer · Pair")
         // The digits come from the key, on their own row, with the check to make.
         rule.onNodeWithTag("keyDigits", useUnmergedTree = true).assertTextEquals("1234 5678")
-        rule.onNodeWithTag("keyMustMatch", useUnmergedTree = true).assertTextContains("key must match", substring = true)
+        rule.onNodeWithTag("keyMustMatch", useUnmergedTree = true).assertTextContains("If not, deny", substring = true)
         // The name's own "digits" stay inside its quotes, on the name's line.
         val shown = text("pairName")
         assertClean(shown)

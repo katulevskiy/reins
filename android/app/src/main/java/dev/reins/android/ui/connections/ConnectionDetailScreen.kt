@@ -1,5 +1,9 @@
 package dev.reins.android.ui.connections
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material.icons.rounded.LinkOff
+import androidx.compose.material.icons.rounded.CalendarToday
 import dev.reins.android.ui.settings.*
 
 import androidx.compose.foundation.background
@@ -104,83 +108,59 @@ fun ConnectionDetailScreen(
                 EmptyState(Glyph.Link, "Not connected", "This AI is no longer connected.", tag = "connectionGone")
                 return@SettingsPage
             }
-            Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp, start = 24.dp, end = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                ConnectionAvatar(connection, Modifier.testTag("connectionAvatar:${shownIcon(connection)}"), size = 76.dp)
+            // Next (Connections 02): its mark and its name as the title, then Autopilot, then the details.
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.runtime.CompositionLocalProvider(LocalColors provides dev.reins.android.design.RColors.Light) {
+                    ConnectionAvatar(connection, Modifier.testTag("connectionAvatar:${shownIcon(connection)}"), size = 36.dp)
+                }
                 RText(
                     untrusted(connection.label),
-                    RType.serif(34f, 38f),
+                    RType.pageTitle,
                     c.ink,
-                    Modifier.padding(top = 12.dp).semantics { heading() }.testTag("connectionName"),
+                    Modifier.weight(1f).semantics { heading() }.testTag("connectionName"),
                     maxLines = 2,
-                    align = TextAlign.Center,
                 )
+            }
+            Column(Modifier.padding(start = 68.dp, end = 20.dp)) {
                 calledItself(connection)?.let {
                     RText(it, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp).testTag("connectionCalledItself"), maxLines = 1)
                 }
-                RText(
-                    connectionHeadline(connection),
-                    RType.mono(13f),
-                    c.tertiary,
-                    Modifier.padding(top = 2.dp).testTag("connectionHeadline"),
-                    maxLines = 1,
-                    ltr = true,
-                )
+                RText(connectionHeadline(connection), RType.mono(12.5f), c.inkMeta, Modifier.padding(top = 2.dp).testTag("connectionHeadline"), maxLines = 1, ltr = true)
             }
 
             autopilot?.let { ConnectionAutopilotSection(connection.id, it, onBypass = { bypassOpen = true }, onOvernight = { overnightOpen = true }, authenticator = authenticator) }
 
-            SettingsGroup(header = null, gap = 12.dp) {
+            SettingsGroup(header = "Details") {
                 autopilot?.let { LearnsIntoRow(connection.id, it) { picking = Picker.Profile } }
                 val active = grants.count { it.connectionId == connection.id && it.active }
-                SettingsRow(
-                    "Active grants",
-                    Modifier.testTag("activeGrants"),
-                    icon = Icons.Rounded.Key,
-                    tint = c.send,
-                    value = if (active == 0) "None" else "$active",
-                    chevron = false,
-                )
-                SettingsRow(
-                    "Connected",
-                    Modifier.testTag("connectedOn"),
-                    icon = Icons.Rounded.History,
-                    value = formatDate(connection.createdAt),
-                    chevron = false,
-                )
-                SettingsRow(
-                    "Last used",
-                    Modifier.testTag("lastUsed"),
-                    icon = Icons.Rounded.Schedule,
-                    value = lastUsed(connection),
-                    chevron = false,
-                )
-            }
-
-            SettingsGroup(header = null, gap = 12.dp) {
-                SettingsRow(
-                    "Name",
-                    Modifier.testTag("connectionRename"),
-                    icon = Icons.Rounded.Edit,
-                    value = untrustedName(connection.label, 28),
-                ) { picking = Picker.Name }
+                SettingsRow("Grants", Modifier.testTag("activeGrants"), icon = Icons.Rounded.Key, value = if (active == 0) "None" else "$active", chevron = false)
+                SettingsRow("Connected", Modifier.testTag("connectedOn"), icon = Icons.Rounded.CalendarToday, value = formatDate(connection.createdAt), chevron = false)
+                SettingsRow("Last seen", Modifier.testTag("lastUsed"), icon = Icons.Rounded.Schedule, value = lastUsed(connection), chevron = false)
+                SettingsRow("Name", Modifier.testTag("connectionRename"), icon = Icons.Rounded.Edit, value = untrustedName(connection.label, 28)) { picking = Picker.Name }
                 SettingsRow(
                     "Icon",
                     Modifier.testTag("connectionIcon"),
                     leading = {
-                        Box(Modifier.size(40.dp).background(c.controlFill, CircleShape), contentAlignment = Alignment.Center) {
-                            ConnectionAvatar(connection, size = 28.dp)
+                        Box(Modifier.size(32.dp).background(c.paperSunken, RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) {
+                            ConnectionAvatar(connection, size = 24.dp)
                         }
                     },
                     value = iconName(connection.icon),
                 ) { picking = Picker.Icon }
             }
 
+            // Next: a red-wash card, held to disconnect; the line under says what it ends.
             dev.reins.android.design.HoldButton(
-                "Hold to disconnect",
+                "Disconnect ${untrustedName(connection.label, 24)}",
                 c.danger,
                 Modifier.padding(start = 16.dp, end = 16.dp, top = 22.dp).fillMaxWidth().testTag("disconnect"),
-                icon = Icons.Rounded.Delete,
+                icon = Icons.Rounded.LinkOff,
             ) { viewModel.disconnect(connection.id, onBack) }
+            RText("Hold to disconnect. Its grants end.", RType.meta, c.inkMeta, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center)
             Spacer(Modifier.height(32.dp))
         }
 

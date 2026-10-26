@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -191,7 +192,7 @@ val WALLPAPER_HEIGHT: Dp = 500.dp
  * 150 dp). Panes inside ([Modifier.pane]) frost the art. The art stays when panes turn solid.
  */
 @Composable
-fun WallpaperPage(wallpaper: Wallpaper?, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+fun WallpaperPage(wallpaper: Wallpaper?, modifier: Modifier = Modifier, artHeight: Dp? = WALLPAPER_HEIGHT, content: @Composable () -> Unit) {
     val c = LocalColors.current
     val context = LocalContext.current
     val version = Wallpapers.photoVersion
@@ -201,20 +202,19 @@ fun WallpaperPage(wallpaper: Wallpaper?, modifier: Modifier = Modifier, content:
     }
     Box(modifier.background(c.paper)) {
         if (backdrop != null) {
+            // [artHeight] null: the art fills the page (the welcome).
+            val art = if (artHeight == null) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(artHeight)
             Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(WALLPAPER_HEIGHT)
-                    .onGloballyPositioned { backdrop.bounds = it.boundsInRoot() },
+                art.onGloballyPositioned { backdrop.bounds = it.boundsInRoot() },
             ) {
                 Image(
                     backdrop.image,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxWidth().height(WALLPAPER_HEIGHT),
+                    modifier = art,
                     contentScale = ContentScale.Crop,
                     alignment = Alignment.TopCenter,
                 )
-                Box(
+                if (artHeight != null) Box(
                     Modifier
                         .fillMaxWidth()
                         .height(150.dp)

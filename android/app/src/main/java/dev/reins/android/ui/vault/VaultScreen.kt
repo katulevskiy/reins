@@ -1,5 +1,18 @@
 package dev.reins.android.ui.vault
 
+import androidx.compose.ui.semantics.semantics
+import dev.reins.android.feedback.play
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import dev.reins.android.design.RowTile
+import dev.reins.android.design.PaneRow
+import dev.reins.android.design.PaneGroup
+import dev.reins.android.design.SectionHeader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,11 +55,11 @@ import dev.reins.core.VaultItemSummary
 /** What the user picks under "Add": the kinds Reins uses, each with the item kind it makes. */
 enum class NewItem(val title: String, val detail: String, val kind: VaultItemKind, val glyph: Glyph) {
     ApiKey("API key", "For reins run and the API proxy: vault:NAME/password", VaultItemKind.LOGIN, Glyph.Key),
-    SshKey("SSH key", "Made on this phone; the private key never leaves the vault", VaultItemKind.SSH_KEY, Glyph.Lock),
-    Login("Login", "A username and password for a website", VaultItemKind.LOGIN, Glyph.Link),
-    Note("Secure note", "Any text: vault:NAME/notes", VaultItemKind.NOTE, Glyph.List),
-    Card("Card", "A payment card", VaultItemKind.CARD, Glyph.Tray),
-    Identity("Identity", "Your name, address and documents", VaultItemKind.IDENTITY, Glyph.People),
+    SshKey("SSH key", "Made on this phone; the private key never leaves the vault", VaultItemKind.SSH_KEY, Glyph.Terminal),
+    Login("Login", "A username and password for a website", VaultItemKind.LOGIN, Glyph.Person),
+    Note("Secure note", "Any text: vault:NAME/notes", VaultItemKind.NOTE, Glyph.FileText),
+    Card("Card", "A payment card", VaultItemKind.CARD, Glyph.Card),
+    Identity("Identity", "Your name, address and documents", VaultItemKind.IDENTITY, Glyph.IdCard),
 }
 
 fun kindLabel(kind: VaultItemKind): String = when (kind) {
@@ -58,11 +71,11 @@ fun kindLabel(kind: VaultItemKind): String = when (kind) {
 }
 
 fun kindGlyph(kind: VaultItemKind): Glyph = when (kind) {
-    VaultItemKind.LOGIN -> Glyph.Key
-    VaultItemKind.NOTE -> Glyph.List
-    VaultItemKind.CARD -> Glyph.Tray
-    VaultItemKind.IDENTITY -> Glyph.People
-    VaultItemKind.SSH_KEY -> Glyph.Lock
+    VaultItemKind.LOGIN -> Glyph.Person
+    VaultItemKind.NOTE -> Glyph.FileText
+    VaultItemKind.CARD -> Glyph.Card
+    VaultItemKind.IDENTITY -> Glyph.IdCard
+    VaultItemKind.SSH_KEY -> Glyph.Terminal
 }
 
 /** Integrations > Password vault > Open the vault: every item, a search, and "Add". */
@@ -77,115 +90,128 @@ fun VaultScreen(viewModel: VaultViewModel, onBack: () -> Unit, onOpen: (String) 
     // Names, usernames, card digits and this phone's key: not for screenshots or the recent apps.
     dev.reins.android.ui.common.SecureWindow()
 
-    Screen(
-        title = "Vault",
-        subtitle = "Password vault",
-        onBack = onBack,
-        actions = { CircleIconButton(Glyph.Plus, Modifier.testTag("vaultAdd"), label = "Add", onClick = onAdd) },
-    ) {
-        Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            RTextField(
-                query,
-                viewModel::search,
-                "Search names, usernames, websites",
-                tag = "vaultSearch",
-                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-            )
-        }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val feedback = dev.reins.android.feedback.LocalFeedback.current
+    var help by remember { mutableStateOf(false) }
+    // Next (Vault 01): a search well, the items in a raised group under a header with its +, and how a computer asks.
+    Screen(title = "Vault", onBack = onBack) {
+        SearchWell(query, viewModel::search, Modifier.padding(horizontal = 16.dp).padding(top = 8.dp))
         ui.error?.let { Banner(untrusted(it), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), BannerKind.Error, tag = "vaultError") }
         val current = items
         when {
-            current == null -> RText("Loading…", RType.sans(15f), c.secondary, Modifier.padding(32.dp))
-            current.isEmpty() && query.isBlank() -> EmptyState(
-                Glyph.Key,
-                "Nothing in the vault yet",
-                "Add an API key, a login or an SSH key. The desktop app finds them by name, like vault:OpenAI/password.",
-                tag = "vaultEmpty",
-            )
+            current == null -> RText("Loading…", RType.sans(15f), c.ink2, Modifier.padding(32.dp))
+            current.isEmpty() && query.isBlank() -> {
+                SectionHeader("Items", glyph = Glyph.Vault, count = "0", onAdd = onAdd, addLabel = "Add", addTag = "vaultAdd")
+                EmptyState(Glyph.Key, "Nothing in the vault yet", "A computer finds an item by name, like vault:OpenAI/password.", tag = "vaultEmpty")
+            }
             current.isEmpty() -> EmptyState(Glyph.Search, "Nothing matches", null, tag = "vaultNoMatch")
-            else -> Group(header = "${current.size} ${if (current.size == 1) "item" else "items"}") {
-                current.forEachIndexed { i, item ->
-                    if (i > 0) Hairline(inset = 68.dp)
-                    ItemRow(item) { onOpen(item.id) }
+            else -> {
+                SectionHeader("Items", glyph = Glyph.Vault, count = current.size.toString(), onAdd = onAdd, addLabel = "Add", addTag = "vaultAdd")
+                PaneGroup {
+                    current.forEachIndexed { i, item -> ItemRow(item, first = i == 0) { onOpen(item.id) } }
                 }
             }
         }
-        RText(
+        SectionHeader("From a computer", glyph = Glyph.Laptop, trailing = { dev.reins.android.ui.settings.HelpIcon(help, "the vault from a computer") { help = it } })
+        dev.reins.android.design.HelpText(
             "reins run and the API proxy find an item by its exact name: vault:NAME/password, /username, /notes or a " +
                 "custom field's name. The SSH agent offers every SSH key. From a computer, reins vault add NAME saves " +
                 "a secret here without showing it to an AI.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = if (phoneKey == null) 32.dp else 8.dp),
+            help,
+            Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp),
         )
-        phoneKey?.let {
-            RText(
-                "This phone's key for reins vault add: $it",
-                RType.sans(13.5f, lineHeight = 19f),
-                c.tertiary,
-                Modifier.padding(start = 32.dp, end = 32.dp, bottom = 32.dp).testTag("phoneKey"),
+        PaneGroup {
+            PaneRow(
+                "vault:NAME/password",
+                leading = { RowTile(Glyph.Terminal) },
+                trailing = { RoundCopy("Copy", "copyVaultRef") { copyPlain(context, "vault:NAME/password"); feedback.play(dev.reins.android.feedback.Event.Copied) } },
+                first = true,
+                titleMono = true,
+            )
+            phoneKey?.let { key ->
+                PaneRow(
+                    "Phone key",
+                    leading = { RowTile(Glyph.Phone) },
+                    value = key,
+                    valueMono = true,
+                    trailing = { RoundCopy("Copy phone key", "copyPhoneKey") { copyPlain(context, key); feedback.play(dev.reins.android.feedback.Event.Copied) } },
+                    tag = "phoneKey",
+                )
+            }
+        }
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+/** The search well (`.srch`): sunken, 44 tall, radius 14, the glyph and the words. */
+@Composable
+internal fun SearchWell(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(
+        modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp)).background(c.paperSunken).padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(Glyph.Search, c.inkMeta, size = 18.dp)
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) RText("Search", RType.sans(16f), c.inkMeta, maxLines = 1)
+            androidx.compose.foundation.text.BasicTextField(
+                query,
+                onChange,
+                Modifier.fillMaxWidth().testTag("vaultSearch"),
+                textStyle = RType.sans(16f).copy(color = c.ink),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(c.violet),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             )
         }
     }
 }
 
+/** A round copy button (40 dp) in ink-2. */
 @Composable
-private fun ItemRow(item: VaultItemSummary, onClick: () -> Unit) {
+internal fun RoundCopy(label: String, tag: String, onClick: () -> Unit) {
     val c = LocalColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .testTag("vaultItem:${item.id}")
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(40.dp).background(c.accentSoft, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            GlyphIcon(kindGlyph(item.kind), c.accent, size = 20.dp)
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(item.name), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
-            RText(
-                untrusted(item.subtitle).ifBlank { kindLabel(item.kind) },
-                RType.sans(13f),
-                c.secondary,
-                Modifier.padding(top = 2.dp),
-                maxLines = 1,
-            )
-        }
-        if (item.favorite) {
-            GlyphIcon(Glyph.Star, c.warning, size = 16.dp)
-            Spacer(Modifier.width(6.dp))
-        }
-        GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
-    }
+    Box(
+        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape).pressable(shape = androidx.compose.foundation.shape.CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label }.testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) { GlyphIcon(Glyph.Copy, c.ink2, size = 18.dp) }
+}
+
+internal fun copyPlain(context: android.content.Context, text: String) {
+    context.getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(android.content.ClipData.newPlainText("Reins", text))
+}
+
+@Composable
+private fun ItemRow(item: VaultItemSummary, first: Boolean, onClick: () -> Unit) {
+    val c = LocalColors.current
+    PaneRow(
+        untrusted(item.name),
+        leading = { RowTile(kindGlyph(item.kind)) },
+        value = untrusted(item.subtitle).takeIf { it.isNotBlank() && !item.favorite }?.let { if (it.length > 18) it.take(17) + "…" else it },
+        valueMono = item.kind == VaultItemKind.SSH_KEY,
+        trailing = if (item.favorite) ({ GlyphIcon(Glyph.StarFilled, c.warning, size = 18.dp) }) else null,
+        chevron = true,
+        first = first,
+        tag = "vaultItem:${item.id}",
+        onClick = onClick,
+    )
 }
 
 /** Vault > Add: what kind of item. */
 @Composable
 fun VaultAddScreen(onBack: () -> Unit, onPick: (NewItem) -> Unit) {
     val c = LocalColors.current
-    Screen(title = "Add to the vault", onBack = onBack) {
-        Group(header = "What to add") {
-            NewItem.entries.forEachIndexed { i, kind ->
-                if (i > 0) Hairline(inset = 52.dp)
-                ListRow(
-                    kind.title,
-                    Modifier.testTag("newItem:${kind.name}"),
-                    subtitle = kind.detail,
-                    glyph = kind.glyph,
-                    tint = c.accent,
-                    chevron = true,
-                    onClick = { onPick(kind) },
-                )
+    // Next (Vault 02): the kinds as flat rows, each with its tile; a kind opens its form.
+    Screen(title = "Add", onBack = onBack) {
+        androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides false) {
+            dev.reins.android.ui.settings.SettingsGroup(header = "Kind", gap = 10.dp) {
+                NewItem.entries.forEach { kind ->
+                    dev.reins.android.ui.settings.SetRow(kind.title, kind.glyph, Modifier.testTag("newItem:${kind.name}")) { onPick(kind) }
+                }
             }
         }
-        RText(
-            "Everything is encrypted on this phone with your vault's key before it reaches the server.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 32.dp),
-        )
+        Spacer(Modifier.height(32.dp))
     }
 }

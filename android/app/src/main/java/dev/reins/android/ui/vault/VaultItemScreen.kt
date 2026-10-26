@@ -1,5 +1,9 @@
 package dev.reins.android.ui.vault
 
+import dev.reins.android.design.fieldSurface
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.border
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -73,8 +77,7 @@ fun VaultItemScreen(
 
     val current = item?.takeIf { it.id == id }
     Screen(
-        title = current?.name?.let(::untrusted) ?: "Vault item",
-        subtitle = current?.let { kindLabel(it.kind) },
+        title = null,
         onBack = onBack,
         actions = {
             if (current != null) CircleIconButton(Glyph.Pencil, Modifier.testTag("vaultEdit"), label = "Edit", onClick = onEdit)
@@ -84,6 +87,22 @@ fun VaultItemScreen(
         if (current == null) {
             RText("Loading…", RType.sans(15f), c.secondary, Modifier.padding(32.dp))
             return@Screen
+        }
+        // Next (Vault 03): the item on its card: its kind's tile in ink, its name, its kind.
+        Row(
+            Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp).fillMaxWidth()
+                .border(1.dp, c.rule2, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.foundation.layout.Box(
+                Modifier.size(52.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).fieldSurface(c.inverse, androidx.compose.foundation.shape.RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center,
+            ) { GlyphIcon(kindGlyph(current.kind), c.onInverse, size = 24.dp) }
+            Column(Modifier.weight(1f)) {
+                RText(untrusted(current.name), RType.display(30f), c.ink, maxLines = 2)
+                RText(kindLabel(current.kind), RType.sans(13.5f), c.inkMeta, Modifier.padding(top = 4.dp), maxLines = 1)
+            }
         }
         if (made?.id == id) {
             Banner(
@@ -96,7 +115,7 @@ fun VaultItemScreen(
         current.warning?.let { Banner(untrusted(it), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), BannerKind.Warning, tag = "vaultWarning") }
         if (current.uses.isNotEmpty()) {
             Group(
-                header = "Use it from the computer",
+                header = "For a computer",
                 footer = if (current.kind == VaultItemKind.SSH_KEY) null else "Tap to copy. Your phone asks you each time one is used.",
             ) {
                 current.uses.forEachIndexed { i, use ->
@@ -225,10 +244,6 @@ private fun IconAction(glyph: Glyph, label: String, tag: String, onClick: () -> 
     ) { GlyphIcon(glyph, c.accent, size = 19.dp) }
 }
 
-/** Not a secret (a reference, a username, a public key): copied as plain text. */
-private fun copyPlain(context: Context, text: String) {
-    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Reins", text))
-}
 
 private fun share(context: Context, text: String) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)

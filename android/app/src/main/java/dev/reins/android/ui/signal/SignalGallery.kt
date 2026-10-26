@@ -204,6 +204,7 @@ private val fieldWords = mapOf(
     Field.Pair to ("Say" to "hello"),
     Field.Accounts to ("Keys" to "change"),
     Field.Warn to ("Fix" to "me"),
+    Field.Night to ("Good" to "night"),
 )
 
 @OptIn(ExperimentalLayoutApi::class)

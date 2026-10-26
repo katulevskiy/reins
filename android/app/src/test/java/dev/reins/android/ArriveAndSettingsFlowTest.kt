@@ -17,11 +17,12 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class ArriveAndSettingsFlowTest : FlowHarness() {
     @Test
-    fun theWelcomeShowsTheKiteAndWhatReinsDoes() {
+    fun theWelcomeShowsTheArtAndWhatReinsDoes() {
         core.session = null
         launch()
         awaitTag("kite")
-        assertTrue(showsText("Your AIs ask. You decide."))
+        // Next (Arrive 01): the art behind a frosted pane, the two lines on it.
+        assertTrue(has("welcomeHeadline"))
         assertTrue(has("continue"))
     }
 

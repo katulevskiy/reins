@@ -421,34 +421,6 @@ fun Tag(title: String, modifier: Modifier = Modifier, tint: Color? = null, mono:
     }
 }
 
-/** Screen header: back button, centred two-line title, trailing actions. */
-@Composable
-fun TopBar(
-    title: String,
-    subtitle: String? = null,
-    onBack: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-    actions: @Composable RowScope.() -> Unit = {},
-) {
-    val c = LocalColors.current
-    Box(
-        modifier
-            .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .height(56.dp)
-            .padding(horizontal = 10.dp),
-    ) {
-        if (onBack != null) {
-            CircleIconButton(Glyph.ChevronLeft, Modifier.align(Alignment.CenterStart), label = "Back", onClick = onBack)
-        }
-        Column(Modifier.align(Alignment.Center).padding(horizontal = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            RText(title, RType.sans(16f, FontWeight.SemiBold), c.text, maxLines = 1)
-            if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.sans(12f), c.secondary, maxLines = 1)
-        }
-        Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
-    }
-}
-
 /** Root-screen header with a large title. */
 @Composable
 fun LargeTitle(title: String, modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit = {}) {
@@ -463,6 +435,21 @@ fun LargeTitle(title: String, modifier: Modifier = Modifier, actions: @Composabl
         RText(title, RType.title, c.ink, Modifier.weight(1f).semantics { heading() }, maxLines = 1)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
     }
+}
+
+/** A pushed page's back (Next `.top`): the arrow alone, a 40 dp target, no plate. Tagged "back". */
+@Composable
+fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier, tint: Color? = null) {
+    val c = LocalColors.current
+    Box(
+        modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .pressable(shape = CircleShape, label = "Back", onClick = onBack)
+            .semantics { contentDescription = "Back" }
+            .testTag("back"),
+        contentAlignment = Alignment.Center,
+    ) { GlyphIcon(Glyph.ArrowBack, tint ?: c.ink, size = 22.dp) }
 }
 
 /** The standard screen: background, header, scrolling content that clears the system bars and the keyboard. */
@@ -481,10 +468,10 @@ fun Screen(
             LargeTitle(title, actions = actions)
         } else if (onBack != null) {
             Row(
-                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 22.dp, end = 22.dp, top = 8.dp),
+                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 12.dp, end = 20.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+                BackArrow(onBack)
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
             }
@@ -499,8 +486,8 @@ fun Screen(
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
             if (title != null && onBack != null) {
-                RText(title, RType.title, c.ink, Modifier.padding(start = 22.dp, end = 22.dp, top = 14.dp).semantics { heading() }, maxLines = 2)
-                if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(start = 22.dp, end = 22.dp, top = 4.dp), maxLines = 2)
+                RText(title, RType.pageTitle, c.ink, Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp).semantics { heading() }, maxLines = 2)
+                if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp), maxLines = 2)
                 Spacer(Modifier.height(8.dp))
             }
             content()
@@ -582,14 +569,16 @@ fun SwitchRow(
                 onChange(it)
                 feedback.play(Event.toggle(it))
             }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Greyed out like the switch when a switch above turns this one off.
         val dim = Modifier.graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
         if (glyph != null) {
-            GlyphIcon(glyph, c.secondary, size = 21.dp, modifier = dim)
-            Spacer(Modifier.width(14.dp))
+            Box(dim.size(32.dp).clip(RoundedCornerShape(9.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+                GlyphIcon(glyph, c.ink2, size = 18.dp)
+            }
+            Spacer(Modifier.width(12.dp))
         }
         Column(dim.weight(1f)) {
             RText(title, RType.row, c.ink, maxLines = 2)
@@ -664,12 +653,16 @@ fun ListRow(
             .fillMaxWidth()
             .defaultMinSize(minHeight = 56.dp)
             .then(if (onClick != null) Modifier.pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (glyph != null) {
-            GlyphIcon(glyph, if (destructive) c.danger else tint ?: c.secondary, size = 21.dp)
-            Spacer(Modifier.width(14.dp))
+            // Next: the glyph on its 32 dp sunken tile (red on its wash for what removes).
+            Box(
+                Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(if (destructive) c.dangerWash else c.paperSunken),
+                contentAlignment = Alignment.Center,
+            ) { GlyphIcon(glyph, if (destructive) c.danger else c.ink2, size = 18.dp) }
+            Spacer(Modifier.width(12.dp))
         }
         Column(Modifier.weight(1f)) {
             RText(title, RType.row, if (destructive) c.danger else c.ink, maxLines = 2)
@@ -683,7 +676,7 @@ fun ListRow(
         }
         if (chevron) {
             Spacer(Modifier.width(8.dp))
-            GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
+            GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
         }
     }
 }
@@ -701,15 +694,22 @@ fun Group(
 ) {
     val c = LocalColors.current
     var help by rememberSaveable { mutableStateOf(false) }
-    Column(modifier.padding(horizontal = 6.dp)) {
+    // Next "Quiet" (`.sec.q` and `.flat`): a small header in meta, the rows flat between hairlines, 20 in.
+    Column(modifier.padding(horizontal = 20.dp)) {
         if (header != null || footer != null) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 22.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                LabelText(header.orEmpty(), c.inkMeta, Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                RText(header.orEmpty(), RType.sans(12.5f, FontWeight.SemiBold, tracking = 0.015f), c.inkMeta, Modifier.weight(1f), maxLines = 1)
                 if (footer != null) HelpButton(help, header ?: "this") { help = it }
             }
         }
-        Column(Modifier.fillMaxWidth(), content = content)
-        if (footer != null) HelpText(footer, help, Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+        Column(
+            Modifier.fillMaxWidth().drawBehind {
+                drawLine(c.rule, androidx.compose.ui.geometry.Offset(0f, 0.5.dp.toPx()), androidx.compose.ui.geometry.Offset(size.width, 0.5.dp.toPx()), 1.dp.toPx())
+                drawLine(c.rule, androidx.compose.ui.geometry.Offset(0f, size.height - 0.5.dp.toPx()), androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx())
+            },
+            content = content,
+        )
+        if (footer != null) HelpText(footer, help, Modifier.padding(top = 8.dp))
     }
 }
 
@@ -763,7 +763,7 @@ fun HelpText(text: String, open: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Hairline(modifier: Modifier = Modifier, inset: Dp = 16.dp) {
+fun Hairline(modifier: Modifier = Modifier, inset: Dp = 44.dp) {
     Box(modifier.fillMaxWidth().padding(start = inset).height(1.dp).background(LocalColors.current.rule))
 }
 

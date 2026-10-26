@@ -20,7 +20,7 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class PermissionControlsFlowTest : FlowHarness() {
     private fun existing() {
-        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        launch(); tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com")
         awaitTag("permissionPreset:CUSTOM")
     }
     private fun chooseRead() {
@@ -28,7 +28,7 @@ class PermissionControlsFlowTest : FlowHarness() {
         awaitTag("permissionAgent:c1")
     }
     @Test fun laterPreservesVerifiedAccountAndDoesNotSaveOrRepeatOAuth() {
-        launch(); tap("tabConnections"); tap("service:gmail")
+        launch(); tap("tabConnections"); openService("gmail")
         runBlocking { GmailViewModel(container).connect("new@gmail.com") }
         awaitTag("integrationConnected")
         awaitTag("permissionPreset:REVIEW_EVERY_REQUEST")
@@ -113,7 +113,7 @@ class PermissionControlsFlowTest : FlowHarness() {
         assertEquals(PermissionScopeKind.SELECTED_RECIPIENTS, send.scope.kind)
     }
     @Test fun unsupportedIntegrationShowsEffectivePolicyWithoutOneWayChanges() {
-        launch(); tap("tabConnections"); tap("service:github")
+        launch(); tap("tabConnections"); openService("github")
         // Existing connected synthetic account is added through the real finishing path.
         runBlocking { container.state.accountConnected(AccountView("github", "octo-cat", 1), container.state.accountEpoch.value) }
         awaitTag("permissionsReadOnly")

@@ -1,5 +1,8 @@
 package dev.reins.android.ui.settings
 
+import androidx.compose.ui.draw.drawBehind
+import dev.reins.android.design.pane
+import androidx.compose.ui.layout.layout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -85,22 +88,39 @@ import dev.reins.android.feedback.play
 @Suppress("UNUSED_PARAMETER")
 internal fun Modifier.settingsCard(c: RColors, radius: Dp = 24.dp): Modifier = this.fillMaxWidth()
 
-/** A page: the back arrow when pushed ([onBack]; none at the root of a tab), an optional large [title], and content that scrolls under them. */
+/** Whether the groups of this page are raised (a tab's root, Next "Standard") or flat (a pushed page, "Quiet"). */
+internal val LocalRaisedGroups = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/**
+ * A page (Next): pushed ([onBack]), the back arrow on its own and the title (`--s 32`) under it, its groups flat between
+ * hairlines ("Quiet"); at the root of a tab, the title (`--s 40`) and raised groups ("Standard"). Content scrolls.
+ */
 @Composable
 fun SettingsPage(
     title: String?,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
     Column(modifier.fillMaxSize().background(c.paper).imePadding()) {
         if (onBack != null) {
             Row(
-                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 22.dp, end = 22.dp, top = 8.dp),
+                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 12.dp, end = 20.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                dev.reins.android.design.RoundIconButton(dev.reins.android.design.Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .pressable(shape = CircleShape, label = "Back", onClick = onBack)
+                        .semantics { contentDescription = "Back" }
+                        .testTag("back"),
+                    contentAlignment = Alignment.Center,
+                ) { dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ArrowBack, c.ink, size = 22.dp) }
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
             }
         } else {
             Spacer(Modifier.windowInsetsPadding(WindowInsets.statusBars))
@@ -115,13 +135,13 @@ fun SettingsPage(
             if (title != null) {
                 RText(
                     title,
-                    RType.title,
+                    if (onBack == null) RType.title else RType.pageTitle,
                     c.ink,
-                    Modifier.padding(start = 22.dp, end = 22.dp, top = if (onBack == null) 22.dp else 14.dp, bottom = 12.dp).semantics { heading() },
+                    Modifier.padding(start = 20.dp, end = 20.dp, top = if (onBack == null) 22.dp else 10.dp, bottom = 6.dp).semantics { heading() },
                     maxLines = 2,
                 )
             }
-            content()
+            androidx.compose.runtime.CompositionLocalProvider(LocalRaisedGroups provides (onBack == null), content = { content() })
             // At the root of a tab, the content clears the floating tab bar.
             if (onBack == null) Spacer(Modifier.height(96.dp).testTag("pageEnd"))
         }
@@ -129,8 +149,8 @@ fun SettingsPage(
 }
 
 /**
- * A group of rows on a card. [header] is in the accent colour above it; without one the group sits a section gap
- * below the last. [help] puts a (?) at the end of the header that shows the longer text under it.
+ * A group of rows: on a pushed page flat between hairlines under a quiet header (`.sec.q`); at a tab's root a raised
+ * group under its header (`.sec`). [help] puts a (?) after the header that shows the longer text under it.
  */
 @Composable
 fun SettingsGroup(
@@ -140,25 +160,57 @@ fun SettingsGroup(
     helpOpen: Boolean = false,
     onHelp: (Boolean) -> Unit = {},
     gap: Dp = 22.dp,
+    /** A glyph before the header (Next `.sec`). */
+    glyph: dev.reins.android.design.Glyph? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
-    Column(modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
+    val raised = LocalRaisedGroups.current
+    Column(modifier.fillMaxWidth().padding(horizontal = if (raised) 16.dp else 20.dp)) {
         if (header != null) {
             Row(
-                Modifier.fillMaxWidth().padding(top = gap + 4.dp, bottom = if (help != null) 0.dp else 4.dp).defaultMinSize(minHeight = 20.dp),
+                Modifier.fillMaxWidth().padding(start = if (raised) 8.dp else 0.dp, top = if (raised) gap else gap - 2.dp, bottom = if (help != null) 0.dp else 6.dp).defaultMinSize(minHeight = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // The (?) right beside the words it explains.
-                dev.reins.android.design.LabelText(header, c.inkMeta, Modifier.weight(1f, fill = false).semantics { heading() })
+                if (glyph != null) {
+                    dev.reins.android.design.GlyphIcon(glyph, if (raised) c.ink2 else c.inkMeta, size = 14.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                RText(
+                    header,
+                    if (raised) RType.section else RType.sans(12.5f, FontWeight.SemiBold, tracking = 0.015f),
+                    if (raised) c.ink2 else c.inkMeta,
+                    Modifier.weight(1f, fill = false).semantics { heading() },
+                    maxLines = 1,
+                )
                 if (help != null) HelpIcon(helpOpen, header, onHelp)
                 Spacer(Modifier.weight(1f))
             }
             if (help != null) HelpText(help, helpOpen, Modifier.padding(bottom = 8.dp))
         } else {
-            Spacer(Modifier.height(gap))
+            Spacer(Modifier.height(if (raised) 12.dp else gap))
         }
-        Column(Modifier.settingsCard(c), content = content)
+        if (raised) {
+            // A raised group: the rows 14 in; the last row's hairline falls outside the group's clip.
+            Column(Modifier.fillMaxWidth().pane()) {
+                Column(
+                    Modifier
+                        .padding(horizontal = 14.dp)
+                        .layout { m, cst ->
+                            val p = m.measure(cst)
+                            val cut = 1.dp.roundToPx()
+                            layout(p.width, (p.height - cut).coerceAtLeast(0)) { p.place(0, 0) }
+                        },
+                    content = content,
+                )
+            }
+        } else {
+            Column(
+                Modifier.fillMaxWidth().drawBehind { drawLine(c.rule, androidx.compose.ui.geometry.Offset(0f, 0.5.dp.toPx()), androidx.compose.ui.geometry.Offset(size.width, 0.5.dp.toPx()), 1.dp.toPx()) },
+                content = content,
+            )
+        }
     }
 }
 
@@ -185,9 +237,10 @@ fun HelpIcon(open: Boolean, topic: String, onToggle: (Boolean) -> Unit) {
 fun IconPlate(icon: ImageVector, tint: Color, modifier: Modifier = Modifier, size: Dp = 40.dp) {
     // A monochrome tile: the glyph in ink (red for what removes), never a coloured disc.
     val c = LocalColors.current
-    val ink = if (tint == c.danger) c.danger else c.ink2
-    Box(modifier.size(size * 0.85f).clip(RoundedCornerShape(10.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
-        Icon(icon, null, Modifier.size(size * 0.45f), tint = ink)
+    val danger = tint == c.danger
+    // Next (`.tile`): 32, radius 9, the glyph in ink-2 on sunken paper; red on its wash for what removes.
+    Box(modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(if (danger) c.dangerWash else c.paperSunken), contentAlignment = Alignment.Center) {
+        Icon(icon, null, Modifier.size(18.dp), tint = if (danger) c.danger else c.ink2)
     }
 }
 
@@ -239,14 +292,14 @@ fun SettingsRow(
             valueContent()
         } else if (value != null) {
             Spacer(Modifier.width(10.dp))
-            RText(value, if (monoValue) RType.value else RType.sans(15f), c.ink2, maxLines = 1, ltr = monoValue)
+            RText(value, if (monoValue) RType.mono(13f) else RType.sans(15f), c.ink2, maxLines = 1, ltr = monoValue)
         }
         if (busy) {
             Spacer(Modifier.width(8.dp))
             Spinner(c.secondary, size = 18.dp)
         } else if (chevron && onClick != null) {
             Spacer(Modifier.width(6.dp))
-            dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkMeta, size = 16.dp)
+            dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkFaint, size = 18.dp)
         }
     }
 }

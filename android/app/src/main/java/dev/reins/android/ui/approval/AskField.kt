@@ -309,11 +309,3 @@ fun AskLoading(loading: Boolean, error: String?, onClose: () -> Unit, errorTag: 
 /** [text] with a word joiner after each slash, so a path or a repo ("octo/app") is never split at its slash. */
 internal fun noBreakAfterSlash(text: String): String = text.replace("/", "/⁠")
 
-/** A timer on a field: the ring draining each second, a white pill with red digits in the last 15 s. Its own clock. */
-@Composable
-fun FieldTimer(createdAt: Long, waitUntil: Long?) {
-    if (waitUntil == null) return
-    val now = dev.reins.android.design.rememberNowState(1_000, untilMillis = waitUntil * 1000)
-    val left = (waitUntil - now.value / 1000).coerceAtLeast(0)
-    Box(Modifier.testTag("waitLine")) { dev.reins.android.design.TimerPill(left, (waitUntil - createdAt).coerceAtLeast(1)) }
-}

@@ -181,7 +181,7 @@ fun EndedGrantsScreen(
         ) {
             item(key = "back") {
                 Box(Modifier.windowInsetsPadding(HeaderInsets).padding(top = 8.dp, start = 0.dp)) {
-                    RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+                    dev.reins.android.design.BackArrow(onBack, Modifier)
                 }
             }
             item(key = "title") {

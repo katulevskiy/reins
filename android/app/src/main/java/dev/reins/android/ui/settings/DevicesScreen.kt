@@ -1,5 +1,8 @@
 package dev.reins.android.ui.settings
 
+import dev.reins.android.design.pressable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
@@ -164,13 +167,13 @@ fun DevicesScreen(
             ListRow(
                 me?.name?.let(::untrusted) ?: "This phone",
                 Modifier.testTag("thisDevice"),
-                subtitle = listOfNotNull(
-                    if (me?.approval == true) "Your approval device: requests come here" else null,
-                    phoneKey?.let { "Key for reins vault add: $it" },
-                ).joinToString("\n").ifEmpty { null },
                 glyph = Glyph.Phone,
-                tint = c.accent,
+                trailing = if (me?.approval == true) ({ dev.reins.android.design.NextPill("Approves", c.success, glyph = Glyph.ShieldCheck) }) else null,
             )
+            phoneKey?.let { key ->
+                Hairline()
+                ListRow("Key", Modifier.testTag("thisDeviceKey"), glyph = Glyph.Terminal, trailing = { RText(key, RType.mono(13f), c.ink, maxLines = 1, ltr = true) })
+            }
         }
         val others = list.orEmpty().filterNot { it.thisDevice }
         Group(
@@ -313,31 +316,30 @@ private fun SignOutDialog(device: DeviceView, busy: Boolean, error: String?, onC
 @Composable
 private fun DeviceRow(device: DeviceView, busy: Boolean, onSignOut: () -> Unit) {
     val c = LocalColors.current
+    // Next (Settings 02): the phone's tile, its name and when it was last seen, and Sign out in red.
     Row(
-        Modifier.fillMaxWidth().testTag("device:${device.id}").padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().testTag("device:${device.id}").padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(deviceGlyph(device.kind), c.secondary, size = 21.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(device.name), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
-            RText(
-                "${device.platform} · last seen ${relativeTime(device.lastSeenAt)}",
-                RType.sans(13f),
-                c.secondary,
-                Modifier.padding(top = 2.dp),
-                maxLines = 2,
-            )
-            if (device.approval) Tag("Approval device", Modifier.padding(top = 4.dp), tint = c.accent)
+        androidx.compose.foundation.layout.Box(Modifier.size(32.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+            GlyphIcon(deviceGlyph(device.kind), c.ink2, size = 18.dp)
         }
-        Spacer(Modifier.width(8.dp))
-        CapsuleButton(
+        Column(Modifier.weight(1f)) {
+            RText(untrusted(device.name), RType.row, c.ink, maxLines = 1)
+            RText("${device.platform} · ${relativeTime(device.lastSeenAt)}", RType.meta, c.inkMeta, maxLines = 2)
+            if (device.approval) dev.reins.android.design.NextPill("Approves", c.success, Modifier.padding(top = 4.dp), glyph = Glyph.ShieldCheck)
+        }
+        RText(
             "Sign out",
-            Modifier.testTag("signOutDevice:${device.id}"),
-            style = ButtonStyle.Destructive,
-            compact = true,
-            enabled = !busy,
-            onClick = onSignOut,
+            RType.sans(15f, FontWeight.SemiBold),
+            c.danger,
+            Modifier
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .pressable(enabled = !busy, shape = androidx.compose.foundation.shape.CircleShape, label = "Sign out", onClick = onSignOut)
+                .padding(horizontal = 6.dp, vertical = 8.dp)
+                .testTag("signOutDevice:${device.id}"),
+            maxLines = 1,
         )
     }
 }
