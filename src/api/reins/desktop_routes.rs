@@ -30,7 +30,7 @@ use super::{
     },
     now_unix,
     presence::PhoneSeen,
-    relay::WaitResult,
+    relay::{Told, WaitResult},
 };
 use crate::db::{DbConn, DbPool, models::ReinsConnection};
 
@@ -137,8 +137,29 @@ pub fn wait_body(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> Option<V
     }
 }
 
-fn wait_response(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> DesktopResponse {
-    wait_body(wait, id, seen).map_or_else(DesktopResponse::not_found, |body| DesktopResponse::json(Status::Ok, body))
+/// [`wait_body`] with what the phone said beside it ([`Told`]): who decided an answered call, where Autopilot leans
+/// on a pending one. Shown by the desktop app; an older app ignores both.
+pub fn told_body(mut body: Value, told: Told) -> Value {
+    match body["status"].as_str() {
+        Some("answered") => {
+            if let Some(decided) = told.decided {
+                body["decided"] = json!(decided);
+            }
+        }
+        Some("pending") => {
+            if let Some(suggestion) = told.suggestion {
+                body["suggestion"] = json!(suggestion);
+            }
+        }
+        _ => {}
+    }
+    body
+}
+
+fn wait_response(wait: &WaitResult, id: &RequestId, connection: &ConnectionId, seen: PhoneSeen) -> DesktopResponse {
+    wait_body(wait, id, seen).map_or_else(DesktopResponse::not_found, |body| {
+        DesktopResponse::json(Status::Ok, told_body(body, HUB.relay.told(id, connection)))
+    })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -281,8 +302,14 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
     };
     // Never hold a pooled DB connection while waiting for the phone.
     drop(conn);
-    let waited = HUB.relay.wait_first(&request_id, &ConnectionId(connection.uuid.clone())).await;
-    wait_response(&waited, &request_id, HUB.presence.status(&connection.user_uuid.to_string(), now_unix()))
+    let connection_id = ConnectionId(connection.uuid.clone());
+    let waited = HUB.relay.wait_leaning(&request_id, &connection_id, true).await;
+    wait_response(
+        &waited,
+        &request_id,
+        &connection_id,
+        HUB.presence.status(&connection.user_uuid.to_string(), now_unix()),
+    )
 }
 
 /// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out).
@@ -301,15 +328,23 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
         Err(wait) => return DesktopResponse::rate_limited(CONNECTION_WAITING_LIMITED, wait),
     };
     let request_id = RequestId::from(id);
-    let waited = HUB.relay.wait(&request_id, &ConnectionId(connection.uuid.clone())).await;
-    wait_response(&waited, &request_id, HUB.presence.status(&connection.user_uuid.to_string(), now_unix()))
+    let connection_id = ConnectionId(connection.uuid.clone());
+    let waited = HUB.relay.wait_leaning(&request_id, &connection_id, false).await;
+    wait_response(
+        &waited,
+        &request_id,
+        &connection_id,
+        HUB.presence.status(&connection.user_uuid.to_string(), now_unix()),
+    )
 }
 
 /// When the approval phone last asked this server for work (`null`: not since the server started), the integrations
 /// it reported having an account for (`null`: not reported since the server started), and the server's clock: for
 /// `reins doctor`, and for `reins setup`/`resume`, which leave git direct for a host the phone cannot serve yet. A
 /// phone asleep in a pocket polls rarely; push wakes it, so an old time is no fault. With them, the name the user gave
-/// this computer on the phone, sealed to the app's key (`null`: none; `reins_proto::device::SealedName`).
+/// this computer on the phone, sealed to the app's key (`null`: none; `reins_proto::device::SealedName`), and the
+/// phone's Autopilot modes as this computer is shown them (`null`: not reported since the server started;
+/// `reins_proto::autopilot::DesktopModes`): the global mode and this connection's own, never another's.
 #[get("/reins/desktop/phone")]
 async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
@@ -320,10 +355,11 @@ async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     let user = connection.user_uuid.to_string();
     let services = HUB.services_of(&user);
     let last_seen = HUB.phone_seen(&user);
+    let modes = HUB.modes_for(&user, &connection.uuid);
     DesktopResponse::json(
         Status::Ok,
         json!({"last_seen": last_seen, "services": services, "server_time": now_unix(),
-               "sealed_name": connection.sealed_name}),
+               "sealed_name": connection.sealed_name, "modes": modes}),
     )
 }
 
@@ -603,6 +639,39 @@ mod tests {
         );
         assert_eq!(wait_body(&WaitResult::Offline, &id, PhoneSeen::Listening).unwrap()["last_seen"], Value::Null);
         assert_eq!(wait_body(&WaitResult::NotFound, &id, seen), None);
-        assert_eq!(wait_response(&WaitResult::NotFound, &id, seen).status, Status::NotFound);
+        assert_eq!(wait_response(&WaitResult::NotFound, &id, &"c1".into(), seen).status, Status::NotFound);
+    }
+
+    #[test]
+    fn the_desktop_app_hears_who_decided_and_where_autopilot_leans() {
+        use reins_proto::autopilot::{Decided, DecidedBy, Leaning, Suggestion};
+        let id = RequestId("req-1".into());
+        let told = Told {
+            decided: Some(Decided {
+                by: DecidedBy::Bypass,
+                confidence: None,
+                reasons: vec![],
+                correctable: false,
+            }),
+            suggestion: Some(Suggestion {
+                v: 1,
+                leaning: Leaning::Deny,
+                confidence: 0.75,
+            }),
+        };
+        let denied = RelayOutcome::Denied {
+            reason: None,
+        };
+        let answered = wait_body(&WaitResult::Answered(denied), &id, PhoneSeen::Never).unwrap();
+        let answered = told_body(answered, told.clone());
+        assert_eq!(answered["decided"], json!({"by": "bypass", "correctable": false}));
+        assert!(answered.get("suggestion").is_none());
+        let pending = told_body(wait_body(&WaitResult::Pending, &id, PhoneSeen::Never).unwrap(), told.clone());
+        assert_eq!(pending["suggestion"]["leaning"], "deny");
+        assert!(pending.get("decided").is_none());
+        let offline = told_body(wait_body(&WaitResult::Offline, &id, PhoneSeen::Never).unwrap(), told);
+        assert!(offline.get("suggestion").is_none() && offline.get("decided").is_none());
+        let plain = wait_body(&WaitResult::Pending, &id, PhoneSeen::Never).unwrap();
+        assert_eq!(told_body(plain.clone(), Told::default()), plain, "nothing said: the old shape");
     }
 }

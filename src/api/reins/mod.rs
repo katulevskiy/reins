@@ -99,6 +99,9 @@ pub struct Hub {
     services: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
     /// Per user: the MCP servers added on the phone, as last reported (validated).
     mcp_servers: std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<McpServerReport>>>>,
+    /// Per user: the phone's Autopilot modes as last reported (`PUT /reins/api/modes`) and when; shown to the desktop
+    /// apps, never used to decide anything here.
+    modes: std::sync::Mutex<std::collections::HashMap<String, (reins_proto::autopilot::ModesReport, i64)>>,
     /// When each account's approval device was last heard from.
     pub presence: presence::Presence,
     /// Per desktop connection: sealed "drop your secrets" notes from the phone, until its daemon picks them up.
@@ -298,6 +301,7 @@ impl Hub {
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
+            modes: std::sync::Mutex::default(),
             presence: presence::Presence::default(),
             revocations: Revocations::default(),
         }
@@ -315,6 +319,19 @@ impl Hub {
     /// The integrations `user`'s phone reported, if it has.
     pub fn services_of(&self, user: &str) -> Option<Vec<String>> {
         self.services.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(user).cloned()
+    }
+
+    /// Keeps the modes `user`'s phone reported at `now`.
+    pub fn set_modes(&self, user: &str, report: reins_proto::autopilot::ModesReport, now: i64) {
+        self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(user.to_owned(), (report, now));
+    }
+
+    /// What one connection of `user` is shown of the phone's modes: for a desktop app the phone paired, the global
+    /// mode and its own; for any other connection, or until the phone has reported them since this server started,
+    /// nothing.
+    pub fn modes_for(&self, user: &str, connection_id: &str) -> Option<reins_proto::autopilot::DesktopModes> {
+        let modes = self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        modes.get(user).and_then(|(report, at)| report.for_connection(connection_id, *at))
     }
 
     /// Replaces `user`'s MCP servers; reports that break the contract's bounds are dropped.
@@ -377,6 +394,7 @@ impl Hub {
     pub fn forget_user(&self, user: &str) {
         self.services.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.mcp_servers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
+        self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.relay.forget_user(user);
         self.presence.forget(user);
         self.pairings.forget_user(user);
