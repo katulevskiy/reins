@@ -35,56 +35,6 @@ struct RowDivider: View {
     }
 }
 
-/// A tappable row of a card: a symbol on a tile, a title and subtitle, maybe a chevron.
-struct AutopilotRow: View {
-    var title: String
-    var subtitle: String? = nil
-    var symbol: String
-    var tint: Color = Palette.violet
-    var destructive = false
-    var chevron = false
-    var identifier: String
-    var action: () -> Void
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Button {
-            feedback.play(.tap)
-            action()
-        } label: {
-            HStack(spacing: 14) {
-                IconTile(symbol: symbol, tint: destructive ? Palette.danger : tint, size: 34)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(destructive ? Palette.danger : Palette.ink)
-                    if let subtitle {
-                        Text(subtitle).font(RFont.sans(13)).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 6)
-                if chevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.inkMeta)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(RowPress())
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier(identifier)
-    }
-}
-
-/// A row's pressed state: the control fill behind it.
-struct RowPress: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.background(configuration.isPressed ? Palette.paperSunken : .clear)
-    }
-}
-
 /// How long a bypass runs: a number of minutes, or until the user turns it off.
 enum BypassLength: Hashable {
     case minutes(UInt32)
