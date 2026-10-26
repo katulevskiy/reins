@@ -12,6 +12,7 @@ struct ActivityScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var sizeClass
     /// What Autopilot made of each waiting request (Manual and Auto), by request id.
     @State private var suggestions: [String: SuggestionView] = [:]
     /// The list was placed where the user stopped reading; until then nothing is marked seen.
@@ -167,6 +168,10 @@ struct ActivityScreen: View {
                 model.activitySearchText = args[i + 1]
             }
             if args.contains("-demoFilter") { model.activityFilters.deciders = [.autopilot] }
+            // `-wallpaperDark <name>` / `-wallpaperLight <name>`: another shipped wallpaper (as Settings would store it).
+            for (flag, scheme) in [("-wallpaperDark", ColorScheme.dark), ("-wallpaperLight", .light)] {
+                if let i = args.firstIndex(of: flag), i + 1 < args.count { AppGroup.defaults.set(args[i + 1], forKey: Wallpaper.key(scheme)) }
+            }
         }
         #endif
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
@@ -203,6 +208,12 @@ struct ActivityScreen: View {
         Group {
             if searchOpen {
                 ActivitySearchBar(text: textBinding) { closeSearch() }
+            } else if sizeClass == .compact {
+                // A phone: always one line (the title shrinks a little before anything wraps).
+                HStack(spacing: 12) {
+                    title
+                    controls
+                }
             } else {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
@@ -228,7 +239,7 @@ struct ActivityScreen: View {
             .textRole(.title)
             .foregroundStyle(Palette.ink)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .minimumScaleFactor(0.7)
             .dynamicTypeSize(...DynamicTypeSize.large)
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("activityMood")

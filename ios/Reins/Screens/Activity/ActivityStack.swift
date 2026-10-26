@@ -243,7 +243,7 @@ struct FieldWaitCard: View {
                         .font(RFont.mono(13))
                         .foregroundStyle(Palette.onField2)
                         .lineLimit(3)
-                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .environment(\.layoutDirection, .leftToRight)
                         .padding(.top, -4)
                         .accessibilityIdentifier("cardDetails:\(item.id)")
