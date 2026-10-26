@@ -33,50 +33,6 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.pressable
 import dev.reins.core.GrantView
 
-/** A permission that ended, with the ways to start it again or to get rid of it. */
-@Composable
-fun EndedGrantRow(grant: GrantView, modifier: Modifier = Modifier, onOpen: () -> Unit, onResume: () -> Unit, onDelete: () -> Unit) {
-    val c = LocalColors.current
-    Row(
-        modifier
-            .fillMaxWidth()
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onOpen)
-            .padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MiniLogo(
-            grant.service.ifBlank { "gmail" },
-            face = { size -> ConnectionIcon(grant.connectionId, grant.connectionLabel, size = size) },
-            size = 40.dp,
-            faceSize = 20.dp,
-            ring = if (c.dark) androidx.compose.ui.graphics.Color(0xFF19191C) else c.elevated,
-            modifier = Modifier.graphicsLayer { alpha = 0.6f },
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(grant.summary), RType.sans(15f, FontWeight.Medium), c.text, maxLines = 2)
-            RText(untrusted(grant.connectionLabel) + " · " + endedLine(grant), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
-        }
-        Spacer(Modifier.width(8.dp))
-        RoundAction(Icons.Rounded.Refresh, "Resume", c.text, c.controlFill, Modifier.testTag("resume:${grant.id}"), onResume)
-        Spacer(Modifier.width(8.dp))
-        RoundAction(Icons.Rounded.Delete, "Delete", c.danger, c.danger.copy(alpha = 0.13f), Modifier.testTag("delete:${grant.id}"), onDelete)
-    }
-}
-
-@Composable
-private fun RoundAction(icon: ImageVector, label: String, tint: androidx.compose.ui.graphics.Color, fill: androidx.compose.ui.graphics.Color, modifier: Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(fill)
-            .pressable(shape = CircleShape, label = label, onClick = onClick)
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) { Icon(icon, null, Modifier.size(20.dp), tint = tint) }
-}
-
 /** How a finished grant ended: "Expired 2 d ago", "All 5 uses spent", "Deleted". */
 fun endedLine(g: GrantView): String = when (g.state) {
     "revoked" -> "Deleted"

@@ -60,6 +60,8 @@ class DistributionTest : FlowHarness() {
         assertTrue(core.catalogue.any { it.service == "sms" })
         launch()
         tap("tabConnections")
+        // Services not connected yet are behind the Services header's +.
+        tap("addService")
         awaitTag("service:device_contacts")
         assertFalse(has("service:sms"))
         assertTrue(container.state.services.value.none { it.service == "sms" })

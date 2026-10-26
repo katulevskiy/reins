@@ -139,6 +139,71 @@ pub struct Entry {
     /// Unix seconds when it ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<i64>,
+    /// The phone's id for the request (what "This was wrong" names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Who decided on the phone when the user did not (Autopilot, a mode). `None`: the user, or not said. Only who
+    /// is written to the log: Autopilot's confidence and reasons are kept in memory (see [`Attribution`]).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub autopilot: Option<Attribution>,
+    /// While it waits: what Autopilot would do with it. Never written to the log: an AI of the same user that reads it
+    /// would learn how to word its next ask; the app asks the server for it instead.
+    #[serde(skip)]
+    pub leaning: Option<Lean>,
+}
+
+/// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
+/// and `correctable` are written to the log; the confidence and the reasons stay in memory, like the leaning.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attribution {
+    pub by: reins_proto::autopilot::DecidedBy,
+    /// Autopilot's confidence, in percent.
+    #[serde(skip)]
+    pub confidence: Option<u8>,
+    #[serde(skip)]
+    pub reasons: Vec<reins_proto::autopilot::Reason>,
+    /// "This was wrong" may be sent for it.
+    #[serde(default)]
+    pub correctable: bool,
+}
+
+/// What Autopilot would do with a request that waits, and how sure it is (percent).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lean {
+    pub leaning: reins_proto::autopilot::Leaning,
+    pub confidence: u8,
+}
+
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a fraction from 0 to 1 as a percentage")]
+fn percent(fraction: f32) -> u8 {
+    (fraction.clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+impl From<reins_proto::autopilot::Decided> for Attribution {
+    fn from(d: reins_proto::autopilot::Decided) -> Self {
+        let d = d.cleaned();
+        Self {
+            by: d.by,
+            confidence: d.confidence.map(percent),
+            reasons: d.reasons,
+            correctable: d.correctable,
+        }
+    }
+}
+
+impl From<&reins_proto::autopilot::Suggestion> for Lean {
+    fn from(s: &reins_proto::autopilot::Suggestion) -> Self {
+        Self {
+            leaning: s.leaning,
+            confidence: percent(s.confidence),
+        }
+    }
+}
+
+/// A field a newer app may write in a shape this one does not know: read as absent, never losing the entry.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> Result<Option<T>, D::Error> {
+    let value = <serde_json::Value as Deserialize>::deserialize(d)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 /// `text` on one line, as `what`, `source` and `service` are kept: each run of whitespace one space.
@@ -177,7 +242,27 @@ impl Entry {
             outcome: Outcome::Waiting,
             reason: None,
             ended_at: None,
+            request_id: None,
+            autopilot: None,
+            leaning: None,
         }
+    }
+
+    /// What the phone said about it so far ([`crate::told::Heard`]): its request id, where Autopilot leans while it
+    /// waits, and who decided once it is answered. `true` when that changed what the log keeps of it.
+    pub fn hear(&mut self, heard: &crate::told::Heard) -> bool {
+        // What the log keeps: the request id, and who decided.
+        let kept = |e: &Self| (e.request_id.clone(), e.autopilot.as_ref().map(|a| (a.by, a.correctable)));
+        let before = kept(self);
+        if heard.request_id.is_some() {
+            self.request_id.clone_from(&heard.request_id);
+        }
+        self.leaning = heard.leaning;
+        if heard.decided.is_some() {
+            self.autopilot.clone_from(&heard.decided);
+            self.leaning = None;
+        }
+        before != kept(self)
     }
 
     #[must_use]
@@ -341,6 +426,9 @@ pub struct Tally {
     pub failed: usize,
     pub allowed: usize,
     pub blocked: usize,
+    /// Of those, the ones the phone decided without the user (Autopilot, a mode), and of these the ones it denied.
+    pub auto: usize,
+    pub auto_denied: usize,
 }
 
 impl Tally {
@@ -348,6 +436,12 @@ impl Tally {
     pub fn of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Self {
         let mut t = Self::default();
         for e in entries {
+            if e.autopilot.is_some() && !e.outcome.open() {
+                t.auto += 1;
+                if !matches!(e.outcome, Outcome::Approved | Outcome::Allowed) {
+                    t.auto_denied += 1;
+                }
+            }
             *match e.outcome {
                 Outcome::Waiting => &mut t.waiting,
                 Outcome::Approved => &mut t.approved,

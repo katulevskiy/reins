@@ -1,5 +1,14 @@
 package dev.reins.android.ui.permissions
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +39,13 @@ import dev.reins.android.design.RText
 import dev.reins.android.design.RTextField
 import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
+import androidx.compose.foundation.layout.Row
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.RowTile
+import dev.reins.android.design.SignalRadio
+import dev.reins.android.design.SwitchRow
+import dev.reins.android.design.pressable
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.AccountPermissionPreset
@@ -122,14 +138,18 @@ fun AccountPermissionsScreen(
         val draft = state.draft
         if (view != null && draft != null && !state.saved) {
             RText("Review and save to apply your choices.", RType.sans(14f), c.ink2, Modifier.padding(16.dp))
-            if (!model.temporary) Group(header = "Starting point") {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AccountPermissionPreset.entries.forEach { preset ->
-                        CapsuleButton(permissionPresetTitle(preset), Modifier.fillMaxWidth().testTag("permissionPreset:$preset"),
-                            enabled = !state.busy && !state.changedElsewhere && preset in view.availablePresets && (preset != AccountPermissionPreset.READ_ASSIST || view.usageVerified),
-                            style = if ((!finishing || state.hasChosenPreset) && draft.preset == preset) ButtonStyle.Inverse else ButtonStyle.Soft,
-                         maxLines = Int.MAX_VALUE) { model.preset(preset) }
-                    }
+            // Next (Permissions 02): where the rules start, as radio rows.
+            if (!model.temporary) Group(header = "Start from") {
+                AccountPermissionPreset.entries.forEachIndexed { i, preset ->
+                    if (i > 0) Hairline()
+                    val on = (!finishing || state.hasChosenPreset) && draft.preset == preset
+                    RadioRow(
+                        permissionPresetTitle(preset),
+                        presetGlyph(preset),
+                        on,
+                        enabled = !state.busy && !state.changedElsewhere && preset in view.availablePresets && (preset != AccountPermissionPreset.READ_ASSIST || view.usageVerified),
+                        tag = "permissionPreset:$preset",
+                    ) { model.preset(preset) }
                 }
             }
             if (!finishing || state.hasChosenPreset) {
@@ -137,13 +157,18 @@ fun AccountPermissionsScreen(
             Group(header = "Agents", footer = "Automatic permissions require selected agents. With no selection, review and block rules apply to all agents, including future connections. Selecting an agent without access explicitly admits it to this account.") {
                 if (draft.agentIds.isEmpty()) RText("All agents (including future connections) for review and block rules. Automatic permission requires selected agents.", RType.sans(14f), c.ink2, Modifier.padding(16.dp).testTag("permissionAllAgents"))
                 if (view.agents.isEmpty()) RText("No agents are connected. You can still set review or block defaults.", RType.sans(15f), c.ink2, Modifier.padding(16.dp))
-                view.agents.forEach { agent ->
-                    CheckRow(agent.connectionId in draft.agentIds, { model.agent(agent.connectionId, it) }, Modifier.fillMaxWidth().padding(16.dp), enabled = !state.busy && !state.changedElsewhere, tag = "permissionAgent:${agent.connectionId}") {
-                        Column {
-                            RText(untrusted(agent.label), RType.sans(16f), c.ink)
-                            RText(if (agent.hasAccountAccess) "Already has account access" else "Will be allowed to discover this account", RType.sans(13f), c.ink2)
-                        }
-                    }
+                view.agents.forEachIndexed { i, agent ->
+                    if (i > 0) Hairline()
+                    // Next: each agent with its switch; the line under says what turning it on admits.
+                    SwitchRow(
+                        untrusted(agent.label),
+                        agent.connectionId in draft.agentIds,
+                        { model.agent(agent.connectionId, it) },
+                        subtitle = if (agent.hasAccountAccess) "Already has account access" else "Will be allowed to discover this account",
+                        glyph = Glyph.Robot,
+                        enabled = !state.busy && !state.changedElsewhere,
+                        tag = "permissionAgent:${agent.connectionId}",
+                    )
                 }
             }
             if (!finishing || draft.preset == AccountPermissionPreset.CUSTOM) view.capabilities.forEach { capability ->
@@ -159,11 +184,32 @@ fun AccountPermissionsScreen(
                         if (model.temporary) CheckRow(rule != null, { model.include(capability.capability, it) }, enabled = !state.busy && view.usageVerified, tag = "delegationCapability:${capability.capability}") {
                             RText("Allow automatically", RType.sans(15f), c.ink)
                         }
-                        if (!model.temporary) PermissionMode.entries.forEach { mode ->
-                            CapsuleButton(permissionModeTitle(mode), Modifier.fillMaxWidth().testTag("permissionMode:${capability.capability}:$mode"),
-                                enabled = !state.busy && !state.changedElsewhere && mode in capability.supportedModes && (mode != PermissionMode.AUTO || view.usageVerified),
-                                style = if (rule?.mode == mode) ButtonStyle.Inverse else ButtonStyle.Soft,
-                             maxLines = Int.MAX_VALUE) { model.mode(capability.capability, mode) }
+                        // Next (Permissions 03): Review, Allow or Block in one well; the chosen one raised.
+                        if (!model.temporary) Row(
+                            Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.CircleShape).background(c.paperSunken).padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            PermissionMode.entries.forEach { mode ->
+                                val on = rule?.mode == mode
+                                val enabled = !state.busy && !state.changedElsewhere && mode in capability.supportedModes && (mode != PermissionMode.AUTO || view.usageVerified)
+                                Row(
+                                    Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 40.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(if (on) c.paperRaised else androidx.compose.ui.graphics.Color.Transparent)
+                                        .pressable(enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape, label = permissionModeTitle(mode)) { model.mode(capability.capability, mode) }
+                                        .semantics { selected = on }
+                                        .testTag("permissionMode:${capability.capability}:$mode")
+                                        .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+                                        .padding(horizontal = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    GlyphIcon(modeGlyph(mode), if (on) c.ink else c.ink2, size = 15.dp)
+                                    RText(shortModeTitle(mode), RType.sans(14f, FontWeight.SemiBold), if (on) c.ink else c.ink2, maxLines = 1)
+                                }
+                            }
                         }
                         if (rule?.mode == PermissionMode.AUTO) {
                             RText("Automatic permission scope", RType.sans(14f), c.ink)
@@ -216,6 +262,46 @@ fun AccountPermissionsScreen(
             onAnother?.let { CapsuleButton("Add another account", Modifier.fillMaxWidth().testTag("connectionAddAnother"), enabled = !state.busy, style = ButtonStyle.Soft, onClick = it, maxLines = Int.MAX_VALUE) }
         }
     }
+}
+
+/** A radio row (Next `.rad`): its glyph's tile, the words, and the radio at the end. */
+@Composable
+private fun RadioRow(title: String, glyph: Glyph, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .selectable(on, enabled = enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
+            .testTag(tag)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RowTile(glyph)
+        RText(title, RType.row, c.ink, Modifier.weight(1f), maxLines = 2)
+        SignalRadio(on)
+    }
+}
+
+private fun presetGlyph(preset: AccountPermissionPreset): Glyph = when (preset.name) {
+    "REVIEW_EVERY_REQUEST" -> Glyph.Person
+    "READ_ASSIST" -> Glyph.Eye
+    else -> Glyph.Settings
+}
+
+private fun modeGlyph(mode: PermissionMode): Glyph = when (mode) {
+    PermissionMode.AUTO -> Glyph.Check
+    PermissionMode.BLOCK -> Glyph.Close
+    else -> Glyph.Person
+}
+
+/** "Review", "Allow", "Block": a mode in one word for the well. */
+private fun shortModeTitle(mode: PermissionMode): String = when (mode) {
+    PermissionMode.AUTO -> "Allow"
+    PermissionMode.BLOCK -> "Block"
+    else -> "Review"
 }
 
 @Composable

@@ -427,6 +427,12 @@ fn is_repeat(entry: &AuditRecord, same: &Sameness) -> bool {
 impl Engine {
     pub(crate) fn pending_approval_view(&self, parked: &ParkedRequest) -> ApprovalView {
         let mut view = crate::views::approval_view(parked);
+        // A change of Autopilot asked from a computer: worded now, from the phone's own state and activity.
+        if let ToolCall::Connector(call) = &parked.request.call
+            && crate::autopilot::desktop::owner_only(&call.service, &call.op)
+        {
+            view.ask = self.desktop_autopilot_view(&parked.request.connection_id.0, call, &parked.label());
+        }
         // A failed policy read can never offer Remember. This only narrows presentation; execution checks policy
         // again and refuses unavailable authority. Account discovery has its own admission grants.
         if self.legacy_mail_grants_unavailable(&parked.request).unwrap_or(true) {

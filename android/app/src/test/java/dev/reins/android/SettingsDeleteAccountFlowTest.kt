@@ -53,7 +53,7 @@ class SettingsDeleteAccountFlowTest : FlowHarness() {
         openSheet()
         assertTrue(showsText("Can't be undone", substring = true))
         assertTrue(showsText("Your account and its vault on the server"))
-        assertTrue(showsText("Type me@example.com to confirm."))
+        assertTrue(showsText("Type your email"))
         rule.onNodeWithTag("confirmDeleteAccount").assertIsNotEnabled()
         type("someone@example.com")
         rule.onNodeWithTag("confirmDeleteAccount").assertIsNotEnabled()

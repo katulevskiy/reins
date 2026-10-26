@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
@@ -37,6 +38,12 @@ import dev.reins.android.design.LocalColors
 import dev.reins.android.design.MenuItem
 import dev.reins.android.design.MenuTint
 import dev.reins.android.design.ModeChip
+import dev.reins.android.design.field
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.RowTile
+import dev.reins.android.design.PaneRow
+import dev.reins.android.design.PaneGroup
+import dev.reins.android.design.NextSheet
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.SignalMenu
@@ -87,8 +94,8 @@ fun bypassRunning(settings: AutopilotSettings?): Boolean =
 val HeaderInsets: WindowInsets @Composable get() = WindowInsets.statusBars.union(WindowInsets(top = 36.dp))
 
 /**
- * A root screen's header: the serif title (44) with its actions at the end, and an optional mood line under it in the
- * italic serif ("One thing waits for you."). Below the status bar unless [underField] (a field already took the top).
+ * A root screen's header (`.ptitle`): the display title (`--s 40`) with its actions at the end, 8 apart. Below the
+ * status bar unless [underField] (a field already took the top). Next has no mood line: [mood] is not drawn.
  */
 @Composable
 fun RootHeader(
@@ -102,15 +109,12 @@ fun RootHeader(
     Column(
         modifier
             .fillMaxWidth()
-            .then(if (underField) Modifier.padding(top = 22.dp) else Modifier.windowInsetsPadding(HeaderInsets).padding(top = 4.dp))
-            .padding(horizontal = 24.dp),
+            .then(if (underField) Modifier.padding(top = 18.dp) else Modifier.windowInsetsPadding(HeaderInsets).padding(top = 8.dp))
+            .padding(horizontal = 20.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             RText(title, RType.title, c.ink, Modifier.weight(1f).semantics { heading() }, maxLines = 1)
             actions()
-        }
-        if (mood != null) {
-            BasicText(mood, Modifier.padding(top = 4.dp).testTag("mood"), style = MoodStyle.copy(color = c.ink2))
         }
     }
 }
@@ -147,64 +151,99 @@ private fun timedUntil(s: AutopilotSettings?): Long? = when (s?.mode) {
 }
 
 /**
- * The mode chip in a root header, and the menu it opens (it grows from the chip): Manual, Auto and Lockdown switch at
- * once; Overnight and Bypass open their hold sheets ([onTimed]); a running one reads "Tap to stop"; the last row opens
- * Autopilot on Trust. While a bypass or an Overnight runs the chip counts down; its clock lives here only.
+ * The mode chip in a root header (Next: same colour, glyph and name in every header). It opens the one mode sheet
+ * ([ModeSheet], drawn over the whole app by the root). While a bypass or an Overnight runs the chip counts down; its
+ * clock lives here only.
  */
 @Composable
-fun HeaderModeChip(
+fun HeaderModeChip(settings: AutopilotSettings?, onOpen: () -> Unit) {
+    val feedback = LocalFeedback.current
+    val mode = settings?.mode ?: AutopilotMode.MANUAL
+    val clock = runningClock(settings)
+    Box(Modifier.semantics(mergeDescendants = true) { contentDescription = "Autopilot: ${AutopilotText.name(mode)}" }.testTag("modePill")) {
+        ModeChip(chipMode(settings), timer = clock, chevron = true) {
+            onOpen()
+            feedback.play(Event.Open)
+        }
+    }
+}
+
+/** The countdown of the timed mode in force ("47:12"), ticking each second; null when none runs or it never ends. */
+@Composable
+private fun runningClock(settings: AutopilotSettings?): String? {
+    val until = timedUntil(settings) ?: return null
+    if (AutopilotText.isUntilOff(until)) return null
+    val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
+    return AutopilotText.clock(until, now)
+}
+
+/**
+ * The one mode sheet (Next, Activity 03 and ModePick): Manual, Auto, Overnight, Lockdown and Bypass, each on its
+ * field-coloured tile with what it does; Manual, Auto and Lockdown switch at once, Overnight and Bypass open their hold
+ * sheets ([onTimed]); a running one shows its clock and stops on tap. Under it, Autopilot on Trust.
+ */
+@Composable
+fun ModeSheet(
+    open: Boolean,
     settings: AutopilotSettings?,
     modelReady: Boolean,
     onSet: (AutopilotMode) -> Unit,
     onTimed: (AutopilotMode) -> Unit,
     onStop: (AutopilotMode) -> Unit,
     onSettings: () -> Unit,
+    onClose: () -> Unit,
 ) {
-    val feedback = LocalFeedback.current
-    var open by remember { mutableStateOf(false) }
+    val c = LocalColors.current
     val mode = settings?.mode ?: AutopilotMode.MANUAL
-    val chip = chipMode(settings)
-    val until = timedUntil(settings)
-    val clock = if (until != null && !AutopilotText.isUntilOff(until)) {
-        val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-        AutopilotText.clock(until, now)
-    } else {
-        null
-    }
-    Box {
-        Box(Modifier.semantics(mergeDescendants = true) { contentDescription = "Autopilot: ${AutopilotText.name(mode)}" }.testTag("modePill")) {
-            ModeChip(chip, timer = clock, chevron = true) {
-                open = true
-                feedback.play(Event.Open)
+    val clock = if (open) runningClock(settings) else null
+    val needs = { m: AutopilotMode -> if (!modelReady && AutopilotText.needsModel(m)) "Needs the model" else null }
+    NextSheet(open, onClose, title = "Mode", paper = true, tag = "autopilotQuick") {
+        PaneGroup {
+            @Composable
+            fun row(m: AutopilotMode, chip: ChipMode, line: String, first: Boolean = false, timed: Boolean = false) {
+                val on = mode == m
+                val running = on && timed
+                PaneRow(
+                    title = if (running && clock != null) "${AutopilotText.name(m)} · $clock" else AutopilotText.name(m),
+                    subtitle = if (running) "Tap to stop" else needs(m) ?: line,
+                    leading = {
+                        val field = chip.field()
+                        RowTile(chip.glyph ?: Glyph.Person, fill = field?.fill(), tint = if (field == null) c.ink2 else null)
+                    },
+                    titleColor = if (m == AutopilotMode.BYPASS) c.danger else null,
+                    trailing = when {
+                        on && !timed -> ({ GlyphIcon(Glyph.Check, c.violet, size = 20.dp) })
+                        else -> null
+                    },
+                    chevron = timed && !on,
+                    first = first,
+                    tag = "quick:${m.name}",
+                ) {
+                    when {
+                        running -> onStop(m)
+                        timed -> onTimed(m)
+                        !on -> onSet(m)
+                    }
+                    onClose()
+                }
+            }
+            row(AutopilotMode.MANUAL, ChipMode.Manual, "You decide", first = true)
+            row(AutopilotMode.AUTO, ChipMode.Auto, "Easy ones decided")
+            row(AutopilotMode.OVERNIGHT, ChipMode.Overnight, "Risky ones wait", timed = true)
+            row(AutopilotMode.LOCKDOWN, ChipMode.Lockdown, "Everything denied")
+            row(AutopilotMode.BYPASS, ChipMode.Bypass, "Everything allowed", timed = true)
+        }
+        PaneGroup(Modifier.padding(top = 12.dp)) {
+            PaneRow(
+                "Autopilot",
+                leading = { RowTile(Glyph.AutopilotFilled, tint = c.violet) },
+                chevron = true,
+                first = true,
+                tag = "quickMore",
+            ) {
+                onClose()
+                onSettings()
             }
         }
-        fun timedRow(m: AutopilotMode, glyph: Glyph, tint: MenuTint, line: String) = if (mode == m) {
-            MenuItem(
-                if (clock != null) "${AutopilotText.name(m)} · $clock" else AutopilotText.name(m),
-                "Tap to stop",
-                glyph,
-                tint,
-                selected = true,
-                destructive = m == AutopilotMode.BYPASS,
-                tag = "quick:${m.name}",
-            ) { onStop(m) }
-        } else {
-            MenuItem("${AutopilotText.name(m)}…", line, glyph, tint, destructive = m == AutopilotMode.BYPASS, chevron = true, tag = "quick:${m.name}") { onTimed(m) }
-        }
-        val needs = { m: AutopilotMode -> if (!modelReady && AutopilotText.needsModel(m)) "Needs the model" else null }
-        SignalMenu(
-            expanded = open,
-            onDismiss = { open = false },
-            modifier = Modifier.testTag("autopilotQuick"),
-            width = 300.dp,
-            items = listOf(
-                MenuItem("Manual", "You decide, with a hint", Glyph.Person, MenuTint.Plain, selected = mode == AutopilotMode.MANUAL, tag = "quick:MANUAL") { if (mode != AutopilotMode.MANUAL) onSet(AutopilotMode.MANUAL) },
-                MenuItem("Auto", needs(AutopilotMode.AUTO) ?: "Decides the easy ones", Glyph.Autopilot, if (mode == AutopilotMode.AUTO) MenuTint.Violet else MenuTint.Plain, selected = mode == AutopilotMode.AUTO, tag = "quick:AUTO") { if (mode != AutopilotMode.AUTO) onSet(AutopilotMode.AUTO) },
-                MenuItem("Lockdown", "Deny everything at once", Glyph.Lock, MenuTint.Warn, selected = mode == AutopilotMode.LOCKDOWN, tag = "quick:LOCKDOWN") { if (mode != AutopilotMode.LOCKDOWN) onSet(AutopilotMode.LOCKDOWN) },
-                timedRow(AutopilotMode.OVERNIGHT, Glyph.Moon, MenuTint.Violet, needs(AutopilotMode.OVERNIGHT) ?: "Auto while you're away").copy(divider = true),
-                timedRow(AutopilotMode.BYPASS, Glyph.Autopilot, MenuTint.Danger, "Approve everything for a while"),
-                MenuItem("Autopilot settings", chevron = true, divider = true, tag = "quickMore") { onSettings() },
-            ),
-        )
     }
 }

@@ -180,6 +180,22 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::POST, "/account/delete").json(deletion)).await.map(drop)
     }
 
+    /// `PUT /modes`: the phone's Autopilot modes now, for the desktop apps (an older server answers 404).
+    pub async fn put_modes(&self, report: &reins_proto::autopilot::ModesReport) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::PUT, "/modes").json(report)).await.map(drop)
+    }
+
+    /// `POST /requests/{id}/suggestion`: what Autopilot would do with a request that waits for the user (an older
+    /// server answers 404).
+    pub async fn post_suggestion(
+        &self,
+        id: &str,
+        suggestion: &reins_proto::autopilot::Suggestion,
+    ) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::POST, &format!("/requests/{id}/suggestion")).json(suggestion)).await.map(drop)
+    }
+
     /// `PUT /services`: which integrations have an account on this phone.
     pub async fn put_services(&self, report: &reins_proto::device::ServicesReport) -> Result<(), ApiFailure> {
         Self::send(self.request(Method::PUT, "/services").json(report)).await.map(drop)
@@ -401,6 +417,7 @@ mod tests {
             outcome: RelayOutcome::Denied {
                 reason: None,
             },
+            decided: None,
         };
         Mock::given(method("POST"))
             .and(path("/reins/api/requests/r1/response"))

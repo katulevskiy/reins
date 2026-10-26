@@ -157,14 +157,18 @@ class AppNotifier(
                     lines.forEachIndexed { i, line -> if (i > 0) big.append('\n'); big.append(line) }
                     setStyle(Notification.BigTextStyle().bigText(big))
                 }
-                // Routine requests are answered right here; what is asked every time opens the sheet.
+                // Next (Outside 01 and 02): Deny and Review. Approving always opens Reins, where the whole ask is shown;
+                // a routine request can be denied from here. What is asked every time only opens the sheet.
                 if (item.kind == PendingKind.REQUEST && item.quick) {
                     addAction(Notification.Action.Builder(null, "Deny", answer(item.id, approve = false)).build())
-                    addAction(
-                        Notification.Action.Builder(null, "Approve", answer(item.id, approve = true))
-                            .setAuthenticationRequired(true)
-                            .build(),
-                    )
+                    addAction(Notification.Action.Builder(null, "Review", openItem(item)).build())
+                }
+                // The time left, counting down on the notification itself.
+                item.waitUntil?.takeIf { it * 1000 > System.currentTimeMillis() }?.let { until ->
+                    setUsesChronometer(true)
+                    setChronometerCountDown(true)
+                    setWhen(until * 1000)
+                    setShowWhen(true)
                 }
             }
             // Colorized in the field's colour (And-Outside 01): the kind of ask, before a word is read.
@@ -175,7 +179,7 @@ class AppNotifier(
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(openItem(item))
-            .setWhen(item.createdAt * 1000)
+            .apply { if (item.waitUntil == null || item.waitUntil!! * 1000 <= System.currentTimeMillis()) setWhen(item.createdAt * 1000) }
             // Gone when the server lets the request go; a refresh takes it away sooner if it was answered elsewhere.
             .setTimeoutAfter(lifetimeMillis(item))
             .addExtras(android.os.Bundle().apply { putString(EXTRA_ITEM, item.id) })
@@ -335,7 +339,7 @@ class AppNotifier(
             .setColor(color)
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(openAutopilot())
-            .addAction(Notification.Action.Builder(null, "Stop", stop).build())
+            .addAction(Notification.Action.Builder(null, "Stop now", stop).build())
             .build()
         manager.notify(id, notification)
     }

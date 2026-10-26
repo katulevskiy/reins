@@ -130,14 +130,14 @@ class SignalShellLogicTest {
     }
 
     @Test
-    fun trustsFieldIsAmberForLockdownRedForBypassVioletForOvernight() {
+    fun trustsFieldIsAmberForLockdownRedForBypassNightForOvernight() {
         fun trustField(s: dev.reins.core.AutopilotSettings?) = dev.reins.android.ui.autopilot.trustField(s)
         assertNull(trustField(null))
         assertNull(trustField(settings()))
         assertEquals(dev.reins.android.design.Field.Warn, trustField(settings().copy(mode = AutopilotMode.LOCKDOWN)))
         assertEquals("the iOS-Trust board's amber", androidx.compose.ui.graphics.Color(0xFFA16207), dev.reins.android.design.Field.Warn.fill())
         assertEquals(dev.reins.android.design.Field.Delete, trustField(settings().copy(mode = AutopilotMode.BYPASS, bypassUntil = 1_700_000_900)))
-        assertEquals(dev.reins.android.design.Field.Grant, trustField(settings().copy(mode = AutopilotMode.OVERNIGHT, overnightUntil = 1_700_000_900)))
+        assertEquals("Next: Overnight's night field", dev.reins.android.design.Field.Night, trustField(settings().copy(mode = AutopilotMode.OVERNIGHT, overnightUntil = 1_700_000_900)))
     }
 
     private fun settings() = dev.reins.core.AutopilotSettings(

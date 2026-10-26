@@ -220,15 +220,6 @@ internal fun FieldLabel(text: String) {
 }
 
 @Composable
-private fun Amount(label: String, value: String) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-        RText(label, RType.sans(14.5f), c.secondary, Modifier.weight(1f))
-        RText(value, RType.mono(14.5f), c.text)
-    }
-}
-
-@Composable
 private fun Section(title: String) {
     val c = LocalColors.current
     RText(title.uppercase(), RType.sans(12.5f, FontWeight.Medium), c.secondary, Modifier.padding(start = 32.dp, top = 18.dp, bottom = 8.dp))

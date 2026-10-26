@@ -1,2 +1,9 @@
-Geist and Geist Mono (c) Vercel, licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
-Instrument Sans and Instrument Serif (c) The Instrument Sans / Instrument Serif Project Authors, licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+Sora (c) 2019 The Sora Project Authors (https://github.com/sora-xor/sora-font).
+Geologica (c) 2020 The Geologisk Project Authors (https://github.com/monokromskriftforlag/geologisk).
+JetBrains Mono (c) 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono).
+
+All three are licensed under the SIL Open Font License 1.1; the full licence of each is in licenses/.
+
+The files are static instances of the variable fonts in github.com/google/fonts (ofl/sora, ofl/geologica,
+ofl/jetbrainsmono): Sora at weights 400, 500 and 600, JetBrains Mono at 400 and 500, and Geologica at 500 cut down to
+its Cyrillic letters (it is only the Cyrillic fallback under Sora).

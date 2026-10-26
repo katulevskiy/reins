@@ -3,16 +3,19 @@ package dev.reins.android
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.swipeDown
 import androidx.test.core.app.ActivityScenario
@@ -66,6 +69,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dev.reins.android.platform.ScreenLock.check = { true }
         Timers.live = false
         Timers.frozenNowMillis = now * 1000
+        // Robolectric reports window blurs off; the screenshots show the frosted panes unless a test asks otherwise.
+        dev.reins.android.design.Transparency.forceSolid = false
         Foreground.focused = false
         Foreground.autoPopup = false
         core.resetPrimarySetup()
@@ -103,6 +108,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dev.reins.android.ui.settings.appPushOverride = null
         Timers.live = true
         Timers.frozenNowMillis = null
+        dev.reins.android.design.Transparency.forceSolid = null
         Foreground.autoPopup = true
     }
 
@@ -127,6 +133,33 @@ abstract class ScreenshotsBase(private val suffix: String) {
             rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() ||
                 rule.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /** Opens every closed day of the river (only Today opens by itself), scrolling down to reach them all. */
+    private fun openAllDays() {
+        val closedDay = androidx.compose.ui.test.SemanticsMatcher("closed day") { n ->
+            n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.startsWith("day:") == true &&
+                n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == "Collapsed"
+        }
+        repeat(12) {
+            settle()
+            if (rule.onAllNodes(closedDay).fetchSemanticsNodes().isNotEmpty()) {
+                rule.onAllNodes(closedDay)[0].performScrollTo().performClick()
+            } else if (rule.onAllNodes(hasTestTag("activityList")).fetchSemanticsNodes().isNotEmpty()) {
+                rule.onNodeWithTag("activityList").performTouchInput { swipeUp() }
+            }
+        }
+        if (rule.onAllNodes(hasTestTag("activityList")).fetchSemanticsNodes().isNotEmpty()) {
+            rule.onNodeWithTag("activityList").performScrollToIndex(0)
+        }
+        settle()
+    }
+
+    /** A service's row on Connections: connected ones in the Services group, the rest behind its +. */
+    private fun openService(id: String) {
+        await("addService")
+        if (rule.onAllNodes(hasTestTag("service:$id")).fetchSemanticsNodes().isEmpty()) tap("addService")
+        tap("service:$id")
     }
 
     private fun tap(tag: String) {
@@ -208,7 +241,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
         launch()
         tap("tabConnections")
-        tap("service:gmail")
+        openService("gmail")
         val app = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
         await("permissionPreset:REVIEW_EVERY_REQUEST")
@@ -226,7 +259,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
             core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
             launch()
             tap("tabConnections")
-            tap("service:gmail")
+            openService("gmail")
             val app = (context.applicationContext as ReinsApp).container
             kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
             await("permissionPreset:REVIEW_EVERY_REQUEST")
@@ -243,7 +276,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun permissionChangesReview() {
         Timers.frozenNowMillis = 1_800_014_400_000L // 2027-01-15; active permissions expire in the future.
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
-        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        launch(); tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com")
         tap("permissionPreset:READ_ASSIST"); tap("permissionAgent:c2"); tap("permissionsPreview")
         await("permissionPreviewSummary")
         shoot("permissions-review")
@@ -272,7 +305,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
             view.copy(availablePresets = listOf(dev.reins.core.AccountPermissionPreset.REVIEW_EVERY_REQUEST, dev.reins.core.AccountPermissionPreset.CUSTOM),
                 capabilities = view.capabilities.map { it.copy(supportedModes = listOf(dev.reins.core.PermissionMode.ASK, dev.reins.core.PermissionMode.BLOCK)) })
         }
-        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        launch(); tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com")
         await("primarySetupOpen")
     }
 
@@ -298,7 +331,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun unsupportedAccountPermissions() {
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
-        launch(); tap("tabConnections"); tap("service:github")
+        launch(); tap("tabConnections"); openService("github")
         val app = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { app.state.accountConnected(dev.reins.core.AccountView("github", "octo-cat", now), app.state.accountEpoch.value) }
         await("permissionsReadOnly")
@@ -584,7 +617,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("tabConnections")
         await("service:gmail")
         shoot("15-integrations")
-        tap("service:gmail")
+        openService("gmail")
         await("account:me@gmail.com")
         shoot("16-gmail-accounts")
     }
@@ -597,6 +630,50 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("newGrant")
         await("createGrant")
         shoot("11-new-grant")
+    }
+
+    // ---- Reins Next: the boards' own cases ---------------------------------------------------------------------------
+
+    @Test
+    fun nextWallpaperPicker() {
+        launch()
+        tap("tabSettings")
+        tap("openWallpaper")
+        await("wallpaper:Halo")
+        frames()
+        shoot("next-wallpaper-picker")
+        tap("wallpaperFor:light")
+        frames()
+        shoot("next-wallpaper-picker-light")
+    }
+
+    /** Activity with only history: the art stays open; then the same with transparency reduced (solid panes). */
+    @Test
+    fun nextActivityWallpaper() {
+        history()
+        launch()
+        await("activityList")
+        frames()
+        shoot("next-activity-history")
+        scenario?.close()
+        dev.reins.android.design.Transparency.forceSolid = true
+        launch()
+        await("activityList")
+        frames()
+        shoot("next-activity-reduce-transparency")
+    }
+
+    /** Another wallpaper (Ruins) under waiting cards. */
+    @Test
+    fun nextActivityRuins() {
+        history()
+        core.pending = listOf(TestData.pending("req1", "write", 1u, waitUntil = now + 40, label = "M2A", conn = "c1", service = "github", account = "octo-cat", op = "push", opTitle = "Push to a branch"))
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = dev.reins.android.design.Wallpaper.Ruins, wallpaperLight = dev.reins.android.design.Wallpaper.Torii))
+        launch()
+        await("pending:req1")
+        frames()
+        shoot("next-activity-ruins")
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice())
     }
 
     @Test
@@ -667,7 +744,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("tabConnections")
         await("service:vault")
         shoot("15-integrations")
-        tap("service:telegram")
+        openService("telegram")
         await("account:+15550100")
         shoot("16-telegram")
     }
@@ -677,7 +754,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("tabConnections")
         tap("tabConnections")
-        tap("service:telegram")
+        openService("telegram")
         await("phone")
         shoot("17-telegram-signin")
     }
@@ -860,7 +937,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("tabConnections")
         tap("tabConnections")
-        tap("service:github")
+        openService("github")
         await("openGithubClassic")
         shoot("26-github-token")
     }
@@ -1151,7 +1228,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("tabConnections")
         tap("tabConnections")
-        tap("service:gitlab")
+        openService("gitlab")
         await("openTokenPage")
         shoot("51-gitlab-token")
     }
@@ -1161,7 +1238,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("tabConnections")
         tap("tabConnections")
-        tap("service:bitbucket")
+        openService("bitbucket")
         await("secret")
         shoot("52-bitbucket-token")
     }
@@ -1259,7 +1336,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("61-autopilot-auto")
         tap("mode:MANUAL")
         frames()
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         await("bypassSheet")
         frames()
         shoot("63-bypass-sheet")
@@ -1276,7 +1353,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("63d-bypass-sheet-until-off")
         tap("cancelBypass")
         frames()
-        tap("mode:LOCKDOWN")
+        tap("forAWhile"); tap("mode:LOCKDOWN")
         await("endLockdown")
         frames()
         shoot("65-autopilot-lockdown")
@@ -1415,12 +1492,10 @@ abstract class ScreenshotsBase(private val suffix: String) {
         top()
         await("modePill")
         shoot("66-home-bypass-pill")
-        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN)
+        // Leaving Lockdown asks the owner (no prompt here): the core is simply in Auto now.
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
         tap("tabTrust")
-        await("endLockdown")
-        rule.onNodeWithTag("endLockdown").performClick()
-        await("mode:MANUAL")
-        rule.onNodeWithTag("mode:AUTO").performClick()
+        await("mode:AUTO")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         pressBack()
         top()
@@ -1885,7 +1960,10 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("filters")
         tap("filter:who")
         tap("who:autopilot")
-        await("entry:7")
+        openAllDays()
+        // Entry 7 was decided by a bypass: the Autopilot filter leaves it out.
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:8"))
+        await("entry:8")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("76-activity-automatic")
         tap("entry:9")
@@ -2092,7 +2170,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", now))
         launch()
         tap("tabConnections")
-        tap("service:vault")
+        openService("vault")
         await("openVault")
     }
 
@@ -2141,7 +2219,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.payments = TestData.paymentsOverview(enabled = false)
         launch()
         tap("tabConnections")
-        tap("service:payments")
+        openService("payments")
         await("paymentsEnable")
         shoot("100-payments-off")
         core.payments = TestData.paymentsOverview()
@@ -2159,7 +2237,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     private fun pressBackAndReopen() {
         scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         settle()
-        tap("service:payments")
+        openService("payments")
     }
 
     @Test
@@ -2291,10 +2369,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         top()
         await("alwaysAsks:req7")
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:9"))
         await("entry:9")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-activity-auto")
-        rule.onNodeWithTag("entry:5").performScrollTo()
+        openAllDays()
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:5"))
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-activity-auto-history")
     }
@@ -2529,7 +2609,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("pending:req1")
         frames()
         shoot("sg-20-asktext-stack")
-        rule.onNodeWithTag("entry:44").performScrollTo()
+        openAllDays()
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:44"))
         frames()
         shoot("sg-21-asktext-river")
     }
@@ -2576,15 +2657,16 @@ abstract class ScreenshotsBase(private val suffix: String) {
         askTextData()
         launch()
         top()
-        await("entry:40")
-        rule.onNodeWithTag("entry:40").performScrollTo()
+        await("activityList")
+        openAllDays()
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:40"))
         rule.onNodeWithTag("entry:40").performTouchInput { down(center); up() }
-        await("hero")
+        rule.waitUntil(10_000) { settle(); listOf("entryBar", "detailTitle").any { rule.onAllNodes(hasTestTag(it), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() } }
         frames()
         shoot("sg-23-asktext-entry")
         pressBack()
-        await("entry:41")
-        rule.onNodeWithTag("entry:41").performScrollTo()
+        await("activityList")
+        rule.onNodeWithTag("activityList").performScrollToNode(hasTestTag("entry:41"))
         rule.onNodeWithTag("entry:41").performTouchInput { down(center); up() }
         await("detailTitle")
         frames()
@@ -2722,6 +2804,61 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("sg-32-settings-appearance")
     }
 
+    /** A new account: the passkey offer, the recovery code, then Settings › Passkeys with the one it has. */
+    @Test
+    fun nextPasskeyOfferAndPasskeys() {
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.recoveryCode = FakeCore.RECOVERY_CODE
+        core.vaultPasskeys = emptyList()
+        launch()
+        await("passkeyOffer")
+        frames()
+        shoot("next-passkey-offer")
+        tap("skipPasskey")
+        await("recoveryRecorded")
+        frames(30)
+        shoot("next-recovery-code", dialogs = true)
+        tap("recoveryRecorded")
+        tap("recoveryCodeDone")
+        frames()
+        core.vaultPasskeys = listOf(dev.reins.core.VaultPasskeyView(FakeCore.EXISTING_PASSKEY_ID, "Pixel 9", now - 86_400 * 30))
+        tap("tabSettings")
+        rule.onNodeWithTag("vaultPasskeysRow").performScrollTo()
+        tap("vaultPasskeysRow")
+        frames(30)
+        shoot("next-settings-passkeys")
+    }
+
+    /** Settings 04-06: Appearance, Passkeys and Delete account, on the kit. */
+    @Test
+    fun nextSettingsPages() {
+        dev.reins.android.ui.settings.appPushOverride = true
+        launch()
+        tap("tabSettings")
+        await("accountCard")
+        rule.onNodeWithTag("openAppearance").performScrollTo()
+        tap("openAppearance")
+        await("appearance")
+        frames()
+        shoot("next-settings-appearance")
+        pressBack()
+        frames()
+        if (rule.onAllNodes(hasTestTag("vaultPasskeysRow")).fetchSemanticsNodes().isNotEmpty()) {
+            rule.onNodeWithTag("vaultPasskeysRow").performScrollTo()
+            tap("vaultPasskeysRow")
+            frames(30)
+            shoot("next-settings-passkeys")
+            pressBack()
+            frames()
+        }
+        rule.onNodeWithTag("deleteAccount").performScrollTo()
+        tap("deleteAccount")
+        await("deleteAccountSheet")
+        rule.onNodeWithTag("deleteAccountEmail").performTextReplacement("me@example.com")
+        frames(30)
+        shoot("next-settings-delete-account", dialogs = true)
+    }
+
     @Test
     fun sgSettingsUpdate() {
         dev.reins.android.ui.settings.appPushOverride = true
@@ -2801,9 +2938,11 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dayHistory()
         launch()
         top()
-        await("activitySearch")
+        await("openSearch")
         // The list at rest first: what it shows counts as seen.
         frames()
+        tap("openSearch")
+        await("activitySearch")
         rule.onNodeWithTag("activitySearch").performTextInput("invoice")
         await("searchResults")
         tap("filters")

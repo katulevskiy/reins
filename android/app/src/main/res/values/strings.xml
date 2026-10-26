@@ -3,6 +3,7 @@
     <string name="app_name">Reins</string>
     <!-- The Overnight mode's name where Android shows it (its notification channel); the same as AutopilotText.OVERNIGHT. -->
     <string name="overnight_name">Overnight</string>
-    <string name="widget_waiting_description">What waits for you, or the pond when nothing does</string>
-    <string name="widget_autopilot_description">Autopilot\'s mode, today\'s decisions, and Lock down</string>
+    <string name="widget_waiting_description">What waits for you: the count, or the list when wide</string>
+    <string name="widget_autopilot_description">The mode, and Lock down</string>
+    <string name="widget_latest_description">The latest things your AI did</string>
 </resources>

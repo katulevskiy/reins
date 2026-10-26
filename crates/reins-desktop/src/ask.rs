@@ -178,7 +178,7 @@ pub async fn ask_logged(
     };
     let mut entry = entry.decider(who);
     let started = Instant::now();
-    let asking = ask(paths, config, q, timeout, interactive, prompter);
+    let (asking, mut heard) = crate::told::listen(ask(paths, config, q, timeout, interactive, prompter));
     let mut asking = std::pin::pin!(asking);
     let quick = tokio::select! {
         a = &mut asking => Some(a),
@@ -188,6 +188,7 @@ pub async fn ask_logged(
     let answer = if let Some(a) = quick {
         a
     } else {
+        entry.hear(&heard.borrow_and_update());
         journal.record(&entry);
         if who == JournalDecider::Phone {
             journal.notify_waiting(&entry.what);
@@ -196,9 +197,10 @@ pub async fn ask_logged(
         if !interactive && let Some(tell) = tell {
             tell(&crate::phone::waiting_line(who, timeout, &entry.what));
         }
-        asking.await
+        crate::phone::hearing(&journal, &mut entry, &mut heard, asking).await
     };
     let (outcome, reason) = outcome(&answer, started.elapsed(), timeout);
+    entry.hear(&heard.borrow_and_update());
     entry.end(outcome, reason.as_deref());
     journal.record(&entry);
     if waited
@@ -256,6 +258,7 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
         let CallAnswer {
             request_id,
             status,
+            ..
         } = answer;
         match status {
             CallStatus::Answered(outcome) => {

@@ -727,6 +727,49 @@ impl Backend {
         Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
     }
 
+    /// The phone's Autopilot modes as this computer is shown them (`Ok(None)`: not reported yet, or an older server).
+    pub async fn phone_modes(&self) -> Result<Option<reins_proto::autopilot::DesktopModes>, String> {
+        reins_desktop::autopilot::modes(&self.paths).await
+    }
+
+    /// Asks the phone to change its mode: what is stricter applies at once, the rest waits for the owner there.
+    pub async fn change_mode(
+        &self,
+        choice: reins_desktop::autopilot::ModeChoice,
+        modes: Option<reins_proto::autopilot::DesktopModes>,
+    ) -> Result<(), String> {
+        let config = self.config()?;
+        reins_desktop::autopilot::change_mode(&self.paths, &config, choice, modes.as_ref()).await
+    }
+
+    /// What the phone said about these requests (where Autopilot leans, who decided and why), asked of the server
+    /// without waiting: the app keeps it in memory, never in the activity log. A request the server no longer has is
+    /// left out.
+    pub async fn told(&self, request_ids: Vec<String>) -> Vec<(String, reins_desktop::told::Heard)> {
+        let Ok(client) = reins_desktop::server::client::DesktopClient::new(&self.paths) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for id in request_ids {
+            if let Ok(answer) = client.peek(&id).await {
+                out.push((id, reins_desktop::told::heard_of(&answer)));
+            }
+        }
+        out
+    }
+
+    /// "This was wrong" for `request_id`: what Autopilot should have done (`true`: approve).
+    pub async fn correct_autopilot(&self, request_id: String, approve: bool) -> Result<(), String> {
+        let config = self.config()?;
+        reins_desktop::autopilot::correct(&self.paths, &config, &request_id, approve).await
+    }
+
+    /// The names and kinds of the vault items (the phone's owner approves; the phone key must be pinned).
+    pub async fn vault_names(&self) -> Result<Vec<(String, String)>, String> {
+        let config = self.config()?;
+        reins_desktop::vault_cli::names(&self.paths, &config, None, None, "Reins").await
+    }
+
     /// "Ask my phone": asks the phone for a work session (`reins allow`'s way) and waits for the answer, up to the
     /// approval wait. On approval the session is saved (`work-session.json`) for the next snapshot.
     pub async fn start_work_session(&self, request: Request) -> Result<Session, String> {

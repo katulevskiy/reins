@@ -1,0 +1,159 @@
+{
+ "v": 3,
+ "attachments": {},
+ "boards": {
+  "AndNext-System.dc.html": {
+   "h": 1300,
+   "page": "android-next",
+   "title": "Android Next · System (the kit)",
+   "w": 3780,
+   "x": 0,
+   "y": 0
+  },
+  "AndNext-Arrival.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Arrive",
+   "w": 2860,
+   "x": 0,
+   "y": 1400
+  },
+  "AndNext-Activity.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Activity",
+   "w": 3330,
+   "x": 3450,
+   "y": 1400
+  },
+  "AndNext-Wallpaper.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Activity with a wallpaper",
+   "w": 4710,
+   "x": 0,
+   "y": 2760
+  },
+  "AndNext-Approve.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Approve a push",
+   "w": 2400,
+   "x": 0,
+   "y": 4120
+  },
+  "AndNext-Kinds.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Every kind of ask",
+   "w": 2860,
+   "x": 3450,
+   "y": 4120
+  },
+  "AndNext-Connect.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Pair and join",
+   "w": 2400,
+   "x": 0,
+   "y": 5480
+  },
+  "AndNext-Permissions.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Permissions",
+   "w": 2400,
+   "x": 3450,
+   "y": 5480
+  },
+  "AndNext-Trust.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Trust, modes and grants",
+   "w": 4250,
+   "x": 0,
+   "y": 6840
+  },
+  "AndNext-Autopilot.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Autopilot",
+   "w": 4250,
+   "x": 0,
+   "y": 8200
+  },
+  "AndNext-Connections.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Connections",
+   "w": 2860,
+   "x": 0,
+   "y": 9560
+  },
+  "AndNext-Vault.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Vault",
+   "w": 2400,
+   "x": 3450,
+   "y": 9560
+  },
+  "AndNext-Settings.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Settings",
+   "w": 3790,
+   "x": 0,
+   "y": 10920
+  },
+  "AndNext-Outside.dc.html": {
+   "h": 1240,
+   "page": "android-next",
+   "title": "Android Next · Outside the app",
+   "w": 2860,
+   "x": 0,
+   "y": 12280
+  }
+ },
+ "createdOnFiles": {
+  "at": "2026-10-26T01:15:00Z",
+  "v": 1
+ },
+ "designSystems": [
+  {
+   "artifact": "https://claude.ai/code/artifact/336b8153-91c6-46a7-8774-93804a84ac03",
+   "copiedAt": "2026-10-14T09:00:00Z",
+   "namespace": "reins-signal",
+   "title": "Reins Signal",
+   "version": "1791953950-6eea"
+  }
+ ],
+ "launch": {
+  "page": "iphone-next",
+  "view": "canvas"
+ },
+ "notes": {},
+ "order": [
+  "AndNext-System.dc.html",
+  "AndNext-Arrival.dc.html",
+  "AndNext-Activity.dc.html",
+  "AndNext-Wallpaper.dc.html",
+  "AndNext-Approve.dc.html",
+  "AndNext-Kinds.dc.html",
+  "AndNext-Connect.dc.html",
+  "AndNext-Permissions.dc.html",
+  "AndNext-Trust.dc.html",
+  "AndNext-Autopilot.dc.html",
+  "AndNext-Connections.dc.html",
+  "AndNext-Vault.dc.html",
+  "AndNext-Settings.dc.html",
+  "AndNext-Outside.dc.html"
+ ],
+ "pages": [
+  {
+   "id": "android-next",
+   "name": "Android · Next"
+  }
+ ],
+ "title": "Reins: UI as built"
+}

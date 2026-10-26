@@ -114,6 +114,8 @@ pub struct Engine {
     session: crate::connector::vault::SessionSlot,
     /// What was last reported to the server, so that a report is sent only when it changes.
     reported_services: Mutex<Option<reins_proto::device::ServicesReport>>,
+    /// The modes last reported to the server for the desktop apps ([`Engine::report_modes`]).
+    pub(crate) reported_modes: Mutex<Option<reins_proto::autopilot::ModesReport>>,
     /// Universal MCP: sessions with the added servers.
     pub(crate) mcp: crate::mcp::McpState,
     inflight: Arc<Mutex<HashSet<String>>>,
@@ -262,6 +264,7 @@ impl Engine {
             payments,
             session,
             reported_services: Mutex::new(None),
+            reported_modes: Mutex::new(None),
             mcp: crate::mcp::McpState::default(),
             inflight: Arc::new(Mutex::new(HashSet::new())),
             data_dir: data_dir.to_path_buf(),
@@ -692,6 +695,86 @@ impl Engine {
         }
     }
 
+    /// Tells the server the phone's Autopilot modes, when they changed since the last report, so that the desktop apps
+    /// can show them (each sees only the global mode and its own). Only the phone that decides reports; a failure (an
+    /// older server, offline) is retried with the next sync or change.
+    pub(crate) async fn report_modes(&self, session: &Session) {
+        if self.require_decider().is_err() {
+            return;
+        }
+        let report = match self.modes_report(unix_now()) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("could not read the modes to report: {e}");
+                return;
+            }
+        };
+        if self.reported_modes.lock().unwrap_or_else(PoisonError::into_inner).as_ref() == Some(&report) {
+            return;
+        }
+        match api_call!(session, |api| api.put_modes(&report)) {
+            Ok(()) => *self.reported_modes.lock().unwrap_or_else(PoisonError::into_inner) = Some(report),
+            Err(e) => log::info!("could not report the modes: {}", e.into_core()),
+        }
+    }
+
+    /// [`Engine::report_modes`] when the phone is signed in (after a change of mode).
+    pub(crate) async fn report_modes_now(&self) {
+        if let Ok(session) = self.session() {
+            self.report_modes(&session).await;
+        }
+    }
+
+    /// The modes as reported: the global mode in force and its base, the running global bypass or Overnight, and each
+    /// connection with a setting of its own, with the mode in force for it now.
+    pub(crate) fn modes_report(&self, now: i64) -> Result<reins_proto::autopilot::ModesReport, CoreError> {
+        use crate::autopilot::{AutopilotMode, modes};
+        use reins_proto::autopilot::{ConnectionModes, ModesReport, Span};
+        let global = self.store.ap_mode_row("")?;
+        let span_of = |row: &modes::ModeRow, mode: AutopilotMode| match mode {
+            AutopilotMode::Bypass if row.bypassing(now) => Span {
+                since: row.bypass_since,
+                until: row.bypass_until,
+            },
+            AutopilotMode::Overnight if row.overnighting(now) => Span {
+                since: row.overnight_since,
+                until: row.overnight_until,
+            },
+            _ => Span::default(),
+        };
+        let mode = modes::global_mode(&global, now);
+        // Only the paired desktop apps are shown the modes, so only their own rows are reported.
+        let mut desktops = self.store.desktop_connections()?;
+        desktops.truncate(reins_proto::autopilot::MAX_CONNECTIONS);
+        let mut connections = Vec::new();
+        for (scope, row) in self.store.ap_mode_rows()? {
+            if scope.is_empty() || !desktops.contains(&scope) {
+                continue;
+            }
+            let effective = modes::effective(&global, Some(&row), now);
+            // Its span is its own running mode's, else the global one it is under.
+            let own = span_of(&row, effective);
+            connections.push(ConnectionModes {
+                connection_id: scope,
+                mode: effective.wire(),
+                span: if own == Span::default() {
+                    span_of(&global, effective)
+                } else {
+                    own
+                },
+            });
+        }
+        connections.truncate(reins_proto::autopilot::MAX_CONNECTIONS);
+        Ok(ModesReport {
+            v: reins_proto::PROTOCOL_VERSION,
+            mode: mode.wire(),
+            base: modes::global_base(&global, now).wire(),
+            span: span_of(&global, mode),
+            connections,
+            desktops,
+        })
+    }
+
     // ---- intake --------------------------------------------------------------------
 
     /// FCM entry point. `kind` is `req`, `pair`, `blob` or `replaced`; the payload is only an id. What was parked then
@@ -768,6 +851,7 @@ impl Engine {
     async fn sync_inner(&self, wait_secs: u32) -> Result<(), CoreError> {
         let session = self.session()?;
         self.report_services(&session).await;
+        self.report_modes(&session).await;
         let pending = api_call!(&session, |api| api.pending(wait_secs)).map_err(ApiFailure::into_core)?;
         if let Some(email) = pending.account_email.as_deref() {
             session.adopt_account_email(email).await?;

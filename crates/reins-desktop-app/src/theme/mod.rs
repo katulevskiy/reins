@@ -1,8 +1,8 @@
-//! Reins Signal, light and dark (`design/signal`): paper, ink and hairlines for everything you read, a solid field of
-//! colour only where something needs a decision ([`Field`]); and its three voices, Instrument Serif, Instrument Sans
-//! and Geist Mono ([`text`]). The colours are the generated tokens ([`tokens`]) by their Signal names
-//! ([`Palette::paper`], [`Palette::ink`], …), in light or dark as the system says or as picked in Settings
-//! ([`Appearance`]).
+//! Reins Next, light and dark (`design/next`): paper, ink and hairlines for everything you read, frosted panes over a
+//! dithered wallpaper on Home and Activity, a grained field of colour only where something needs a decision
+//! ([`Field`]); and its two voices, Sora (Geologica under it for Cyrillic) and JetBrains Mono ([`text`]). The colours
+//! are the generated tokens ([`tokens`], the same values Signal had) by their names ([`Palette::paper`],
+//! [`Palette::ink`], …), in light or dark as the system says or as picked in Settings ([`Appearance`]).
 
 pub mod motion;
 pub mod text;
@@ -11,36 +11,30 @@ pub mod tokens;
 
 use std::borrow::Cow;
 
-use gpui::{App, Hsla, Rgba, Window, WindowAppearance};
+use gpui::{App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Rgba, Window, WindowAppearance};
 use reins_desktop::journal::Kind;
 
-pub use text::SignalText;
+pub use text::NextText;
 use tokens::Token;
 
-/// Asks, titles, big numbers and the mood line. Never bold; the target of an ask is in italic.
-pub const SERIF: &str = "Instrument Serif";
+/// Titles, asks, big numbers: Sora at 500 (the boards' display face).
+pub const DISPLAY: &str = "Sora";
 /// Everything you read.
-pub const SANS: &str = "Instrument Sans";
-/// Labels in capitals and machine values (branches, SHAs, timers).
-pub const MONO: &str = "Geist Mono";
-/// The sans before Signal, still registered as the fallback.
-#[allow(dead_code, reason = "named in the font tests")]
-pub const FALLBACK_SANS: &str = "Geist";
+pub const SANS: &str = "Sora";
+/// Machine values: branches, hashes, addresses, codes, diffs, timers.
+pub const MONO: &str = "JetBrains Mono";
+/// Under Sora for Cyrillic only (it has no Cyrillic): Geologica 500.
+pub const CYRILLIC: &str = "Geologica";
 
-/// The faces, as the phone apps ship them (SIL Open Font License 1.1, `ios/Shared/Fonts/FONTS-NOTICE.txt`). No 700:
-/// Signal's heaviest weight is 600.
-const FONTS: [&[u8]; 11] = [
-    include_bytes!("../../../../ios/Shared/Fonts/InstrumentSerif-Regular.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/InstrumentSerif-Italic.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/InstrumentSans-Regular.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/InstrumentSans-Medium.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/InstrumentSans-SemiBold.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/GeistMono.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/GeistMono-Medium.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/Geist.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/Geist-Medium.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/Geist-SemiBold.ttf"),
-    include_bytes!("../../../../ios/Shared/Fonts/Geist-Bold.ttf"),
+/// The faces (SIL Open Font License 1.1, `assets/fonts/FONTS-NOTICE.txt`): Sora 400, 500 and 600, Geologica 500 (its
+/// Cyrillic only), JetBrains Mono 400 and 500.
+const FONTS: [&[u8]; 6] = [
+    include_bytes!("../../assets/fonts/Sora-Regular.ttf"),
+    include_bytes!("../../assets/fonts/Sora-Medium.ttf"),
+    include_bytes!("../../assets/fonts/Sora-SemiBold.ttf"),
+    include_bytes!("../../assets/fonts/Geologica-Medium.ttf"),
+    include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../../assets/fonts/JetBrainsMono-Medium.ttf"),
 ];
 
 pub fn register_fonts(cx: &App) {
@@ -49,7 +43,20 @@ pub fn register_fonts(cx: &App) {
 
 fn register_fonts_in(text: &gpui::TextSystem) {
     if let Err(e) = text.add_fonts(FONTS.iter().map(|f| Cow::Borrowed(*f)).collect()) {
-        log::warn!("cannot load the Signal fonts: {e}");
+        log::warn!("cannot load the fonts: {e}");
+    }
+}
+
+/// The window's font: Sora, falling back to Geologica for what Sora lacks (Cyrillic). Set once on the root; every
+/// element under it keeps the fallback whatever family it picks.
+#[must_use]
+pub fn root_font() -> Font {
+    Font {
+        family: SANS.into(),
+        features: FontFeatures::default(),
+        fallbacks: Some(FontFallbacks::from_fonts(vec![CYRILLIC.to_owned()])),
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
     }
 }
 
@@ -75,11 +82,12 @@ pub fn token(t: Token, dark: bool) -> Hsla {
     }
 }
 
-/// The desktop sidebar's ground (`--side` in `Desk-Home.dc.html`; not a phone token).
+/// The desktop sidebar's ground (`.side` in `DeskNext-System.dc.html`: `paper-sunken` 70% into `paper`; not a phone
+/// token).
 const SIDE: Token = Token {
-    light: 0x00EE_EEF2,
+    light: 0x00EF_EFF2,
     light_a: 1.0,
-    dark: 0x000C_0C0F,
+    dark: 0x0020_2025,
     dark_a: 1.0,
 };
 
@@ -260,7 +268,7 @@ impl Palette {
         token(t, self.dark)
     }
 
-    // Signal's names.
+    // The tokens' names.
 
     /// The ground of every screen.
     #[must_use]
@@ -456,7 +464,7 @@ impl Appearance {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "linux")]
-    use gpui::{FontStyle, FontWeight, font};
+    use gpui::font;
 
     use super::*;
 
@@ -468,8 +476,8 @@ mod tests {
             assert_eq!(pal.warning, pal.token(tokens::WARNING));
         }
         assert_eq!(Palette::light().danger, rgba(0x00B9_1C1C, 1.0));
-        assert_eq!(Palette::light().side(), rgba(0x00EE_EEF2, 1.0));
-        assert_eq!(Palette::dark().side(), rgba(0x000C_0C0F, 1.0));
+        assert_eq!(Palette::light().side(), rgba(0x00EF_EFF2, 1.0));
+        assert_eq!(Palette::dark().side(), rgba(0x0020_2025, 1.0));
     }
 
     /// The appearance picked is saved by name; System follows the window.
@@ -503,35 +511,33 @@ mod tests {
         assert_eq!(Field::of(Kind::Secrets), Field::Read);
     }
 
-    /// The faces are registered: the italic is the real italic, and 400, 500 and 600 are three faces (700 falls to
-    /// 600, the heaviest there is).
+    /// The faces are registered: Sora's 400, 500 and 600 are three faces (700 falls to 600, the heaviest there is),
+    /// JetBrains Mono has its two, and Geologica is there for the Cyrillic Sora lacks.
     #[test]
     #[cfg(target_os = "linux")]
-    fn the_signal_faces_resolve() {
+    fn the_faces_resolve() {
         let platform = gpui_platform::current_platform(true);
         let text = gpui::TextSystem::new(platform.text_system());
         register_fonts_in(&text);
         let names = text.all_font_names();
-        for family in [SERIF, SANS, MONO, FALLBACK_SANS] {
+        for family in [DISPLAY, SANS, MONO, CYRILLIC] {
             assert!(names.iter().any(|n| n == family), "{family} is not registered: {names:?}");
         }
-        let serif = text.resolve_font(&font(SERIF));
-        let italic = text.resolve_font(&font(SERIF).italic());
-        assert_ne!(serif, italic, "the italic is the regular face, slanted");
-        assert_eq!(text.get_font_for_id(italic).map(|f| f.style), Some(FontStyle::Italic));
-        let size = gpui::px(24.0);
-        assert_ne!(
-            text.advance(serif, size, 'a').unwrap().width,
-            text.advance(italic, size, 'a').unwrap().width,
-            "the italic has its own glyphs"
-        );
-        let weight = |w: FontWeight| {
-            let mut f = font(SANS);
+        let weight = |family: &'static str, w: FontWeight| {
+            let mut f = font(family);
             f.weight = w;
             text.resolve_font(&f)
         };
-        let faces = [weight(FontWeight::NORMAL), weight(FontWeight::MEDIUM), weight(FontWeight::SEMIBOLD)];
+        let faces =
+            [weight(SANS, FontWeight::NORMAL), weight(SANS, FontWeight::MEDIUM), weight(SANS, FontWeight::SEMIBOLD)];
         assert!(faces[0] != faces[1] && faces[1] != faces[2] && faces[0] != faces[2], "{faces:?}");
-        assert_eq!(weight(FontWeight::BOLD), faces[2]);
+        assert_eq!(weight(SANS, FontWeight::BOLD), faces[2]);
+        assert_ne!(weight(MONO, FontWeight::NORMAL), weight(MONO, FontWeight::MEDIUM));
+        // Sora has no Cyrillic; Geologica has it and nothing of Latin.
+        let size = gpui::px(16.0);
+        assert!(text.advance(faces[0], size, 'a').is_ok());
+        let geologica = weight(CYRILLIC, FontWeight::MEDIUM);
+        assert!(text.advance(geologica, size, 'Ж').unwrap().width > gpui::px(0.0));
+        assert!(root_font().fallbacks.is_some_and(|f| f.fallback_list() == [CYRILLIC]));
     }
 }

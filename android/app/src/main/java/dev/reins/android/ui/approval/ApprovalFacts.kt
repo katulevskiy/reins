@@ -57,6 +57,7 @@ import dev.reins.android.design.StrikeText
 import dev.reins.android.design.pressable
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.design.pane
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.formatDate
 import dev.reins.android.ui.common.untrusted
@@ -105,26 +106,41 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
 // ---- the grouped card ------------------------------------------------------------------------------------------
 
 /**
- * Facts under the field (Signal): plain hairline rows on paper, never cards. [borderTint] marks a group that needs a
- * look (a warning) with a thin bar of that colour on its left.
+ * Facts under the field (Next): a raised group 16 in from the edges (radius 20, a hairline ring in light), its rows
+ * 16 in, a hairline between them. [borderTint] marks a group that needs a look (a warning) with a bar of that colour
+ * on its left.
  */
 @Composable
 internal fun FactGroup(modifier: Modifier = Modifier, tag: String? = null, borderTint: Color? = null, rows: List<@Composable () -> Unit>) {
     val c = LocalColors.current
     Column(
         modifier
-            .padding(horizontal = 22.dp)
+            .padding(horizontal = 16.dp)
             .fillMaxWidth()
+            .pane()
             .then(
                 if (borderTint != null) {
-                    Modifier.drawBehind { drawRect(borderTint, size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height)) }.padding(start = 12.dp)
+                    Modifier.drawBehind { drawRect(borderTint, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }
                 } else {
                     Modifier
                 },
             )
             .then(if (tag != null) Modifier.testTag(tag) else Modifier),
     ) {
-        rows.forEach { row -> Box(Modifier.fillMaxWidth().hairlineBelow(c.rule)) { row() } }
+        rows.forEachIndexed { i, row ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (i > 0) {
+                            Modifier.drawBehind { drawLine(c.rule, androidx.compose.ui.geometry.Offset(16.dp.toPx(), 0f), androidx.compose.ui.geometry.Offset(size.width, 0f), 1.dp.toPx()) }
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(horizontal = 16.dp),
+            ) { row() }
+        }
     }
 }
 
@@ -141,19 +157,19 @@ internal fun FactRow(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = LocalColors.current
+    // Next (`.kv`): the key in meta on the left (at least 62 wide), the value right after it.
     Row(
-        modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).padding(vertical = 9.dp),
+        modifier.fillMaxWidth().defaultMinSize(minHeight = 50.dp).padding(vertical = if (maxLines > 1) 13.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(key, RType.sans(15f), c.ink2, maxLines = 1)
-        Spacer(Modifier.width(14.dp))
+        RText(key, RType.sans(13.5f, FontWeight.Medium), c.inkMeta, Modifier.defaultMinSize(minWidth = 62.dp), maxLines = 1)
+        Spacer(Modifier.width(12.dp))
         RText(
             value,
-            if (mono) RType.value else RType.sans(15f, FontWeight.Medium),
+            if (mono) RType.mono(14f) else RType.sans(15.5f, FontWeight.Medium),
             valueColor ?: c.ink,
             Modifier.weight(1f).then(if (valueTag != null) Modifier.testTag(valueTag) else Modifier),
             maxLines = maxLines,
-            align = TextAlign.End,
             ltr = mono,
             overflow = if (mono) TextOverflow.MiddleEllipsis else TextOverflow.Ellipsis,
         )
@@ -203,8 +219,8 @@ internal fun Counts(additions: ULong?, deletions: ULong?, size: Float = 14f, mod
 @Composable
 internal fun GroupHeader(text: String, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     val c = LocalColors.current
-    Row(modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        dev.reins.android.design.LabelText(text, c.inkMeta, Modifier.weight(1f))
+    Row(modifier.fillMaxWidth().padding(start = 24.dp, end = 20.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        dev.reins.android.design.LabelText(text, c.ink2, Modifier.weight(1f))
         trailing()
     }
 }

@@ -61,47 +61,6 @@ fun grantUseLine(grant: GrantView): String {
 /** Caps this small get one bar per use. */
 const val MAX_DOTS = 20
 
-/** A running grant: the service and the AI, what it allows, how much is used, and its time left as a ring. */
-@Composable
-fun GrantCard(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    // A grant without an end has nothing to count down.
-    val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
-    val clock = remember(grant, now) { derivedStateOf { grantClock(grant, now.value / 1000) } }
-    val soon by remember(grant, now) { derivedStateOf { clock.value.soon } }
-    val shape = RoundedCornerShape(22.dp)
-    Row(
-        modifier
-            .fillMaxWidth()
-            .then(if (soon) Modifier.toneCard(c.danger, radius = 22.dp, top = 0.08f, bottom = 0.02f, edge = 0.35f) else Modifier.plainCard(c))
-            .pressable(highlight = c.controlFill, shape = shape, onClick = onClick)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MiniLogo(
-            grant.service.ifBlank { "gmail" },
-            face = { size -> ConnectionIcon(grant.connectionId, grant.connectionLabel, size = size) },
-            ring = if (c.dark) Color(0xFF111113) else c.elevated,
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(grant.summary), RType.sans(15.5f, FontWeight.SemiBold, lineHeight = 20f), c.text, maxLines = 2)
-            Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (soon) {
-                    RText("${untrusted(grant.connectionLabel)} · ", RType.sans(12.5f), c.tertiary, maxLines = 1)
-                    RText("ends soon", RType.sans(12.5f, FontWeight.SemiBold), c.danger, Modifier.testTag("endsSoon"), maxLines = 1)
-                } else {
-                    RText(grantUseLine(grant), RType.sans(12.5f), c.tertiary, Modifier.testTag("uses"), maxLines = 1)
-                }
-            }
-            val max = grant.maxUses?.toInt()
-            if (max != null && max > 1) UseDots(grant.uses.toInt(), max, Modifier.padding(top = 8.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        GrantPie(clock)
-    }
-}
-
 /** One short bar per use, the used ones in the accent; a big cap is one bar that fills. */
 @Composable
 fun UseDots(uses: Int, max: Int, modifier: Modifier = Modifier) {

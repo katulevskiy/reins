@@ -302,35 +302,26 @@ private fun GrantField(grant: GrantView, onBack: () -> Unit) {
     val c = LocalColors.current
     val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
     val clock = remember(grant) { derivedStateOf { grantClock(grant, now.value / 1000) } }
+    // Next (Trust 06): back and whose it is on top; the time left with its ring and the service's tile; what it allows.
     FieldHeader(Field.Grant) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            RoundIconButton(Glyph.ChevronLeft, "Back", onField = true, size = 36.dp, onClick = onBack)
-            LabelText("Grant · ${serviceName(grant.service.ifBlank { "gmail" })}", c.onField2, Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            RoundIconButton(Glyph.ArrowBack, "Back", onField = true, size = 36.dp, onClick = onBack)
+            CompositionLocalProvider(LocalColors provides RColors.Light) { ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 28.dp) }
+            RText(untrusted(grant.connectionLabel), RType.sans(15f, FontWeight.SemiBold), c.onField, Modifier.weight(1f), maxLines = 1)
         }
-        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             val value = clock.value
-            Row(Modifier.weight(1f).testTag("timeLeft"), verticalAlignment = Alignment.Bottom) {
+            Row(Modifier.weight(1f).testTag("timeLeft"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (grant.active) {
-                    RText(value.remaining?.let(::compactDuration) ?: "∞", RType.serif(56f, 58f), c.onField, maxLines = 1, ltr = true)
-                    RText(if (value.remaining != null) " left" else " no end", RType.serif(26f, 34f, italic = true), c.onField, Modifier.padding(bottom = 6.dp), maxLines = 1)
+                    RText(value.remaining?.let(::compactDuration) ?: "∞", RType.display(64f), c.onField, maxLines = 1, ltr = true)
+                    Box(Modifier.testTag("pie")) { Ring(value.fraction, c.onField, c.onField.copy(alpha = 0.3f), 32.dp) }
                 } else {
-                    RText(inactiveWord(grant), RType.serif(48f, 52f), c.onField, maxLines = 1)
+                    RText(inactiveWord(grant), RType.display(56f), c.onField, maxLines = 1)
                 }
             }
-            if (grant.active) {
-                Box(Modifier.testTag("pie")) { Ring(value.fraction, c.onField, c.onField.copy(alpha = 0.3f), 30.dp) }
-            }
+            dev.reins.android.ui.common.IntegrationIcon(grant.service.ifBlank { "gmail" }, "grant", size = 40.dp, ring = Field.Grant.fill(), field = Field.Grant)
         }
-        AskText(untrusted(grant.summary), c.onField, Modifier.testTag("grantTitle"), style = RType.serif(36f, 38f), minSize = 28.sp, maxLines = 4)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompositionLocalProvider(LocalColors provides RColors.Light) { ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 20.dp) }
-            RText(
-                "${untrusted(grant.connectionLabel)} · ${serviceName(grant.service.ifBlank { "gmail" })}",
-                RType.sans(14f, FontWeight.Medium),
-                c.onField2,
-                maxLines = 1,
-            )
-        }
+        AskText(untrusted(grant.summary), c.onField, Modifier.testTag("grantTitle"), style = RType.display(36f), minSize = 22.sp, maxLines = 4)
     }
 }
 

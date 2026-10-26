@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotSelected
@@ -59,11 +60,11 @@ class PolishFlowTest : FlowHarness() {
         )
         launch()
         awaitTag("entry:7")
-        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Asked to run a command in acme-web")
+        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextContains(" asked to run a command in acme-web", substring = true)
         rule.onNodeWithTag("entryDetails:7", useUnmergedTree = true).assertTextEquals("git push --force origin main \\\n--no-verify")
-        rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextEquals("Read .env")
+        rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextContains(" read .env", substring = true)
         rule.onNodeWithTag("entryDetails:8", useUnmergedTree = true).assertTextEquals("~/dev/api/.env")
-        rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextEquals("Sent an email")
+        rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextContains(" sent an email", substring = true)
         rule.onNodeWithTag("entryDetails:9", useUnmergedTree = true).assertTextEquals("ada@acme.com")
         assertTrue("a kind tile each", hasDeep("tile:7"))
         assertTrue(hasDeep("tile:8"))
@@ -80,7 +81,8 @@ class PolishFlowTest : FlowHarness() {
         awaitTag("pending:req7")
         rule.onNodeWithTag("sentence:req7", useUnmergedTree = true).assertTextEquals("Run a command")
         rule.onNodeWithTag("cardDetails:req7", useUnmergedTree = true).assertTextEquals("git push --force origin main")
-        assertTrue("what it touches and what it does", showsText("TERMINAL · RUN"))
+        // What it touches and what it does: the card's tile, said in words.
+        rule.onNodeWithTag("cardIcon:req7", useUnmergedTree = true).assertContentDescriptionContains("Terminal", substring = true)
     }
 
     @Test

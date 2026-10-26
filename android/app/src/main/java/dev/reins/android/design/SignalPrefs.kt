@@ -20,6 +20,11 @@ import androidx.core.content.ContextCompat
 data class SignalPrefs(
     /** The grain on colour fields: the Appearance switch, and off when the system asks for more contrast. */
     val grain: Boolean = true,
+    /**
+     * Frosted panes over the wallpaper. Off (solid panes, the art unchanged) when the system turns window blurs off
+     * (Reduce transparency, Battery Saver) or asks for more contrast.
+     */
+    val frosted: Boolean = true,
 )
 
 val LocalSignalPrefs = staticCompositionLocalOf { SignalPrefs() }
@@ -39,36 +44,45 @@ enum class ThemeChoice(val label: String) {
     }
 }
 
-/** The Appearance choices, kept on this phone: paper or graphite, the sans and the field grain. */
+/**
+ * The Appearance choices, kept on this phone: paper or graphite, the field grain, and the wallpaper for each theme
+ * (Settings › Wallpaper; Halo in the dark and Torii dither in the light by default).
+ */
 @Immutable
-data class AppearanceChoice(val geist: Boolean = false, val grain: Boolean = true, val theme: ThemeChoice = ThemeChoice.System)
+data class AppearanceChoice(
+    val grain: Boolean = true,
+    val theme: ThemeChoice = ThemeChoice.System,
+    val wallpaperDark: Wallpaper = Wallpaper.Halo,
+    val wallpaperLight: Wallpaper = Wallpaper.ToriiDither,
+) {
+    fun wallpaper(dark: Boolean): Wallpaper = if (dark) wallpaperDark else wallpaperLight
+}
 
 object Appearance {
     private const val PREFS = "appearance"
-    private const val KEY_SANS = "sans"
+    private const val KEY_WALL_DARK = "wallpaperDark"
+    private const val KEY_WALL_LIGHT = "wallpaperLight"
     private const val KEY_GRAIN = "grain"
     private const val KEY_THEME = "theme"
     private var state: MutableState<AppearanceChoice>? = null
 
-    fun state(context: Context): MutableState<AppearanceChoice> = state ?: mutableStateOf(load(context)).also {
-        state = it
-        Fonts.geist = it.value.geist
-    }
+    fun state(context: Context): MutableState<AppearanceChoice> = state ?: mutableStateOf(load(context)).also { state = it }
 
     fun set(context: Context, choice: AppearanceChoice) {
         prefs(context).edit()
-            .putString(KEY_SANS, if (choice.geist) "geist" else "instrument")
+            .putString(KEY_WALL_DARK, choice.wallpaperDark.name)
+            .putString(KEY_WALL_LIGHT, choice.wallpaperLight.name)
             .putBoolean(KEY_GRAIN, choice.grain)
             .putString(KEY_THEME, choice.theme.name)
             .apply()
-        Fonts.geist = choice.geist
         state(context).value = choice
     }
 
     private fun load(context: Context): AppearanceChoice {
         val p = prefs(context)
         return AppearanceChoice(
-            geist = p.getString(KEY_SANS, null) == "geist",
+            wallpaperDark = Wallpaper.named(p.getString(KEY_WALL_DARK, null)) ?: Wallpaper.Halo,
+            wallpaperLight = Wallpaper.named(p.getString(KEY_WALL_LIGHT, null)) ?: Wallpaper.ToriiDither,
             grain = p.getBoolean(KEY_GRAIN, true),
             theme = ThemeChoice.entries.firstOrNull { it.name == p.getString(KEY_THEME, null) } ?: ThemeChoice.System,
         )
@@ -91,4 +105,37 @@ fun rememberHighContrast(): Boolean {
         onDispose { ui.removeContrastChangeListener(listener) }
     }
     return high
+}
+
+/**
+ * Whether panes should be solid: the system has window blurs off (Android's Reduce transparency or "Allow window-level
+ * blurs" off, and Battery Saver, which turns them off too) or Battery Saver is on. Kept up to date.
+ */
+@Composable
+fun rememberReduceTransparency(): Boolean {
+    val context = LocalContext.current
+    val wm = remember(context) { context.getSystemService(android.view.WindowManager::class.java) }
+    val power = remember(context) { context.getSystemService(android.os.PowerManager::class.java) }
+    var blurOff by remember(wm) { mutableStateOf(runCatching { wm?.isCrossWindowBlurEnabled == false }.getOrDefault(false)) }
+    var saver by remember(power) { mutableStateOf(power?.isPowerSaveMode == true) }
+    DisposableEffect(wm, power) {
+        val listener = java.util.function.Consumer<Boolean> { enabled -> blurOff = !enabled }
+        runCatching { wm?.addCrossWindowBlurEnabledListener(ContextCompat.getMainExecutor(context), listener) }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: Context, i: android.content.Intent) {
+                saver = power?.isPowerSaveMode == true
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        onDispose {
+            runCatching { wm?.removeCrossWindowBlurEnabledListener(listener) }
+            runCatching { context.unregisterReceiver(receiver) }
+        }
+    }
+    return blurOff || saver
 }

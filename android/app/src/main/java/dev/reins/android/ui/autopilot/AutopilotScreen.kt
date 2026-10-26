@@ -159,7 +159,7 @@ internal fun running(s: AutopilotSettings): Running? = when {
  */
 fun trustField(s: AutopilotSettings?): Field? = when {
     s == null -> null
-    running(s)?.kind == TimedKind.Overnight -> Field.Grant
+    running(s)?.kind == TimedKind.Overnight -> Field.Night
     running(s) != null -> Field.Delete
     s.mode == AutopilotMode.LOCKDOWN -> Field.Warn
     else -> null
@@ -179,6 +179,8 @@ fun TrustRunningField(
     scrolled: () -> Int,
     onStop: (TimedKind) -> Unit,
     onEndLockdown: () -> Unit,
+    /** How many it decided while it runs: the count on the label row (✓ bypass, pause Overnight, ✕ lockdown). */
+    decided: Int? = null,
 ) {
     val c = LocalColors.current
     val field = trustField(s) ?: return
@@ -188,26 +190,45 @@ fun TrustRunningField(
         scrolled,
         surface = { Box(Modifier.fieldSurface(field, FieldHeaderShape)) },
         label = {
+            // Next (Autopilot 02-04): the mode's glyph and name, and on the right how many it decided.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (run != null) dev.reins.android.design.BreathingDot(c.onField, size = 7.dp) else GlyphIcon(Glyph.Lock, c.onField2, size = 14.dp)
-                LabelText("Autopilot · ${AutopilotText.name(s.mode)}", c.onField2, Modifier.weight(1f))
+                GlyphIcon(
+                    when (run?.kind) {
+                        TimedKind.Bypass -> Glyph.Bypass
+                        TimedKind.Overnight -> Glyph.Moon
+                        null -> Glyph.Block
+                    },
+                    c.onField,
+                    size = 16.dp,
+                )
+                RText(AutopilotText.name(s.mode), RType.sans(15f, FontWeight.SemiBold), c.onField, Modifier.weight(1f).testTag("runningName"), maxLines = 1)
+                if (decided != null && decided > 0) {
+                    GlyphIcon(
+                        when (run?.kind) {
+                            TimedKind.Bypass -> Glyph.Check
+                            TimedKind.Overnight -> Glyph.Pause
+                            null -> Glyph.Close
+                        },
+                        c.onField,
+                        size = 16.dp,
+                    )
+                    RText(decided.toString(), RType.sans(15f, FontWeight.SemiBold), c.onField, Modifier.testTag("runningCount"), maxLines = 1)
+                }
                 if (run != null && AutopilotText.isUntilOff(run.until)) FieldClock(run.kind, run.until)
             }
         },
         clock = if (run != null && !AutopilotText.isUntilOff(run.until)) ({ HeroClock(run.kind, run.until) }) else null,
         hero = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val (hero, italic) = when (run?.kind) {
-                    TimedKind.Bypass -> "Approving everything" to "everything"
-                    TimedKind.Overnight -> "${AutopilotText.OVERNIGHT} decides" to "decides"
-                    null -> "Everything that would ask is denied" to "is denied"
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (run == null) {
+                    androidx.compose.foundation.text.BasicText(
+                        askString("Everything that would ask is denied", "is denied"),
+                        Modifier.testTag("heroMode"),
+                        style = RType.display(32f).copy(color = c.onField),
+                    )
+                } else {
+                    Box(Modifier.testTag("heroMode")) { RunningLine(run.kind, run.until, run.since, s, c.onField2) }
                 }
-                androidx.compose.foundation.text.BasicText(
-                    askString(hero, italic),
-                    Modifier.testTag("heroMode"),
-                    style = RType.serif(32f, 36f).copy(color = c.onField),
-                )
-                if (run != null) RunningLine(run.kind, run.until, run.since, s, c.onField2)
             }
         },
         button = {
@@ -230,15 +251,12 @@ fun TrustRunningField(
     )
 }
 
-/** The time left as the field's hero: "47:12 *left*", in the serif, on its own clock. */
+/** The time left as the field's hero: "47:12" in display type at its largest, on its own clock. */
 @Composable
 private fun HeroClock(kind: TimedKind, until: Long) {
     val c = LocalColors.current
     val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-    Row(verticalAlignment = Alignment.Bottom) {
-        RText(AutopilotText.clock(until, now), RType.serif(58f, 60f), c.onField, Modifier.testTag(kind.tag("Clock")), maxLines = 1, ltr = true)
-        RText(" left", RType.serif(26f, 34f, italic = true), c.onField, Modifier.padding(bottom = 6.dp), maxLines = 1)
-    }
+    RText(AutopilotText.clock(until, now), RType.display(96f).copy(fontFeatureSettings = "tnum"), c.onField, Modifier.testTag(kind.tag("Clock")), maxLines = 1, ltr = true)
 }
 
 /** A timed mode without an end, on its field's label row: the infinity sign. */
@@ -255,6 +273,21 @@ private fun FieldClock(kind: TimedKind, until: Long) {
 @Composable
 private fun RunningLine(kind: TimedKind, until: Long, since: Long?, s: AutopilotSettings, color: Color) {
     val now = rememberNowMillis(60_000) / 1000
+    if (kind == TimedKind.Bypass && !AutopilotText.isUntilOff(until)) {
+        // Next (Autopilot 02): "Still asks" and what still does, as pills; the sentence is what is read out.
+        Row(
+            Modifier.semantics(mergeDescendants = true) { contentDescription = AutopilotText.BYPASS_STILL_ASKS }.testTag(kind.tag("Line")),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RText("Still asks", RType.sans(14f, FontWeight.Medium), color, maxLines = 1)
+            dev.reins.android.ui.approval.FieldVerdict("New AI", glyph = Glyph.Link, maxLines = 1)
+            dev.reins.android.ui.approval.FieldVerdict("New phone", glyph = Glyph.Phone, maxLines = 1)
+        }
+        return
+    }
+    // Overnight's "Too risky" choice sits under the field (Autopilot 03), so the field keeps to its clock.
+    if (kind == TimedKind.Overnight && !AutopilotText.isUntilOff(until)) return
     val text = when {
         AutopilotText.isUntilOff(until) -> AutopilotText.runningLine(kind.mode, until, since, now)
         kind == TimedKind.Bypass -> AutopilotText.BYPASS_STILL_ASKS
@@ -392,9 +425,12 @@ internal fun StatTiles(stats: List<Stat>, modifier: Modifier = Modifier) {
     }
 }
 
-/** This week's numbers, or (without a usable model) getting it. Its error and notice lines above. */
+/**
+ * Autopilot's lines on Trust (Next): its error and notice, and, without a usable model, getting it. The week's
+ * numbers ([withStats]) are no longer on the page.
+ */
 @Composable
-fun AutopilotWeek(viewModel: AutopilotViewModel, s: AutopilotSettings) {
+fun AutopilotWeek(viewModel: AutopilotViewModel, s: AutopilotSettings, withStats: Boolean = false) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val model = ui.model ?: s.model
@@ -406,7 +442,7 @@ fun AutopilotWeek(viewModel: AutopilotViewModel, s: AutopilotSettings) {
             onDownload = @DontMemoize { viewModel.download() },
             onPause = @DontMemoize { viewModel.cancelDownload() },
         )
-    } else {
+    } else if (withStats) {
         StatTiles(
             listOf(
                 Stat("${ui.stats?.scored ?: "—"}", "scored this week", tag = "statScored"),
@@ -526,11 +562,8 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
         onClose = @DontMemoize { sheets.overnight = false },
     )
     BottomSheet(sheets.model, null, onClose = @DontMemoize { sheets.model = false }, tag = "modelSheet") {
-        // Honest about size and place (iOS-Autopilot 06): "On-device *model*", then the model on its plate.
-        Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            AskText("On-device model", LocalColors.current.ink, Modifier.weight(1f), target = "model", style = RType.serif(30f, 34f), minSize = 24.sp, maxLines = 1)
-            RoundIconButton(Glyph.Close, "Close", Modifier.testTag("closeSheet"), size = 36.dp, onClick = @DontMemoize { sheets.model = false })
-        }
+        // Autopilot 07: "Model", the model and what to do with it, then how it updates.
+        dev.reins.android.design.SheetTitle("Model", onClose = @DontMemoize { sheets.model = false })
         ModelDetails(
             model,
             job = ui.job,
@@ -713,30 +746,6 @@ fun profileGlyph(icon: String?): Glyph = when (icon) {
     else -> Glyph.Person
 }
 
-/** The on-device model: what it is, whether it is here, getting it and removing it (set-up's card). */
-@Composable
-internal fun ModelCard(
-    model: ModelStatus?,
-    job: DownloadJob,
-    wifiOnly: Boolean,
-    onDownload: () -> Unit,
-    onCancel: () -> Unit,
-    onDelete: () -> Unit,
-    onWifiOnly: (Boolean) -> Unit,
-    autoUpdate: Boolean,
-    onAutoUpdate: (Boolean) -> Unit,
-    checking: Boolean,
-    checkResult: String?,
-    onCheckNow: () -> Unit,
-) {
-    Group(
-        header = "On-device model",
-        footer = "Runs on this phone, nothing leaves it. Without it, every request is left to you, without hints.",
-    ) {
-        ModelDetails(model, job, wifiOnly, onDownload, onCancel, onDelete, onWifiOnly, autoUpdate, onAutoUpdate, checking, checkResult, onCheckNow)
-    }
-}
-
 /**
  * The model's details: version and size, its state, getting or deleting it, updating by itself and Wi-Fi only, and
  * behind More, "Check now".
@@ -760,72 +769,61 @@ internal fun ModelDetails(
     if (model == null) return
     val downloading = model.state == ModelState.DOWNLOADING || job == DownloadJob.Running
     val waiting = job == DownloadJob.Waiting && model.state != ModelState.DOWNLOADING
-    Column(Modifier.padding(horizontal = 22.dp, vertical = 8.dp).testTag("modelCard")) {
-        // The model on its plate: its glyph, name, version and size, and a word for where it is.
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.paperSunken).padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            PlainTile(Glyph.Chip, 40.dp)
-            Column(Modifier.weight(1f)) {
-                RText(model.label, RType.row, c.ink, maxLines = 2)
-                RText("Version ${model.version} · ${AutopilotText.modelSize(model)}", RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 2)
-            }
-            when {
-                downloading -> Unit
-                waiting -> Pill("Waiting", c.warning)
-                model.state == ModelState.INSTALLED -> Pill("Ready", c.success)
-                model.state == ModelState.FAILED -> Pill("Failed", c.danger)
-                else -> Unit
-            }
-        }
-        RText(
-            AutopilotText.modelState(model, waiting, wifiOnly),
-            RType.sans(14f, FontWeight.Medium),
-            if (model.state == ModelState.FAILED) c.danger else c.ink2,
-            Modifier.padding(top = 12.dp),
+    // The model, its version and size, and getting or deleting it, in one group (Autopilot 07).
+    dev.reins.android.design.PaneGroup(Modifier.testTag("modelCard")) {
+        dev.reins.android.design.PaneRow(
+            model.label,
+            leading = { dev.reins.android.design.RowTile(Glyph.Chip, fill = c.violetFill) },
+            trailing = {
+                when {
+                    downloading -> Unit
+                    waiting -> dev.reins.android.design.NextPill("Waiting", c.warning)
+                    model.state == ModelState.INSTALLED -> dev.reins.android.design.NextPill("Ready", c.success)
+                    model.state == ModelState.FAILED -> dev.reins.android.design.NextPill("Failed", c.danger)
+                    else -> Unit
+                }
+            },
+            first = true,
+        )
+        dev.reins.android.design.PaneRow(
+            "v${model.version} · ${AutopilotText.modelSize(model)}",
+            leading = { dev.reins.android.design.RowTile(Glyph.HardDrive) },
+            titleMono = true,
+            subtitle = AutopilotText.modelState(model, waiting, wifiOnly),
         )
         if (downloading) {
             val fraction = AutopilotText.fraction(model)
-            if (fraction != null) {
-                MeterBar(fraction, c.violet, Modifier.padding(top = 10.dp), height = 8.dp)
-            } else {
-                IndeterminateBar(Modifier.padding(top = 10.dp))
+            Box(Modifier.padding(start = 62.dp, end = 14.dp, bottom = 14.dp)) {
+                if (fraction != null) MeterBar(fraction, c.violet, height = 6.dp) else IndeterminateBar()
             }
         }
-        if (model.state == ModelState.FAILED) {
-            Banner(AutopilotText.modelError(model.error), Modifier.padding(top = 12.dp), BannerKind.Error)
-        }
-    }
-    SwitchRow("Update automatically", autoUpdate, onAutoUpdate, tag = "autoUpdate")
-    SwitchRow(
-        "Download on Wi-Fi only",
-        wifiOnly,
-        onWifiOnly,
-        subtitle = "Updates wait for Wi-Fi",
-        tag = "wifiOnly",
-    )
-    RText(
-        "Runs on this phone; nothing leaves it. Without it every request is left to you, without hints.",
-        RType.meta,
-        c.inkMeta,
-        Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
-    )
-    Column(Modifier.padding(horizontal = 22.dp).padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when {
             downloading -> Unit
-            waiting -> SignalButton("Cancel", Modifier.fillMaxWidth().testTag("cancelDownload"), style = dev.reins.android.design.ButtonStyle.Soft, onClick = onCancel)
+            waiting -> dev.reins.android.design.PaneRow("Cancel", leading = { dev.reins.android.design.RowTile(Glyph.Close) }, tag = "cancelDownload", onClick = onCancel)
             model.state == ModelState.INSTALLED ->
-                SignalButton("Delete model", Modifier.fillMaxWidth().testTag("deleteModel"), style = dev.reins.android.design.ButtonStyle.DangerWash, onClick = onDelete)
-            else -> SignalButton(
+                dev.reins.android.design.PaneRow("Delete model", leading = { dev.reins.android.design.RowTile(Glyph.Trash, tint = c.danger) }, titleColor = c.danger, tag = "deleteModel", onClick = onDelete)
+            else -> dev.reins.android.design.PaneRow(
                 if (model.state == ModelState.FAILED) "Try again" else "Download",
-                Modifier.fillMaxWidth().testTag("downloadModel"),
-                glyph = if (model.state == ModelState.FAILED) Glyph.Refresh else Glyph.Download,
+                leading = { dev.reins.android.design.RowTile(if (model.state == ModelState.FAILED) Glyph.Refresh else Glyph.Download, tint = c.violet) },
+                titleColor = c.violet,
+                tag = "downloadModel",
                 onClick = onDownload,
             )
         }
     }
+    if (model.state == ModelState.FAILED) {
+        Banner(AutopilotText.modelError(model.error), Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), BannerKind.Error)
+    }
+    dev.reins.android.design.PaneGroup(Modifier.padding(top = 14.dp)) {
+        SwitchRow("Wi-Fi only", wifiOnly, onWifiOnly, Modifier.padding(horizontal = 14.dp), subtitle = "Updates wait for Wi-Fi", glyph = Glyph.Wifi, tag = "wifiOnly")
+        SwitchRow("Auto-update", autoUpdate, onAutoUpdate, Modifier.padding(horizontal = 14.dp), glyph = Glyph.Sync, tag = "autoUpdate")
+    }
+    RText(
+        "Runs on this phone; nothing leaves it. Without it, Auto pauses.",
+        RType.meta,
+        c.inkMeta,
+        Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+    )
     if (AutopilotText.modelUsable(model)) CheckNowMore(checking, model.state == ModelState.DOWNLOADING, checkResult, onCheckNow)
 }
 

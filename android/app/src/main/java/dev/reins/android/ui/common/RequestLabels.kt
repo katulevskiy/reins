@@ -1,5 +1,6 @@
 package dev.reins.android.ui.common
 
+import androidx.compose.ui.graphics.asAndroidPath
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -145,7 +147,8 @@ fun IntegrationIcon(
     val words = actionWords(provider, action)
     Box(modifier.size(size).semantics { contentDescription = words }.testTag("integrationIcon:$provider:$action")) {
         Box(
-            Modifier.size(size).clip(CircleShape).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.08f), CircleShape),
+            // Next: a white tile with rounded corners (11 on 36), ringed faintly, the same in both themes.
+            Modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.08f), RoundedCornerShape(size * 0.3f)),
             contentAlignment = Alignment.Center,
         ) {
             if (logo != null) {
@@ -158,7 +161,7 @@ fun IntegrationIcon(
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = size * 0.1f, y = size * 0.1f)
+                .offset(x = size * 0.14f + 2.dp, y = size * 0.14f + 2.dp)
                 .size(badge + 4.dp)
                 .clip(CircleShape)
                 .background(ring)
@@ -210,6 +213,13 @@ object IntegrationBitmap {
         return bitmap
     }
 
+    /** A glyph alone, [px] square, filled in [color] (for widgets, which draw no Compose). */
+    fun glyph(glyph: Glyph, px: Int, color: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(px.coerceAtLeast(1), px.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        drawGlyph(AndroidCanvas(bitmap), glyph, 0f, px.toFloat(), color, 1f)
+        return bitmap
+    }
+
     private fun drawGlyph(canvas: AndroidCanvas, glyph: Glyph, x: Float, size: Float, color: Int, weight: Float) {
         val k = size / 24f
         canvas.save()
@@ -217,21 +227,10 @@ object IntegrationBitmap {
         canvas.scale(k, k)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
+            style = Paint.Style.FILL
         }
-        for (part in glyph.parts) {
-            val path = androidx.core.graphics.PathParser.createPathFromPathData(part.d)
-            if (part.fill) {
-                paint.style = Paint.Style.FILL
-                canvas.drawPath(path, paint)
-            }
-            if (part.stroke) {
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = part.width * weight / 1.6f
-                canvas.drawPath(path, paint)
-            }
-        }
+        // Material Symbols are filled shapes; the part's path is already on the 24 grid.
+        for (part in glyph.parts) canvas.drawPath(part.path.asAndroidPath(), paint)
         canvas.restore()
     }
 }
@@ -255,9 +254,18 @@ fun AskSentenceText(
     /** Words searched (lower case): where the sentence matches them is set apart in [highlight]. */
     terms: List<String> = emptyList(),
     highlight: SpanStyle? = null,
+    /** Drawn before the sentence, in its own style: the other side's name at the head of a row (never Reins' words). */
+    lead: androidx.compose.ui.text.AnnotatedString? = null,
 ) {
     Column(modifier) {
-        val text = remember(sentence.text, sentence.target, terms, highlight) { askTitle(sentence.text, sentence.target, terms, highlight) }
+        val text = remember(sentence.text, sentence.target, terms, highlight, lead) {
+            val words = askTitle(sentence.text, sentence.target, terms, highlight)
+            if (lead == null) words else androidx.compose.ui.text.buildAnnotatedString {
+                append(lead)
+                append(" ")
+                append(words)
+            }
+        }
         BasicText(
             text,
             if (tag != null) Modifier.testTag(tag) else Modifier,

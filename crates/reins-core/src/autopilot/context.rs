@@ -94,3 +94,76 @@ pub fn written(seq: i64) {
         })
         .ok();
 }
+
+/// Who decided the request being answered, as its answer tells the desktop app (`None`: the user, or nothing decided
+/// around this answer). The answer passes the server unsealed, so it carries Autopilot's own reading and counts of
+/// what the user did with similar requests, never their labels (they can name other AIs' requests).
+pub fn told() -> Option<reins_proto::autopilot::Decided> {
+    use reins_proto::autopilot::{Decided, DecidedBy};
+    DECISION
+        .try_with(|d| {
+            let by = match d.decided_by.as_str() {
+                "autopilot" => DecidedBy::Autopilot,
+                "overnight" => DecidedBy::Overnight,
+                "bypass" => DecidedBy::Bypass,
+                "lockdown" => DecidedBy::Lockdown,
+                _ => return None,
+            };
+            let note = d.note.as_ref();
+            let reasons = note.map(|n| reasons_of(by, n)).unwrap_or_default();
+            Some(
+                Decided {
+                    by,
+                    confidence: note.map(|n| n.confidence).filter(|c| *c > 0.0),
+                    reasons,
+                    correctable: note.is_some() && by != DecidedBy::Lockdown,
+                }
+                .cleaned(),
+            )
+        })
+        .ok()
+        .flatten()
+}
+
+/// Autopilot's reasons for the desktop app, as codes and numbers only (the desktop words them): the note's own `reason`
+/// can quote another request's label or what the risk model read in this one, so it never leaves the phone this way.
+fn reasons_of(by: reins_proto::autopilot::DecidedBy, n: &AuditAutopilot) -> Vec<reins_proto::autopilot::Reason> {
+    use crate::autopilot::{RiskLevel, Verdict};
+    use reins_proto::autopilot::{DecidedBy, Reason, RiskWord};
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a percentage of a probability")]
+    let pct = |p: f32| (p.clamp(0.0, 1.0) * 100.0).round() as u8;
+    let mut reasons = Vec::new();
+    match (by, n.suggested) {
+        (DecidedBy::Bypass, _) => reasons.push(Reason::Bypass),
+        (DecidedBy::Lockdown, _) => reasons.push(Reason::Lockdown),
+        (_, Verdict::Approve) => reasons.push(Reason::Routine {
+            approve: pct(n.p_approve),
+        }),
+        (_, Verdict::Deny) => reasons.push(Reason::Harmful {
+            deny: pct(n.p_deny),
+        }),
+        (_, Verdict::Ask) => {}
+    }
+    let said = |verb: &str| {
+        let count = n.neighbours.iter().filter(|l| l.starts_with(&format!("{verb}:"))).count();
+        u8::try_from(count).unwrap_or(u8::MAX)
+    };
+    let (approved, denied) = (said("approved"), said("denied"));
+    if approved > 0 || denied > 0 {
+        reasons.push(Reason::LikeYours {
+            approved,
+            denied,
+        });
+    }
+    if let Some(risk) = &n.risk {
+        reasons.push(Reason::Risk {
+            level: match risk.level {
+                RiskLevel::Benign => RiskWord::Routine,
+                RiskLevel::Risky => RiskWord::Undoable,
+                RiskLevel::Severe => RiskWord::HardToUndo,
+                RiskLevel::Catastrophic => RiskWord::Irreversible,
+            },
+        });
+    }
+    reasons
+}

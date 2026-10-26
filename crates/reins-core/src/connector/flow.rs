@@ -281,6 +281,43 @@ impl Engine {
                 .await;
         }
 
+        // A change of Autopilot from the computer: what the phone reads as stricter applies at once, never asked;
+        // anything looser parks below as the owner's question, and only with the app's own proof that it asked
+        // (`crate::autopilot::desktop`).
+        if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
+            match self.desktop_autopilot_intake(&request.connection_id.0, call) {
+                Err(e) => return self.fail_connector(session, &request, call, &e).await,
+                Ok(false) => {}
+                Ok(true) => {
+                    let (outcome, detail) = match self.apply_desktop_autopilot(&request.connection_id.0, call).await {
+                        Ok(data) => (
+                            RelayOutcome::Result {
+                                result: ToolResult::Connector {
+                                    data,
+                                },
+                            },
+                            "applied at once: it only makes Reins stricter".to_owned(),
+                        ),
+                        Err(e) => return self.fail_connector(session, &request, call, &e).await,
+                    };
+                    let audit = self.audit_connector(&request, call, action_of(call), "sent", &detail, None, &[]);
+                    return self
+                        .finish_authorized(
+                            session,
+                            &request,
+                            audit,
+                            outcome,
+                            AuthorizedResponse {
+                                source: AuthorizationSource::Automatic,
+                                effect: ResponseEffect::Succeeded,
+                                settle_pending: false,
+                            },
+                        )
+                        .await;
+                }
+            }
+        }
+
         if effect == Effect::Write && call.service == reins_proto::connector::PAYMENTS {
             return self.payments_write(session, &request, call).await;
         }
@@ -582,6 +619,13 @@ impl Engine {
             ));
         }
 
+        // A change of Autopilot asked from a computer: only the owner's own approval applies it, never an automatic
+        // decision (`crate::autopilot::desktop`).
+        if crate::autopilot::desktop::owner_only(&call.service, &call.op) && source != AuthorizationSource::OwnerReview
+        {
+            return Err(CoreError::invalid("Only you approve a change of Autopilot asked from a computer."));
+        }
+
         if effect == Effect::Write && held.purchase.is_some() {
             if choice.standing.is_some() {
                 return Err(CoreError::invalid("A purchase is asked for every time and cannot be remembered."));
@@ -633,6 +677,15 @@ impl Engine {
                     let trace = self.authorization_attempt_started(request, source)?;
                     WriteAttempt {
                         result: self.start_work_session(&request.connection_id, &parked.label(), &plan, now),
+                        trace,
+                        disclosure_error: None,
+                    }
+                } else if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
+                    // Read again from the call as the owner approved it, and applied now.
+                    AuthorizationInvocation::new(request, source).begin(self)?;
+                    let trace = self.authorization_attempt_started(request, source)?;
+                    WriteAttempt {
+                        result: self.apply_desktop_autopilot(&request.connection_id.0, call).await,
                         trace,
                         disclosure_error: None,
                     }

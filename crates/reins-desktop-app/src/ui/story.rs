@@ -1200,6 +1200,14 @@ pub fn answer(e: &Entry, phone: &str) -> (Glyph, Tone, String) {
         Decider::Local => format!("{word} here"),
         Decider::Settings => format!("{word} by your rules"),
     };
+    if let Some(a) = e.autopilot.as_ref().filter(|_| !e.outcome.open()) {
+        let tone = if matches!(e.outcome, Outcome::Approved | Outcome::Allowed) {
+            Tone::Field(Field::Grant)
+        } else {
+            Tone::Field(Field::Delete)
+        };
+        return (Glyph::Autopilot, tone, crate::modes::said(a, e.outcome));
+    }
     match e.outcome {
         Outcome::Waiting => (Glyph::Phone, Tone::Field(Field::Grant), "Waiting on your phone".to_owned()),
         Outcome::Approved => (Glyph::Phone, Tone::Success, on("Approved")),
@@ -1211,31 +1219,26 @@ pub fn answer(e: &Entry, phone: &str) -> (Glyph, Tone, String) {
     }
 }
 
-/// The request in one plain line, for a notification and the tray: the sentence, then the details in brackets
-/// ("Claude Code wants to run a command in reins (rm -rf jarx · and 7 more commands)").
+/// A waiting request as a banner (`DeskNext-MenuBar.png`): who asks as the title, on its own (cleaned, one line,
+/// capped: the requester's word never runs into a sentence of Reins'); under it what it asks, its details and where to
+/// answer.
 #[must_use]
-pub fn spoken(e: &Entry) -> String {
+pub fn banner(e: &Entry, phone: &str) -> (String, String) {
     let a = Ask::of(e);
-    match &a.details {
-        Some(d) => format!("{} ({d})", a.line()),
-        None => a.line(),
+    let who = middle(&clean(&a.who), 40);
+    let order: String = a.order.iter().map(|w| w.text.as_str()).collect();
+    let mut body = order;
+    if let Some(d) = &a.details {
+        body = format!("{body} · {d}");
     }
+    let body = middle(&clean(&body), 150);
+    (who, format!("{body} · answer on {phone}"))
 }
 
 /// The field a request waits on.
 #[must_use]
 pub fn field_of(e: &Entry) -> Field {
     Ask::of(e).field
-}
-
-/// Who asks, and where from: "Claude Code · ~/code/acme-web" (a long folder cut in the middle).
-#[must_use]
-pub fn who_from(e: &Entry) -> String {
-    let a = Ask::of(e);
-    match a.dir {
-        Some(dir) if !dir.is_empty() => format!("{} · {}", a.who, middle(&dir, 56)),
-        _ => a.who,
-    }
 }
 
 /// The request as a terminal would have shown it: what matched and the rule's group, what Reins did, and what the
@@ -1252,6 +1255,19 @@ pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
     if e.decider == Decider::Phone {
         lines.push(format!("reins: asking {phone}…"));
     }
+    if let Some(a) = e.autopilot.as_ref().filter(|_| !e.outcome.open()) {
+        lines.push(after(crate::modes::said(a, e.outcome).to_lowercase()));
+    } else {
+        transcript_end(e, phone, &after, &mut lines);
+    }
+    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
+        lines.push(format!("{} was told: {reason}", a.who));
+    }
+    lines
+}
+
+/// How `e` ended, as the terminal said it.
+fn transcript_end(e: &Entry, phone: &str, after: &dyn Fn(String) -> String, lines: &mut Vec<String>) {
     match e.outcome {
         Outcome::Waiting => {}
         Outcome::Approved => lines.push(after(format!("approved on {phone}"))),
@@ -1261,10 +1277,6 @@ pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
         Outcome::Allowed => lines.push("reins: allowed by your rules".to_owned()),
         Outcome::Blocked => lines.push("reins: blocked by your rules".to_owned()),
     }
-    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
-        lines.push(format!("{} was told: {reason}", a.who));
-    }
-    lines
 }
 
 /// How long the phone has to answer `e`, in seconds: the hooks' wait for commands and files, the approvals' for the
@@ -1842,11 +1854,15 @@ mod tests {
     }
 
     #[test]
-    fn notifications_say_it_in_one_line() {
-        assert_eq!(
-            spoken(&waiting(command())),
-            "Claude Code wants to run a command in reins (rm -rf jarx · and 10 more commands)"
-        );
+    fn banners_keep_who_asks_apart() {
+        let mut e =
+            Entry::new(Kind::Command, "Claude Code wants to run: rm -rf build").source(Some("Claude\u{202e}Code"));
+        e.outcome = Outcome::Waiting;
+        let (title, body) = banner(&e, "Dana's iPhone");
+        assert!(!title.contains('\u{202e}'), "{title:?}");
+        assert!(title.chars().count() <= 40);
+        assert!(!body.contains(&title), "the requester stays out of the sentence: {body}");
+        assert!(body.ends_with("· answer on Dana's iPhone"), "{body}");
     }
 
     #[test]

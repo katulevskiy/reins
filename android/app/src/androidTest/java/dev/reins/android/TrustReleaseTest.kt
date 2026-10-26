@@ -72,10 +72,13 @@ class TrustReleaseTest {
             click("Auto")
             awaitMode(AutopilotMode.AUTO)
         }
-        click("Bypass…")
-        click("Cancel")
-        click("Overnight…")
-        click("Cancel")
+        // Next (Trust 01): the timed modes sit behind For a while; their sheets close with the round Close.
+        click("For a while")
+        click("Bypass")
+        click(By.desc("Close"))
+        click("For a while")
+        click("Overnight")
+        click(By.desc("Close"))
         click("On-device model")
         click("Delete model")
         click("Cancel")
@@ -90,8 +93,8 @@ class TrustReleaseTest {
         // Exercise the new typed permission DTOs through the same optimized production navigation.
         // Preview is read-only: no provider account, policy save or owner-authentication step is involved.
         FakeCore.shared.accounts = listOf(AccountView("gmail", "synthetic@example.com", 1_700_000_100))
-        click("Account and temporary permissions")
-        click("View Gmail permissions")
+        click("Permissions")
+        click("synthetic@example.com")
         find(By.text("Account permissions"))
         find(By.text("synthetic@example.com"))
         click("Allow searching and reading")

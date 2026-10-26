@@ -61,10 +61,9 @@ fun AppearanceScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val feedback = LocalFeedback.current
     val choice by Appearance.state(context)
-    var sansMenu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).testTag("appearance")) {
         Box(Modifier.windowInsetsPadding(HeaderInsets).padding(start = 24.dp, top = 8.dp)) {
-            RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+            dev.reins.android.design.BackArrow(onBack, Modifier)
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 14.dp)) {
             RText("Appearance", RType.title, c.ink, maxLines = 1)
@@ -108,38 +107,6 @@ fun AppearanceScreen(onBack: () -> Unit) {
                     RText("A painted finish on requests", RType.meta, c.inkMeta, maxLines = 1)
                 }
                 Toggle(choice.grain, Modifier.testTag("grainSwitch")) { Appearance.set(context, choice.copy(grain = it)) }
-            }
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 56.dp).hairlineBelow(c.rule).padding(vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RText("Sans for reading", RType.row, c.ink, Modifier.weight(1f), maxLines = 1)
-                Box {
-                    Row(
-                        Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .pressable(shape = RoundedCornerShape(10.dp), label = "Sans for reading") {
-                                sansMenu = true
-                                feedback.play(Event.Open)
-                            }
-                            .testTag("sansMenu")
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RText(if (choice.geist) "Geist" else "Instrument", RType.sans(15f, FontWeight.Medium), c.ink, maxLines = 1)
-                        GlyphIcon(Glyph.ChevronDown, c.ink, size = 14.dp)
-                    }
-                    SignalMenu(
-                        expanded = sansMenu,
-                        onDismiss = { sansMenu = false },
-                        width = 220.dp,
-                        items = listOf(
-                            MenuItem("Instrument", "Instrument Sans", selected = !choice.geist, tag = "sans:instrument") { Appearance.set(context, choice.copy(geist = false)) },
-                            MenuItem("Geist", "The Reins sans", selected = choice.geist, tag = "sans:geist") { Appearance.set(context, choice.copy(geist = true)) },
-                        ),
-                    )
-                }
             }
         }
     }

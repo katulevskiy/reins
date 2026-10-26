@@ -59,9 +59,11 @@ pub fn routes() -> Vec<Route> {
     routes![
         put_device,
         put_services,
+        put_modes,
         get_pending,
         get_request,
         post_request_response,
+        post_request_suggestion,
         get_pairing,
         post_pairing_response,
         post_pairing_claim,
@@ -360,6 +362,18 @@ async fn put_services(data: Data<'_>, headers: Headers, key: DeviceKey, conn: Db
     Ok(Status::NoContent)
 }
 
+/// The phone's Autopilot modes now (`reins_proto::autopilot::ModesReport`), for the desktop apps to show. The approval
+/// device only. Nothing here decides anything with them: the phone applies its modes itself.
+#[put("/reins/api/modes", data = "<data>")]
+async fn put_modes(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    drop(conn);
+    let report: reins_proto::autopilot::ModesReport = parse_versioned(&read_body_limited(data, 256 * 1024).await?)?;
+    report.check().map_err(|e| bad_request(e.to_string()))?;
+    HUB.set_modes(&user_key(&headers), report, now_unix());
+    Ok(Status::NoContent)
+}
+
 /// A2: undelivered requests and pairings; long-polls up to `wait` seconds when empty. With a roster, the answer
 /// carries the op log's head, and `log=<seq>` also returns as soon as the head passes it (a proposal arrived).
 #[get("/reins/api/pending?<wait>&<log>")]
@@ -426,8 +440,28 @@ async fn post_request_response(
         let answer = super::roles::open_signed_answer(&user, AnswerKind::Request, id, &body, &entries)?;
         parse_versioned(&answer)?
     };
-    HUB.relay.answer(&user, &RequestId::from(id), response.outcome).map_err(|e| answer_error(&e))?;
+    HUB.relay
+        .answer_decided(&user, &RequestId::from(id), response.outcome, response.decided)
+        .map_err(|e| answer_error(&e))?;
     HUB.live.bump(&user);
+    Ok(Status::NoContent)
+}
+
+/// Where Autopilot leans on a request still waiting for the user (`reins_proto::autopilot::Suggestion`), shown on the
+/// desktop app that asked. The approval device only, for its own account's unanswered requests.
+#[post("/reins/api/requests/<id>/suggestion", data = "<data>")]
+async fn post_request_suggestion(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    drop(conn);
+    let suggestion: reins_proto::autopilot::Suggestion = parse_versioned(&read_body_limited(data, 4 * 1024).await?)?;
+    suggestion.check().map_err(|e| bad_request(e.to_string()))?;
+    HUB.relay.suggest(&user_key(&headers), &RequestId::from(id), suggestion).map_err(|e| answer_error(&e))?;
     Ok(Status::NoContent)
 }
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,32 +52,31 @@ fun VaultPasskeysScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyProm
     var removing by remember { mutableStateOf<VaultPasskeyView?>(null) }
     LaunchedEffect(viewModel) { viewModel.load() }
 
-    Screen(title = "Vault passkeys", onBack = onBack) {
-        Group(
-            header = "Passkeys",
-            footer = "Each one opens your vault on a new or reinstalled phone, without your other phone or the recovery code. " +
-                "Your password manager keeps the passkey. Reins keeps only a copy of the vault's key that the passkey alone opens.",
-        ) {
-            val current = list
-            when {
-                current == null -> RText("Loading…", RType.sans(15f), c.secondary, Modifier.padding(16.dp))
-                current.isEmpty() -> Column(Modifier.padding(16.dp).testTag("noPasskeys")) {
-                    RText("No passkey yet", RType.sans(16f, FontWeight.Medium), c.text)
-                }
-                else -> current.forEachIndexed { i, passkey ->
-                    if (i > 0) Hairline(inset = 68.dp)
-                    PasskeyRow(passkey, busy = ui.busy) { removing = passkey }
-                }
+    // Settings 05: each passkey its own group (its phone, when it was added), then Add a passkey.
+    Screen(title = "Passkeys", onBack = onBack) {
+        val current = list
+        when {
+            current == null -> RText("Loading…", RType.sans(15f), c.inkMeta, Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
+            current.isEmpty() -> dev.reins.android.design.PaneGroup(Modifier.padding(top = 8.dp).testTag("noPasskeys")) {
+                dev.reins.android.design.PaneRow("No passkey yet", leading = { dev.reins.android.design.RowTile(Glyph.Passkey) }, first = true)
             }
+            else -> current.forEach { passkey -> PasskeyGroup(passkey, busy = ui.busy) { removing = passkey } }
         }
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             CapsuleButton(
                 "Add a passkey",
                 Modifier.fillMaxWidth().testTag("addPasskey"),
+                style = dev.reins.android.design.ButtonStyle.Soft,
                 busy = ui.busy,
                 glyph = Glyph.Plus,
             ) { viewModel.add(passkeys) }
             ui.error?.let { Banner(it, Modifier.padding(top = 12.dp), BannerKind.Error, tag = "passkeyError") }
+            RText(
+                "Opens your vault on a new phone. Your password manager keeps it.",
+                RType.meta,
+                c.inkMeta,
+                Modifier.padding(start = 8.dp, end = 8.dp, top = 12.dp),
+            )
         }
         androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = 32.dp))
     }
@@ -96,27 +96,32 @@ fun VaultPasskeysScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyProm
 }
 
 @Composable
-private fun PasskeyRow(passkey: VaultPasskeyView, busy: Boolean, onRemove: () -> Unit) {
+private fun PasskeyGroup(passkey: VaultPasskeyView, busy: Boolean, onRemove: () -> Unit) {
     val c = LocalColors.current
     val id = PasskeyJson.b64(passkey.credentialId)
-    Row(
-        Modifier.fillMaxWidth().testTag("passkey:$id").padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(40.dp).background(c.accentSoft, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            GlyphIcon(Glyph.Key, c.accent, size = 20.dp)
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(passkey.name), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
-            RText("Added ${formatDate(passkey.createdAt)}", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
-        }
-        Spacer(Modifier.width(8.dp))
+    dev.reins.android.design.PaneGroup(Modifier.padding(top = 8.dp, bottom = 6.dp).testTag("passkey:$id")) {
         Row(
-            Modifier
-                .testTag("removePasskey:$id")
-                .pressable(enabled = !busy, shape = CircleShape, onClick = onRemove)
-                .padding(10.dp),
-        ) { GlyphIcon(Glyph.Trash, c.danger, size = 20.dp) }
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 14.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(c.inverse), contentAlignment = Alignment.Center) {
+                GlyphIcon(Glyph.Phone, c.onInverse, size = 24.dp)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                RText(untrusted(passkey.name), RType.display(26f), c.ink, maxLines = 1)
+                RText("Passkey", RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 1)
+            }
+            Row(
+                Modifier
+                    .testTag("removePasskey:$id")
+                    .pressable(enabled = !busy, shape = CircleShape, label = "Remove", onClick = onRemove)
+                    .padding(12.dp),
+            ) { GlyphIcon(Glyph.Trash, c.inkMeta, size = 20.dp) }
+        }
+        dev.reins.android.design.PaneRow(
+            "Added ${formatDate(passkey.createdAt)}",
+            leading = { GlyphIcon(Glyph.Calendar, c.inkMeta, size = 18.dp) },
+        )
     }
 }
