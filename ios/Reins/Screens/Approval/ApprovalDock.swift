@@ -1,20 +1,24 @@
 import SwiftUI
 
-/// The dock (the Android app's ApprovalDock.kt): how long to remember it (Once · 1 hour · 1 day · Custom ▾, or "Asked
-/// every time" when nothing may be remembered), then Deny and Approve, on a raised plate with a hairline on top. It
-/// stays under every page of the screen.
+/// The dock (the kit's `dock`; the Android app's ApprovalDock.kt): how long to remember it (Once · 1 hour · 1 day ·
+/// Custom ▾, or "Every time" when nothing may be remembered), then Deny in outline and Approve in ink with the phone's
+/// biometry, on paper with a hairline ring and round top corners. It stays under every page of the screen. At
+/// accessibility text sizes (Next-AX) how long is one "For  Once ▾" row and Approve sits over Deny, both full width.
 struct ApprovalDock: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let ax = typeSize.isAccessibilitySize
         VStack(spacing: 10) {
             if let error = vm.error {
                 Text(error)
                     .font(RFont.sans(13.5, .medium))
                     .foregroundStyle(Palette.danger)
-                    .lineLimit(3)
+                    .lineLimit(ax ? nil : 3)
+                    .fixedSize(horizontal: false, vertical: ax)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 6)
                     .accessibilityIdentifier("approvalError")
@@ -22,22 +26,35 @@ struct ApprovalDock: View {
             if view.kind == .grant {
                 GrantPeriodRow(vm: vm, view: view)
             } else if ApprovalWords.rememberLocked(view) || ApprovalWords.held(view) {
-                Chooser.asked(ApprovalWords.mailPermissionSettings(view) ? "Approve once" : "Asked every time")
+                Chooser.asked(ApprovalWords.mailPermissionSettings(view) ? "Approve once" : "Every time")
                     .accessibilityIdentifier("noStanding")
                 if ApprovalWords.mailPermissionSettings(view) {
                     Text("For ongoing access, use account or temporary permissions in Trust. Sensitive requests can still require review.")
-                        .font(.footnote).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("accountPermissionHelp")
+                        .font(RFont.sans(13)).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("accountPermissionHelp")
                 }
             } else {
                 if ApprovalWords.likeThisOn(view, vm.draft) { LikeThisNote() }
                 if let wider = ApprovalWords.secretsWider(view, vm.draft) { SecretsCommandNote(command: wider) }
-                DockSegments(vm: vm, view: view)
+                if ax { DockMenu(vm: vm, view: view) } else { DockSegments(vm: vm, view: view) }
             }
-            buttons
+            if ax {
+                VStack(spacing: 10) {
+                    approve
+                    deny
+                }
+                .disabled(vm.busy)
+            } else {
+                RatioRow(spacing: 10, ratio: 1 / 1.35) {
+                    deny
+                    approve
+                }
+                .disabled(vm.busy)
+                .frame(height: 54)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
         .background {
             UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
                 .fill(Palette.paper)
@@ -51,44 +68,56 @@ struct ApprovalDock: View {
         .accessibilityIdentifier("dock")
     }
 
-    private var buttons: some View {
-        RatioRow(spacing: 10, ratio: 1 / 1.35) {
-            Button {
-                Task { await vm.deny(model) }
-            } label: {
-                Text(ApprovalWords.denyLabel(view))
-            }
-            .buttonStyle(SignalButtonLook(kind: .outline))
-            .accessibilityIdentifier("deny")
-
-            if ApprovalWords.held(view) {
-                HoldButton(title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy) {
-                    Task { await vm.approve(model) }
-                }
-                .accessibilityIdentifier("approve")
-            } else {
-                Button {
-                    Task { await vm.approve(model) }
-                } label: {
-                    HStack(spacing: 8) {
-                        if vm.busy {
-                            ProgressView().tint(Palette.onInverse)
-                        } else {
-                            Image(systemName: Biometry.symbol).font(.system(size: 18, weight: .semibold))
-                        }
-                        Text(ApprovalWords.approveLabel(view, vm.draft)).lineLimit(1)
-                    }
-                }
-                .buttonStyle(SignalButtonLook(kind: .inverse))
-                .accessibilityIdentifier("approve")
-            }
+    private var deny: some View {
+        Button {
+            Task { await vm.deny(model) }
+        } label: {
+            Text(ApprovalWords.denyLabel(view))
         }
-        .disabled(vm.busy)
-        .frame(height: 54)
+        .buttonStyle(SignalButtonLook(kind: .outline))
+        .accessibilityIdentifier("deny")
+    }
+
+    @ViewBuilder private var approve: some View {
+        if ApprovalWords.held(view) {
+            HoldButton(title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy) {
+                Task { await vm.approve(model) }
+            }
+            .accessibilityIdentifier("approve")
+        } else {
+            Button {
+                Task { await vm.approve(model) }
+            } label: {
+                HStack(spacing: 8) {
+                    if vm.busy {
+                        ProgressView().tint(Palette.onInverse)
+                    } else {
+                        BiometryMark()
+                    }
+                    Text(ApprovalWords.approveLabel(view, vm.draft)).lineLimit(1)
+                }
+            }
+            .buttonStyle(SignalButtonLook(kind: .inverse))
+            .accessibilityIdentifier("approve")
+        }
     }
 }
 
-/// Once · 1 hour · 1 day · Custom ▾, as the Signal chooser.
+/// The phone's biometry on a button: the Face ID glyph of the set, else the system's mark (Touch ID, Optic ID, the
+/// passcode's lock).
+struct BiometryMark: View {
+    var size: CGFloat = 18
+
+    var body: some View {
+        if Biometry.symbol == "faceid" {
+            GlyphIcon(.faceId, size: size)
+        } else {
+            Image(systemName: Biometry.symbol).font(.system(size: size, weight: .semibold))
+        }
+    }
+}
+
+/// Once · 1 hour · 1 day · Custom ▾, as the kit's chooser.
 private struct DockSegments: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
@@ -117,7 +146,57 @@ private struct DockSegments: View {
     }
 }
 
-/// A permission the AI asked for: how long, which can only be made shorter in its sheet.
+/// The same choices at accessibility sizes: one "For  Once ▾" row on the sunken capsule, a menu of them.
+private struct DockMenu: View {
+    @Bindable var vm: ApprovalModel
+    var view: ApprovalView
+    @Environment(ApprovalNav.self) private var nav
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        let short = view.kind == .accounts ? "1 hour" : ApprovalWords.shortLabel(view)
+        let current = switch ApprovalWords.segment(vm.draft) {
+        case .once: "Once"
+        case .short: short
+        case .day: "1 day"
+        case .custom: ApprovalWords.customLabel(vm.draft)
+        }
+        Menu {
+            Button("Once") { set(.once) }.accessibilityIdentifier("lifetime:once")
+            Button(short) { set(.hour) }.accessibilityIdentifier("lifetime:hour")
+            Button("1 day") { set(.day) }.accessibilityIdentifier("lifetime:day")
+            Button("Custom…") {
+                nav.overlay = .remember
+                feedback.play(.open)
+            }
+            .accessibilityIdentifier("lifetimeCustom")
+        } label: {
+            HStack(spacing: 8) {
+                Text("For").foregroundStyle(Palette.ink2)
+                Spacer(minLength: 8)
+                Text(current).foregroundStyle(Palette.ink).multilineTextAlignment(.trailing)
+                GlyphIcon(.chevronDown, size: 16).foregroundStyle(Palette.ink)
+            }
+            .font(RFont.sans(14, .semibold))
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .background(Palette.paperSunken, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("For \(current)")
+        .accessibilityIdentifier("lifetimeMenu")
+    }
+
+    private func set(_ kind: LifetimeKind) {
+        vm.draft.lifetime = kind
+        vm.draft.allMail = nil
+        feedback.play(.selection)
+    }
+}
+
+/// A permission the AI asked for (Next-Kinds 04): "For 1 hour ▾", which can only be made shorter in its sheet.
 private struct GrantPeriodRow: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
@@ -127,10 +206,24 @@ private struct GrantPeriodRow: View {
     var body: some View {
         let asked = view.grant?.durationSecs ?? 0
         let secs = vm.draft.grantSeconds.map { UInt64(max($0, 0)) }.map { min($0, asked) } ?? asked
-        ChooserSummary(label: "Allow for", value: ApprovalWords.period(secs)) {
+        Button {
             nav.overlay = .grant
             feedback.play(.open)
+        } label: {
+            HStack(spacing: 8) {
+                GlyphIcon(.timer, size: 16)
+                Text("For \(ApprovalWords.period(secs))")
+                GlyphIcon(.chevronDown, size: 13)
+            }
+            .font(RFont.sans(14, .semibold))
+            .foregroundStyle(Palette.ink2)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(Palette.paperSunken, in: Capsule())
+            .contentShape(Capsule())
         }
+        .buttonStyle(PressDimsStyle())
+        .accessibilityLabel("Allow for \(ApprovalWords.period(secs))")
         .accessibilityIdentifier("grantPeriod")
     }
 }

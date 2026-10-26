@@ -120,7 +120,7 @@ struct DecisionBar: View {
                     if busy {
                         ProgressView().tint(accent ? .white : Palette.onInverse)
                     } else {
-                        Image(systemName: Biometry.symbol).font(.system(size: 18, weight: .semibold))
+                        BiometryMark()
                     }
                     Text(approveTitle).lineLimit(1)
                 }

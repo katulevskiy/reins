@@ -271,14 +271,14 @@ enum ApprovalWords {
 
     static func offersUntilRevoked(_ view: ApprovalView) -> Bool { view.kind != .accounts }
 
-    /// The sheet's confirm button for `draft`'s lifetime: "Remember for 1 week", "Remember until I revoke".
+    /// The sheet's confirm button for `draft`'s lifetime: "Remember 1 week", "Remember until I revoke".
     static func rememberButton(_ view: ApprovalView, _ draft: ApprovalDraft) -> String {
         switch draft.lifetime {
         case .untilRevoked: "Remember until I revoke"
         case .once: "Done"
-        case .hour: "Remember for \(shortLabel(view))"
-        case .day: "Remember for 1 day"
-        default: "Remember for \(sheetChoiceLabel(draft) ?? "")"
+        case .hour: "Remember \(shortLabel(view))"
+        case .day: "Remember 1 day"
+        default: "Remember \(sheetChoiceLabel(draft) ?? "")"
         }
     }
 
