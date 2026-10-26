@@ -28,6 +28,7 @@ use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, Ser
 use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
 use crate::state::{Place, Rect, Saved};
+use crate::ui::kit::Wallpaper;
 use crate::tray::{Action, Look, Shown, Tray};
 use crate::welcome::{self, Stage, ToolRow};
 use crate::work::{self, Work};
@@ -1608,6 +1609,31 @@ impl Model {
     /// Light, dark, or as the system says (Settings → Appearance).
     pub fn set_appearance(&mut self, appearance: crate::theme::Appearance, cx: &mut Context<'_, Self>) {
         self.saved.appearance = appearance;
+        self.persist();
+        cx.notify();
+    }
+
+    /// The wallpaper for dark (`dark`) or light paper (Settings → Wallpaper).
+    pub fn set_wallpaper(&mut self, dark: bool, w: Wallpaper, cx: &mut Context<'_, Self>) {
+        if dark {
+            self.saved.wallpaper_dark = Some(w);
+        } else {
+            self.saved.wallpaper_light = Some(w);
+        }
+        self.persist();
+        cx.notify();
+    }
+
+    /// Frosted panes on or off (Settings → Wallpaper).
+    pub fn set_frosted_panes(&mut self, on: bool, cx: &mut Context<'_, Self>) {
+        self.saved.solid_panes = !on;
+        self.persist();
+        cx.notify();
+    }
+
+    /// Grain on fields on or off (Settings → Look).
+    pub fn set_grain(&mut self, on: bool, cx: &mut Context<'_, Self>) {
+        self.saved.flat_fields = !on;
         self.persist();
         cx.notify();
     }

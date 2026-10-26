@@ -102,12 +102,13 @@ impl Wallpaper {
         }
     }
 
-    /// The picture, decoded once (as BGRA, GPUI's order).
-    fn image(self) -> Option<Arc<RenderImage>> {
-        static DECODED: [OnceLock<Option<Arc<RenderImage>>>; 8] = [const { OnceLock::new() }; 8];
-        let i = Self::ALL.iter().position(|w| *w == self)?;
+    /// The picture, decoded once (as BGRA, GPUI's order); `small`: scaled down to 260 px wide, for thumbnails
+    /// (GPUI samples a picture without mipmaps, so a big one drawn small shimmers).
+    fn image(self, small: bool) -> Option<Arc<RenderImage>> {
+        static DECODED: [OnceLock<Option<Arc<RenderImage>>>; 16] = [const { OnceLock::new() }; 16];
+        let i = Self::ALL.iter().position(|w| *w == self)? * 2 + usize::from(small);
         DECODED[i]
-            .get_or_init(|| match decode(self.bytes()) {
+            .get_or_init(|| match decode(self.bytes(), small) {
                 Ok(img) => Some(img),
                 Err(e) => {
                     log::warn!("cannot decode the {} wallpaper: {e}", self.label());
@@ -118,10 +119,14 @@ impl Wallpaper {
     }
 }
 
-fn decode(bytes: &[u8]) -> Result<Arc<RenderImage>, String> {
+fn decode(bytes: &[u8], small: bool) -> Result<Arc<RenderImage>, String> {
     let mut rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
         .map_err(|e| e.to_string())?
         .into_rgba8();
+    if small {
+        let h = rgba.height() * 260 / rgba.width().max(1);
+        rgba = image::imageops::resize(&rgba, 260, h, image::imageops::FilterType::Triangle);
+    }
     for p in rgba.chunks_exact_mut(4) {
         p.swap(0, 2);
     }
@@ -134,6 +139,7 @@ pub fn art(which: Wallpaper, x: f32, y: f32) -> Art {
         which,
         at: (x, y),
         radius: 0.0,
+        small: false,
         style: StyleRefinement::default(),
     };
     a = a.size_full();
@@ -145,10 +151,18 @@ pub struct Art {
     which: Wallpaper,
     at: (f32, f32),
     radius: f32,
+    small: bool,
     style: StyleRefinement,
 }
 
 impl Art {
+    /// Drawn small (a thumbnail): from the scaled-down picture.
+    #[must_use]
+    pub fn thumbnail(mut self) -> Self {
+        self.small = true;
+        self
+    }
+
     /// Rounds the picture's corners.
     #[must_use]
     pub fn corners(mut self, radius: f32) -> Self {
@@ -216,7 +230,7 @@ impl Element for Art {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        let Some(image) = self.which.image() else {
+        let Some(image) = self.which.image(self.small) else {
             return;
         };
         let Some(fitted) = cover(bounds, image.size(0).width.0, image.size(0).height.0, self.at) else {
@@ -303,8 +317,10 @@ mod tests {
     #[test]
     fn every_wallpaper_decodes_and_is_named_once() {
         for w in Wallpaper::ALL {
-            let img = w.image().unwrap_or_else(|| panic!("{w:?} does not decode"));
+            let img = w.image(false).unwrap_or_else(|| panic!("{w:?} does not decode"));
             assert_eq!((img.size(0).width.0, img.size(0).height.0), (780, 1000), "{w:?}");
+            let small = w.image(true).unwrap();
+            assert_eq!((small.size(0).width.0, small.size(0).height.0), (260, 333), "{w:?}");
             assert_eq!(Wallpaper::from_id(w.id()), Some(w));
             assert_eq!(serde_json::to_string(&w).unwrap(), format!("\"{}\"", w.id()));
         }

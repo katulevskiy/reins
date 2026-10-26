@@ -71,18 +71,24 @@ fn this_computer_label() -> &'static str {
 }
 
 impl Root {
+    /// Settings (`DeskNext-Settings.png`): who this computer is paired as, then two columns of panes: this computer
+    /// and its look; the keyboard, and Disconnect, held, as the quiet last row.
     pub(super) fn settings(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        if self.wallpaper_page {
+            return self.wallpaper_page(d, pal, cx);
+        }
+        let glass = kit::Glass::Solid;
         let mut page = div()
             .flex()
             .flex_col()
-            .gap(px(24.0))
             .child(div().title().text_color(pal.ink()).child("Settings"))
-            .child(Self::account_card(d, pal, cx));
-        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+            .child(div().mt(px(20.0)).child(Self::account_card(d, pal, cx)));
+        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).mt(px(12.0)).text_color(pal.danger)));
+        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal).mt(px(12.0))));
 
         // This computer.
-        let tile = |g: Glyph| kit::kind_tile(g, Tone::Neutral, 32.0, pal);
+        let tile = |g: Glyph| kit::pane::tile(g, pal);
+        let value = |t: String| kit::pane::row_value(t, pal);
         let autostart = d.autostart;
         let notify = d.config().map(|c| c.notify.clone()).unwrap_or_default();
         let (phone, sound) = (notify.phone, notify.sound);
@@ -91,126 +97,71 @@ impl Root {
             (true, false) => "On",
             (false, _) => "Off",
         };
-        let health_line = match (&d.health.checks, &d.health.error) {
-            (_, Some(e)) => e.clone(),
-            (Some(c), None) => {
-                let s = health::summary(c).title;
-                checked(d).map_or(s.clone(), |at| format!("{s} · {}", at.trim_start_matches("Checked ")))
-            }
-            (None, None) => "Not checked yet".to_owned(),
-        };
-        let shield = if cfg!(target_os = "macos") {
-            "The shield in the menu bar shows Reins is on"
-        } else {
-            "The shield in the tray shows Reins is on"
+        let health_word = match (&d.health.checks, &d.health.error) {
+            (_, Some(_)) => "Can't check".to_owned(),
+            (Some(c), None) => health::summary(c).title,
+            (None, None) => "Not checked".to_owned(),
         };
         let (name, itself) = name_lines(&d.shown_as, d.phone_name.as_deref());
-        let name_meta = div()
-            .flex()
-            .gap(px(6.0))
-            .min_w(px(0.0))
-            .child(div().truncate().child(name.clone()))
-            .when_some(itself, |m, i| m.child(div().text_color(pal.ink_faint()).truncate().child(i)));
-        let mut computer = div().flex().flex_col().child(
-            list_row(pal, self.name_open)
-                .id("name")
-                .cursor_pointer()
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut name_block = div().flex().flex_col().child(
+            kit::pane::clickable(kit::pane_row(), "name", pal)
                 .child(tile(Glyph::Laptop))
-                .child(title_meta("Name", Some(name_meta.into_any_element()), pal))
-                .child(glyph(
-                    if self.name_open {
-                        Glyph::ChevronUp
-                    } else {
-                        Glyph::ChevronDown
-                    },
-                    14.0,
-                    pal.ink_faint(),
-                ))
+                .child(kit::title_sub("Name", itself.map(|i| div().child(i).into_any_element()), pal))
+                .child(value(name.clone()))
+                .child(glyph(if self.name_open { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_faint()))
                 .on_click(Self::on_view(cx, |this, _| this.name_open = !this.name_open)),
         );
         if self.name_open {
             // The phone keeps the name (synced to the user's phones, sealed); a name typed here could be anyone's on
-            // this computer, so the field shows it and points to the phone.
-            computer = computer.child(
+            // this computer, so the row points to the phone.
+            name_block = name_block.child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .pl(px(44.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .pl(px(kit::pane::INSET))
                     .pb(px(12.0))
-                    .border_b_1()
-                    .border_color(pal.rule())
-                    .child(
-                        div()
-                            .id("name-field")
-                            .h(px(36.0))
-                            .px(px(12.0))
-                            .flex()
-                            .items_center()
-                            .rounded(px(10.0))
-                            .border_1()
-                            .border_color(pal.rule())
-                            .bg(pal.paper_sunken())
-                            .text_size(px(14.0))
-                            .text_color(pal.ink())
-                            .truncate()
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .text_size(px(12.5))
-                            .text_color(pal.ink_meta())
-                            .child(glyph(Glyph::Phone, 13.0, pal.ink_meta()))
-                            .child(format!("Rename on {}", d.phone())),
-                    ),
+                    .text_size(px(13.0))
+                    .text_color(pal.ink_meta())
+                    .child(glyph(Glyph::Phone, 13.0, pal.ink_meta()))
+                    .child(format!("Rename on {}", d.phone())),
             );
         }
-        computer = computer
-            .child(
-                list_row(pal, false)
-                    .child(tile(Glyph::Power))
-                    .child(title_meta("Open at login", Some(shield.into_any_element()), pal))
-                    .child(
-                        kit::switch("autostart", autostart, pal).on_click(Self::on_model(cx, Model::toggle_autostart)),
-                    ),
-            )
-            .child(
-                list_row(pal, false)
-                    .child(tile(Glyph::Terminal))
-                    .child(title_meta(
-                        "Command line tool",
-                        Some(mono("~/.local/bin/reins", 12.0).into_any_element()),
-                        pal,
-                    ))
-                    .child(if d.cli_installed {
-                        kit::status_pill(None, "Installed", Some(pal.success), pal).into_any_element()
-                    } else {
-                        kit::button("cli", kit::Look::Soft, kit::Size::Small, None, "Install", pal)
-                            .h(px(34.0))
-                            .on_click(Self::on_model(cx, Model::install_cli))
-                            .into_any_element()
-                    }),
-            )
-            .child(
-                list_row(pal, self.notify_open)
-                    .id("notify")
-                    .cursor_pointer()
-                    .child(tile(Glyph::Bell))
-                    .child(title_meta("Notifications", Some(notify_word.into_any_element()), pal))
-                    .child(glyph(
-                        if self.notify_open {
-                            Glyph::ChevronUp
-                        } else {
-                            Glyph::ChevronDown
-                        },
-                        14.0,
-                        pal.ink_faint(),
-                    ))
-                    .on_click(Self::on_view(cx, |this, _| this.notify_open = !this.notify_open)),
-            );
+        rows.push(name_block.into_any_element());
+        rows.push(
+            kit::pane_row()
+                .child(tile(Glyph::Power))
+                .child(kit::title_sub("Open at login", None, pal))
+                .child(kit::switch("autostart", autostart, pal).on_click(Self::on_model(cx, Model::toggle_autostart)))
+                .into_any_element(),
+        );
+        rows.push(
+            kit::pane_row()
+                .child(tile(Glyph::Terminal))
+                .child(kit::title_sub("Command line tool", None, pal))
+                .child(if d.cli_installed {
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(13.0))
+                        .text_color(pal.ink_2())
+                        .child("~/.local/bin/reins")
+                        .into_any_element()
+                } else {
+                    kit::button("cli", kit::Look::Soft, kit::Size::Small, None, "Install", pal)
+                        .on_click(Self::on_model(cx, Model::install_cli))
+                        .into_any_element()
+                })
+                .into_any_element(),
+        );
+        let mut notify_block = div().flex().flex_col().child(
+            kit::pane::clickable(kit::pane_row(), "notify", pal)
+                .child(tile(Glyph::Bell))
+                .child(kit::title_sub("Notifications", None, pal))
+                .child(value(notify_word.to_owned()))
+                .child(glyph(if self.notify_open { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_faint()))
+                .on_click(Self::on_view(cx, |this, _| this.notify_open = !this.notify_open)),
+        );
         if self.notify_open {
             let sub = |id: &'static str, label: &'static str, on: bool, enabled: bool| {
                 div()
@@ -218,130 +169,167 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .py(px(8.0))
-                    .text_size(px(14.0))
+                    .min_h(px(44.0))
+                    .pl(px(kit::pane::INSET))
+                    .pr(px(14.0))
+                    .text_size(px(14.5))
                     .text_color(pal.ink())
                     .child(label)
                     .child(kit::switch(SharedString::from(format!("{id}-switch")), on, pal))
                     .when(!enabled, |r| r.opacity(0.4))
             };
-            computer = computer.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .pl(px(44.0))
-                    .pb(px(8.0))
-                    .border_b_1()
-                    .border_color(pal.rule())
-                    .child(sub("notify-phone", "Notify me here", phone, true).cursor_pointer().on_click(
-                        Self::on_model(cx, move |m, cx| {
+            notify_block = notify_block
+                .child(sub("notify-phone", "Notify me here", phone, true).cursor_pointer().on_click(Self::on_model(
+                    cx,
+                    move |m, cx| {
+                        m.change(
+                            Setting::Notify {
+                                phone: !phone,
+                                sound,
+                            },
+                            cx,
+                        );
+                    },
+                )))
+                .child({
+                    let r = sub("notify-sound", "Play a sound", sound && phone, phone);
+                    if phone {
+                        r.cursor_pointer().on_click(Self::on_model(cx, move |m, cx| {
                             m.change(
                                 Setting::Notify {
-                                    phone: !phone,
-                                    sound,
+                                    phone,
+                                    sound: !sound,
                                 },
                                 cx,
                             );
-                        }),
-                    ))
-                    .child({
-                        let r = sub("notify-sound", "Play a sound", sound && phone, phone);
-                        if phone {
-                            r.cursor_pointer().on_click(Self::on_model(cx, move |m, cx| {
-                                m.change(
-                                    Setting::Notify {
-                                        phone,
-                                        sound: !sound,
-                                    },
-                                    cx,
-                                );
-                            }))
-                        } else {
-                            r
-                        }
-                    }),
-            );
+                        }))
+                    } else {
+                        r
+                    }
+                });
         }
-        computer = computer
-            .child(
-                list_row(pal, false)
-                    .child(tile(Glyph::Heart))
-                    .child(title_meta("Health checks", Some(health_line.into_any_element()), pal))
-                    .child(Self::check_again("run-checks", "Run", d, pal, cx)),
-            )
-            .child(
-                list_row(pal, false)
+        rows.push(notify_block.into_any_element());
+        rows.push(
+            kit::pane::clickable(kit::pane_row(), "health-row", pal)
+                .child(tile(Glyph::Heart))
+                .child(kit::title_sub("Health checks", None, pal))
+                .child(value(health_word))
+                .child(kit::pane::chevron(pal))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.health_open = true;
+                    this.model.update(cx, |m, cx| m.show_section(Section::Home, cx));
+                    cx.notify();
+                }))
+                .into_any_element(),
+        );
+        let computer = kit::group(rows, kit::pane::INSET, glass, pal);
+
+        // Look.
+        let (dark_w, light_w) = (d.saved.wallpaper(true), d.saved.wallpaper(false));
+        let thumb = |w: kit::Wallpaper| {
+            div()
+                .flex_none()
+                .w(px(26.0))
+                .h(px(34.0))
+                .rounded(px(6.0))
+                .overflow_hidden()
+                .border_1()
+                .border_color(pal.rule())
+                .child(kit::wallpaper::art(w, 0.5, 0.0).corners(6.0).thumbnail())
+        };
+        let grain_on = !d.saved.flat_fields;
+        let look = kit::group(
+            [
+                kit::pane_row()
                     .child(tile(Glyph::Appearance))
-                    .child(title_meta("Appearance", Some(appearance_line(d.saved.appearance).into_any_element()), pal))
-                    .child(self.appearance_menu(d.saved.appearance, pal, cx)),
-            );
+                    .child(kit::title_sub("Appearance", None, pal))
+                    .child(self.appearance_menu(d.saved.appearance, pal, cx))
+                    .into_any_element(),
+                kit::pane::clickable(kit::pane_row(), "wallpaper-row", pal)
+                    .child(tile(Glyph::Appearance))
+                    .child(kit::title_sub("Wallpaper", None, pal))
+                    .child(value(format!("{} · {}", dark_w.label(), light_w.label())))
+                    .child(thumb(dark_w))
+                    .child(thumb(light_w))
+                    .child(kit::pane::chevron(pal))
+                    .on_click(Self::on_view(cx, |this, _| this.wallpaper_page = true))
+                    .into_any_element(),
+                kit::pane_row()
+                    .child(tile(Glyph::Appearance))
+                    .child(kit::title_sub("Grain on fields", None, pal))
+                    .child(kit::switch("grain", grain_on, pal).on_click(Self::on_model(cx, move |m, cx| m.set_grain(!grain_on, cx))))
+                    .into_any_element(),
+            ],
+            kit::pane::INSET,
+            glass,
+            pal,
+        );
 
         // Keyboard.
-        let lines = keyboard_lines();
-        let mut keys = div().flex().flex_col();
-        for (what, k) in &lines {
-            keys = keys.child(
-                list_row(pal, false)
-                    .child(div().flex_1().min_w(px(0.0)).truncate().text_color(pal.ink()).child(what.clone()))
-                    .child(kit::key_cap(k.clone(), pal)),
-            );
-        }
+        // The board's short names: "Sections", "Close" (and what closing does).
+        let keys = keyboard_lines()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (what, k))| match what.as_str() {
+                _ if i == 0 => ("Sections".to_owned(), k),
+                "Close window, keep Reins on" => ("Close".to_owned(), format!("{k}, Reins keeps running")),
+                "Close what is open" => ("Back".to_owned(), k),
+                _ => (what, k),
+            })
+            .chain(std::iter::once(("Quit".to_owned(), shortcuts::hint("q"))))
+            .map(|(what, k)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .min_h(px(50.0))
+                    .px(px(16.0))
+                    .child(div().w(px(96.0)).flex_none().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(pal.ink_meta()).child(what))
+                    .child(div().flex_1().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(13.5)).text_color(pal.ink()).child(k))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        let keys = kit::group(keys, 16.0, glass, pal);
 
-        // Account.
+        // Disconnect, held; or pair again.
         let disconnect: AnyElement = if d.paired {
-            let look = self.hold_progress(Held::Disconnect).map_or(HoldLook::Idle, HoldLook::Filling);
-            Self::hold_area(
-                kit::hold_button(
-                    "disconnect",
-                    Glyph::Unlink,
-                    format!("Hold to disconnect {}", this_computer()),
-                    "Disconnected",
-                    look,
-                    48.0,
-                    pal,
-                )
-                .w_full()
-                .mt(px(8.0))
-                .text_size(px(14.5)),
+            self.hold_row(
+                "disconnect",
                 Held::Disconnect,
+                Glyph::Unlink,
+                format!("Disconnect {}", this_computer()),
+                "Hold to disconnect. git and keys stop going through Reins.",
+                pal,
                 cx,
             )
-            .into_any_element()
         } else {
             kit::button("pair-again", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Phone), "Pair again", pal)
                 .w_full()
-                .mt(px(8.0))
                 .on_click(Self::on_model(cx, Model::sign_out))
                 .into_any_element()
         };
-        let account = div().flex().flex_col().child(disconnect).child(
-            list_row(pal, true)
-                .id("quit")
-                .cursor_pointer()
-                .child(tile(Glyph::Quit))
-                .child(title_meta("Quit Reins", Some("The service keeps running".into_any_element()), pal))
-                .child(kit::key_cap(shortcuts::hint("q"), pal))
-                .on_click(Self::on_model(cx, Model::quit)),
-        );
 
-        page = page.child(columns(
-            div().flex().flex_col().child(section(this_computer_label(), None, computer, pal)),
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(24.0))
-                .child(section("Keyboard", None, keys, pal))
-                .child(section("Account", None, account, pal)),
-            380.0,
-        ));
+        let left = div()
+            .flex()
+            .flex_col()
+            .child(kit::section(Some(Glyph::Laptop), this_computer_label(), None, pal))
+            .child(computer)
+            .child(kit::section(Some(Glyph::Appearance), "Look", None, pal))
+            .child(look);
+        let right = div()
+            .flex()
+            .flex_col()
+            .child(kit::section(Some(Glyph::Terminal), "Keyboard", None, pal))
+            .child(keys)
+            .child(div().mt(px(18.0)).child(disconnect));
+        page = page.child(super::connections::two_columns(left, right));
 
         // The version and the links.
         let footer_link = |id: &'static str, label: &'static str, url: String| {
             div()
                 .id(id)
                 .cursor_pointer()
-                .text_color(pal.ink_2())
-                .underline()
+                .text_color(pal.ink_meta())
                 .hover(|s| s.text_color(pal.ink()))
                 .child(label)
                 .on_click(move |_, _, cx| cx.open_url(&url))
@@ -350,11 +338,10 @@ impl Root {
             div()
                 .flex()
                 .gap(px(5.0))
-                .pt(px(12.0))
+                .pt(px(22.0))
+                .px(px(6.0))
                 .text_size(px(12.5))
-                .text_color(pal.ink_meta())
-                .child(format!("Reins {}", reins_desktop::update::VERSION))
-                .child("·")
+                .text_color(pal.ink_faint())
                 .child(footer_link("downloads", "Downloads", crate::links::download()))
                 .child("·")
                 .child(footer_link("terms", "Terms", crate::links::TERMS.to_owned()))
@@ -362,6 +349,129 @@ impl Root {
                 .child(footer_link("privacy", "Privacy", crate::links::PRIVACY.to_owned())),
         );
         page.into_any_element()
+    }
+
+    /// Settings → Wallpaper (`DeskNext-Settings.png` 02): the set for dark or for light paper, a preview, and Frosted
+    /// panes.
+    fn wallpaper_page(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let dark = self.wallpaper_dark_slot;
+        let current = d.saved.wallpaper(dark);
+        let back = kit::icon_button("wallpaper-back", Glyph::ChevronLeft, 36.0, pal)
+            .on_click(Self::on_view(cx, |this, _| this.wallpaper_page = false));
+        let head = div()
+            .flex()
+            .items_center()
+            .gap(px(14.0))
+            .child(back)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(div().title().text_color(pal.ink()).child("Wallpaper"))
+                    .child(div().mt(px(6.0)).mood().text_color(pal.ink_2()).child("One for dark, one for light. Shown behind Home and Activity.")),
+            );
+        let mut slots = kit::segmented(pal).w_full();
+        for (i, (label, g, is_dark)) in [("Dark", Glyph::Moon, true), ("Light", Glyph::Appearance, false)].into_iter().enumerate() {
+            slots = slots.child(
+                kit::segment(("wall-slot", i), "", dark == is_dark, pal)
+                    .child(glyph(g, 14.0, if dark == is_dark { pal.ink() } else { pal.ink_2() }))
+                    .child(label)
+                    .on_click(Self::on_view(cx, move |this, _| this.wallpaper_dark_slot = is_dark)),
+            );
+        }
+        let mut grid = div().flex().flex_wrap().gap(px(14.0)).mt(px(16.0));
+        for w in kit::Wallpaper::ALL {
+            let on = w == current;
+            grid = grid.child(
+                div()
+                    .id(SharedString::from(format!("wallpaper-{}", w.id())))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.0))
+                    .w(px(130.0))
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(130.0))
+                            .h(px(100.0))
+                            .rounded(px(14.0))
+                            .when_else(on, |t| t.border_2().border_color(pal.violet()), |t| t.border_1().border_color(pal.rule()))
+                            .child(kit::wallpaper::art(w, 0.5, 0.0).corners(13.0).thumbnail())
+                            .when(on, |t| {
+                                t.child(
+                                    div()
+                                        .absolute()
+                                        .right(px(6.0))
+                                        .bottom(px(6.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(20.0))
+                                        .rounded_full()
+                                        .bg(pal.violet_fill())
+                                        .child(glyph(Glyph::Check, 12.0, gpui::white())),
+                                )
+                            }),
+                    )
+                    .child(div().text_size(px(13.5)).text_color(pal.ink_2()).child(w.label()))
+                    .on_click(Self::on_model(cx, move |m, cx| m.set_wallpaper(dark, w, cx))),
+            );
+        }
+        let frosted = !d.saved.solid_panes;
+        let preview_pal = if dark { Palette::dark() } else { Palette::light() };
+        let preview = div()
+            .relative()
+            .h(px(300.0))
+            .rounded(px(20.0))
+            .overflow_hidden()
+            .bg(preview_pal.paper())
+            .child(kit::wallpaper::band(current, 300.0, preview_pal))
+            .child(
+                div().absolute().left(px(24.0)).right(px(24.0)).bottom(px(24.0)).child(kit::pane(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .px(px(14.0))
+                        .py(px(14.0))
+                        .text_size(px(15.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(preview_pal.ink())
+                        .child(glyph(Glyph::ShieldCheck, 18.0, preview_pal.success))
+                        .child("All quiet"),
+                    kit::Glass::over(true, frosted),
+                    16.0,
+                    preview_pal,
+                )),
+            );
+        let toggle = kit::group(
+            [kit::pane_row()
+                .child(kit::pane::tile(Glyph::Appearance, pal))
+                .child(kit::title_sub("Frosted panes", None, pal))
+                .child(kit::switch("frosted", frosted, pal).on_click(Self::on_model(cx, move |m, cx| m.set_frosted_panes(!frosted, cx))))
+                .into_any_element()],
+            kit::pane::INSET,
+            kit::Glass::Solid,
+            pal,
+        );
+        let os = if cfg!(target_os = "macos") {
+            "With Reduce Transparency on in macOS, panes turn solid."
+        } else if cfg!(windows) {
+            "With transparency effects off in Windows, panes turn solid."
+        } else {
+            "With reduced transparency on, panes turn solid."
+        };
+        let left = div().flex().flex_col().mt(px(20.0)).child(slots).child(grid);
+        let right = div()
+            .flex()
+            .flex_col()
+            .child(kit::section(None, "Preview", None, pal))
+            .child(preview)
+            .child(div().mt(px(14.0)).child(toggle))
+            .child(div().px(px(6.0)).pt(px(8.0)).text_size(px(13.5)).text_color(pal.ink_meta()).child(os));
+        div().flex().flex_col().child(head).child(super::connections::two_columns(left, right)).into_any_element()
     }
 
     /// Appearance's value and the menu it opens: System, Light, Dark.
@@ -448,40 +558,54 @@ impl Root {
             Some(DaemonState::Stopped) => Err("Service off".to_owned()),
             Some(DaemonState::Unknown(_)) => Err("Service unreachable".to_owned()),
         };
+        let word = |g: Glyph, text: String, color: gpui::Hsla| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .text_size(px(13.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(glyph(g, 14.0, color))
+                .child(text)
+        };
         let mut pills = div().flex().flex_wrap().items_center().gap(px(16.0));
         pills = if d.paired {
-            pills.child(kit::status_pill(Some(Glyph::Phone), format!("{} approves", d.phone()), Some(pal.success), pal))
+            pills.child(word(Glyph::ShieldCheck, format!("{} approves", d.phone()), pal.success))
         } else {
-            pills.child(kit::status_pill(Some(Glyph::Unlink), "Not paired", Some(pal.danger), pal))
+            pills.child(word(Glyph::Unlink, "Not paired".to_owned(), pal.danger))
         };
         pills = match service {
-            Ok(()) => pills.child(kit::status_pill(Some(Glyph::Server), "Service on", Some(pal.success), pal)),
-            Err(why) => pills.child(kit::status_pill(Some(Glyph::Server), why, Some(pal.danger), pal)).child(
+            Ok(()) => pills.child(word(Glyph::Server, "Service on".to_owned(), pal.success)),
+            Err(why) => pills.child(word(Glyph::Server, why, pal.danger)).child(
                 kit::button("start-service", kit::Look::Inverse, kit::Size::Small, None, "Start", pal)
                     .on_click(Self::on_model(cx, Model::start_service)),
             ),
         };
         let initial = account.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-        div()
+        let mut line = line;
+        if let Some(key) = key {
+            line = format!("{line} · {key}");
+        }
+        let card = div()
             .flex()
             .flex_wrap()
             .items_center()
             .gap(px(16.0))
-            .pb(px(20.0))
-            .border_b_1()
-            .border_color(pal.rule())
+            .px(px(20.0))
+            .py(px(18.0))
             .child(
                 div()
                     .flex()
                     .flex_none()
                     .items_center()
                     .justify_center()
-                    .size(px(56.0))
+                    .size(px(48.0))
                     .rounded_full()
-                    .bg(pal.paper_sunken())
-                    .font_family(DISPLAY)
-                    .text_size(px(30.0))
-                    .text_color(pal.ink())
+                    .bg(pal.success.opacity(0.16))
+                    .text_size(px(20.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(pal.success)
                     .child(initial),
             )
             .child(
@@ -492,18 +616,18 @@ impl Root {
                     .min_w(px(220.0))
                     .child(
                         div()
-                            .text_size(px(17.0))
-                            .line_height(px(22.0))
+                            .text_size(px(18.0))
+                            .line_height(px(23.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(pal.ink())
                             .truncate()
                             .child(account),
                     )
-                    .child(mono(line, 12.5).text_color(pal.ink_meta()))
-                    .when_some(key, |col, key| col.child(fingerprint_line(key, pal))),
+                    // The key compared when pairing stays whole: the line wraps rather than cutting it.
+                    .child(div().mt(px(2.0)).font_family(MONO).text_size(px(13.0)).text_color(pal.ink_meta()).child(line)),
             )
-            .child(pills)
-            .into_any_element()
+            .child(pills);
+        kit::pane(card, kit::Glass::Solid, kit::pane::RADIUS, pal)
     }
 }
 

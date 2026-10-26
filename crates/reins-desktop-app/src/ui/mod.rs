@@ -112,6 +112,9 @@ pub struct Root {
     presses: u64,
     /// Home's Health tile is open to its checks.
     health_open: bool,
+    /// Settings shows its Wallpaper page, for dark paper's wallpaper (else light's).
+    wallpaper_page: bool,
+    wallpaper_dark_slot: bool,
     /// The AI tool Connections shows on a page of its own.
     tool_page: Option<reins_desktop::harness::Harness>,
     /// The waiting request whose field Home hides (Hide on the field).
@@ -318,6 +321,9 @@ impl Root {
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
             hidden_ask: None,
+            // `REINS_DEMO_WALLPAPER=dark|light`: Settings' Wallpaper page, for that paper.
+            wallpaper_page: demo_var("REINS_DEMO_WALLPAPER").is_some(),
+            wallpaper_dark_slot: demo_var("REINS_DEMO_WALLPAPER").is_none_or(|v| v != "light"),
             // `REINS_DEMO_TOOL=<id>`: that AI tool's page under Connections.
             tool_page: demo_var("REINS_DEMO_TOOL").and_then(|id| {
                 use reins_desktop::harness::Harness;
@@ -502,6 +508,7 @@ impl Render for Root {
             self.help = None;
             self.filter_open = false;
             self.tool_page = None;
+            self.wallpaper_page = false;
         }
         // The tray's "Until I resume…": the pause sheet, there, to be held.
         if self.model.read(cx).pause_hold_asked {
