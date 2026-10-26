@@ -401,7 +401,10 @@ final class AutopilotUITests: XCTestCase {
         scrollTo("openTryIt")
         tap("openTryIt")
         waitFor("situation")
-        tap("example:Injection attempt")
+        // The examples scroll sideways: bring the fourth into view.
+        let injection = waitFor("example:Injection attempt")
+        for _ in 0..<3 where !injection.isHittable { waitFor("example:Push a branch").swipeLeft() }
+        injection.tap()
         tap("evaluate")
         waitFor("verdictWord", timeout: 8)
         text("Deny")

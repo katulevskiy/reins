@@ -152,7 +152,8 @@ struct GrantUseDots: View {
 /// summary is the core's; the split only sets the part after its last "from", "of", "in" or "to" in the target weight.
 enum GrantWords {
     static func runs(_ summary: String) -> [AskText.Run] {
-        let clean = untrusted(summary)
+        // One clean line: the summary carries the AI's parties.
+        let clean = untrustedName(summary, limit: 300)
         for word in [" from ", " of ", " in ", " to "] {
             if let r = clean.range(of: word, options: .backwards), r.upperBound < clean.endIndex {
                 return [AskText.Run(text: String(clean[..<r.upperBound])), AskText.Run(text: String(clean[r.upperBound...]), target: true)]
