@@ -83,9 +83,8 @@ final class SoundsScreenUITests: XCTestCase {
         app.swipeUp()
         app.buttons["try:Slider"].firstMatch.tap()
         shot("sounds-bottom")
-        app.swipeDown()
-        app.swipeDown()
-        app.swipeDown()
+        // Back to the top: the page runs longer than the screen.
+        for _ in 0..<6 where !master.isHittable { app.swipeDown() }
 
         flip("soundsMaster")
         XCTAssertFalse(toggle("haptics").isEnabled, "the master turns everything off")
