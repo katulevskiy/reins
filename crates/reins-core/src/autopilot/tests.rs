@@ -2099,6 +2099,43 @@ async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
     assert_eq!(env.decided().last().unwrap().0, "r5");
 }
 
+/// What the desktop app is told: who decided (inside the answer), Autopilot's confidence and reading, and counts of
+/// what the user did with similar requests, never their labels; and what Autopilot leans to for what waits.
+#[tokio::test]
+async fn the_answer_says_autopilot_decided_and_what_waits_says_where_it_leans() {
+    let env = env_risk().await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    assert_eq!(env.waiting().await, ["r1"], "a new recipient waits");
+    let told: Vec<Value> = env
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/reins/api/requests/r1/suggestion")
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    assert_eq!(told.len(), 1, "told once");
+    assert_eq!(told[0]["leaning"], "ask");
+    assert!(told[0]["confidence"].as_f64().unwrap() > 0.95, "{told:?}");
+    env.approve("r1").await;
+    assert!(env.answer("r1").await.unwrap().get("decided").is_none(), "the user's own answer");
+
+    env.relay("r2", OLD, email("friend@x.com", "hi again")).await;
+    let answer = env.answer("r2").await.expect("answered by Autopilot");
+    let decided = &answer["decided"];
+    assert_eq!(decided["by"], "autopilot", "{answer}");
+    assert!(decided["confidence"].as_f64().unwrap() > 0.5, "{answer}");
+    assert_eq!(decided["correctable"], true);
+    let reasons = decided["reasons"].as_array().unwrap();
+    assert!(!reasons.is_empty() && reasons.len() <= 3, "{answer}");
+    assert!(!decided.to_string().contains("friend@x.com"), "no label of another request: {decided}");
+    assert_eq!(reasons[0], "Looks routine (97% approve)", "built from numbers only");
+}
+
 #[tokio::test]
 async fn custom_thresholds_are_clamped_kept_and_used_by_auto() {
     // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)

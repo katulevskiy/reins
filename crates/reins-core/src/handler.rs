@@ -742,9 +742,12 @@ impl Engine {
     {
         // Every answer to a request goes through here: a phone that does not decide sends none.
         self.require_decider()?;
+        // Who decided, when the user did not (Autopilot, a bypass, Lockdown): the desktop app shows it. Inside the
+        // signed bytes.
         let response = RelayResponse {
             v: PROTOCOL_VERSION,
             outcome,
+            decided: crate::autopilot::context::told(),
         };
         // With a roster, the primary signs the answer's exact bytes (the server and desktops check it).
         let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;

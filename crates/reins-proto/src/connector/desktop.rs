@@ -16,6 +16,17 @@ pub const TOKEN_HOSTS: &[(&str, &str)] =
 pub const SESSION_OP: &str = "session";
 /// `desktop_session_end`: the session's permissions end now.
 pub const SESSION_END_OP: &str = "session_end";
+/// `desktop_autopilot_mode`: a change of the phone's global mode, asked from the desktop app. The phone applies what
+/// is stricter at once (Lockdown, a stricter mode, ending a bypass or Overnight) and asks its owner for anything looser.
+pub const AUTOPILOT_MODE_OP: &str = "autopilot_mode";
+/// The modes the desktop app may ask for: `stop` ends the running bypass or Overnight.
+pub const AUTOPILOT_MODES: &[&str] = &["manual", "auto", "lockdown", "bypass", "stop"];
+/// `desktop_autopilot_correct`: "This was wrong" for a request Autopilot decided. Teaching it to deny applies at once;
+/// teaching it to approve is asked.
+pub const AUTOPILOT_CORRECT_OP: &str = "autopilot_correct";
+/// The longest bypass the desktop app may ask for (a day; longer ones start on the phone).
+pub const MAX_DESKTOP_BYPASS_MINUTES: i64 = 24 * 60;
+
 /// The shortest and longest a work session may run.
 pub const MIN_SESSION_SECS: i64 = 15 * 60;
 pub const MAX_SESSION_SECS: i64 = 12 * 3_600;
@@ -155,6 +166,52 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             vec![list_p("grants", 50, 64, "The session's permission ids."), CLIENT_KEY, NONCE],
             None,
         )
+        .desktop(),
+    );
+    all.push(
+        tool(
+            "desktop_autopilot_mode",
+            DESKTOP,
+            AUTOPILOT_MODE_OP,
+            Effect::Write,
+            "Change Autopilot's mode",
+            "Set the phone's mode for every AI: Manual, Auto, Lockdown, a bypass for a while, or stop the bypass or \
+             Overnight that runs. What is stricter applies at once; anything looser is asked on the phone.",
+            vec![
+                choice_p("mode", AUTOPILOT_MODES, true, "The mode; `stop` ends the running bypass or Overnight."),
+                int_p(
+                    "minutes",
+                    1,
+                    MAX_DESKTOP_BYPASS_MINUTES,
+                    None,
+                    "How long a bypass lasts (1 minute to a day). Only with `bypass`.",
+                ),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            None,
+        )
+        .once()
+        .desktop(),
+    );
+    all.push(
+        tool(
+            "desktop_autopilot_correct",
+            DESKTOP,
+            AUTOPILOT_CORRECT_OP,
+            Effect::Write,
+            "Tell Autopilot it was wrong",
+            "\"This was wrong\" for a request of this computer that Autopilot decided: what it should have done. \
+             Teaching it to deny applies at once; teaching it to approve is asked on the phone.",
+            vec![
+                str_p("request_id", 100, true, "The request Autopilot decided."),
+                choice_p("should_have", &["approve", "deny"], true, "What it should have done."),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            None,
+        )
+        .once()
         .desktop(),
     );
     all.push(
