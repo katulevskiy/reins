@@ -327,6 +327,32 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertTrue(feedback.lastWas(.lockdownOff))
     }
 
+    func testLeavingLockdownWithoutTheOwnerIsRefused() async {
+        await start()
+        await ap.setMode(.lockdown)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        owner.answer = false
+        await ap.setMode(.manual)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown, "picking a mode is no way out of lockdown without the owner")
+        XCTAssertEqual(owner.asked, ["End lockdown"])
+        await ap.endLockdown()
+        XCTAssertEqual(model.autopilot?.mode, .lockdown, "nor is End")
+        owner.answer = true
+        await ap.setMode(.auto)
+        XCTAssertEqual(model.autopilot?.mode, .auto, "with the owner's check it ends")
+        XCTAssertEqual(owner.asked.count, 3, "one check per attempt, never two for one tap")
+    }
+
+    func testStartingBypassWithoutTheOwnerIsRefused() async {
+        await start()
+        owner.answer = false
+        await ap.startBypass(minutes: 15)
+        XCTAssertNotEqual(model.autopilot?.mode, .bypass)
+        await ap.setMode(.bypass, minutes: 15)
+        XCTAssertNotEqual(model.autopilot?.mode, .bypass, "setMode goes through the same check")
+        XCTAssertEqual(owner.asked.count, 2)
+    }
+
     func testWithoutTheModelTheModeIsManual() async {
         await start(modelInstalled: false)
         XCTAssertEqual(model.autopilot?.mode, .manual)
