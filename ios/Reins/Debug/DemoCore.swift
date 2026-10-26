@@ -172,6 +172,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.approvalElsewhere = approvalElsewhere
         s.passkeys = passkeys ? [Self.demoPasskey] : []
         s.passkeysOffline = passkeysOffline
+        // `-demoTemporary` (screenshots): one temporary permission for me@gmail.com, as the Permissions board shows it.
+        if ProcessInfo.processInfo.arguments.contains("-demoTemporary") {
+            s.delegationRecords = [DelegationView(
+                id: "temporary-0", revision: 1, title: "Selected agents", service: "gmail", account: "me@gmail.com", state: .active,
+                expiresAt: now + 86_400, agentIds: ["c1"],
+                rules: [CapabilityPermissionInput(capability: .mailSearch, mode: .auto, scope: PermissionScopeSelection(kind: .allInAccount, ids: []))],
+                used: 0, usageVerified: true, unresolved: 0, maxUses: 20, scopeSummary: "Search mail in this account, for Claude",
+                effectiveReason: "Explicit temporary permission", restrictions: []
+            )]
+        }
         // `-demoMode bypass|overnight|lockdown` (screenshots): start with that mode running, as if started 12 minutes ago.
         let args = ProcessInfo.processInfo.arguments
         if let i = args.firstIndex(of: "-demoMode"), i + 1 < args.count {

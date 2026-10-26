@@ -143,6 +143,7 @@ struct GrantDetailScreen: View {
                     Label { Text("Extend") } icon: { GlyphIcon(.timer, size: 18) }
                 }
                 .buttonStyle(SignalButtonLook(kind: .outline))
+                .frame(maxWidth: .infinity)
                 .frame(height: 54)
                 .disabled(busy)
                 .accessibilityIdentifier("extend")
@@ -150,7 +151,7 @@ struct GrantDetailScreen: View {
                 HoldButton(title: "Hold to end", busy: busy) {
                     run(leave: true) { await model.revokeGrant(grant.id) }
                 }
-                .layoutPriority(1)
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("revoke")
             } else {
                 Button {
@@ -205,7 +206,8 @@ enum GrantFactText {
     /// "Ends Oct 25, 3:50 PM", "Never ends on its own", "Expired Oct 25, 3:50 PM", "Used up".
     static func ends(_ g: GrantView) -> String {
         guard let end = g.expiresAt else { return g.active ? "Never ends on its own" : GrantText.inactiveWord(g) }
-        return "\(g.active ? "Ends" : GrantText.inactiveWord(g)) \(TimeText.dateTime(end))"
+        let when = Date(timeIntervalSince1970: TimeInterval(end)).formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        return "\(g.active ? "Ends" : GrantText.inactiveWord(g)) \(when)"
     }
 }
 
@@ -284,10 +286,10 @@ private struct GrantField: View {
                     }
                     .foregroundStyle(Palette.onField)
                 }
-                .padding(.top, 18)
+                .padding(.top, 10)
                 AskText(GrantWords.runs(grant.summary), role: .ask, lineLimit: 4)
                     .foregroundStyle(Palette.onField)
-                    .padding(.top, 8)
+                    .padding(.top, 2)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(untrusted(grant.summary))
                     .accessibilityAddTraits(.isHeader)

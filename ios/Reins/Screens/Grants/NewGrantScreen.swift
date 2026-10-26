@@ -203,7 +203,7 @@ struct NewGrantScreen: View {
                     model.back()
                     feedback.defaultTap()
                 } label: {
-                    GlyphIcon(.close, size: 18)
+                    GlyphIcon(.close, size: 18).foregroundStyle(Palette.ink)
                 }
                 .accessibilityLabel("Cancel")
                 .accessibilityIdentifier("cancelNewGrant")
