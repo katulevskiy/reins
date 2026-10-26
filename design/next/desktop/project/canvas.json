@@ -1,0 +1,141 @@
+{
+ "v": 3,
+ "attachments": {},
+ "boards": {
+  "DeskNext-System.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · System (the kit)",
+   "w": 2792,
+   "x": 0,
+   "y": 0
+  },
+  "DeskNext-Setup.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · First run",
+   "w": 5496,
+   "x": 2900,
+   "y": 0
+  },
+  "DeskNext-Home.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Home and Activity",
+   "w": 5496,
+   "x": 0,
+   "y": 1320
+  },
+  "DeskNext-Ask.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · The ask",
+   "w": 4144,
+   "x": 0,
+   "y": 2640
+  },
+  "DeskNext-Pushes.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Pushes and diffs",
+   "w": 2792,
+   "x": 4300,
+   "y": 2640
+  },
+  "DeskNext-Connections.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Connections",
+   "w": 2792,
+   "x": 0,
+   "y": 3960
+  },
+  "DeskNext-Keys.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Keys and Vault",
+   "w": 2792,
+   "x": 2900,
+   "y": 3960
+  },
+  "DeskNext-Secrets.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Secrets scan",
+   "w": 4144,
+   "x": 0,
+   "y": 5280
+  },
+  "DeskNext-Autopilot.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Autopilot, Try it",
+   "w": 2792,
+   "x": 4300,
+   "y": 5280
+  },
+  "DeskNext-Rules.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Rules and modes",
+   "w": 5496,
+   "x": 0,
+   "y": 6600
+  },
+  "DeskNext-Settings.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Settings",
+   "w": 4144,
+   "x": 0,
+   "y": 7920
+  },
+  "DeskNext-MenuBar.dc.html": {
+   "h": 1180,
+   "page": "desktop-next",
+   "title": "Desktop Next · Menu bar and notifications",
+   "w": 2792,
+   "x": 4300,
+   "y": 7920
+  }
+ },
+ "createdOnFiles": {
+  "at": "2026-10-26T01:15:00Z",
+  "v": 1
+ },
+ "designSystems": [
+  {
+   "artifact": "https://claude.ai/code/artifact/336b8153-91c6-46a7-8774-93804a84ac03",
+   "copiedAt": "2026-10-14T09:00:00Z",
+   "namespace": "reins-signal",
+   "title": "Reins Signal",
+   "version": "1791953950-6eea"
+  }
+ ],
+ "launch": {
+  "page": "iphone-next",
+  "view": "canvas"
+ },
+ "notes": {},
+ "order": [
+  "DeskNext-System.dc.html",
+  "DeskNext-Setup.dc.html",
+  "DeskNext-Home.dc.html",
+  "DeskNext-Ask.dc.html",
+  "DeskNext-Pushes.dc.html",
+  "DeskNext-Connections.dc.html",
+  "DeskNext-Keys.dc.html",
+  "DeskNext-Secrets.dc.html",
+  "DeskNext-Autopilot.dc.html",
+  "DeskNext-Rules.dc.html",
+  "DeskNext-Settings.dc.html",
+  "DeskNext-MenuBar.dc.html"
+ ],
+ "pages": [
+  {
+   "id": "desktop-next",
+   "name": "Desktop · Next"
+  }
+ ],
+ "title": "Reins: UI as built"
+}

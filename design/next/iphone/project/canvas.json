@@ -1,0 +1,259 @@
+{
+ "v": 3,
+ "attachments": {},
+ "boards": {
+  "Next-Activity.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Activity",
+   "w": 3330,
+   "x": 0,
+   "y": 3560
+  },
+  "Next-Approve.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Approve a push",
+   "w": 2400,
+   "x": 3920,
+   "y": 3560
+  },
+  "Next-Arrival.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Arrive",
+   "w": 2860,
+   "x": 0,
+   "y": 2200
+  },
+  "Next-Autopilot.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Autopilot",
+   "w": 4250,
+   "x": 0,
+   "y": 7640
+  },
+  "Next-Connect.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Pair and join",
+   "w": 2400,
+   "x": 3450,
+   "y": 4920
+  },
+  "Next-Connections.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Connections",
+   "w": 2860,
+   "x": 4450,
+   "y": 7640
+  },
+  "Next-Kinds.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Every kind of ask",
+   "w": 2860,
+   "x": 0,
+   "y": 4920
+  },
+  "Next-ModePick.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Mode picker, final",
+   "w": 2400,
+   "x": 3450,
+   "y": 0
+  },
+  "Next-More.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · More screens",
+   "w": 1960,
+   "x": 3450,
+   "y": 10360
+  },
+  "Next-Outside.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Outside the app",
+   "w": 2860,
+   "x": 0,
+   "y": 10360
+  },
+  "Next-Permissions.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Permissions",
+   "w": 2400,
+   "x": 3450,
+   "y": 6280
+  },
+  "Next-Proto.dc.html": {
+   "h": 1000,
+   "is_interactive": true,
+   "page": "iphone-next",
+   "title": "Next · Prototype, core loop",
+   "w": 1400,
+   "x": 3450,
+   "y": 11720
+  },
+  "Next-Running.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Running mode and the ask, immersive",
+   "w": 2680,
+   "x": 6050,
+   "y": 0
+  },
+  "Next-Settings.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Settings",
+   "w": 3790,
+   "x": 3450,
+   "y": 9000
+  },
+  "Next-Stress.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Stress test",
+   "w": 3330,
+   "x": 0,
+   "y": 11720
+  },
+  "Next-System.dc.html": {
+   "h": 1300,
+   "page": "iphone-next",
+   "title": "Next · System (the kit)",
+   "w": 3300,
+   "x": 0,
+   "y": 0
+  },
+  "Next-Tour.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Tour",
+   "w": 2400,
+   "x": 3450,
+   "y": 2200
+  },
+  "Next-Trust.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Trust and grants",
+   "w": 2400,
+   "x": 0,
+   "y": 6280
+  },
+  "Next-Type.dc.html": {
+   "h": 700,
+   "page": "iphone-next",
+   "title": "Next · Type (Sora)",
+   "w": 2180,
+   "x": 0,
+   "y": 1400
+  },
+  "Next-Vault.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Vault",
+   "w": 2400,
+   "x": 0,
+   "y": 9000
+  },
+  "Next-Wallpaper.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Activity with a wallpaper",
+   "w": 4710,
+   "x": 6107,
+   "y": 13217
+  },
+  "Next-Cyrillic.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Cyrillic for Sora, four options",
+   "w": 4250,
+   "x": 0,
+   "y": 13100
+  },
+  "Next-SE.dc.html": {
+   "h": 1060,
+   "page": "iphone-next",
+   "title": "Next · iPhone SE, chose B",
+   "w": 1960,
+   "x": 5000,
+   "y": 11720
+  },
+  "Next-AX.dc.html": {
+   "h": 1240,
+   "page": "iphone-next",
+   "title": "Next · Largest text",
+   "w": 1940,
+   "x": 7160,
+   "y": 11720
+  },
+  "Next-Flows.dc.html": {
+   "h": 6650,
+   "page": "iphone-next",
+   "title": "Next · User flows, scored",
+   "w": 2600,
+   "x": 9000,
+   "y": 0
+  }
+ },
+ "createdOnFiles": {
+  "at": "2026-10-26T01:15:00Z",
+  "v": 1
+ },
+ "designSystems": [
+  {
+   "artifact": "https://claude.ai/code/artifact/336b8153-91c6-46a7-8774-93804a84ac03",
+   "copiedAt": "2026-10-14T09:00:00Z",
+   "namespace": "reins-signal",
+   "title": "Reins Signal",
+   "version": "1791953950-6eea"
+  }
+ ],
+ "launch": {
+  "page": "iphone-next",
+  "view": "canvas"
+ },
+ "notes": {},
+ "order": [
+  "Next-Flows.dc.html",
+  "Next-System.dc.html",
+  "Next-ModePick.dc.html",
+  "Next-Running.dc.html",
+  "Next-Type.dc.html",
+  "Next-Cyrillic.dc.html",
+  "Next-Arrival.dc.html",
+  "Next-Tour.dc.html",
+  "Next-Activity.dc.html",
+  "Next-Approve.dc.html",
+  "Next-Kinds.dc.html",
+  "Next-Connect.dc.html",
+  "Next-Trust.dc.html",
+  "Next-Permissions.dc.html",
+  "Next-Autopilot.dc.html",
+  "Next-Connections.dc.html",
+  "Next-Vault.dc.html",
+  "Next-Settings.dc.html",
+  "Next-Outside.dc.html",
+  "Next-More.dc.html",
+  "Next-Wallpaper.dc.html",
+  "Next-Proto.dc.html",
+  "Next-Stress.dc.html",
+  "Next-SE.dc.html",
+  "Next-AX.dc.html"
+ ],
+ "pages": [
+  {
+   "id": "iphone-next",
+   "name": "iPhone · Next"
+  }
+ ],
+ "title": "Reins: UI as built"
+}
