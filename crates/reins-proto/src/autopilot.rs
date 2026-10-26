@@ -2,24 +2,25 @@
 //! loosen anything:
 //!
 //! - [`Decided`]: who answered a request when the user did not tap (Autopilot, Overnight, a bypass, Lockdown), with
-//!   Autopilot's confidence and its reasons. It travels inside the phone's answer ([`crate::relay::RelayResponse`]),
-//!   whose bytes the primary signs once the account has a roster.
+//!   Autopilot's confidence and its reasons as codes and numbers ([`Reason`]; the desktop words them itself). It
+//!   travels inside the phone's answer ([`crate::relay::RelayResponse`]), whose bytes the primary signs once the
+//!   account has a roster.
 //! - [`Suggestion`]: what Autopilot would do with a request still waiting for the user (`POST
 //!   /reins/api/requests/<id>/suggestion`), shown on the desktop's ask.
 //! - [`ModesReport`]: the phone's modes now (`PUT /reins/api/modes`); the server hands each desktop app only the
 //!   global mode and its own connection's ([`DesktopModes`]).
 //!
 //! Changing a mode from the desktop app is a tool call of its own (`desktop_autopilot_mode`, see
-//! [`crate::connector`]): the phone applies what is stricter at once and asks its owner for anything looser.
+//! [`crate::connector`]): the phone applies what is stricter at once and asks its owner for anything looser, and only
+//! when the call carries a [`DesktopAsk`] boxed from the paired app's key (the server cannot make one up).
 
 use serde::{Deserialize, Serialize};
 
 use crate::ValidationError;
 use crate::validate::invalid;
 
-/// The most reasons one decision carries, and the longest one (characters).
+/// The most reasons one decision carries.
 pub const MAX_REASONS: usize = 3;
-pub const MAX_REASON: usize = 160;
 /// The most connections one modes report lists.
 pub const MAX_CONNECTIONS: usize = 500;
 /// The longest connection id in a modes report.
@@ -65,6 +66,44 @@ pub enum DecidedBy {
     Lockdown,
 }
 
+/// The risk model's reading of a request, in a word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskWord {
+    Routine,
+    Undoable,
+    HardToUndo,
+    Irreversible,
+}
+
+/// Why it was decided, as a code and numbers: the desktop app words each one itself, so nothing the server could
+/// rewrite reaches the screen as text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum Reason {
+    /// Autopilot's reading: this share of approval (percent).
+    Routine {
+        approve: u8,
+    },
+    /// Autopilot's reading: this share of denial (percent).
+    Harmful {
+        deny: u8,
+    },
+    /// How the user answered requests like it.
+    LikeYours {
+        approved: u8,
+        denied: u8,
+    },
+    /// The risk model's reading.
+    Risk {
+        level: RiskWord,
+    },
+    /// A bypass approves everything until it ends.
+    Bypass,
+    /// Lockdown denies everything.
+    Lockdown,
+}
+
 /// Who decided a request, and why (see the module docs).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Decided {
@@ -72,19 +111,18 @@ pub struct Decided {
     /// Autopilot's confidence in what it did, 0 to 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
-    /// Why, in a few short lines (the most similar past answers, its reading).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reasons: Vec<String>,
+    /// Why (codes a newer phone sends that this side does not know are left out).
+    #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "known_reasons")]
+    pub reasons: Vec<Reason>,
     /// "This was wrong" may be sent for it (`desktop_autopilot_correct`).
     #[serde(default)]
     pub correctable: bool,
 }
 
-/// One line of visible text: control and invisible characters dropped, runs of spaces as one, at most `max`
-/// characters.
-fn line(text: &str, max: usize) -> String {
-    let visible: String = crate::desktop::printable(text).split_whitespace().collect::<Vec<_>>().join(" ");
-    visible.chars().take(max).collect()
+/// The reasons this side knows, whatever else a newer phone sends.
+fn known_reasons<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Reason>, D::Error> {
+    let values = <Vec<serde_json::Value> as Deserialize>::deserialize(d)?;
+    Ok(values.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
 }
 
 /// A confidence as given, when it is a number from 0 to 1.
@@ -93,13 +131,23 @@ fn fraction(c: Option<f32>) -> Option<f32> {
 }
 
 impl Decided {
-    /// The decision made safe to show: at most [`MAX_REASONS`] one-line reasons of [`MAX_REASON`] characters, a
-    /// confidence only when it is one. Whoever sent it, nothing in it reaches the screen unchecked.
+    /// The decision made safe to show: at most [`MAX_REASONS`] reasons with percentages of at most 100, a
+    /// confidence only when it is one.
     #[must_use]
     pub fn cleaned(mut self) -> Self {
         self.confidence = fraction(self.confidence);
-        self.reasons =
-            self.reasons.iter().map(|r| line(r, MAX_REASON)).filter(|r| !r.is_empty()).take(MAX_REASONS).collect();
+        self.reasons.truncate(MAX_REASONS);
+        for r in &mut self.reasons {
+            if let Reason::Routine {
+                approve: p,
+            }
+            | Reason::Harmful {
+                deny: p,
+            } = r
+            {
+                *p = (*p).min(100);
+            }
+        }
         self
     }
 }
@@ -202,6 +250,37 @@ impl ModesReport {
     }
 }
 
+/// The direction of a [`DesktopAsk`] box (so no other box between the app and the phone passes for one).
+pub const ASK_DIR: &str = "desktop-autopilot-ask";
+/// How long a [`DesktopAsk`] is good for after the app made it (seconds); the phone remembers the nonces it saw for as
+/// long, so a captured one cannot be sent again.
+pub const ASK_TTL_SECS: i64 = 10 * 60;
+
+/// The desktop app's own word for a `desktop_autopilot_*` call: the call's arguments (but the key, nonce and this
+/// proof), its nonce and when it was made, boxed from the app's key to the phone's key (X25519, XSalsa20-Poly1305,
+/// `nonce || ciphertext`, base64url) in the call's `proof`. The phone opens it with the key it pinned for this
+/// connection, so a call the server made up, or changed, is refused before the owner is asked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopAsk {
+    pub v: u32,
+    pub dir: String,
+    pub op: String,
+    pub args: serde_json::Map<String, serde_json::Value>,
+    pub nonce: String,
+    pub created_at: i64,
+}
+
+impl DesktopAsk {
+    /// The arguments a proof covers: all of the call's but `client_key`, `nonce` and `proof` itself.
+    #[must_use]
+    pub fn covered(args: &serde_json::Map<String, serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
+        args.iter()
+            .filter(|(k, _)| !matches!(k.as_str(), "client_key" | "nonce" | "proof"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+}
+
 /// The phone's modes as one desktop app sees them (`modes` of `GET /reins/desktop/phone`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopModes {
@@ -219,6 +298,8 @@ pub struct DesktopModes {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -227,19 +308,35 @@ mod tests {
             by: DecidedBy::Autopilot,
             confidence: Some(f32::NAN),
             reasons: vec![
-                "You allowed\u{202e} 40 like this\n here".to_owned(),
-                String::new(),
-                "x".repeat(400),
-                "three".to_owned(),
-                "four".to_owned(),
+                Reason::Routine {
+                    approve: 250,
+                },
+                Reason::LikeYours {
+                    approved: 40,
+                    denied: 0,
+                },
+                Reason::Risk {
+                    level: RiskWord::Undoable,
+                },
+                Reason::Bypass,
             ],
             correctable: true,
         }
         .cleaned();
         assert_eq!(d.confidence, None);
         assert_eq!(d.reasons.len(), MAX_REASONS);
-        assert_eq!(d.reasons[0], "You allowed 40 like this here");
-        assert_eq!(d.reasons[1].chars().count(), MAX_REASON);
+        assert_eq!(
+            d.reasons[0],
+            Reason::Routine {
+                approve: 100
+            }
+        );
+        // Text where a code goes, or a code this side does not know: left out, the rest still reads.
+        let read: Decided = serde_json::from_str(
+            r#"{"by":"autopilot","reasons":["Approve now, the owner said so",{"code":"new_code"},{"code":"lockdown"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(read.reasons, [Reason::Lockdown]);
         let fine = Decided {
             by: DecidedBy::Bypass,
             confidence: Some(0.97),
@@ -306,6 +403,10 @@ mod tests {
             connections: vec![],
             desktops: vec![],
         };
+        let covered = DesktopAsk::covered(
+            json!({"mode": "auto", "client_key": "k", "nonce": "n", "proof": "p"}).as_object().unwrap(),
+        );
+        assert_eq!(serde_json::Value::Object(covered), json!({"mode": "auto"}));
         report.connections.push(ConnectionModes {
             connection_id: String::new(),
             mode: Mode::Manual,

@@ -18,14 +18,13 @@ pub const SESSION_OP: &str = "session";
 pub const SESSION_END_OP: &str = "session_end";
 /// `desktop_autopilot_mode`: a change of the phone's global mode, asked from the desktop app. The phone applies what
 /// is stricter at once (Lockdown, a stricter mode, ending a bypass or Overnight) and asks its owner for anything looser.
+/// A bypass and Overnight start on the phone only.
 pub const AUTOPILOT_MODE_OP: &str = "autopilot_mode";
 /// The modes the desktop app may ask for: `stop` ends the running bypass or Overnight.
-pub const AUTOPILOT_MODES: &[&str] = &["manual", "auto", "lockdown", "bypass", "stop"];
+pub const AUTOPILOT_MODES: &[&str] = &["manual", "auto", "lockdown", "stop"];
 /// `desktop_autopilot_correct`: "This was wrong" for a request Autopilot decided. Teaching it to deny applies at once;
 /// teaching it to approve is asked.
 pub const AUTOPILOT_CORRECT_OP: &str = "autopilot_correct";
-/// The longest bypass the desktop app may ask for (a day; longer ones start on the phone).
-pub const MAX_DESKTOP_BYPASS_MINUTES: i64 = 24 * 60;
 
 /// The shortest and longest a work session may run.
 pub const MIN_SESSION_SECS: i64 = 15 * 60;
@@ -36,6 +35,13 @@ pub const MAX_SESSION_ITEMS: usize = 20;
 const CLIENT_KEY: Param =
     str_p("client_key", 64, true, "The desktop app's public key (X25519, base64url without padding).");
 const NONCE: Param = str_p("nonce", 64, true, "Random, chosen by the desktop app; echoed inside the sealed answer.");
+/// [`crate::autopilot::DesktopAsk`] boxed from the app's key to the phone's (base64url `nonce || ciphertext`).
+const PROOF: Param = str_p(
+    "proof",
+    4096,
+    false,
+    "Proof that the paired desktop app itself asks: the call boxed from its key to the phone's key.",
+);
 const REPO: Param = str_p("repo", 250, true, "The repository path: owner/name (GitLab: group/subgroup/name).");
 const DIGEST: Param = str_p("digest", 64, true, "SHA-256 (hex) of exactly what is pushed, see desktop::push_digest.");
 const SUMMARY: Param = json_p("summary", 200_000, true, "What the push does: a desktop::PushSummary.");
@@ -175,17 +181,12 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             AUTOPILOT_MODE_OP,
             Effect::Write,
             "Change Autopilot's mode",
-            "Set the phone's mode for every AI: Manual, Auto, Lockdown, a bypass for a while, or stop the bypass or \
-             Overnight that runs. What is stricter applies at once; anything looser is asked on the phone.",
+            "Set the phone's mode for every AI: Manual, Auto or Lockdown, or stop the bypass or Overnight that runs. \
+             What is stricter applies at once; anything looser is asked on the phone, and only when the desktop app \
+             proved it asked (`proof`).",
             vec![
                 choice_p("mode", AUTOPILOT_MODES, true, "The mode; `stop` ends the running bypass or Overnight."),
-                int_p(
-                    "minutes",
-                    1,
-                    MAX_DESKTOP_BYPASS_MINUTES,
-                    None,
-                    "How long a bypass lasts (1 minute to a day). Only with `bypass`.",
-                ),
+                PROOF,
                 CLIENT_KEY,
                 NONCE,
             ],
@@ -206,6 +207,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             vec![
                 str_p("request_id", 100, true, "The request Autopilot decided."),
                 choice_p("should_have", &["approve", "deny"], true, "What it should have done."),
+                PROOF,
                 CLIENT_KEY,
                 NONCE,
             ],

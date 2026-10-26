@@ -169,7 +169,10 @@ mod tests {
             decided: Some(crate::autopilot::Decided {
                 by: crate::autopilot::DecidedBy::Autopilot,
                 confidence: Some(0.96),
-                reasons: vec!["You denied 12 like this".into()],
+                reasons: vec![crate::autopilot::Reason::LikeYours {
+                    approved: 0,
+                    denied: 12,
+                }],
                 correctable: true,
             }),
         };

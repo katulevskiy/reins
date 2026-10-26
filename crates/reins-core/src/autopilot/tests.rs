@@ -2133,7 +2133,7 @@ async fn the_answer_says_autopilot_decided_and_what_waits_says_where_it_leans() 
     let reasons = decided["reasons"].as_array().unwrap();
     assert!(!reasons.is_empty() && reasons.len() <= 3, "{answer}");
     assert!(!decided.to_string().contains("friend@x.com"), "no label of another request: {decided}");
-    assert_eq!(reasons[0], "Looks routine (97% approve)", "built from numbers only");
+    assert_eq!(reasons[0], json!({"code": "routine", "approve": 97}), "codes and numbers only");
 }
 
 #[tokio::test]

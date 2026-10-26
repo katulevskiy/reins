@@ -2464,6 +2464,15 @@ impl Engine {
             let Some(_claim) = self.claim(&row.id) else {
                 continue;
             };
+            // A change of Autopilot a computer asked before the lockdown (waiting, so looser): denied with it. One asked
+            // after it waits for the owner (the way out of a lockdown is never decided by it).
+            if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+                let decision = Decision::new("lockdown", None);
+                if let (Err(e), _) = deciding(decision, Box::pin(self.deny_claimed(&row.id))).await {
+                    log::warn!("Lockdown could not deny a change of Autopilot asked before it: {e}");
+                }
+                continue;
+            }
             let base = self.store.ap_suggestion(&row.id).ok().flatten();
             let mut s = base.unwrap_or_else(|| Suggestion {
                 request_id: subject.id.clone(),

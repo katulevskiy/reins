@@ -282,9 +282,10 @@ impl Engine {
         }
 
         // A change of Autopilot from the computer: what the phone reads as stricter applies at once, never asked;
-        // anything looser parks below as the owner's question (`crate::autopilot::desktop`).
+        // anything looser parks below as the owner's question, and only with the app's own proof that it asked
+        // (`crate::autopilot::desktop`).
         if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
-            match self.desktop_autopilot_stricter(call) {
+            match self.desktop_autopilot_intake(&request.connection_id.0, call) {
                 Err(e) => return self.fail_connector(session, &request, call, &e).await,
                 Ok(false) => {}
                 Ok(true) => {

@@ -157,8 +157,10 @@ fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> A
 /// ([`read_ask`]). A hook's rule lines are not shown as part of the detail. `computer`: the paired computer's name, as
 /// the phone knows it (for the questions the phone words itself).
 pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
+    // A change of Autopilot is worded by the engine, from the phone's state when it is viewed
+    // (`Engine::desktop_autopilot_view`).
     if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
-        return autopilot_view(call, computer);
+        return None;
     }
     if call.service != DESKTOP || call.op != "ask" {
         return None;
@@ -188,26 +190,18 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
     })
 }
 
-/// A change of Autopilot asked from the computer, worded by the phone (never the computer's words): held to approve,
-/// asked every time ([`crate::autopilot::desktop`]).
-fn autopilot_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
-    use crate::autopilot::desktop::{correction, correction_question, mode_change, mode_question};
-    let (question, detail) = if call.op == reins_proto::connector::AUTOPILOT_MODE_OP {
-        mode_question(mode_change(call).ok()?, computer)
+/// A change of Autopilot asked from the computer, in a line (the preview's; the owner's question is worded from the
+/// phone's state when it is viewed).
+fn autopilot_line(call: &ConnectorCall) -> Option<String> {
+    use crate::autopilot::desktop::{ModeChange, correction, mode_change};
+    if call.op == reins_proto::connector::AUTOPILOT_MODE_OP {
+        Some(match mode_change(call).ok()? {
+            ModeChange::Set(mode) => format!("Autopilot: {}", mode.as_str()),
+            ModeChange::Stop => "Autopilot: stop the bypass or Overnight".to_owned(),
+        })
     } else {
-        correction_question(correction(call).ok()?.1, computer)
-    };
-    Some(AskView {
-        question,
-        detail: Some(detail),
-        topic: None,
-        rule: None,
-        uncertain: false,
-        destructive: true,
-        kind: None,
-        branch: None,
-        default_branch: None,
-    })
+        correction(call).ok().map(|_| "Autopilot: this was wrong".to_owned())
+    }
 }
 
 /// A built-in guard group's name (`env-files`: ".env files"), for Autopilot's kinds of question.
@@ -653,11 +647,11 @@ impl Connector for Desktop {
         if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
             client_key(call)?;
             nonce_arg(call)?;
-            let view = autopilot_view(call, "this computer").ok_or_else(|| bad("The change is malformed."))?;
+            let line = autopilot_line(call).ok_or_else(|| bad("The change is malformed."))?;
             return Ok(Preview {
                 resource: format!("autopilot:{}", call.op),
                 resource_label: "Autopilot".to_owned(),
-                lines: vec![view.question],
+                lines: vec![line],
                 once_only: true,
                 ..Preview::default()
             });

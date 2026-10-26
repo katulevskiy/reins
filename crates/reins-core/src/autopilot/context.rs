@@ -125,37 +125,45 @@ pub fn told() -> Option<reins_proto::autopilot::Decided> {
         .flatten()
 }
 
-/// Autopilot's reasons for the desktop app, built only from numbers and fixed words: the note's own `reason` can quote
-/// another request's label or what the risk model read in this one, so it never leaves the phone this way.
-fn reasons_of(by: reins_proto::autopilot::DecidedBy, n: &AuditAutopilot) -> Vec<String> {
+/// Autopilot's reasons for the desktop app, as codes and numbers only (the desktop words them): the note's own `reason`
+/// can quote another request's label or what the risk model read in this one, so it never leaves the phone this way.
+fn reasons_of(by: reins_proto::autopilot::DecidedBy, n: &AuditAutopilot) -> Vec<reins_proto::autopilot::Reason> {
     use crate::autopilot::{RiskLevel, Verdict};
-    use reins_proto::autopilot::DecidedBy;
-    let pct = |p: f32| (p.clamp(0.0, 1.0) * 100.0).round();
+    use reins_proto::autopilot::{DecidedBy, Reason, RiskWord};
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a percentage of a probability")]
+    let pct = |p: f32| (p.clamp(0.0, 1.0) * 100.0).round() as u8;
     let mut reasons = Vec::new();
     match (by, n.suggested) {
-        (DecidedBy::Bypass, _) => reasons.push("Bypass approves everything until it ends".to_owned()),
-        (DecidedBy::Lockdown, _) => reasons.push("Lockdown denies everything".to_owned()),
-        (_, Verdict::Approve) => reasons.push(format!("Looks routine ({}% approve)", pct(n.p_approve))),
-        (_, Verdict::Deny) => reasons.push(format!("Looks harmful ({}% deny)", pct(n.p_deny))),
+        (DecidedBy::Bypass, _) => reasons.push(Reason::Bypass),
+        (DecidedBy::Lockdown, _) => reasons.push(Reason::Lockdown),
+        (_, Verdict::Approve) => reasons.push(Reason::Routine {
+            approve: pct(n.p_approve),
+        }),
+        (_, Verdict::Deny) => reasons.push(Reason::Harmful {
+            deny: pct(n.p_deny),
+        }),
         (_, Verdict::Ask) => {}
     }
-    let said = |verb: &str| n.neighbours.iter().filter(|l| l.starts_with(&format!("{verb}:"))).count();
-    match (said("approved"), said("denied")) {
-        (0, 0) => {}
-        (a, 0) => reasons.push(format!("You approved {a} like it")),
-        (0, d) => reasons.push(format!("You denied {d} like it")),
-        (a, d) => reasons.push(format!("You approved {a} and denied {d} like it")),
+    let said = |verb: &str| {
+        let count = n.neighbours.iter().filter(|l| l.starts_with(&format!("{verb}:"))).count();
+        u8::try_from(count).unwrap_or(u8::MAX)
+    };
+    let (approved, denied) = (said("approved"), said("denied"));
+    if approved > 0 || denied > 0 {
+        reasons.push(Reason::LikeYours {
+            approved,
+            denied,
+        });
     }
     if let Some(risk) = &n.risk {
-        reasons.push(
-            match risk.level {
-                RiskLevel::Benign => "Risk: routine",
-                RiskLevel::Risky => "Risk: easily undone",
-                RiskLevel::Severe => "Risk: hard to undo",
-                RiskLevel::Catastrophic => "Risk: irreversible",
-            }
-            .to_owned(),
-        );
+        reasons.push(Reason::Risk {
+            level: match risk.level {
+                RiskLevel::Benign => RiskWord::Routine,
+                RiskLevel::Risky => RiskWord::Undoable,
+                RiskLevel::Severe => RiskWord::HardToUndo,
+                RiskLevel::Catastrophic => RiskWord::Irreversible,
+            },
+        });
     }
     reasons
 }
