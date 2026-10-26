@@ -209,6 +209,12 @@ fn connector(call: &ConnectorCall, cx: &Context) -> RequestLabel {
             label(DESKTOP, "grant", "Start a work session:", line(call.str_arg("reason").unwrap_or_default()), false)
         }
         (DESKTOP, reins_proto::connector::SESSION_END_OP) => label(DESKTOP, "grant", "End a work session", "", false),
+        (DESKTOP, reins_proto::connector::AUTOPILOT_MODE_OP) => {
+            label(DESKTOP, "grant", "Change Autopilot's mode", "", false)
+        }
+        (DESKTOP, reins_proto::connector::AUTOPILOT_CORRECT_OP) => {
+            label(DESKTOP, "grant", "Correct Autopilot", "", false)
+        }
         (VAULT, "secret_release") => {
             let n = call.args.get("secrets").and_then(Value::as_array).map_or(0, Vec::len);
             let command = line(call.str_arg("command").unwrap_or_default());

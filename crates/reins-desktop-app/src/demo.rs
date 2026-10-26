@@ -11,7 +11,7 @@ use std::sync::Arc;
 use reins_desktop::api_proxy::ApiConfig;
 use reins_desktop::control::{ApiInfo, SshKeyInfo};
 use reins_desktop::harness::Harness;
-use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
+use reins_desktop::journal::{Attribution, Decider, Entry, Kind, Lean, Outcome};
 use reins_desktop::pushes::{CommitInfo, FileChange, FileStatus, Push, PushSummary, RefChange, RefUpdate};
 use reins_desktop::run::Profile;
 use reins_desktop::secrets_import::{Change, Done, Existing, Moved, Receipt, VaultProject};
@@ -20,6 +20,7 @@ use reins_desktop::secrets_scan::{
 };
 use reins_desktop::stats::Connection;
 use reins_desktop::work_session::{Request, Session};
+use reins_proto::autopilot::{DecidedBy, Leaning, Reason, RiskWord};
 
 use crate::backend::{DaemonState, Snapshot};
 
@@ -104,6 +105,9 @@ const WAITING_PUSH: Sample = (
     0,
 );
 
+/// The sample Autopilot decided (the approved recursive delete).
+const AUTO_SAMPLE: usize = 2;
+
 const SAMPLES: &[Sample] = &[
     (
         40,
@@ -142,7 +146,7 @@ const SAMPLES: &[Sample] = &[
         Outcome::Approved,
         Decider::Phone,
         None,
-        2,
+        0,
     ),
     (
         23 * 60,
@@ -360,6 +364,29 @@ impl Demo {
                     outcome,
                     reason: reason.map(str::to_owned),
                     ended_at: (!outcome.open()).then_some(at + took),
+                    request_id: Some(format!("demo-request-{i}")),
+                    // The recursive delete was Autopilot's; it leaves the force push waiting to the user.
+                    autopilot: (i == AUTO_SAMPLE).then(|| Attribution {
+                        by: DecidedBy::Autopilot,
+                        confidence: Some(95),
+                        reasons: vec![
+                            Reason::Routine {
+                                approve: 96,
+                            },
+                            Reason::LikeYours {
+                                approved: 40,
+                                denied: 0,
+                            },
+                            Reason::Risk {
+                                level: RiskWord::Undoable,
+                            },
+                        ],
+                        correctable: true,
+                    }),
+                    leaning: (outcome == Outcome::Waiting).then_some(Lean {
+                        leaning: Leaning::Ask,
+                        confidence: 71,
+                    }),
                 }
             })
             .collect()
@@ -382,6 +409,21 @@ impl Demo {
             c("git", "github.com/acme/api", 5, 2 * 3_600, "read"),
             c("git", "github.com/acme/design-system", 1, 5 * 3_600, "read"),
         ]
+    }
+
+    /// The vault's item names, as the phone would give them.
+    #[must_use]
+    pub fn vault_names() -> Vec<(String, String)> {
+        [
+            ("AWS deploy", "login"),
+            ("Anthropic", "login"),
+            ("OpenAI", "login"),
+            ("Prod DB", "login"),
+            ("Recovery codes", "note"),
+        ]
+        .into_iter()
+        .map(|(n, k)| (n.to_owned(), k.to_owned()))
+        .collect()
     }
 
     #[must_use]

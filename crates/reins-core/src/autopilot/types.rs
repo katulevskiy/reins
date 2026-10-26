@@ -33,6 +33,19 @@ pub enum AutopilotMode {
 }
 
 impl AutopilotMode {
+    /// The mode as the desktop apps are told it.
+    #[must_use]
+    pub fn wire(self) -> reins_proto::autopilot::Mode {
+        use reins_proto::autopilot::Mode;
+        match self {
+            Self::Manual => Mode::Manual,
+            Self::Auto => Mode::Auto,
+            Self::Overnight => Mode::Overnight,
+            Self::Bypass => Mode::Bypass,
+            Self::Lockdown => Mode::Lockdown,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",

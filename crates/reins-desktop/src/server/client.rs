@@ -17,7 +17,7 @@ use crate::config::Paths;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(75);
 const MAX_ANSWER_BYTES: usize = 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CallStatus {
     /// The phone answered (a result, a denial or an error).
     Answered(RelayOutcome),
@@ -27,10 +27,14 @@ pub enum CallStatus {
     Offline,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CallAnswer {
     pub request_id: String,
     pub status: CallStatus,
+    /// Who decided an answered call when the user did not (a newer phone and server say).
+    pub decided: Option<reins_proto::autopilot::Decided>,
+    /// Where Autopilot leans on a call that waits (a newer phone and server say).
+    pub suggestion: Option<reins_proto::autopilot::Suggestion>,
 }
 
 /// When the approval phone last polled the server, and the server's clock.
@@ -47,6 +51,16 @@ pub struct PhoneSeen {
     /// (`reins_proto::device::SealedName`); `None`: none, or an older server.
     #[serde(default)]
     pub sealed_name: Option<String>,
+    /// The phone's Autopilot modes as this computer is shown them; `None`: not reported yet, an older server, or a
+    /// shape this app does not know.
+    #[serde(default, deserialize_with = "lenient")]
+    pub modes: Option<reins_proto::autopilot::DesktopModes>,
+}
+
+/// A field a newer server may send in a shape this app does not know: read as absent, never failing the answer.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> Result<Option<T>, D::Error> {
+    let value = <Value as Deserialize>::deserialize(d)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 pub struct DesktopClient {
@@ -95,6 +109,15 @@ impl DesktopClient {
         self.send(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}"))).await
     }
 
+    /// Where an earlier call stands now, without waiting (and without telling the call being asked on this task):
+    /// for the app, which keeps where Autopilot leans and why in memory only.
+    pub async fn peek(&self, request_id: &str) -> Result<CallAnswer, LinkError> {
+        let id: String = url::form_urlencoded::byte_serialize(request_id.as_bytes()).collect();
+        parse_answer(
+            &self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}?peek=true"))).await?,
+        )
+    }
+
     /// When the approval phone last asked the server for work. `LinkError::NotFound` from a server too old to say.
     pub async fn phone(&self) -> Result<PhoneSeen, LinkError> {
         let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/phone"))).await?;
@@ -121,7 +144,9 @@ impl DesktopClient {
     }
 
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {
-        parse_answer(&self.send_raw(build).await?)
+        let answer = parse_answer(&self.send_raw(build).await?)?;
+        crate::told::hear(&answer);
+        Ok(answer)
     }
 
     /// Sends with the access token; on 401 renews the token and tries once more. The body of a successful answer.
@@ -172,6 +197,10 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
         status: String,
         #[serde(default)]
         outcome: Option<Value>,
+        #[serde(default, deserialize_with = "lenient")]
+        decided: Option<reins_proto::autopilot::Decided>,
+        #[serde(default, deserialize_with = "lenient")]
+        suggestion: Option<reins_proto::autopilot::Suggestion>,
     }
     let bad = |why: String| LinkError::Failed(format!("unexpected answer from the Reins server: {why}"));
     let w: Wire = serde_json::from_slice(body).map_err(|e| bad(e.to_string()))?;
@@ -186,9 +215,12 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
         ("offline", _) => CallStatus::Offline,
         (other, _) => return Err(bad(format!("status `{other}`"))),
     };
+    let answered = matches!(status, CallStatus::Answered(_));
     Ok(CallAnswer {
         request_id: w.request_id,
         status,
+        decided: w.decided.filter(|_| answered).map(reins_proto::autopilot::Decided::cleaned),
+        suggestion: w.suggestion.filter(|s| !answered && s.check().is_ok()),
     })
 }
 
@@ -233,5 +265,42 @@ mod tests {
         ] {
             assert!(matches!(parse_answer(bad), Err(LinkError::Failed(_))), "{}", String::from_utf8_lossy(bad));
         }
+    }
+
+    #[test]
+    fn who_decided_and_the_leaning_are_read_when_they_fit_and_never_fail_an_answer() {
+        let a = parse_answer(
+            br#"{"request_id":"r1","status":"answered","outcome":{"outcome":"denied","reason":null},
+                "decided":{"by":"lockdown","correctable":false,"reasons":["Lockdown\u0007 denies",{"code":"lockdown"}]}}"#,
+        )
+        .unwrap();
+        let d = a.decided.unwrap();
+        assert_eq!(
+            (d.by, d.reasons),
+            (reins_proto::autopilot::DecidedBy::Lockdown, vec![reins_proto::autopilot::Reason::Lockdown]),
+            "text is never a reason"
+        );
+        let p = parse_answer(
+            br#"{"request_id":"r2","status":"pending","suggestion":{"v":1,"leaning":"deny","confidence":0.8}}"#,
+        )
+        .unwrap();
+        assert_eq!(p.suggestion.unwrap().leaning, reins_proto::autopilot::Leaning::Deny);
+        // A shape this app does not know, or a leaning out of range: the answer still reads, without it.
+        let odd = parse_answer(
+            br#"{"request_id":"r3","status":"pending","suggestion":{"v":1,"leaning":"shrug","confidence":0.8},
+                "decided":{"by":"someone"}}"#,
+        )
+        .unwrap();
+        assert_eq!((odd.status, odd.suggestion, odd.decided), (CallStatus::Pending, None, None));
+        let out = parse_answer(
+            br#"{"request_id":"r4","status":"pending","suggestion":{"v":1,"leaning":"deny","confidence":4}}"#,
+        )
+        .unwrap();
+        assert_eq!(out.suggestion, None);
+        let seen: PhoneSeen = serde_json::from_str(
+            r#"{"last_seen":1,"server_time":2,"modes":{"mode":"warp","global":"auto","base":"auto","reported_at":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(seen.modes, None, "a mode this app does not know");
     }
 }

@@ -28,9 +28,55 @@ impl Look {
 
 use crate::pause::PauseFor;
 
+/// A mode running on the phone: the icon takes its colour (and its clock goes beside it), unless something waits or
+/// Reins needs the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeLook {
+    Bypass,
+    Overnight,
+    Lockdown,
+}
+
+/// A change of the phone's mode from the menu: a request to the phone, like the window's picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeAct {
+    Manual,
+    Auto,
+    Lockdown,
+    /// Ends the running bypass or Overnight.
+    Stop,
+}
+
+impl ModeAct {
+    pub const ALL: [Self; 4] = [Self::Manual, Self::Auto, Self::Lockdown, Self::Stop];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Manual => "mode-manual",
+            Self::Auto => "mode-auto",
+            Self::Lockdown => "mode-lockdown",
+            Self::Stop => "mode-stop",
+        }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "Manual",
+            Self::Auto => "Auto",
+            Self::Lockdown => "Lockdown",
+            Self::Stop => "Stop bypass or Overnight",
+        }
+    }
+}
+
+/// The modes submenu's title.
+const MODE_MENU: &str = "Phone mode";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Status,
+    Mode(ModeAct),
     Pause(PauseFor),
     Resume,
     /// Ends the running work session.
@@ -46,11 +92,13 @@ impl Action {
         [Self::Status, Self::Resume, Self::EndSession, Self::Open, Self::Quit]
             .into_iter()
             .chain(PauseFor::ALL.into_iter().map(Self::Pause))
+            .chain(ModeAct::ALL.into_iter().map(Self::Mode))
     }
 
     fn id(self) -> &'static str {
         match self {
             Self::Status => "status",
+            Self::Mode(m) => m.id(),
             Self::Pause(length) => length.id(),
             Self::Resume => "resume",
             Self::EndSession => "end-session",
@@ -91,6 +139,7 @@ pub fn status_lines(look: Look, status: String, phone: &str, pause_left: Option<
 
 /// What the tray shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent menu items enabled or not")]
 pub struct Shown {
     pub look: Look,
     /// Beside the icon, where the platform shows one (macOS): how many wait, a pause's clock.
@@ -103,6 +152,11 @@ pub struct Shown {
     pub can_resume: bool,
     /// A work session runs: "End work session" ends it.
     pub can_end: bool,
+    /// A mode running on the phone (its colour), and whether the modes menu works (paired, nothing asked yet) and
+    /// Stop does (a bypass or Overnight runs).
+    pub mode: Option<ModeLook>,
+    pub can_mode: bool,
+    pub can_stop: bool,
 }
 
 /// The icon's pixels: RGBA, `width` by `height`.
@@ -140,6 +194,34 @@ fn templated(look: Look) -> bool {
     look == Look::On
 }
 
+/// The icon `shown` wears: a running mode's colour over the calm and paused ones; what waits and what needs the user
+/// keep theirs.
+fn icon_of(shown: &Shown) -> Result<Pixels, String> {
+    match (shown.look, shown.mode) {
+        (Look::On | Look::Paused, Some(mode)) => mode_pixels(mode),
+        (look, _) => pixels(look),
+    }
+}
+
+/// Whether `shown`'s icon is the template image.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn templated_shown(shown: &Shown) -> bool {
+    templated(shown.look) && shown.mode.is_none()
+}
+
+/// A running mode's icon: the shield on its field's colour.
+fn mode_pixels(mode: ModeLook) -> Result<Pixels, String> {
+    let bytes: &[u8] = match (cfg!(target_os = "macos"), mode) {
+        (true, ModeLook::Bypass) => include_bytes!("../assets/icons/tray-bypass.png"),
+        (true, ModeLook::Overnight) => include_bytes!("../assets/icons/tray-overnight.png"),
+        (true, ModeLook::Lockdown) => include_bytes!("../assets/icons/tray-lockdown.png"),
+        (false, ModeLook::Bypass) => include_bytes!("../assets/icons/tray-color-bypass.png"),
+        (false, ModeLook::Overnight) => include_bytes!("../assets/icons/tray-color-overnight.png"),
+        (false, ModeLook::Lockdown) => include_bytes!("../assets/icons/tray-color-lockdown.png"),
+    };
+    decode(bytes)
+}
+
 /// The icon for `look`: on macOS the menu bar's size (the ink shield a template image, the rest coloured plates), the
 /// tray's elsewhere.
 fn pixels(look: Look) -> Result<Pixels, String> {
@@ -164,10 +246,12 @@ mod imp {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-    use super::{Action, END_SESSION, Look, PAUSE_MENU, PauseFor, Shown, pixels};
+    use super::{Action, END_SESSION, Look, MODE_MENU, ModeAct, PAUSE_MENU, PauseFor, Shown, icon_of, pixels};
 
     pub struct Tray {
         icon: TrayIcon,
+        modes: Submenu,
+        stop: MenuItem,
         status: MenuItem,
         detail: MenuItem,
         pause: Submenu,
@@ -178,6 +262,11 @@ mod imp {
 
     fn icon(look: Look) -> Result<Icon, String> {
         let p = pixels(look)?;
+        Icon::from_rgba(p.rgba, p.width, p.height).map_err(|e| e.to_string())
+    }
+
+    fn icon_for(shown: &Shown) -> Result<Icon, String> {
+        let p = icon_of(shown)?;
         Icon::from_rgba(p.rgba, p.width, p.height).map_err(|e| e.to_string())
     }
 
@@ -195,6 +284,12 @@ mod imp {
                 &[&quarter, &hour, &four, &day, &PredefinedMenuItem::separator(), &manual],
             )
             .map_err(|e| e.to_string())?;
+            let [manual, auto, lockdown] = [ModeAct::Manual, ModeAct::Auto, ModeAct::Lockdown]
+                .map(|m| MenuItem::with_id(Action::Mode(m).id(), m.label(), true, None));
+            let stop = MenuItem::with_id(Action::Mode(ModeAct::Stop).id(), ModeAct::Stop.label(), false, None);
+            let modes =
+                Submenu::with_items(MODE_MENU, false, &[&manual, &auto, &PredefinedMenuItem::separator(), &lockdown])
+                    .map_err(|e| e.to_string())?;
             let resume = MenuItem::with_id(Action::Resume.id(), "Resume", false, None);
             let end = MenuItem::with_id(Action::EndSession.id(), END_SESSION, false, None);
             let open = MenuItem::with_id(Action::Open.id(), "Open Reins", true, None);
@@ -203,6 +298,9 @@ mod imp {
             menu.append_items(&[
                 &status,
                 &detail,
+                &PredefinedMenuItem::separator(),
+                &modes,
+                &stop,
                 &PredefinedMenuItem::separator(),
                 &pause,
                 &resume,
@@ -223,6 +321,8 @@ mod imp {
             let icon = builder.build().map_err(|e| e.to_string())?;
             Ok(Self {
                 icon,
+                modes,
+                stop,
                 status,
                 detail,
                 pause,
@@ -236,13 +336,13 @@ mod imp {
             if self.shown.as_ref() == Some(shown) {
                 return;
             }
-            if self.shown.as_ref().is_none_or(|s| s.look != shown.look) {
-                match icon(shown.look) {
+            if self.shown.as_ref().is_none_or(|s| (s.look, s.mode) != (shown.look, shown.mode)) {
+                match icon_for(shown) {
                     Ok(i) => {
                         // The ink shield is a template image on macOS (the menu bar colours it); the coloured
                         // states are drawn as they are.
                         #[cfg(target_os = "macos")]
-                        let set = if super::templated(shown.look) {
+                        let set = if super::templated_shown(shown) {
                             self.icon.set_icon_templated(Some(i))
                         } else {
                             self.icon.set_icon(Some(i))
@@ -263,6 +363,8 @@ mod imp {
             self.pause.set_enabled(shown.can_pause);
             self.resume.set_enabled(shown.can_resume);
             self.end.set_enabled(shown.can_end);
+            self.modes.set_enabled(shown.can_mode);
+            self.stop.set_enabled(shown.can_stop);
             if let Err(e) = self.icon.set_tooltip(Some(format!("Reins: {}", shown.status))) {
                 log::warn!("tray tooltip: {e}");
             }
@@ -276,7 +378,7 @@ mod imp {
     use futures::channel::mpsc::UnboundedSender;
     use ksni::TrayMethods as _;
 
-    use super::{Action, END_SESSION, Look, PAUSE_MENU, PauseFor, Shown, pixels};
+    use super::{Action, END_SESSION, Look, MODE_MENU, ModeAct, PAUSE_MENU, PauseFor, Shown, icon_of};
 
     struct Item {
         shown: Shown,
@@ -299,7 +401,7 @@ mod imp {
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-            match pixels(self.shown.look) {
+            match icon_of(&self.shown) {
                 // StatusNotifierItem wants ARGB32 in network byte order.
                 Ok(p) => vec![ksni::Icon {
                     width: i32::try_from(p.width).unwrap_or(0),
@@ -353,6 +455,20 @@ mod imp {
                 .into(),
                 ksni::MenuItem::Separator,
                 SubMenu {
+                    label: MODE_MENU.to_owned(),
+                    enabled: self.shown.can_mode,
+                    submenu: vec![
+                        item(ModeAct::Manual.label(), Action::Mode(ModeAct::Manual), true),
+                        item(ModeAct::Auto.label(), Action::Mode(ModeAct::Auto), true),
+                        ksni::MenuItem::Separator,
+                        item(ModeAct::Lockdown.label(), Action::Mode(ModeAct::Lockdown), true),
+                    ],
+                    ..SubMenu::default()
+                }
+                .into(),
+                item(ModeAct::Stop.label(), Action::Mode(ModeAct::Stop), self.shown.can_stop),
+                ksni::MenuItem::Separator,
+                SubMenu {
                     label: PAUSE_MENU.to_owned(),
                     enabled: self.shown.can_pause,
                     submenu: lengths,
@@ -385,6 +501,9 @@ mod imp {
                     can_pause: false,
                     can_resume: false,
                     can_end: false,
+                    mode: None,
+                    can_mode: false,
+                    can_stop: false,
                 },
                 actions,
             };
@@ -479,6 +598,33 @@ mod tests {
     }
 
     #[test]
+    fn a_running_mode_colours_the_icon_unless_something_needs_the_user() {
+        let shown = |look, mode| Shown {
+            look,
+            title: None,
+            status: String::new(),
+            detail: String::new(),
+            can_pause: false,
+            can_resume: false,
+            can_end: false,
+            mode,
+            can_mode: true,
+            can_stop: false,
+        };
+        let bypass = icon_of(&shown(Look::On, Some(ModeLook::Bypass))).unwrap();
+        assert_ne!(bypass.rgba, pixels(Look::On).unwrap().rgba);
+        assert!(!templated_shown(&shown(Look::On, Some(ModeLook::Bypass))));
+        assert!(templated_shown(&shown(Look::On, None)));
+        let waiting = icon_of(&shown(Look::Waiting, Some(ModeLook::Lockdown))).unwrap();
+        assert_eq!(waiting.rgba, pixels(Look::Waiting).unwrap().rgba, "what waits keeps its colour");
+        for mode in [ModeLook::Bypass, ModeLook::Overnight, ModeLook::Lockdown] {
+            let p = mode_pixels(mode).unwrap();
+            assert_eq!(p.width, pixels(Look::On).unwrap().width);
+            assert!(p.rgba.chunks(4).any(|c| c[3] == 255 && c[..3] != [0, 0, 0]));
+        }
+    }
+
+    #[test]
     fn the_status_says_two_lines() {
         let two = |look, status: &str, left: Option<&str>| {
             status_lines(look, status.to_owned(), "Dana's iPhone", left.map(str::to_owned))
@@ -503,7 +649,7 @@ mod tests {
     #[test]
     fn menu_ids_round_trip() {
         let all: Vec<Action> = Action::all().collect();
-        assert_eq!(all.len(), 5 + PauseFor::ALL.len());
+        assert_eq!(all.len(), 5 + PauseFor::ALL.len() + ModeAct::ALL.len());
         for a in all {
             assert_eq!(Action::from_id(a.id()), Some(a));
         }

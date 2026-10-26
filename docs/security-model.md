@@ -384,6 +384,22 @@ open them. It still cannot get anything you do not approve on the phone. It does
 you gave the desktop connection, and it could approve local-mode prompts through the control API. For full
 separation, run the daemon as its own OS user and keep the agent from reading that user's files.
 
+**Autopilot on the desktop.** The desktop app shows who decided a request (Autopilot, Overnight, a bypass,
+Lockdown), Autopilot's confidence and reasons, and, while a request waits, which way Autopilot leans. Only who decided is
+written to the activity log (`activity.jsonl`). The leaning, the confidence and the reasons are kept in the app's
+memory, asked of the server without waiting. An AI that tails the log therefore does not learn how close its asks
+come to being let through. This is not a wall against a same-user agent, which can read the app's session (above) and
+ask the server for the same as the app. The server shows these only to the connections the phone paired as desktop
+apps, never to an AI's own connection.
+
+A change of Autopilot's mode asked from the desktop app is applied at once only when it makes Reins stricter. Anything
+looser (Auto, leaving Lockdown, "This was wrong" towards approving) needs two things:
+- the app's own proof of the call, boxed from its key to the phone key it pinned, so the server can neither make one up
+  nor send one twice;
+- the owner's approval on the phone, held, with the phone's owner check.
+
+A bypass and Overnight start on the phone only.
+
 **Who runs a command** (Reins Secrets). The daemon tells a person from an AI agent by the process that asks it
 (`reins run` connects to a socket only this user can open; the daemon reads the caller's process id from it) and that
 process's ancestors: a known agent harness among them makes it that agent, and what the caller says can only make it an

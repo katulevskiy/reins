@@ -6,6 +6,7 @@
 //! `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
+mod autopilot;
 mod connections;
 mod diff;
 mod field;
@@ -104,6 +105,8 @@ pub struct Root {
     /// across its refs).
     commits_open: BTreeSet<usize>,
     files_open: BTreeSet<(usize, usize)>,
+    /// The sidebar's "For a while" menu is open.
+    while_open: bool,
     /// The "Pause git" sheet is open, and the length picked in it.
     pause_sheet: bool,
     pause_choice: PauseFor,
@@ -180,6 +183,15 @@ struct Data {
     /// This computer's own name, and the one the user gave it on the phone (which the phone shows instead).
     shown_as: String,
     phone_name: Option<String>,
+    /// The phone's modes as this computer is shown them, a change asked of it, and "This was wrong" sent and being
+    /// sent (by request id).
+    modes: Option<reins_proto::autopilot::DesktopModes>,
+    mode_asked: Option<reins_desktop::autopilot::ModeChoice>,
+    /// The vault's item names as the phone gave them, and whether they are being asked for.
+    vault_names: Option<Vec<(String, String)>>,
+    vault_asking: bool,
+    corrected: std::collections::HashSet<String>,
+    correcting: Option<String>,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -216,6 +228,12 @@ impl Data {
             machine: m.machine.clone(),
             shown_as: m.shown_as.clone(),
             phone_name: m.phone_name.clone(),
+            modes: m.modes,
+            mode_asked: m.mode_asked,
+            vault_names: m.vault_names.clone(),
+            vault_asking: m.vault_asking,
+            corrected: m.corrected.clone(),
+            correcting: m.correcting.clone(),
             demo: m.demo(),
             gallery: false,
         }
@@ -313,6 +331,7 @@ impl Root {
                 .and_then(|d| d.split_once(':').and_then(|(c, f)| Some((c.parse().ok()?, f.parse().ok()?))))
                 .into_iter()
                 .collect(),
+            while_open: demo_var("REINS_DEMO_WHILE").is_some(),
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
                 PauseFor::Manual
@@ -390,6 +409,7 @@ impl Root {
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
                 let open = self.pause_sheet
+                    || self.while_open
                     || self.filter_open
                     || self.appearance_open
                     || self.help.is_some()
@@ -403,6 +423,7 @@ impl Root {
                     });
                 }
                 self.pause_sheet = false;
+                self.while_open = false;
                 self.filter_open = false;
                 self.appearance_open = false;
                 self.help = None;
@@ -489,13 +510,16 @@ impl Root {
                 Section::Settings => scroll(id, self.settings(d, pal, cx), true),
             }
         };
-        let mut root = div()
-            .relative()
-            .size_full()
+        // A mode running on the phone lays its band over every page.
+        let page = div()
             .flex()
-            .flex_row()
-            .child(self.sidebar(d, pal, cx))
-            .child(div().flex_1().min_w(px(0.0)).h_full().child(content));
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .children(Self::mode_band(d, pal, cx))
+            .child(div().flex_1().min_h(px(0.0)).child(content));
+        let mut root = div().relative().size_full().flex().flex_row().child(self.sidebar(d, pal, cx)).child(page);
         if self.pause_sheet && d.paired {
             root = root.child(self.pause_sheet(pal, cx));
         }
@@ -531,7 +555,10 @@ impl Render for Root {
         // Seconds count while a request waits, a work session is being asked for, or the test waits.
         self.keep_ticking(
             matches!(d.test, Test::Waiting(_))
-                || (screen == Screen::Status && (d.waiting().next().is_some() || d.work.asking.is_some())),
+                || (screen == Screen::Status
+                    && (d.waiting().next().is_some()
+                        || d.work.asking.is_some()
+                        || d.running().and_then(crate::modes::Running::until).is_some())),
             window,
             cx,
         );

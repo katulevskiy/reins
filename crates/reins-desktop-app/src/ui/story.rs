@@ -1200,6 +1200,14 @@ pub fn answer(e: &Entry, phone: &str) -> (Glyph, Tone, String) {
         Decider::Local => format!("{word} here"),
         Decider::Settings => format!("{word} by your rules"),
     };
+    if let Some(a) = e.autopilot.as_ref().filter(|_| !e.outcome.open()) {
+        let tone = if matches!(e.outcome, Outcome::Approved | Outcome::Allowed) {
+            Tone::Field(Field::Grant)
+        } else {
+            Tone::Field(Field::Delete)
+        };
+        return (Glyph::Autopilot, tone, crate::modes::said(a, e.outcome));
+    }
     match e.outcome {
         Outcome::Waiting => (Glyph::Phone, Tone::Field(Field::Grant), "Waiting on your phone".to_owned()),
         Outcome::Approved => (Glyph::Phone, Tone::Success, on("Approved")),
@@ -1247,6 +1255,19 @@ pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
     if e.decider == Decider::Phone {
         lines.push(format!("reins: asking {phone}…"));
     }
+    if let Some(a) = e.autopilot.as_ref().filter(|_| !e.outcome.open()) {
+        lines.push(after(crate::modes::said(a, e.outcome).to_lowercase()));
+    } else {
+        transcript_end(e, phone, &after, &mut lines);
+    }
+    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
+        lines.push(format!("{} was told: {reason}", a.who));
+    }
+    lines
+}
+
+/// How `e` ended, as the terminal said it.
+fn transcript_end(e: &Entry, phone: &str, after: &dyn Fn(String) -> String, lines: &mut Vec<String>) {
     match e.outcome {
         Outcome::Waiting => {}
         Outcome::Approved => lines.push(after(format!("approved on {phone}"))),
@@ -1256,10 +1277,6 @@ pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
         Outcome::Allowed => lines.push("reins: allowed by your rules".to_owned()),
         Outcome::Blocked => lines.push("reins: blocked by your rules".to_owned()),
     }
-    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
-        lines.push(format!("{} was told: {reason}", a.who));
-    }
-    lines
 }
 
 /// How long the phone has to answer `e`, in seconds: the hooks' wait for commands and files, the approvals' for the

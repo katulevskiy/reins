@@ -99,6 +99,9 @@ pub struct State {
     profile_writes: Mutex<()>,
     /// Connection → when its "paused" notice was sent.
     paused: Mutex<HashMap<String, i64>>,
+    /// What Autopilot leans to for requests left to the user, to tell the server after the pass (the desktop app
+    /// shows it on its ask).
+    told: Mutex<Vec<(String, reins_proto::autopilot::Suggestion)>>,
 }
 
 /// A parked item, as the pass sees it.
@@ -203,6 +206,30 @@ pub(crate) fn suggestion_line(s: &Suggestion) -> Option<String> {
     })
 }
 
+/// What Autopilot leans to for a request it judged and left to the user, as the desktop app is told: nothing when a
+/// floor or a held risk makes it always ask, or when it did not judge it.
+fn leaning_of(s: &Suggestion) -> Option<reins_proto::autopilot::Suggestion> {
+    use reins_proto::autopilot::Leaning;
+    if s.floor.is_some() || s.risk.as_ref().is_some_and(|r| r.held) {
+        return None;
+    }
+    let j = s.judged.as_ref()?;
+    let (leaning, confidence) = match s.verdict {
+        Verdict::Approve => (Leaning::Approve, j.probs[0]),
+        Verdict::Deny => (Leaning::Deny, j.probs[1]),
+        Verdict::Ask => (Leaning::Ask, j.probs[0]),
+    };
+    Some(reins_proto::autopilot::Suggestion {
+        v: reins_proto::PROTOCOL_VERSION,
+        leaning,
+        confidence: if confidence.is_finite() {
+            confidence.clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
+    })
+}
+
 /// Everything a request offers: each message or item shown (sensitive ones too), each account not shared yet.
 fn everything(view: &ApprovalView) -> ApprovalChoice {
     let selected_message_ids = if view.kind == ApprovalKind::Accounts {
@@ -215,6 +242,9 @@ fn everything(view: &ApprovalView) -> ApprovalChoice {
         standing: None,
     }
 }
+
+/// Why a change of Autopilot asked from a computer always waits for the owner.
+const OWNER_ONLY: &str = "only you change Autopilot from a computer";
 
 /// After an Approve, a Close item on the view still waits. The wording is fixed: no path, subject, or secret.
 const CLOSER_LOOK: &str = "Always asks: one item needs a closer look";
@@ -573,6 +603,26 @@ impl Engine {
         let _one = self.autopilot.pass.lock().await;
         if let Err(e) = self.ap_pass(self.ap_may_run_model()).await {
             log::warn!("Autopilot could not look at the waiting items: {e}");
+        }
+        // A bypass or an Overnight that ran out: the desktop apps hear of it, and of what Autopilot leans to.
+        self.report_modes_now().await;
+        self.tell_suggestions().await;
+    }
+
+    /// Tells the server what Autopilot leans to for the requests it left to the user (best effort: an older server,
+    /// or a request answered meanwhile, refuses it; the desktop app then shows the ask without it).
+    async fn tell_suggestions(&self) {
+        let told = std::mem::take(&mut *self.autopilot.told.lock().unwrap_or_else(PoisonError::into_inner));
+        if told.is_empty() {
+            return;
+        }
+        let Ok(session) = self.session() else {
+            return;
+        };
+        for (id, suggestion) in told {
+            if let Err(e) = crate::session::api_call!(&session, |api| api.post_suggestion(&id, &suggestion)) {
+                log::info!("could not tell the server Autopilot's suggestion for {id}: {}", e.into_core());
+            }
         }
     }
 
@@ -1462,6 +1512,11 @@ impl Engine {
     /// Keeps the evaluation and tells the app the item waits for the user.
     fn ap_wait(&self, subject: &Subject, s: &Suggestion) -> Result<(), CoreError> {
         self.store.ap_put_suggestion(s)?;
+        if subject.kind == PendingKind::Request
+            && let Some(told) = leaning_of(s)
+        {
+            self.autopilot.told.lock().unwrap_or_else(PoisonError::into_inner).push((subject.id.clone(), told));
+        }
         let mut item = subject.item.clone();
         item.suggestion = suggestion_line(s);
         self.names().item(&mut item);
@@ -1477,6 +1532,14 @@ impl Engine {
         verdict: Verdict,
         by: By,
     ) -> Result<(), CoreError> {
+        // A change of Autopilot asked from a computer is the owner's alone: no mode decides it, either way (a bypass
+        // would approve its own extension, Lockdown would deny the way out of it).
+        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+            s.verdict = Verdict::Ask;
+            s.floor = Some(OWNER_ONLY.to_owned());
+            s.reason = format!("Always asks: {OWNER_ONLY}");
+            return self.ap_wait(subject, &s);
+        }
         if verdict == Verdict::Approve {
             // The mode as it is now, not as it was when the request was judged: a change in between (another mode, a
             // lockdown, an Overnight that ended or was stopped) leaves the request to the user.
@@ -1643,6 +1706,9 @@ impl Engine {
     }
 
     async fn ap_execute(&self, subject: &Subject, verdict: Verdict) -> Result<(), CoreError> {
+        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+            return Err(CoreError::invalid("a change of Autopilot from a computer is never decided automatically"));
+        }
         if subject.purchase && verdict == Verdict::Approve {
             // With what its screen would pick; the budgets still apply.
             let session = self.session()?;
@@ -2269,6 +2335,7 @@ impl Engine {
         if mode == Some(AutopilotMode::Lockdown) {
             self.ap_lockdown_sweep(connection_id.as_deref()).await;
         }
+        self.report_modes_now().await;
         Ok(())
     }
 
@@ -2308,6 +2375,7 @@ impl Engine {
             connection_id,
         });
         self.ap_sweep_into(AutopilotMode::Bypass, now).await;
+        self.report_modes_now().await;
         Ok(())
     }
 
@@ -2350,6 +2418,7 @@ impl Engine {
             connection_id,
         });
         self.ap_sweep_into(AutopilotMode::Overnight, now).await;
+        self.report_modes_now().await;
         Ok(())
     }
 
@@ -2395,6 +2464,15 @@ impl Engine {
             let Some(_claim) = self.claim(&row.id) else {
                 continue;
             };
+            // A change of Autopilot a computer asked before the lockdown (waiting, so looser): denied with it. One asked
+            // after it waits for the owner (the way out of a lockdown is never decided by it).
+            if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+                let decision = Decision::new("lockdown", None);
+                if let (Err(e), _) = deciding(decision, Box::pin(self.deny_claimed(&row.id))).await {
+                    log::warn!("Lockdown could not deny a change of Autopilot asked before it: {e}");
+                }
+                continue;
+            }
             let base = self.store.ap_suggestion(&row.id).ok().flatten();
             let mut s = base.unwrap_or_else(|| Suggestion {
                 request_id: subject.id.clone(),

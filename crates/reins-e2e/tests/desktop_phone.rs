@@ -470,3 +470,150 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     assert!(matches!(revoked, Err(reins_desktop::server::LinkError::LoggedOut(_))), "{revoked:?}");
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }
+
+/// Logs a fresh app (its own state directory) in to `server`, the phone approving it as "Laptop".
+async fn logged_in_app(server: &Server, phone: &Phone) -> (tempfile::TempDir, Paths) {
+    let state = tempfile::tempdir().unwrap();
+    let paths = Paths::under(state.path());
+    paths.ensure().unwrap();
+    let identity = Identity::load_or_create(&paths.identity_file()).unwrap();
+    let (url_tx, url_rx) = tokio::sync::oneshot::channel::<String>();
+    let (code_tx, code_rx) = tokio::sync::oneshot::channel::<u8>();
+    let login = reins_desktop::server::oauth::login_with_browser(&paths, &identity, &server.base, move |url| {
+        url_tx.send(url.to_owned()).unwrap();
+    });
+    let browser = async { browse(url_rx.await.unwrap(), code_tx).await };
+    let user = async {
+        let item = next_item(phone).await;
+        let code = code_rx.await.unwrap();
+        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned()), true).await.unwrap();
+    };
+    let (logged_in, (), ()) = tokio::join!(login, browser, user);
+    assert_eq!(logged_in.unwrap(), server.base);
+    (state, paths)
+}
+
+/// Runs `work` while the phone app is open (syncing, deciding what it may decide on its own), and returns its result.
+async fn with_phone_open<T>(phone: &Phone, work: impl Future<Output = T>) -> T {
+    let mut work = std::pin::pin!(work);
+    loop {
+        tokio::select! {
+            out = &mut work => return out,
+            items = phone.core.sync(1) => assert!(items.expect("sync").is_empty(), "nothing waits for the user"),
+        }
+    }
+}
+
+/// The phone's Autopilot from the desktop app, end to end: the modes the app is shown, a stricter mode applied at
+/// once, a looser one only once the owner approves it on the phone, and who decided an answer, kept in the app's
+/// activity log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
+    use reins_core::AutopilotMode;
+    use reins_desktop::autopilot::{self, ModeChoice};
+    use reins_proto::autopilot::{DecidedBy, Mode as PhoneMode};
+
+    reins_e2e::init_tls();
+    let server = Server::start(20, 10).await;
+    server.register(EMAIL).await;
+    let phone = Phone::sign_in(&server.base, EMAIL).await;
+    let (_state, paths) = logged_in_app(&server, &phone).await;
+    let config = Config {
+        mode: Mode::Reins,
+        approval_timeout_secs: 60,
+        ..Config::default()
+    };
+    let mode = async || phone.core.autopilot_settings().await.unwrap().mode;
+
+    // ---- the phone's key on this computer (once): looser asks carry the app's proof, boxed to it ----
+    let digits = phone.core.phone_key_fingerprint().await.unwrap();
+    let writer = reins_desktop::secrets_client::PhoneVaultWriter::new(&paths, &config, Some(digits));
+    let user = async {
+        let item = next_item(&phone).await;
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let (pinned, ()) = tokio::join!(writer.check_phone_key(), user);
+    pinned.expect("the phone's key is pinned");
+
+    // ---- Auto on the phone: the app is shown it ----
+    phone.core.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await.unwrap();
+    let shown = autopilot::modes(&paths).await.unwrap().expect("the phone reported its modes");
+    assert_eq!((shown.mode, shown.base), (PhoneMode::Auto, PhoneMode::Auto));
+
+    // ---- back to Manual from the computer: stricter, applied at once, nothing asked ----
+    with_phone_open(&phone, autopilot::change_mode(&paths, &config, ModeChoice::Manual, Some(&shown))).await.unwrap();
+    assert_eq!(mode().await, AutopilotMode::Manual);
+    let shown = autopilot::modes(&paths).await.unwrap().unwrap();
+    assert_eq!(shown.mode, PhoneMode::Manual);
+
+    // ---- Auto from the computer: looser, so the owner is asked, in the phone's words, held to approve ----
+    let user = async {
+        let item = next_item(&phone).await;
+        let view = phone.core.approval_view(item.id.clone()).await.unwrap();
+        let ask = view.ask.expect("asked as a question");
+        assert_eq!(ask.question, "Turn on Auto for every AI?");
+        assert!(ask.destructive && view.quick.is_none() && view.no_standing, "{ask:?}");
+        assert_eq!(mode().await, AutopilotMode::Manual, "nothing changed before the owner said so");
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let (changed, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Auto, Some(&shown)), user);
+    changed.unwrap();
+    assert_eq!(mode().await, AutopilotMode::Auto);
+
+    // ---- Auto asked again after Manual, refused on the phone: nothing changes ----
+    with_phone_open(&phone, autopilot::change_mode(&paths, &config, ModeChoice::Manual, None)).await.unwrap();
+    let user = async {
+        let item = next_item(&phone).await;
+        phone.core.deny(item.id).await.unwrap();
+    };
+    let (refused, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Auto, None), user);
+    assert!(refused.unwrap_err().contains("denied"));
+    assert_eq!(mode().await, AutopilotMode::Manual);
+
+    // ---- a question the bypass the owner started answers: the app's log says the bypass decided it ----
+    phone.core.start_bypass(None, Some(30)).await.unwrap();
+    let q = reins_desktop::ask::Question {
+        question: "Deploy now?".to_owned(),
+        detail: None,
+        topic: None,
+    };
+    let entry = reins_desktop::journal::Entry::new(reins_desktop::journal::Kind::Ask, &q.question);
+    let (answer, _) = with_phone_open(
+        &phone,
+        reins_desktop::ask::ask_logged(&paths, &config, &q, Duration::from_secs(60), false, &NoPrompter, entry, None),
+    )
+    .await;
+    assert_eq!(answer, reins_desktop::ask::Answer::Yes);
+    let logged = reins_desktop::journal::read(&paths, 10, 3_600);
+    let asked = logged.iter().find(|e| e.what == "Deploy now?").expect("logged");
+    let decided = asked.autopilot.as_ref().expect("who decided");
+    assert_eq!(decided.by, DecidedBy::Bypass);
+    assert!(asked.request_id.is_some());
+    // The log keeps who decided, never the leaning, the confidence or the reasons (an AI could read them).
+    let raw = std::fs::read_to_string(reins_desktop::journal::Journal::file(&paths)).unwrap();
+    assert!(raw.contains("\"autopilot\""), "{raw}");
+    assert!(!raw.contains("leaning") && !raw.contains("confidence") && !raw.contains("reasons"), "{raw}");
+    let modes = autopilot::modes(&paths).await.unwrap().unwrap();
+    assert_eq!(modes.mode, PhoneMode::Bypass);
+    assert!(modes.span.until.is_some(), "with its end");
+}
