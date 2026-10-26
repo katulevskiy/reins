@@ -151,7 +151,7 @@ struct DrillRow<Detail: View>: View {
             feedback.play(.open)
         } label: {
             HStack(spacing: 12) {
-                Text(title).font(RFont.sans(quiet ? 15 : 16, .medium)).foregroundStyle(quiet ? Palette.ink2 : Palette.ink).lineLimit(1)
+                Text(title).font(RFont.sans(quiet ? 15 : 16, .medium)).foregroundStyle(quiet ? Palette.ink2 : Palette.ink)
                 Spacer(minLength: 0)
                 detail
                 GlyphIcon(.chevronRight, size: 14).foregroundStyle(Palette.inkFaint)
@@ -292,6 +292,7 @@ private struct MailRow: View {
     var service: String
     var onChange: (Bool) -> Void
     @Environment(\.feedback) private var feedback
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let m = message
@@ -310,7 +311,7 @@ private struct MailRow: View {
                 TickBox(checked: checked, enabled: enabled)
                 VStack(alignment: .leading, spacing: 4) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
+                        Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(typeSize.isAccessibilitySize ? nil : 2)
                         if !meta.isEmpty { Text(meta).font(RFont.sans(13)).foregroundStyle(Palette.inkMeta).lineLimit(1) }
                     }
                     .opacity(checked ? 1 : 0.5)

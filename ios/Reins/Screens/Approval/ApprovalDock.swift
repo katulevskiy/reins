@@ -74,13 +74,16 @@ struct ApprovalDock: View {
         } label: {
             Text(ApprovalWords.denyLabel(view))
         }
-        .buttonStyle(SignalButtonLook(kind: .outline))
+        .buttonStyle(SignalButtonLook(kind: .outline, height: typeSize.isAccessibilitySize ? 64 : nil))
         .accessibilityIdentifier("deny")
     }
 
     @ViewBuilder private var approve: some View {
         if ApprovalWords.held(view) {
-            HoldButton(title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy) {
+            HoldButton(
+                title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy,
+                height: typeSize.isAccessibilitySize ? 64 : 54
+            ) {
                 Task { await vm.approve(model) }
             }
             .accessibilityIdentifier("approve")
@@ -92,12 +95,12 @@ struct ApprovalDock: View {
                     if vm.busy {
                         ProgressView().tint(Palette.onInverse)
                     } else {
-                        BiometryMark()
+                            BiometryMark(size: typeSize.isAccessibilitySize ? 24 : 18)
                     }
                     Text(ApprovalWords.approveLabel(view, vm.draft)).lineLimit(1)
                 }
             }
-            .buttonStyle(SignalButtonLook(kind: .inverse))
+            .buttonStyle(SignalButtonLook(kind: .inverse, height: typeSize.isAccessibilitySize ? 64 : nil))
             .accessibilityIdentifier("approve")
         }
     }

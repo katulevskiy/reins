@@ -118,7 +118,7 @@ enum FieldEars: Equatable {
         switch self {
         case .island: max(top + 7, 66)
         case .underStatusBar: top + 48
-        case .firstRow: top + 8
+        case .firstRow: top
         }
     }
 }
@@ -196,6 +196,7 @@ struct WhoAsks: View {
     var connectionId: String
     var label: String
     var host: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 8) {
@@ -203,7 +204,7 @@ struct WhoAsks: View {
             (Text(verbatim: untrustedName(label, limit: 40)).foregroundStyle(Palette.onField)
                 + Text(verbatim: host.map { $0.isEmpty ? "" : " · \($0)" } ?? "").foregroundStyle(Palette.onField2))
                 .font(RFont.sans(15, .semibold))
-                .lineLimit(1)
+                .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 .truncationMode(.middle)
                 .environment(\.layoutDirection, .leftToRight)
         }
@@ -222,6 +223,7 @@ struct AskHead<Who: View, Pick: View>: View {
     var askId = "what"
     @ViewBuilder var who: Who
     @ViewBuilder var pick: Pick
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -241,7 +243,10 @@ struct AskHead<Who: View, Pick: View>: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier(askId)
             if let mono = ask.mono {
-                HStack(alignment: .center, spacing: 10) {
+                // At accessibility sizes the pick goes under the mono line, so neither has to wrap around the other.
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                layout {
                     Text(verbatim: mono)
                         .font(TextRole.value.font())
                         .foregroundStyle(Color.white.opacity(0.85))

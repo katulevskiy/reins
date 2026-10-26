@@ -150,6 +150,7 @@ struct CommitsPage: View {
 private struct CommitRow: View {
     var commit: GitCommitView
     var page: ApprovalPage
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(ApprovalNav.self) private var nav
     @Environment(\.feedback) private var feedback
 
@@ -162,7 +163,9 @@ private struct CommitRow: View {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     let subject = untrusted(commit.subject)
-                    Text(subject.isEmpty ? "(no message)" : subject).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                    // Beside a flag the subject may take a second line rather than be cut to a word.
+                    Text(subject.isEmpty ? "(no message)" : subject).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : AttentionText.mark(commit.attention) == nil ? 1 : 2)
                     HStack(spacing: 8) {
                         Text(untrusted(commit.shortSha)).font(RFont.mono(12.5)).foregroundStyle(Palette.inkMeta)
                         Counts(additions: commit.additions, deletions: commit.deletions, size: 12.5)
@@ -172,7 +175,7 @@ private struct CommitRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if let mark = AttentionText.mark(commit.attention) {
                     AttentionTag(mark: mark, id: "commitAttention:\(commit.shortSha)")
-                        .frame(maxWidth: 150, alignment: .trailing)
+                        .frame(maxWidth: 128, alignment: .trailing)
                 }
                 if opens { GlyphIcon(.chevronRight, size: 14).foregroundStyle(Palette.inkFaint) }
             }

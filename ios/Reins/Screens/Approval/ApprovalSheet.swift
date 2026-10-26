@@ -274,8 +274,7 @@ struct HelpDot: View {
             open = true
             feedback.play(.open)
         } label: {
-            Image(systemName: "questionmark.circle")
-                .font(.system(size: size * 0.56, weight: .medium))
+            GlyphIcon(.help, size: size * 0.56)
                 .foregroundStyle(onField ? Palette.onField : open ? Palette.ink : Palette.ink2)
                 .frame(width: size, height: size)
                 .background(onField ? Palette.onFieldWash : open ? Palette.ink.opacity(0.18) : Palette.paperSunken, in: Circle())
