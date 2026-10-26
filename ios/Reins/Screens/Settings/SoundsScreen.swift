@@ -166,31 +166,39 @@ private struct PreviewChips: View {
     @State private var running = false
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(Sample.all) { sample in
-                Button {
-                    play(sample)
-                } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Score(sample: sample)
-                        Text(sample.title)
-                            .font(RFont.sans(13.5, .medium))
-                            .foregroundStyle(enabled ? Palette.ink : Palette.inkMeta)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.85)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
-                    .padding(12)
-                    .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // Not lazy: every chip is there for VoiceOver and UI tests, scrolled to or not.
+        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(Array(stride(from: 0, to: Sample.all.count, by: 3)), id: \.self) { start in
+                GridRow {
+                    ForEach(Sample.all[start..<min(start + 3, Sample.all.count)]) { sample in chip(sample) }
+                    ForEach(0..<(3 - min(3, Sample.all.count - start)), id: \.self) { _ in Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
                 }
-                .buttonStyle(PressDimsStyle())
-                .accessibilityLabel(sample.title)
-                .accessibilityHint(sample.supporting + ". Plays its sound and haptic")
-                .accessibilityIdentifier("try:\(sample.title)")
             }
         }
+    }
+
+    private func chip(_ sample: Sample) -> some View {
+        Button {
+            play(sample)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                Score(sample: sample)
+                Text(sample.title)
+                    .font(RFont.sans(13.5, .medium))
+                    .foregroundStyle(enabled ? Palette.ink : Palette.inkMeta)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+            .padding(12)
+            .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(PressDimsStyle())
+        .accessibilityLabel(sample.title)
+        .accessibilityHint(sample.supporting + ". Plays its sound and haptic")
+        .accessibilityIdentifier("try:\(sample.title)")
     }
 
     private func play(_ sample: Sample) {
