@@ -347,7 +347,8 @@ struct AccountPermissionsScreen: View {
                 Button(duration.label) { editor.expiresAt(Int64(Date().timeIntervalSince1970) + Int64(duration.seconds)) }
             }
         } label: {
-            FlatRow(title: "Expires", value: draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "Choose", chevron: true) { GlyphTile(.timer) }
+            FlatRow(title: "Expires", value: draft.expiresAt.map(Self.left) ?? "Choose", chevron: true) { GlyphTile(.timer) }
+                .accessibilityValue(draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "Not chosen")
         }
         .disabled(editor.busy)
         .accessibilityIdentifier("permissionExpires")
@@ -414,6 +415,12 @@ struct AccountPermissionsScreen: View {
         }
     }
     private func finish() { if let onDone { onDone() } else { app.back() } }
+
+    /// How long until `at`, as a length: "1 day", "8 hours".
+    static func left(_ at: Int64) -> String {
+        let minutes = max((at - Int64(Date().timeIntervalSince1970) + 59) / 60, 1)
+        return AutopilotText.lengthLabel(minutes: UInt32(min(minutes, Int64(UInt32.max))))
+    }
 }
 
 struct PermissionRestrictions: View {
@@ -531,7 +538,7 @@ private struct PermissionDraftReview: View {
 
     /// "1 day · 20 uses": the automatic permission's limits in one line.
     static func limits(_ draft: AccountPermissionsDraft) -> String {
-        let ends = draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "No expiry"
+        let ends = draft.expiresAt.map(AccountPermissionsScreen.left) ?? "No expiry"
         let uses = draft.maxUses.map { "\($0) uses" } ?? "no use limit"
         return "\(ends) · \(uses)"
     }

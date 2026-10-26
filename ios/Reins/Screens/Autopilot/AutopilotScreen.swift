@@ -161,7 +161,7 @@ struct SheetTitle: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Text(title)
-                .textRole(.title)
+                .textRole(.cardAsk)
                 .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
                 .frame(maxWidth: .infinity, alignment: .leading)

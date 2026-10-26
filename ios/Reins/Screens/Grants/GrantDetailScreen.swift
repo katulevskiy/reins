@@ -279,8 +279,8 @@ private struct GrantField: View {
                     let clock = grantClock(grant, now: nowSeconds(ctx.date))
                     HStack(alignment: .center, spacing: 14) {
                         Text(grant.active ? (clock.remaining.map(compactDuration) ?? "\u{221E}") : GrantText.inactiveWord(grant))
-                            .font(RFont.display(grant.active ? 64 : 40))
-                            .tracking(RFont.displayTracking(64))
+                            .font(RFont.display(grant.active ? 48 : 34))
+                            .tracking(RFont.displayTracking(48))
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -297,7 +297,13 @@ private struct GrantField: View {
                     .foregroundStyle(Palette.onField)
                 }
                 .padding(.top, 10)
-                AskText(GrantWords.runs(grant.summary), role: .ask, lineLimit: 4)
+                GrantWords.runs(grant.summary).reduce(Text(verbatim: "")) { sentence, run in
+                    Text("\(sentence)\(Text(verbatim: run.text).font(RFont.display(27, target: run.target)))")
+                }
+                    .tracking(RFont.displayTracking(27))
+                    .lineHeight(.multiple(factor: 1.04))
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(Palette.onField)
                     .padding(.top, 2)
                     .accessibilityElement(children: .ignore)

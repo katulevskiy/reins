@@ -232,7 +232,7 @@ struct TimedModeSheet<Extra: View>: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center, spacing: 6) {
                     Text(name)
-                        .textRole(.title)
+                        .textRole(.cardAsk)
                         .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     HelpMark(open: helpOpen) {

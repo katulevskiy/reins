@@ -349,10 +349,11 @@ struct RunningOverlay: View {
         .padding(.horizontal, placement.side)
         .padding(.top, placement.top)
         .foregroundStyle(Palette.onField)
-        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+        // Its own sizes: 13.5 beside the island, 21 in the row under the status bar at accessibility sizes.
+        .dynamicTypeSize(.large)
     }
 
-    private var earFont: Font { placement.accessibility ? RFont.sans(22, .semibold) : RFont.fixedSans(13.5, .semibold) }
+    private var earFont: Font { RFont.fixedSans(placement.accessibility ? 21 : 13.5, .semibold) }
 
     @ViewBuilder private func left(_ stage: RunningStage) -> some View {
         HStack(spacing: 5) {
