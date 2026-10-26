@@ -286,7 +286,7 @@ struct SheetContent: View {
         }
         .environment(model)
         .environment(\.feedback, model.feedback)
-        .modifier(SheetShape(regular: regular, fullScreen: target.isApproval))
+        .modifier(SheetShape(regular: regular, fullScreen: target.isApproval, ownDetents: target.ownDetents))
         // Quiet when the request's chime just announced it (a request that pops up by itself).
         .onAppear { model.feedback.sheetOpened() }
     }
@@ -297,9 +297,13 @@ private struct SheetShape: ViewModifier {
     var regular: Bool
     /// A full-screen cover (an approval) takes no detents.
     var fullScreen = false
+    /// Pairing, joining and connecting a computer size themselves (the Connect board's sheets).
+    var ownDetents = false
 
     func body(content: Content) -> some View {
         if fullScreen {
+            content
+        } else if ownDetents && !regular {
             content
         } else if regular {
             content.presentationSizing(.form)

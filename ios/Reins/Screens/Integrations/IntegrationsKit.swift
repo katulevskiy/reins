@@ -1,7 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// The explicit finishing surface. Account permission choices use this same place once supported by the core.
+/// "Account connected", "Server connected": the explicit finish, quiet. A green check, the title, who it is (cleaned,
+/// mono), Done and, where there can be more than one, Add another account.
 struct IntegrationCompletion: View {
     var title: String
     var identity: String
@@ -10,24 +11,26 @@ struct IntegrationCompletion: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 30))
-                .foregroundStyle(Palette.success)
+            GlyphIcon(.check, size: 22)
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Palette.success, in: Circle())
                 .accessibilityHidden(true)
-            Text(title).textRole(.title).accessibilityAddTraits(.isHeader)
-            Text(untrusted(identity))
-                .textRole(.body)
+            Text(title).textRole(.quietTitle).foregroundStyle(Palette.ink).accessibilityAddTraits(.isHeader)
+            Text(verbatim: untrusted(identity))
+                .font(RFont.mono(14))
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityIdentifier("connectedIdentity")
-            Text("The connection is saved. You can manage it here at any time.")
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-            ActionButton(title: "Done", action: onDone).accessibilityIdentifier("connectionDone")
+            Button("Done", action: onDone)
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .padding(.top, 4)
+                .accessibilityIdentifier("connectionDone")
             if let onAnother {
-                ActionButton(title: "Add another account", kind: .secondary, action: onAnother)
+                Button("Add another account", action: onAnother)
+                    .buttonStyle(SignalButtonStyle(.soft))
                     .accessibilityIdentifier("connectionAddAnother")
             }
         }
@@ -57,28 +60,6 @@ extension View {
     }
 }
 
-/// The small heading above a group of rows.
-struct GroupHeading: View {
-    var title: String
-
-    init(_ title: String) { self.title = title }
-
-    var body: some View {
-        SectionHeader(title)
-            .textCase(nil)
-            .padding(.horizontal, -4)
-    }
-}
-
-/// The explanation under a group.
-struct GroupFootnote: View {
-    var text: String
-
-    init(_ text: String) { self.text = text }
-
-    var body: some View { GroupFooter(text) }
-}
-
 /// A message in a tinted box: what is going on, a warning, or what went wrong.
 struct IntegrationBanner: View {
     enum Kind { case notice, warning, error, success }
@@ -94,21 +75,20 @@ struct IntegrationBanner: View {
         }
     }
 
-    private var symbol: String {
+    private var glyph: Glyph {
         switch kind {
-        case .notice: "info.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .error: "exclamationmark.octagon.fill"
-        case .success: "checkmark.circle.fill"
+        case .notice: .help
+        case .warning: .warning
+        case .error: .circleAlert
+        case .success: .circleCheck
         }
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
+            GlyphIcon(glyph, size: 16)
                 .foregroundStyle(tint)
-                .accessibilityHidden(true)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
             Text(text)
                 .font(RFont.sans(14.5))
                 .foregroundStyle(Palette.ink)
@@ -242,7 +222,7 @@ struct PasteInto: View {
         }
         .labelStyle(.iconOnly)
         .buttonBorderShape(.circle)
-        .tint(Palette.violet)
+        .tint(Palette.ink2)
         .controlSize(.small)
         .accessibilityLabel(label)
     }
@@ -303,7 +283,7 @@ struct SecretForm: View {
 
 // MARK: Accounts
 
-/// How an account is doing, under its name.
+/// How an account is doing, beside its name: the green dot when it works; a problem in words, never just a colour.
 struct AccountStatusLine: View {
     var status: GmailStatus?
     var needsAgain: String
@@ -311,24 +291,22 @@ struct AccountStatusLine: View {
     var body: some View {
         switch status {
         case nil:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Checking…").textRole(.meta).foregroundStyle(Palette.inkMeta)
-            }
+            ProgressView().controlSize(.mini).accessibilityLabel("Checking")
         case .ready:
-            StatusPill(text: "Connected", tint: Palette.success)
+            OkDot()
         case .needsConsent:
-            // A problem in words, amber, never just a red dot.
-            Text(needsAgain).textRole(.meta).foregroundStyle(Palette.warning)
+            Text(needsAgain).textRole(.sub).foregroundStyle(Palette.warning).lineLimit(2)
         case let .unavailable(message):
-            Text(untrusted(message)).textRole(.meta).foregroundStyle(Palette.danger).lineLimit(3)
+            Text(untrusted(message)).textRole(.sub).foregroundStyle(Palette.danger).lineLimit(3)
         }
     }
 }
 
-/// One connected account: who, how it is doing, "Allow again" when that helps, and removing it.
+/// One connected account (the kit's `acct`): its avatar, who (mono for a phone number), how it is doing, "Allow
+/// again" when that helps, and removing it.
 struct AccountRowView<Avatar: View>: View {
     var title: String
+    var mono = false
     var status: GmailStatus?
     var needsAgain: String
     var canAllowAgain: Bool
@@ -339,19 +317,27 @@ struct AccountRowView<Avatar: View>: View {
 
     @Environment(\.feedback) private var feedback
 
+    private var problem: Bool {
+        switch status {
+        case .needsConsent?, .unavailable?: true
+        default: false
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 14) {
-            avatar
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(TextRole.row.font())
+        HStack(spacing: 12) {
+            MarkPlate(size: 32) { avatar }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title)
+                    .font(mono ? RFont.mono(15) : TextRole.row.font())
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .environment(\.layoutDirection, .leftToRight)
-                AccountStatusLine(status: status, needsAgain: needsAgain)
+                if problem { AccountStatusLine(status: status, needsAgain: needsAgain) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if !problem { AccountStatusLine(status: status, needsAgain: needsAgain) }
             // The one-tap fix beside the problem.
             if status == .needsConsent && canAllowAgain {
                 Button("Allow again", action: onAllowAgain)
@@ -359,43 +345,26 @@ struct AccountRowView<Avatar: View>: View {
                     .disabled(busy)
                     .accessibilityIdentifier("reconnect:\(title)")
             }
-            Button {
-                onRemove()
-                feedback.defaultTap()
-            } label: {
-                GlyphIcon(.trash, size: 18)
-                    .foregroundStyle(Palette.inkMeta)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.borderless)
-            .disabled(busy)
-            .accessibilityLabel("Remove \(title)")
-            .accessibilityIdentifier("removeAccount:\(title)")
+            QuietIconButton(.trash, label: "Remove \(title)", action: onRemove)
+                .disabled(busy)
+                .accessibilityIdentifier("removeAccount:\(title)")
         }
-        .padding(.vertical, 4)
-        .swipeActions(edge: .trailing) {
-            Button("Remove", systemImage: "trash", role: .destructive) {
-                onRemove()
-                feedback.defaultTap()
-            }
-        }
+        .padding(.vertical, 9)
+        .frame(minHeight: 56)
         .accessibilityElement(children: .contain)
     }
 }
 
-/// Nothing connected yet, and what connecting does.
+/// Nothing connected yet (what the service is for is behind the page's (?)).
 struct NoAccountsRow: View {
     var title: String
     var message: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // The message (what the service is for) is behind the group's (?), with the rest of its explanation.
-            Text(title).textRole(.row).foregroundStyle(Palette.ink)
-        }
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("noAccounts")
+        Text(title)
+            .font(RFont.sans(15))
+            .foregroundStyle(Palette.ink2)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            .accessibilityIdentifier("noAccounts")
     }
 }

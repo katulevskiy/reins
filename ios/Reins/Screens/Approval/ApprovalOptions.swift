@@ -1,10 +1,12 @@
 import SwiftUI
 
-// The approval screen's sheets for how long and how wide (the Android app's ApprovalSheets.kt): "Remember for" behind
-// the dock's Custom ▾, with what a remembered approval covers under "What it covers", and a permission's length.
+// The approval screen's sheets for how long and how wide (the Android app's ApprovalSheets.kt; Next-Approve 04):
+// "Remember" behind the dock's Custom ▾, durations as rows and what a remembered approval covers under "Covers", and
+// a permission's length.
 
-/// "Remember for": a week, 30 days, a custom time, a number of uses, and, set apart in red, until revoked. Under "What it
-/// covers", what a remembered approval covers. The choice shows in the dock's last segment.
+/// "Remember": a week, 30 days, a custom time, a number of uses and, in red, until revoked, each a row with its radio;
+/// under "Covers", this one or anything like it (and, behind More, exactly what), then one button. The choice shows in
+/// the dock's last segment.
 struct RememberSheet: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
@@ -15,84 +17,81 @@ struct RememberSheet: View {
 
     var body: some View {
         let forever = pending == .untilRevoked && vm.draft.allMail == nil
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    FactGroup {
-                        ForEach(ApprovalWords.sheetLifetimes(view)) { kind in
-                            LifetimeOption(kind: kind, selected: pending == kind && vm.draft.allMail == nil, vm: vm) { pending = kind }
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Text("Remember").textRole(.cardAsk).foregroundStyle(Palette.ink).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    RoundHeaderButton(glyph: .close, label: "Close") { dismiss() }
+                        .accessibilityIdentifier("closeOverlay")
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 4)
+                FactGroup {
+                    ForEach(ApprovalWords.sheetLifetimes(view)) { kind in
+                        LifetimeOption(kind: kind, selected: pending == kind && vm.draft.allMail == nil, vm: vm) { pending = kind }
                     }
                     if ApprovalWords.offersUntilRevoked(view) {
-                        FactGroup(border: Palette.danger.opacity(0.3)) {
-                            OptionRow(selected: forever, id: "lifetime:untilRevoked", tint: Palette.danger) {
-                                pending = .untilRevoked
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "infinity").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.danger)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Until I revoke").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.danger)
-                                        Text("Never expires").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
-                                    }
-                                }
+                        OptionRow(selected: forever, id: "lifetime:untilRevoked", tint: Palette.danger) {
+                            pending = .untilRevoked
+                        } label: {
+                            HStack(spacing: 12) {
+                                GlyphIcon(.infinity, size: 18).foregroundStyle(Palette.danger)
+                                Text("Until I revoke").font(RFont.sans(16, .medium)).foregroundStyle(Palette.danger)
                             }
                         }
                     }
-                    if forever {
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.danger)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Anything like this runs without asking, forever.").font(RFont.sans(13.5, .semibold)).foregroundStyle(Palette.danger)
-                                Text("Only for things you'd never want to stop.").font(RFont.sans(13.5)).foregroundStyle(Palette.dynamic(0xDC2626, 0xFFBBBB))
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(Palette.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.danger.opacity(0.28), lineWidth: 1))
-                        .padding(.horizontal, 16)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("foreverWarning")
+                }
+                if forever {
+                    HStack(alignment: .top, spacing: 10) {
+                        GlyphIcon(.warning, size: 16).foregroundStyle(Palette.danger).padding(.top, 1)
+                        Text("Anything like this runs without asking, forever.").font(RFont.sans(13.5, .semibold)).foregroundStyle(Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    if view.kind != .accounts {
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Palette.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 16)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("foreverWarning")
+                }
+                if view.kind != .accounts {
+                    FactHeader(text: "Covers", glyph: .key) {
                         Button {
                             withAnimation(.smooth) { more.toggle() }
                             feedback.play(.expand(more))
                         } label: {
-                            HStack {
-                                Text("What it covers").font(RFont.sans(15, .medium))
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(more ? 90 : 0))
+                            HStack(spacing: 3) {
+                                Text("More")
+                                GlyphIcon(.chevronDown, size: 13).rotationEffect(.degrees(more ? 180 : 0))
                             }
+                            .font(RFont.sans(13, .semibold))
                             .foregroundStyle(Palette.violet)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 12)
+                            .frame(minHeight: 44)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("moreToggle")
                         .accessibilityValue(more ? "Open" : "Closed")
-                        if more { ScopeOptions(vm: vm, view: view).transition(.opacity) }
                     }
-                }
-                .padding(.vertical, 6)
-                .animation(.smooth(duration: 0.25), value: forever)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) { confirm(forever: forever).padding(16).background(Palette.dynamic(0xFFFFFF, 0x151517)) }
-            .background(Palette.dynamic(0xFFFFFF, 0x151517).ignoresSafeArea())
-            .navigationTitle("Remember for")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("Close")
-                        .accessibilityIdentifier("closeOverlay")
+                    .padding(.top, 8)
+                    .padding(.vertical, -11)
+                    CoversChooser(vm: vm, view: view).padding(.horizontal, 16)
+                    if more { ScopeOptions(vm: vm, view: view).transition(.opacity) }
                 }
             }
+            .padding(.bottom, 12)
+            .animation(.smooth(duration: 0.25), value: forever)
         }
-        .onAppear { if pending == nil, vm.draft.lifetime != .once { pending = vm.draft.lifetime } }
+        .safeAreaInset(edge: .bottom, spacing: 0) { confirm(forever: forever).padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8).background(Palette.paper) }
+        .background(Palette.paper.ignoresSafeArea())
+        .presentationBackground(Palette.paper)
+        .presentationDetents([.fraction(0.72), .large])
+        // What the dock had, else the first row: one tap on the button remembers it.
+        .onAppear { if pending == nil { pending = vm.draft.lifetime != .once ? vm.draft.lifetime : ApprovalWords.sheetLifetimes(view).first } }
         .accessibilityContainer("rememberSheet")
     }
 
@@ -112,16 +111,10 @@ struct RememberSheet: View {
                 "Choose how long"
             }
             let enabled = vm.draft.allMail != nil || pending != nil
-            Button { apply() } label: {
-                Text(label)
-                    .font(RFont.sans(17, .semibold))
-                    .foregroundStyle(enabled ? Palette.paper : Palette.inkMeta)
-                    .frame(maxWidth: .infinity, minHeight: 54)
-                    .background(enabled ? Palette.ink : Palette.paperSunken, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(!enabled)
-            .accessibilityIdentifier("rememberConfirm")
+            Button { apply() } label: { Text(label) }
+                .buttonStyle(SignalButtonLook(kind: .inverse))
+                .disabled(!enabled)
+                .accessibilityIdentifier("rememberConfirm")
         }
     }
 
@@ -134,11 +127,56 @@ struct RememberSheet: View {
     }
 }
 
-/// A radio row.
+/// Covers: this one, or anything like it ("This push" · "Pushes like it"), as the kit's chooser. Anything like it is
+/// wider than the screen, so the dock then says so.
+private struct CoversChooser: View {
+    @Bindable var vm: ApprovalModel
+    var view: ApprovalView
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        if let quick = view.quick, quick.allow != nil {
+            let like = vm.draft.likeThis && vm.draft.allMail == nil
+            VStack(alignment: .leading, spacing: 6) {
+                Chooser([
+                    Chooser.Segment(id: "scope:picked", title: words.0, selected: !like) {
+                        vm.draft.likeThis = false
+                        vm.draft.allMail = nil
+                        feedback.play(.selection)
+                    },
+                    Chooser.Segment(id: "scope:like", title: words.1, selected: like) {
+                        vm.draft.likeThis = true
+                        vm.draft.allMail = nil
+                        feedback.play(.selection)
+                    },
+                ])
+                if like {
+                    Text("\(untrusted(quick.allowWhat)), by \(untrustedName(view.connectionLabel))")
+                        .font(RFont.sans(12.5, .medium)).foregroundStyle(Palette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8)
+                        .accessibilityIdentifier("allowWhat")
+                }
+            }
+        }
+    }
+
+    /// "This push" · "Pushes like it", by kind.
+    private var words: (String, String) {
+        if view.git != nil { return ("This push", "Pushes like it") }
+        switch view.kind {
+        case .send: return ("This email", "Emails like it")
+        case .search, .read, .fetch: return ("These", "Like these")
+        default: return ("Only this", "Like this")
+        }
+    }
+}
+
+/// A radio row (the kit's: a glyph, a title, what it needs, the radio at the right).
 private struct OptionRow<Label: View>: View {
     var selected: Bool
     var id: String
-    var tint: Color = Palette.violet
+    var tint: Color = Palette.violetFill
     var onSelect: () -> Void
     @ViewBuilder var label: Label
     @Environment(\.feedback) private var feedback
@@ -146,15 +184,10 @@ private struct OptionRow<Label: View>: View {
     var body: some View {
         HStack(spacing: 10) {
             label.frame(maxWidth: .infinity, alignment: .leading)
-            ZStack {
-                Circle().strokeBorder(selected ? tint : Palette.dynamic(0x97979F, 0x4A4A52), lineWidth: 2)
-                if selected { Circle().fill(tint).frame(width: 11, height: 11) }
-            }
-            .frame(width: 22, height: 22)
+            RadioDot(selected: selected, tint: tint)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
         .frame(minHeight: 52)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -177,7 +210,14 @@ private struct LifetimeOption: View {
     var body: some View {
         OptionRow(selected: selected, id: "lifetime:\(kind.rawValue)", onSelect: onSelect) {
             HStack(spacing: 6) {
-                Text(title).font(RFont.sans(15.5)).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    // The set has no clock: the system's, at the glyphs' weight.
+                    if let glyph { GlyphIcon(glyph, size: 18) } else { Image(systemName: "clock").font(.system(size: 16, weight: .regular)) }
+                }
+                .foregroundStyle(Palette.inkMeta)
+                .frame(width: 18)
+                .padding(.trailing, 6)
+                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
                 switch kind {
                 case .custom:
                     CountStepper(value: $vm.draft.customAmount, in: 1...vm.draft.customUnit.max, id: "custom") { onSelect() }
@@ -190,16 +230,17 @@ private struct LifetimeOption: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 3) {
-                            Text(vm.draft.customUnit.rawValue).font(RFont.sans(14.5, .semibold))
-                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.ink2)
+                        HStack(spacing: 4) {
+                            Text(vm.draft.customUnit.rawValue).font(RFont.sans(13.5, .semibold))
+                            GlyphIcon(.chevronDown, size: 12)
                         }
                         .foregroundStyle(Palette.ink)
-                        .padding(.leading, 11)
-                        .padding(.trailing, 8)
-                        .padding(.vertical, 7)
-                        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(Palette.paperRaised, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Palette.rule, lineWidth: 1))
                     }
+                    .padding(.leading, 6)
                     .accessibilityIdentifier("custom:unit")
                 case .uses:
                     CountStepper(value: $vm.draft.uses, in: 1...ApprovalRules.maxUses, id: "uses") { onSelect() }
@@ -210,18 +251,26 @@ private struct LifetimeOption: View {
         }
     }
 
+    private var glyph: Glyph? {
+        switch kind {
+        case .custom: .timer
+        case .uses: .token
+        default: nil
+        }
+    }
+
     private var title: String {
         switch kind {
         case .week: "1 week"
         case .month: "30 days"
         case .custom: "Custom"
-        case .uses: "Number of uses"
+        case .uses: "Uses"
         default: kind.label
         }
     }
 }
 
-/// − n + on a sunken plate.
+/// − n + on the sunken capsule (the kit's stepper).
 private struct CountStepper: View {
     @Binding var value: Int
     var range: ClosedRange<Int>
@@ -237,28 +286,29 @@ private struct CountStepper: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            step("minus", "Fewer", value > range.lowerBound) { value -= 1 }
+        HStack(spacing: 4) {
+            step(.minus, "Fewer", value > range.lowerBound) { value -= 1 }
                 .accessibilityIdentifier("\(id):minus")
-            Text("\(value)").font(RFont.mono(15, .medium)).foregroundStyle(Palette.ink).frame(minWidth: 34).monospacedDigit()
+            Text("\(value)").font(RFont.mono(14)).foregroundStyle(Palette.ink).frame(minWidth: 14).monospacedDigit()
                 .accessibilityIdentifier("\(id):value")
-            step("plus", "More", value < range.upperBound) { value += 1 }
+            step(.plus, "More", value < range.upperBound) { value += 1 }
                 .accessibilityIdentifier("\(id):plus")
         }
-        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .padding(.horizontal, 4)
+        .frame(height: 34)
+        .background(Palette.paperSunken, in: Capsule())
         .accessibilityElement(children: .contain)
     }
 
-    private func step(_ symbol: String, _ label: String, _ enabled: Bool, _ change: @escaping () -> Void) -> some View {
+    private func step(_ glyph: Glyph, _ label: String, _ enabled: Bool, _ change: @escaping () -> Void) -> some View {
         Button {
             change()
             onChange()
             feedback.play(.detent, step: value)
         } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(enabled ? Palette.ink2 : Palette.inkMeta.opacity(0.5))
-                .frame(width: 32, height: 34)
+            GlyphIcon(glyph, size: 14)
+                .foregroundStyle(enabled ? Palette.ink : Palette.inkFaint)
+                .frame(width: 26, height: 34)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -286,28 +336,6 @@ private struct ScopeOptions: View {
         let send = view.kind == .send
         let gmail = [ApprovalKind.search, .read, .send].contains(view.kind)
         return VStack(alignment: .leading, spacing: 10) {
-            if let quick = view.quick, quick.allow != nil {
-                FactGroup {
-                    OptionRow(selected: !vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:picked") {
-                        vm.draft.likeThis = false
-                        vm.draft.allMail = nil
-                    } label: {
-                        Text("Only what's shown").font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
-                    }
-                    // Wider than the screen: it says exactly what, and the dock says it is on.
-                    OptionRow(selected: vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:like", tint: Palette.danger) {
-                        vm.draft.likeThis = true
-                        vm.draft.allMail = nil
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Anything like this").font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.warning)
-                            Text("\(untrusted(quick.allowWhat)), by \(untrusted(view.connectionLabel))")
-                                .font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
-                                .accessibilityIdentifier("allowWhat")
-                        }
-                    }
-                }
-            }
             if !write && !send { everything }
             if vm.draft.allMail == nil {
                 if gmail {
@@ -511,9 +539,9 @@ struct GrantSheet: View {
             let current = min(vm.draft.grantSeconds ?? asked, asked)
             let index = max(steps.lastIndex { $0 <= current } ?? 0, 0)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Allow for").font(RFont.sans(18, .semibold)).foregroundStyle(Palette.ink)
+                Text("Allow for").textRole(.section).foregroundStyle(Palette.ink2)
                 Text(ApprovalWords.period(UInt64(steps[index])))
-                    .font(RFont.sans(26, .semibold))
+                    .textRole(.cardAsk)
                     .foregroundStyle(Palette.ink)
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("grantDuration")
@@ -537,12 +565,8 @@ struct GrantSheet: View {
                     .accessibilityIdentifier("grantSlider")
                     Text("Asked for \(ApprovalWords.period(UInt64(asked))). Only shorter.").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
                 }
-                Button { dismiss() } label: {
-                    Text("Done").font(RFont.sans(17, .semibold)).foregroundStyle(Palette.paper)
-                        .frame(maxWidth: .infinity, minHeight: 54)
-                        .background(Palette.ink, in: Capsule())
-                }
-                .buttonStyle(.plain)
+                Button("Done") { dismiss() }
+                .buttonStyle(SignalButtonLook(kind: .inverse))
                 .padding(.top, 12)
                 .accessibilityIdentifier("grantDone")
             }

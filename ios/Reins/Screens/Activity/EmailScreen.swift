@@ -30,7 +30,7 @@ struct EmailScreen: View {
             }
         }
         .pageBackground()
-        .navigationTitle("Email")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: attempt) {
             guard let entry, let logged, !logged.id.isEmpty else { return }
@@ -48,35 +48,36 @@ struct EmailScreen: View {
     @ViewBuilder private func content(_ entry: ActivityEntry, _ logged: ActivityMessage) -> some View {
         let email: EmailContent? = if case let .loaded(e) = load { e } else { nil }
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(([serviceName(entry.service.isEmpty ? "gmail" : entry.service)] + [entry.account ?? ""].filter { !$0.isEmpty }).joined(separator: " · "))
-                    .textRole(.section)
-                    .foregroundStyle(Palette.inkMeta)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .environment(\.layoutDirection, .leftToRight)
+            // The quiet template (Next-More, 02): the service's mark and the subject at 24, then the headers as glyph
+            // facts in a flat group.
+            HStack(spacing: 12) {
+                ServiceAvatar(service: entry.service.isEmpty ? "gmail" : entry.service, size: 36)
                 let subject = untrusted(email?.subject ?? logged.subject)
                 Text(subject.isEmpty ? "(no subject)" : subject)
-                    .textRole(.cardAsk)
+                    .textRole(.quietTitle)
                     .foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("emailSubject")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
 
-            VStack(spacing: 0) {
-                HeaderLine(label: "From", value: untrusted(email?.from ?? logged.from)).accessibilityIdentifier("emailFrom")
+            FlatGroup(inset: 32) {
+                HeaderLine(glyph: .person, label: "From", value: untrusted(email?.from ?? logged.from)).accessibilityIdentifier("emailFrom")
                 if let to = email?.to, !to.isEmpty {
-                    HeaderLine(label: "To", value: to.map(untrusted).joined(separator: ", ")).accessibilityIdentifier("emailTo")
+                    HeaderLine(glyph: .mail, label: "To", value: to.map(untrusted).joined(separator: ", ")).accessibilityIdentifier("emailTo")
                 }
                 if let cc = email?.cc, !cc.isEmpty {
-                    HeaderLine(label: "Cc", value: cc.map(untrusted).joined(separator: ", "))
+                    HeaderLine(glyph: .mail, label: "Cc", value: cc.map(untrusted).joined(separator: ", "))
                 }
-                HeaderLine(label: "Date", value: TimeText.full(email?.date ?? logged.date))
+                if let account = entry.account, !account.isEmpty {
+                    HeaderLine(glyph: .tray, label: "Account", value: account, mono: true)
+                }
+                HeaderLine(glyph: .timer, label: "Date", value: TimeText.full(email?.date ?? logged.date))
             }
-            .padding(.horizontal, 24)
+            .padding(.top, 16)
 
             switch load {
             case .loading:
@@ -101,36 +102,39 @@ struct EmailScreen: View {
             case let .loaded(e):
                 let body = untrusted(e.body)
                 Text(body.isEmpty ? "(This email has no text.)" : body)
-                    .textRole(.body)
+                    .font(RFont.sans(15.5))
+                    .lineSpacing(5)
                     .foregroundStyle(Palette.ink)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 18)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
                     .accessibilityIdentifier("emailBody")
             }
         }
     }
 }
 
-/// "From        Bank <alerts@bank.com>": a header as a hairline fact.
+/// A header as a glyph fact on paper (the kit's flat `lrow`): the glyph says what it is, VoiceOver says its name.
 private struct HeaderLine: View {
+    var glyph: Glyph
     var label: String
     var value: String
+    var mono = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text(label).font(RFont.sans(15)).foregroundStyle(Palette.ink2).frame(width: 52, alignment: .leading)
+        HStack(spacing: 12) {
+            GlyphIcon(glyph, size: 18).foregroundStyle(Palette.inkMeta).frame(width: 20)
             Text(value)
-                .font(RFont.sans(15, .medium))
+                .font(mono ? RFont.mono(14.5) : TextRole.row.font())
                 .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.layoutDirection, .leftToRight)
                 .textSelection(.enabled)
         }
-        .padding(.vertical, 12)
-        .frame(minHeight: 48)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-        .accessibilityElement(children: .combine)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
     }
 }
 

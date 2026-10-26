@@ -88,14 +88,17 @@ enum NewAccountRules {
     }
 }
 
-/// The signed-out root: a welcome whose way in is "Continue" (passwordless, through the server's sign-in page:
-/// WorkOS AuthKit on the hosted server), with "Use another server" for self-hosters, which also offers the master
-/// password forms. A centred card on wide screens, the full width on a phone. What follows a sign-in (the onboarding
-/// steps) is `OnboardingScreen`; an account whose keys are on another phone goes to `UnlockScreen` first.
+/// The signed-out root (the Arrival board, 01): the shipped wallpaper full-bleed (Torii dither in light, Halo in dark)
+/// and, on a frosted pane over its lower half, "Your AI asks, *You decide.*" and the way in: "Continue" (passwordless,
+/// through the server's sign-in page: WorkOS AuthKit on the hosted server). "Other server" is for self-hosters; only a
+/// server of one's own offers the master password forms. What follows a sign-in (the onboarding steps) is
+/// `OnboardingScreen`; an account whose keys are on another phone goes to `UnlockScreen` first.
 struct SignInScreen: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var mode: AccountEntryView.Mode?
     @State private var sso = SsoSignIn()
     @State private var otherServer = false
@@ -105,32 +108,30 @@ struct SignInScreen: View {
     @FocusState private var serverFocused: Bool
 
     var body: some View {
-        GeometryReader { geo in
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: sizeClass == .regular ? 40 : 24)
-                    Group {
-                        if let mode {
-                            AccountEntryView(mode: mode, server: server) { self.mode = nil }
-                        } else {
-                            welcome
-                        }
-                    }
-                    .frame(maxWidth: 440)
-                    .padding(.horizontal, sizeClass == .regular ? 32 : 24)
-                    Spacer(minLength: 24)
-                }
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+        Group {
+            if let mode {
+                AccountEntryView(mode: mode, server: server) { self.mode = nil }
+                    .transition(.opacity)
+            } else {
+                welcome.transition(.opacity)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .scrollBounceBehavior(.basedOnSize)
         }
-        .pageBackground()
-        .animation(.smooth(duration: 0.25), value: mode)
+        .animation(reduceMotion ? .easeInOut(duration: 0.15) : .smooth(duration: 0.25), value: mode)
         .animation(.smooth(duration: 0.25), value: otherServer)
         .animation(.smooth(duration: 0.25), value: sso.error)
         .onAppear {
             if model.demo && server == SignInState.defaultServer { server = DemoData.server }
+            #if DEBUG
+            // `-accountForm`: the form for a new account on a server of one's own (screenshots).
+            if model.demo, ProcessInfo.processInfo.arguments.contains("-accountForm") {
+                otherServer = true
+                mode = .create
+            }
+            // `-autoContinue`: Continue at once (screenshots of what follows a sign-in, the Unlock screen).
+            if model.demo, ProcessInfo.processInfo.arguments.contains("-autoContinue") {
+                Task { await sso.run(model, feedback: feedback, server: serverUrl) }
+            }
+            #endif
             // Signed out of a server of one's own: offer it again rather than the hosted one.
             if !model.demo, server == SignInState.defaultServer, let last = LastServer.toOffer {
                 server = last
@@ -152,94 +153,150 @@ struct SignInScreen: View {
         otherServer && serverUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() != SignInState.defaultServer
     }
 
-    /// iOS-Arrival.png, 01: the kite, "Your AIs ask. *You decide.*" in the serif, what Reins is in a line, then the way in.
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            KiteDrawing()
-                .frame(maxWidth: .infinity)
-                .frame(height: 220)
-                .padding(.bottom, 8)
-            AskText([AskText.Run(text: "Your AIs ask. "), AskText.Run(text: "You decide.", target: true)], role: .ask, lineLimit: nil)
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text("Reins sits between your AI agents and your accounts. When one wants to read, send or change something, this phone asks you first.")
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 14)
-            if otherServer {
-                TextField("Server", text: $server)
-                    .textContentType(.URL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.done)
-                    .focused($serverFocused)
-                    .disabled(sso.busy)
-                    .fieldWell()
-                    .accessibilityIdentifier("server")
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if noBrowserSignIn {
-                Text("Email and master password")
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("passwordFormsNote")
-            } else {
-                Button {
-                    serverFocused = false
-                    Task { await sso.run(model, feedback: feedback, server: serverUrl) }
-                } label: {
-                    HStack(spacing: 10) {
-                        if sso.busy { ProgressView().tint(Palette.onInverse) }
-                        Text("Continue")
+        GeometryReader { geo in
+            ZStack(alignment: .top) {
+                Palette.paper.ignoresSafeArea()
+                WelcomeArt()
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        pane
+                            .frame(maxWidth: 440)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 4)
                     }
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height)
                 }
-                .buttonStyle(CapsuleButtonStyle(kind: .primary))
-                .disabled(sso.busy || serverUrl.count <= "https://".count)
-                .accessibilityIdentifier("continue")
-            }
-            if let error = sso.error {
-                FormBanner(text: error).transition(.opacity)
-            }
-            if customServer || noBrowserSignIn {
-                // A server of your own may have no sign-in page: its accounts use a master password.
-                Button("Sign in with a master password") { mode = .signIn }
-                    .buttonStyle(CapsuleButtonStyle(kind: noBrowserSignIn ? .primary : .secondary))
-                    .disabled(sso.busy)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("signInChoice")
-                Button {
-                    mode = .create
-                } label: {
-                    Text("Create an account with a master password")
-                        .textRole(.button)
-                        .foregroundStyle(Palette.ink2)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .disabled(sso.busy)
-                .accessibilityIdentifier("createAccount")
-            } else {
-                Button {
-                    otherServer = true
-                    serverFocused = true
-                } label: {
-                    Text("Use another server")
-                        .textRole(.button)
-                        .foregroundStyle(Palette.ink2)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .disabled(sso.busy)
-                .padding(.top, 4)
-                .accessibilityIdentifier("otherServer")
+                .scrollDismissesKeyboard(.interactively)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
-        .transition(.opacity)
+    }
+
+    /// The words and the way in, on the frosted pane.
+    private var pane: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            (Text("Your AI asks,\n").font(RFont.display(44)).foregroundStyle(Palette.ink)
+                + Text("You decide.").font(RFont.display(44, target: true)).foregroundStyle(Palette.kindAccounts))
+                .tracking(RFont.displayTracking(44))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 6) {
+                if otherServer {
+                    HStack(spacing: 10) {
+                        GlyphIcon(.server, size: 18).foregroundStyle(Palette.inkMeta)
+                        TextField("Server", text: $server)
+                            .font(RFont.mono(15))
+                            .textContentType(.URL)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.done)
+                            .focused($serverFocused)
+                            .disabled(sso.busy)
+                            .accessibilityIdentifier("server")
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 50)
+                    .background(Palette.paperSunken.opacity(0.8), in: Capsule())
+                    .padding(.bottom, 4)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                if noBrowserSignIn {
+                    Text("Email and master password")
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("passwordFormsNote")
+                } else {
+                    Button {
+                        serverFocused = false
+                        Task { await sso.run(model, feedback: feedback, server: serverUrl) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            if sso.busy { ProgressView().tint(Palette.onInverse) }
+                            Text("Continue")
+                        }
+                    }
+                    .buttonStyle(SignalButtonStyle(.inverse))
+                    .disabled(sso.busy || serverUrl.count <= "https://".count)
+                    .accessibilityIdentifier("continue")
+                }
+                if let error = sso.error {
+                    FormBanner(text: error).padding(.top, 4).transition(.opacity)
+                }
+                if customServer || noBrowserSignIn {
+                    // A server of one's own may have no sign-in page: its accounts use a master password. Never on the
+                    // hosted server, which is passwordless.
+                    Button("Sign in with a master password") { mode = .signIn }
+                        .buttonStyle(SignalButtonStyle(noBrowserSignIn ? .inverse : .soft))
+                        .disabled(sso.busy)
+                        .padding(.top, 4)
+                        .accessibilityIdentifier("signInChoice")
+                    PaneLink(title: "Create an account", glyph: .person) { mode = .create }
+                        .disabled(sso.busy)
+                        .accessibilityIdentifier("createAccount")
+                } else {
+                    PaneLink(title: "Other server", glyph: .server) {
+                        otherServer = true
+                        serverFocused = true
+                    }
+                    .disabled(sso.busy)
+                    .accessibilityIdentifier("otherServer")
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 26)
+        .padding(.bottom, 18)
+        .background(FrostedPane(radius: 30))
+    }
+}
+
+/// A quiet link under the main button (the kit's `lnk`): a glyph and words in ink-2, 46 pt tall.
+private struct PaneLink: View {
+    var title: String
+    var glyph: Glyph
+    var action: () -> Void
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        Button {
+            action()
+            feedback.defaultTap()
+        } label: {
+            Label { Text(title) } icon: { GlyphIcon(glyph, size: 18) }
+                .labelStyle(SignalLabelStyle())
+                .font(RFont.sans(16, .semibold))
+                .foregroundStyle(Palette.ink2)
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressDimsStyle())
+    }
+}
+
+/// The welcome's wallpaper: the shipped default for the theme, 620 pt tall from the top of the screen, already faded
+/// into the page at its bottom.
+private struct WelcomeArt: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        GeometryReader { geo in
+            if let image = Wallpaper.defaultFor(scheme).image(scheme) {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.medium)
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: 620, alignment: .top)
+                    .clipped()
+            }
+        }
+        .frame(height: 620)
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -303,17 +360,15 @@ struct BrandMark: View {
     }
 }
 
-/// How an account gets onto this phone: creating one, or signing in to one (email, master password, and a two-step
-/// code when the server asks for one). The server is the hosted one unless "Use another server" opens its field.
-///
-/// The welcome's "Continue" (`SsoSignIn`) is the way in on the hosted server; these forms are for a server of one's own
-/// whose accounts use a master password. Both hand the session to the model (`finishSignIn`, `finishSso`).
+/// How an account gets onto a server of one's own with a master password (the Arrival board, 02): creating one, or
+/// signing in to one (email, master password, and a two-step code when the server asks). The hosted server is
+/// passwordless: these forms are only reached from "Other server". Both hand the session to the model (`finishSignIn`).
 struct AccountEntryView: View {
     enum Mode: Hashable { case create, signIn }
     var mode: Mode
     var onBack: () -> Void
 
-    /// `server`: the one picked under "Use another server" on the welcome (its field shows here too).
+    /// `server`: the one picked under "Other server" on the welcome (its field shows here too).
     init(mode: Mode, server: String = SignInState.defaultServer, onBack: @escaping () -> Void) {
         self.mode = mode
         self.onBack = onBack
@@ -346,163 +401,182 @@ struct AccountEntryView: View {
         creating ? problem == nil : SignInState.canSubmit(server: server, email: email, password: password)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            RoundHeaderButton(glyph: .arrowBack, label: "Back", action: onBack)
-                .disabled(state.busy)
-                .accessibilityIdentifier("back")
-                .padding(.bottom, 8)
-            AskText(creating
-                    ? [AskText.Run(text: "Create your "), AskText.Run(text: "account", target: true)]
-                    : [AskText.Run(text: "Sign "), AskText.Run(text: "in", target: true)],
-                    role: .ask, lineLimit: nil)
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.bottom, 6)
+    private var mismatchNow: Bool {
+        !passwordAgain.isEmpty && passwordAgain != password && password.count >= NewAccountRules.minPasswordLength
+    }
 
-            if otherServer {
-                field("Server", text: $server, field: .server, next: .email, content: .URL, keyboard: .URL)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            field("Email", text: $email, field: .email, next: .password, content: creating ? .emailAddress : .username, keyboard: .emailAddress)
-            FieldLabel("Master password")
-            SecureField("Master password", text: $password)
-                // Creating: no password AutoFill. A master password is one to remember and write down, not a generated
-                // one, and with two secure fields iOS's new-password handling empties the first at every keystroke
-                // where it cannot offer one (the simulator). `.oneTimeCode` is what keeps it out.
-                .textContentType(creating ? .oneTimeCode : .password)
-                .submitLabel(creating || state.needsTotp ? .next : .go)
-                .focused($focus, equals: .password)
-                .onSubmit {
-                    if creating { focus = .passwordAgain } else if state.needsTotp { focus = .totp } else { submit() }
-                }
-                .disabled(state.busy)
-                .fieldWell()
-                .accessibilityIdentifier("password")
-            if creating { createFields }
-            if state.needsTotp {
-                TextField("Two-step code", text: Binding(get: { totp }, set: { totp = String($0.filter { !$0.isWhitespace }.prefix(10)) }))
-                    .textContentType(.oneTimeCode)
-                    .keyboardType(.numberPad)
-                    .submitLabel(.go)
-                    .focused($focus, equals: .totp)
-                    .onSubmit(submit)
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                RoundHeaderButton(glyph: .chevronLeft, label: "Back", action: onBack)
                     .disabled(state.busy)
-                    .fieldWell(mono: true)
-                    .accessibilityIdentifier("totp")
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if let error = state.error {
-                FormBanner(text: error).transition(.opacity)
-            }
-            Button(action: submit) {
-                HStack(spacing: 10) {
-                    if state.busy { ProgressView().tint(Palette.onInverse) }
-                    Text(creating ? "Create account" : "Sign in")
+                    .accessibilityIdentifier("back")
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                HStack(spacing: 14) {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Palette.fieldAccounts)
+                        .overlay { Grain().clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)) }
+                        .overlay { GlyphIcon(creating ? .person : .key, size: 22).foregroundStyle(.white) }
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
+                    Text(creating ? "New account" : "Sign in")
+                        .textRole(.title)
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
+                RaisedFields {
+                    if otherServer {
+                        field("Server", glyph: .server, text: $server, field: .server, next: .email, content: .URL, keyboard: .URL, mono: true)
+                    }
+                    field("Email", glyph: .mail, text: $email, field: .email, next: .password, content: creating ? .emailAddress : .username, keyboard: .emailAddress)
+                    GlyphInputRow(glyph: .lock) {
+                        SecureField("Master password", text: $password)
+                            // Creating: no password AutoFill. A master password is one to remember and write down, not a
+                            // generated one, and with two secure fields iOS's new-password handling empties the first at
+                            // every keystroke where it cannot offer one (the simulator). `.oneTimeCode` keeps it out.
+                            .textContentType(creating ? .oneTimeCode : .password)
+                            .submitLabel(creating || state.needsTotp ? .next : .go)
+                            .focused($focus, equals: .password)
+                            .onSubmit {
+                                if creating { focus = .passwordAgain } else if state.needsTotp { focus = .totp } else { submit() }
+                            }
+                            .disabled(state.busy)
+                            .accessibilityIdentifier("password")
+                    } trailing: {
+                        if creating && !password.isEmpty { StrengthMeter(password: password) }
+                    }
+                    if creating {
+                        GlyphInputRow(glyph: .lock) {
+                            SecureField("Master password again", text: $passwordAgain)
+                                .textContentType(.oneTimeCode)
+                                .submitLabel(.done)
+                                .focused($focus, equals: .passwordAgain)
+                                .onSubmit { focus = nil }
+                                .disabled(state.busy)
+                                .accessibilityIdentifier("passwordAgain")
+                        } trailing: {
+                            if !passwordAgain.isEmpty && passwordAgain == password && password.count >= NewAccountRules.minPasswordLength {
+                                GlyphIcon(.check, size: 18).foregroundStyle(Palette.success).accessibilityLabel("The passwords match")
+                            }
+                        }
+                    }
+                    if state.needsTotp {
+                        GlyphInputRow(glyph: .shieldCheck) {
+                            TextField("Two-step code", text: Binding(get: { totp }, set: { totp = String($0.filter { !$0.isWhitespace }.prefix(10)) }))
+                                .font(RFont.mono(15))
+                                .textContentType(.oneTimeCode)
+                                .keyboardType(.numberPad)
+                                .submitLabel(.go)
+                                .focused($focus, equals: .totp)
+                                .onSubmit(submit)
+                                .disabled(state.busy)
+                                .accessibilityIdentifier("totp")
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .padding(.top, 22)
+                if creating {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // Always there, so the fields above keep their place (and their focus) as the hint changes.
+                        Text(mismatchNow ? "The two passwords do not match." : "At least \(NewAccountRules.minPasswordLength) characters.")
+                            .textRole(.sub)
+                            .foregroundStyle(mismatchNow ? Palette.danger : Palette.inkMeta)
+                            .accessibilityIdentifier("passwordHint")
+                        Label { Text("Nobody can reset your master password. Forget it and the account is lost.") } icon: { GlyphIcon(.warning, size: 14) }
+                            .labelStyle(SignalLabelStyle())
+                            .font(RFont.sans(13))
+                            .foregroundStyle(Palette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("masterPasswordWarning")
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+                    RaisedGroup {
+                        HStack(spacing: 12) {
+                            Text("[Terms](https://reins2fa.com/terms) · [Privacy](https://reins2fa.com/privacy)")
+                                .font(RFont.sans(16, .medium))
+                                .foregroundStyle(Palette.ink)
+                                .tint(Palette.ink)
+                                .underline()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Toggle("Accept the Terms and the Privacy Policy", isOn: $terms)
+                                .labelsHidden()
+                                .disabled(state.busy)
+                                .accessibilityIdentifier("acceptTerms")
+                                .onChange(of: terms) { _, on in feedback.play(.toggle(on)) }
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 56)
+                    }
+                    .padding(.top, 14)
+                }
+                if let error = state.error {
+                    FormBanner(text: error).padding(.horizontal, 16).padding(.top, 12).transition(.opacity)
+                }
+                if !otherServer {
+                    Button {
+                        otherServer = true
+                        focus = .server
+                    } label: {
+                        Label { Text("Other server") } icon: { GlyphIcon(.server, size: 18) }
+                            .labelStyle(SignalLabelStyle())
+                            .font(RFont.sans(16, .semibold))
+                            .foregroundStyle(Palette.ink2)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .buttonStyle(PressDimsStyle())
+                    .disabled(state.busy)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("otherServer")
                 }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .primary))
-            .disabled(!canSubmit || state.busy)
-            .opacity(canSubmit ? 1 : 0.45)
-            .padding(.top, 4)
-            .accessibilityIdentifier(creating ? "create" : "signIn")
-            if !otherServer {
-                Button {
-                    otherServer = true
-                    focus = .server
-                } label: {
-                    Text("Use another server")
-                        .textRole(.button)
-                        .foregroundStyle(Palette.ink2)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+            .frame(maxWidth: 480, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 24)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ArriveFooter {
+                Button(action: submit) {
+                    HStack(spacing: 10) {
+                        if state.busy { ProgressView().tint(Palette.onInverse) }
+                        Text(creating ? "Create account" : "Sign in")
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(state.busy)
-                .accessibilityIdentifier("otherServer")
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .disabled(!canSubmit || state.busy)
+                .accessibilityIdentifier(creating ? "create" : "signIn")
             }
         }
+        .pageBackground()
         .animation(.smooth(duration: 0.25), value: state)
         .animation(.smooth(duration: 0.25), value: otherServer)
-        .transition(.opacity)
         .onAppear {
             if model.demo && server == SignInState.defaultServer { server = DemoData.server }
         }
     }
 
-    private func strengthTint(_ s: NewAccountRules.Strength) -> Color {
-        switch s {
-        case .weak: Palette.danger
-        case .fair: Palette.warning
-        case .strong: Palette.success
-        }
-    }
-
-    /// The second password, what is still missing, the warning that nobody can recover the password, the Terms.
-    @ViewBuilder private var createFields: some View {
-        // How hard the first one is to guess, once there is something to judge.
-        if !password.isEmpty {
-            let strength = NewAccountRules.strength(password)
-            let word = Text(strength.rawValue).fontWeight(.semibold).foregroundStyle(strengthTint(strength))
-            let hint = NewAccountRules.strengthHint(password)
-            StrengthBar(strength: strength, tint: strengthTint(strength))
-            // A strong password needs no advice: the word says it.
-            (hint.isEmpty ? Text("\(word)") : Text("\(word) · \(hint)"))
-                .textRole(.meta)
-                .foregroundStyle(Palette.inkMeta)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("passwordStrength")
-        }
-        FieldLabel("Master password again")
-        SecureField("Master password again", text: $passwordAgain)
-            .textContentType(.oneTimeCode)
-            .submitLabel(.done)
-            .focused($focus, equals: .passwordAgain)
-            .onSubmit { focus = nil }
-            .disabled(state.busy)
-            .fieldWell(error: mismatchNow)
-            .accessibilityIdentifier("passwordAgain")
-        // Always there, so the fields above keep their place (and their focus) as the hint changes.
-        let mismatch = !passwordAgain.isEmpty && passwordAgain != password && password.count >= NewAccountRules.minPasswordLength
-        Text(mismatch ? "The two passwords do not match." : "At least \(NewAccountRules.minPasswordLength) characters.")
-            .textRole(.meta)
-            .foregroundStyle(mismatch ? Palette.danger : Palette.inkMeta)
-            .accessibilityIdentifier("passwordHint")
-        Banner("Nobody can reset your master password. Forget it and the account is lost. Write it down.", kind: .warning)
-        HStack(alignment: .center, spacing: 12) {
-            Text("I accept the [Terms](https://reins2fa.com/terms) and the [Privacy Policy](https://reins2fa.com/privacy).")
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .tint(Palette.violet)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Toggle("Accept the Terms", isOn: $terms)
-                .labelsHidden()
-                .disabled(state.busy)
-                .accessibilityIdentifier("acceptTerms")
-                .onChange(of: terms) { _, on in feedback.play(.toggle(on)) }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var mismatchNow: Bool {
-        !passwordAgain.isEmpty && passwordAgain != password && password.count >= NewAccountRules.minPasswordLength
-    }
-
-    @ViewBuilder private func field(
-        _ title: String, text: Binding<String>, field: Field, next: Field, content: UITextContentType, keyboard: UIKeyboardType
+    private func field(
+        _ title: String, glyph: Glyph, text: Binding<String>, field: Field, next: Field, content: UITextContentType, keyboard: UIKeyboardType,
+        mono: Bool = false
     ) -> some View {
-        FieldLabel(title)
-        TextField(title, text: text)
-            .textContentType(content)
-            .keyboardType(keyboard)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .submitLabel(.next)
-            .focused($focus, equals: field)
-            .onSubmit { focus = next }
-            .disabled(state.busy)
-            .fieldWell()
-            .accessibilityIdentifier(title.lowercased())
+        GlyphInputRow(glyph: glyph) {
+            TextField(title, text: text)
+                .font(mono ? RFont.mono(15) : RFont.sans(16))
+                .textContentType(content)
+                .keyboardType(keyboard)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.next)
+                .focused($focus, equals: field)
+                .onSubmit { focus = next }
+                .disabled(state.busy)
+                .accessibilityIdentifier(title.lowercased())
+        }
     }
 
     private func submit() {
@@ -538,27 +612,13 @@ struct AccountEntryView: View {
     }
 }
 
-/// A form field's name above it, in the meta line.
-private struct FieldLabel: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text)
-            .textRole(.meta)
-            .foregroundStyle(Palette.ink2)
-            .padding(.top, 4)
-            .padding(.bottom, -6)
-            .accessibilityHidden(true)
-    }
-}
-
-/// How strong the master password looks, as three segments that fill one by one, each with a detent tick.
-private struct StrengthBar: View {
-    var strength: NewAccountRules.Strength
-    var tint: Color
+/// How strong the master password looks, as three short segments in the field's corner (the board's meter), each
+/// filling with a detent tick. A hint only: the server's one rule is the length.
+private struct StrengthMeter: View {
+    var password: String
     @Environment(\.feedback) private var feedback
 
+    private var strength: NewAccountRules.Strength { NewAccountRules.strength(password) }
     private var filled: Int {
         switch strength {
         case .weak: 1
@@ -566,93 +626,25 @@ private struct StrengthBar: View {
         case .strong: 3
         }
     }
+    private var tint: Color {
+        switch strength {
+        case .weak: Palette.danger
+        case .fair: Palette.warning
+        case .strong: Palette.success
+        }
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(0..<3, id: \.self) { i in
-                Capsule()
-                    .fill(i < filled ? tint : Palette.rule)
-                    .frame(height: 4)
+                Capsule().fill(i < filled ? tint : Palette.rule2).frame(width: 16, height: 4)
             }
         }
         .animation(.easeOut(duration: 0.2), value: filled)
         .onChange(of: filled) { _, step in feedback.play(.detent, step: step) }
-        .accessibilityHidden(true)
-    }
-}
-
-/// The welcome's kite (iOS-Arrival.png, 01): the AI flies, you hold the line. An ink drawing whose string draws itself
-/// once, in 600 ms, when the welcome first shows.
-struct KiteDrawing: View {
-    @State private var drawn = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width, h = geo.size.height
-            let kite = CGRect(x: w * 0.5, y: h * 0.02, width: min(w, h) * 0.36, height: min(w, h) * 0.5)
-            ZStack {
-                KiteShape()
-                    .fill(Palette.paperSunken)
-                    .overlay(KiteShape().stroke(Palette.ink, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round)))
-                    .overlay(KiteSpars().stroke(Palette.ink, lineWidth: 1))
-                    .frame(width: kite.width, height: kite.height)
-                    .rotationEffect(.degrees(-14))
-                    .position(x: kite.midX, y: kite.midY)
-                KiteString(from: CGPoint(x: kite.midX - kite.width * 0.12, y: kite.maxY - kite.height * 0.04),
-                           to: CGPoint(x: w * 0.16, y: h * 0.96))
-                    .trim(from: 0, to: drawn ? 1 : 0)
-                    .stroke(Palette.ink2, style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
-                Circle()
-                    .fill(Palette.ink)
-                    .frame(width: 7, height: 7)
-                    .position(x: w * 0.16, y: h * 0.96)
-            }
-        }
-        .onAppear {
-            guard !drawn else { return }
-            if reduceMotion { drawn = true } else { withAnimation(.easeOut(duration: 0.6)) { drawn = true } }
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-/// A diamond kite, its widest a third of the way down.
-private struct KiteShape: Shape {
-    func path(in r: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: r.midX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * 0.34))
-        p.addLine(to: CGPoint(x: r.midX, y: r.maxY))
-        p.addLine(to: CGPoint(x: r.minX, y: r.minY + r.height * 0.34))
-        p.closeSubpath()
-        return p
-    }
-}
-
-/// The kite's cross: its spine and its spar.
-private struct KiteSpars: Shape {
-    func path(in r: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: r.midX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.midX, y: r.maxY))
-        p.move(to: CGPoint(x: r.minX, y: r.minY + r.height * 0.34))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * 0.34))
-        return p
-    }
-}
-
-/// The line from the kite down to the hand that holds it, slack in a long curve.
-private struct KiteString: Shape {
-    var from: CGPoint
-    var to: CGPoint
-
-    func path(in _: CGRect) -> Path {
-        var p = Path()
-        p.move(to: from)
-        p.addCurve(to: to,
-                   control1: CGPoint(x: from.x - (from.x - to.x) * 0.1, y: from.y + (to.y - from.y) * 0.55),
-                   control2: CGPoint(x: to.x + (from.x - to.x) * 0.55, y: to.y - (to.y - from.y) * 0.12))
-        return p
+        .accessibilityElement()
+        .accessibilityLabel("Strength: \(strength.rawValue)")
+        .accessibilityValue(NewAccountRules.strengthHint(password))
+        .accessibilityIdentifier("passwordStrength")
     }
 }

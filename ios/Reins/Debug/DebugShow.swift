@@ -1,7 +1,7 @@
 #if DEBUG
 /// `-show <place>` at launch (screenshots, manual checks): a tab (`activity`, `trust`, `connections`, `settings`) or a
 /// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `wallpaper`, `ownphoto[:light]`, `vault`, `vaultAdd`, `vaultItem:<id>`, `vaultNew:<kind>`, `connection:<id>`,
-/// `gmail`, `service:<id>`, `mcp:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`, `entry:<id>` (an Activity entry), and `tour` (its page
+/// `gmail`, `service:<id>`, `mcp:<id>`, `connectSheet`, `addService`, `typeCode`, `join:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`, `entry:<id>` (an Activity entry), and `tour` (its page
 /// from `-tourPage <n>`, 0 to 4).
 @MainActor
 enum DebugShow {
@@ -28,7 +28,21 @@ enum DebugShow {
         case "ended": model.show(.expiredGrants, in: .trust)
         case "newgrant": model.show(.newGrant(token: 1), in: .trust)
         case "tour": model.startTour()
+        case "typeCode":
+            model.select(.connections)
+            model.connectStartsTyped = true
+            model.openSheet(.connectComputer)
+        case "join":
+            model.select(.connections)
+            model.openSheet(.join(id))
+        case "connectSheet", "addService":
+            // Connections opens its own sheet when it sees the place (ConnectionsScreen).
+            model.select(.connections)
         case "entry": model.show(.activityDetail(Int64(id) ?? 0), in: .activity)
+        case "email":
+            // `email:<entry>`: the entry's first email, opened.
+            model.show(.activityDetail(Int64(id) ?? 0), in: .activity)
+            model.push(.email(entryId: Int64(id) ?? 0, index: 0))
         default:
             if let section = AppSection(rawValue: place) { model.select(section) }
         }

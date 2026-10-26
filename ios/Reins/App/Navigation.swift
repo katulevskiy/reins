@@ -94,6 +94,14 @@ enum SheetTarget: Hashable, Identifiable {
         }
     }
 
+    /// Pairing, joining and connecting a computer set their own detents.
+    var ownDetents: Bool {
+        switch self {
+        case .pairing, .join, .connectComputer, .upload: true
+        default: false
+        }
+    }
+
     /// A request to approve: shown full screen.
     var isApproval: Bool {
         if case .approval = self { return true }

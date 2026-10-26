@@ -1,9 +1,9 @@
 import SwiftUI
 
-// The ask as a field (Reins Signal, iOS-Approve, iOS-Kinds): a solid colour running into the top of the screen with
-// who asks and how long it waits, the request's icon and label line ("GITHUB · PUSH"), the ask in the serif with its
-// target in italic and its machine details in mono under it (AskFormat), and every warning the request carries, each
-// on a line of its own, then Autopilot's opinion. It replaces the old washed hero and the agent bar above it.
+// The ask as a field (Reins Next: Next-Approve, Next-Kinds, Next-Running "D · the ask, final"): a colour field
+// running into the top of the screen, the timer and close in the island's ears, the service's icon · who asks on one
+// short line, the ask in `.ask` with its target in 600 and its machine details in mono under it (AskFormat) beside
+// Autopilot's pick, then every warning the request carries, each a flag of its own.
 
 extension AskLine {
     /// A long ask (a question from the computer in its own words) is set smaller, never cut.
@@ -95,30 +95,88 @@ enum FieldLines {
     }
 }
 
-/// The approval's field: close, who asks and the timer; the label line; the ask; the warning lines and Autopilot.
+/// Where the field's top row (the timer at the left, close at the right) sits (Next-Running "D · the ask, final",
+/// Next-SE option B, Next-AX). Pure, unit-tested.
+enum FieldEars: Equatable {
+    /// In the Dynamic Island's ears, 30 pt in from the screen's edges; the status bar steps aside.
+    case island
+    /// No island: the status bar stays and the row sits right under it, 16 pt in.
+    case underStatusBar
+    /// Accessibility text sizes: the status bar stays and the row is the field's first row.
+    case firstRow
+
+    /// `top`: the screen's top safe-area inset (59 on an island phone, 20 on an iPhone SE).
+    static func of(top: CGFloat, accessibility: Bool) -> FieldEars {
+        if accessibility { return .firstRow }
+        return top >= 47 ? .island : .underStatusBar
+    }
+
+    var hidesStatusBar: Bool { self == .island }
+
+    /// How far below the screen's top the field's content starts.
+    func contentTop(_ top: CGFloat) -> CGFloat {
+        switch self {
+        case .island: max(top + 7, 66)
+        case .underStatusBar: top + 48
+        case .firstRow: top
+        }
+    }
+}
+
+/// The approval's field (the kit's ask): the timer and close in the ears, then the service's icon · who asks on one short
+/// line, the ask (`.ask`, its target in 600), the machine value in mono with Autopilot's pick beside it, and every
+/// warning the request carries as a flag of its own. Who asks is Reins' own line, apart from Reins' sentence; a name
+/// the requester chose never joins the sentence (ASK-TEXT.md).
 struct ApprovalField: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     var autopilot: AutopilotModel
-    /// The status bar's height, when the field sits in a scroll that runs under it.
+    /// The screen's top safe-area inset: the field runs under the status bar.
     var top: CGFloat = 0
     @Environment(AppModel.self) private var model
+    @Environment(ApprovalNav.self) private var nav
+    @Environment(\.feedback) private var feedback
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        SignalField(kind: ApprovalWords.tone(view).field) {
-            VStack(alignment: .leading, spacing: 0) {
-                whoAsks
-                let ask = AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label, computer: computer)
-                AskHead(ask: ask, field: ApprovalWords.tone(view).field, askId: view.ask != nil ? "askQuestion" : "what")
-                    .padding(.top, 26)
-                FieldVerdicts(vm: vm, view: view, autopilot: autopilot).padding(.top, 16)
+        let ears = FieldEars.of(top: top, accessibility: typeSize.isAccessibilitySize)
+        let field = ApprovalWords.tone(view).field
+        let ask = AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label, computer: computer)
+        SignalField(kind: field) {
+            VStack(alignment: .leading, spacing: 10) {
+                if ears == .firstRow { earsRow.padding(.bottom, 4) }
+                AskHead(ask: ask, field: field, askId: view.ask != nil ? "askQuestion" : "what") {
+                    WhoAsks(connectionId: view.connectionId, label: view.connectionLabel, host: computer)
+                } pick: {
+                    FieldPick(vm: vm, view: view, open: openAutopilot)
+                }
+                FieldFlags(vm: vm, view: view, autopilot: autopilot, open: openAutopilot)
             }
-            .padding(.horizontal, 22)
-            .padding(.top, top + 4)
+            .padding(.horizontal, 20)
+            .padding(.top, ears.contentTop(top))
             .padding(.bottom, 22)
+        }
+        .overlay(alignment: .top) {
+            switch ears {
+            case .island: earsRow.frame(height: 36).padding(.horizontal, 30).padding(.top, 12)
+            case .underStatusBar: earsRow.frame(height: 36).padding(.horizontal, 16).padding(.top, top + 4)
+            case .firstRow: EmptyView()
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("hero")
+    }
+
+    /// The timer at the left, close at the right. In the ears, each side stays clear of the island (95 pt at most).
+    private var earsRow: some View {
+        let ears = FieldEars.of(top: top, accessibility: typeSize.isAccessibilitySize)
+        let side: CGFloat? = ears == .island ? 95 : ears == .underStatusBar ? 160 : nil
+        return HStack(spacing: 8) {
+            FieldTimer(view: view).frame(maxWidth: side, alignment: .leading)
+            Spacer(minLength: 0)
+            RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: ears == .firstRow ? 44 : 32) { model.closeSheet() }
+                .accessibilityIdentifier("closeSheet")
+        }
     }
 
     /// The asking computer's name, for a command with no folder of its own.
@@ -126,61 +184,119 @@ struct ApprovalField: View {
         findConnection(model.connections, id: view.connectionId, label: view.connectionLabel).map { asciiHost(untrustedName($0.clientHost)) }
     }
 
-    private var whoAsks: some View {
-        let host = computer
-        return HStack(spacing: 10) {
-            RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 36) { model.closeSheet() }
-                .accessibilityIdentifier("closeSheet")
-            ConnectionIcon(connectionId: view.connectionId, label: view.connectionLabel, size: 28)
-            (Text(verbatim: untrustedName(view.connectionLabel)).foregroundStyle(Palette.onField)
-                + Text(verbatim: host.map { $0.isEmpty ? "" : " · \($0)" } ?? "").foregroundStyle(Palette.onField2))
-                .font(RFont.sans(14.5, .medium))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-            FieldTimer(view: view)
-        }
+    private func openAutopilot() {
+        nav.overlay = .autopilot
+        feedback.play(.open)
     }
 }
 
-/// The request on a field (ASK-TEXT): its icon beside the label line, the sentence in the serif with the target in
-/// italic, never cut, and its machine details in mono under it, wrapped and never cut either.
-struct AskHead: View {
+/// Who asks, on the field's first line: its avatar and the name it was given (one line, cut), then the address it
+/// asks from, dimmer. Never part of the sentence.
+struct WhoAsks: View {
+    var connectionId: String
+    var label: String
+    var host: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ConnectionIcon(connectionId: connectionId, label: label, size: 22)
+            (Text(verbatim: untrustedName(label, limit: 40)).foregroundStyle(Palette.onField)
+                + Text(verbatim: host.map { $0.isEmpty ? "" : " · \($0)" } ?? "").foregroundStyle(Palette.onField2))
+                .font(RFont.sans(15, .semibold))
+                .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                .truncationMode(.middle)
+                .environment(\.layoutDirection, .leftToRight)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Asked by \(untrustedName(label, limit: 40))\(host.map { $0.isEmpty ? "" : ", \($0)" } ?? "")")
+        .accessibilityIdentifier("whoAsks")
+    }
+}
+
+/// The request on a field (ASK-TEXT, the kit's ask): the service's icon · who asks, the sentence in `.ask` with its
+/// target in 600, never cut, and its machine details in mono under it (wrapped, never cut) with `pick` at the right.
+struct AskHead<Who: View, Pick: View>: View {
     var ask: AskLine
     var field: FieldKind
     /// The sentence's identifier: "what", or "askQuestion" for a question to answer.
     var askId = "what"
+    @ViewBuilder var who: Who
+    @ViewBuilder var pick: Pick
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                RequestIcon(spec: ask.icon, size: 34, ring: field.fill)
-                    .accessibilityIdentifier("requestIcon")
-                Text(ask.kind)
-                    .textRole(.section)
-                    .foregroundStyle(Palette.onField2)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                RequestIcon(spec: ask.icon, size: 26, ring: field.fill)
+                    .accessibilityRepresentation { Text(verbatim: ask.kind) }
                     .accessibilityIdentifier("fieldLabel")
+                if Who.self != EmptyView.self {
+                    Text(verbatim: "·").font(RFont.sans(15, .semibold)).opacity(0.6).accessibilityHidden(true)
+                    who
+                }
             }
             AskText(ask.runs, role: ask.role, lineLimit: nil)
                 .foregroundStyle(Palette.onField)
-                .padding(.top, 12)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(ask.text)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier(askId)
             if let mono = ask.mono {
-                Text(verbatim: mono)
-                    .font(TextRole.value.font())
-                    .foregroundStyle(Palette.onField2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .environment(\.layoutDirection, .leftToRight)
-                    .textSelection(.enabled)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("askMono")
+                // At accessibility sizes the pick goes under the mono line, so neither has to wrap around the other.
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                layout {
+                    Text(verbatim: mono)
+                        .font(TextRole.value.font())
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("askMono")
+                    pick
+                }
+            } else {
+                pick
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension AskHead where Who == EmptyView, Pick == EmptyView {
+    /// A sheet's own ask (a pairing): no requester on the line, nothing to pick.
+    init(ask: AskLine, field: FieldKind, askId: String = "what") {
+        self.init(ask: ask, field: field, askId: askId, who: { EmptyView() }, pick: { EmptyView() })
+    }
+}
+
+/// Autopilot's pick on the field, beside the mono line: its glyph and how sure ("97%"); a pick other than approving
+/// says which. Opens why. Nothing while the request is held.
+private struct FieldPick: View {
+    @Bindable var vm: ApprovalModel
+    var view: ApprovalView
+    var open: () -> Void
+
+    var body: some View {
+        if let s = vm.suggestion, s.judged, !s.floor, !ApprovalWords.held(view) {
+            let p = s.verdict == .deny ? s.pDeny : s.pApprove
+            let percent = SuggestionText.percent(p)
+            let (text, words) = switch s.verdict {
+            case .approve: (percent, "Autopilot would allow")
+            case .deny: ("Deny \(percent)", "Autopilot would deny")
+            case .ask: ("Unsure \(percent)", "Autopilot is unsure")
+            }
+            Button(action: open) {
+                // A 44 pt target around the 24 pt pill, without making its line taller.
+                Pill(text, tone: .onFieldWash, mode: .auto, size: .pill)
+                    .contentShape(Rectangle().inset(by: -10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(words) · \(percent)")
+            .accessibilityIdentifier("suggestion")
+        }
     }
 }
 
@@ -199,7 +315,7 @@ struct FieldTimer: View {
                     } label: {
                         HStack(spacing: 6) {
                             GlyphIcon(.timerOff, size: 16)
-                            Text("Stopped").font(RFont.sans(13.5, .semibold))
+                            Text("Stopped").font(RFont.sans(13.5, .semibold)).lineLimit(1)
                         }
                         .foregroundStyle(Palette.onField)
                         .padding(.leading, 9)
@@ -221,66 +337,60 @@ struct FieldTimer: View {
     }
 }
 
-/// Under the ask: every warning line, then (unless it is held) Autopilot's opinion, why it always asks, or the offer
-/// to get its model.
-private struct FieldVerdicts: View {
+/// Under the ask: every warning as a flag of its own (never behind a fold), then why it always asks, or the offer to
+/// get Autopilot's model.
+private struct FieldFlags: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     var autopilot: AutopilotModel
+    var open: () -> Void
     @Environment(ApprovalNav.self) private var nav
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
         let s = vm.suggestion
-        VStack(alignment: .leading, spacing: 9) {
-            ForEach(FieldLines.of(view, suggestion: s, risk: s?.risk, riskInFacts: nav.riskInFacts)) { line in
-                HStack(alignment: .center, spacing: 8) {
-                    FieldVerdictRow(
-                        text: line.text, glyph: line.symbol, strong: line.tone == .red, lineLimit: line.maxLines,
-                        action: line.id == "risk" && s?.judged == true ? openAutopilot : nil,
-                        onOverflow: line.id == "risk" ? { if $0 && !nav.riskInFacts { nav.riskInFacts = true } } : nil
-                    )
-                    .accessibilityIdentifier(line.id)
-                    if let help = line.help { HelpDot(id: line.id, text: help, size: 26, onField: true) }
+        let lines = FieldLines.of(view, suggestion: s, risk: s?.risk, riskInFacts: nav.riskInFacts)
+        let tail = !ApprovalWords.held(view) ? tailKind(s) : nil
+        if !lines.isEmpty || tail != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(lines) { line in
+                    HStack(alignment: .center, spacing: 6) {
+                        FieldFlag(
+                            text: line.text, glyph: line.symbol, strong: line.tone == .red, lineLimit: line.maxLines,
+                            action: line.id == "risk" && s?.judged == true ? open : nil,
+                            onOverflow: line.id == "risk" ? { if $0 && !nav.riskInFacts { nav.riskInFacts = true } } : nil
+                        )
+                        .accessibilityIdentifier(line.id)
+                        if let help = line.help { HelpDot(id: line.id, text: help, size: 26, onField: true) }
+                    }
+                }
+                switch tail {
+                case .download(let model): FieldDownloadLine(autopilot: autopilot, model: model)
+                case .floor:
+                    FieldFlag(text: "Always asks", glyph: .lock, chevron: true, action: open)
+                        .accessibilityIdentifier("suggestion")
+                case nil: EmptyView()
                 }
             }
-            if !ApprovalWords.held(view) { autopilotLine(s) }
         }
     }
 
-    @ViewBuilder private func autopilotLine(_ s: SuggestionView?) -> some View {
-        if let s, s.judged, !s.floor {
-            let p = s.verdict == .deny ? s.pDeny : s.pApprove
-            let words = switch s.verdict {
-            case .approve: "Autopilot would allow"
-            case .deny: "Autopilot would deny"
-            case .ask: "Autopilot is unsure"
-            }
-            FieldVerdictRow(
-                text: "\(words) · \(SuggestionText.percent(p))", glyph: s.verdict == .ask ? nil : .autopilot,
-                ring: s.verdict == .ask ? Double(p) : nil, chevron: true, action: openAutopilot
-            )
-            .accessibilityIdentifier("suggestion")
-        } else if let model = autopilot.model, !AutopilotText.modelUsable(model), s?.floor != true {
-            FieldDownloadLine(autopilot: autopilot, model: model)
-        } else if let s, s.floor, ApprovalWords.dangerTags(view).isEmpty, FieldLines.alwaysAskReason(view) == nil {
-            FieldVerdictRow(text: "Always asks", glyph: .lock, chevron: true, action: openAutopilot)
-                .accessibilityIdentifier("suggestion")
-        }
-    }
+    private enum Tail { case download(ModelStatus), floor }
 
-    private func openAutopilot() {
-        nav.overlay = .autopilot
-        feedback.play(.open)
+    private func tailKind(_ s: SuggestionView?) -> Tail? {
+        if let s, s.judged, !s.floor { return nil }
+        if let model = autopilot.model, !AutopilotText.modelUsable(model), s?.floor != true { return .download(model) }
+        if let s, s.floor, ApprovalWords.dangerTags(view).isEmpty, FieldLines.alwaysAskReason(view) == nil { return .floor }
+        return nil
     }
 }
 
-/// A line on a field: a glyph (or a ring) and a few words in on-field ink; a tap opens its detail.
-struct FieldVerdictRow: View {
+/// A flag on a field (the kit's on-field pill): a glyph (or a ring) and a few words on the white wash, wrapping rather
+/// than cut unless `lineLimit` says so; a tap opens its detail.
+struct FieldFlag: View {
     var text: String
     var glyph: Glyph? = nil
     var ring: Double? = nil
-    /// A red line: full white and semibold.
+    /// A red line: on solid white, in the field's own ink, so it reads first.
     var strong = false
     var lineLimit: Int? = nil
     var chevron = false
@@ -292,46 +402,47 @@ struct FieldVerdictRow: View {
 
     var body: some View {
         if let action {
-            Button(action: action) { row }.buttonStyle(.plain)
+            Button(action: action) { flag }.buttonStyle(.plain)
         } else {
-            row
+            flag
         }
     }
 
-    private var row: some View {
-        let ink = strong ? Palette.onField : Palette.onField2
-        return HStack(alignment: .top, spacing: 8) {
+    private var flag: some View {
+        HStack(alignment: .top, spacing: 5) {
             if let ring {
-                ArcRing(fraction: ring, color: Palette.onField, track: Palette.onField.opacity(0.3), lineWidth: 2.2)
-                    .frame(width: 16, height: 16)
-                    .padding(.top, 1.5)
+                ArcRing(fraction: ring, color: Palette.onField, track: Palette.onField.opacity(0.3), lineWidth: 2)
+                    .frame(width: 13, height: 13)
+                    .padding(.top, 2.5)
             } else if let glyph {
-                GlyphIcon(glyph, size: 16).foregroundStyle(ink).padding(.top, 1.5)
+                GlyphIcon(glyph, size: 13).padding(.top, 2.5)
             }
             label
-                .font(RFont.sans(14.5, strong ? .semibold : .regular))
-                .foregroundStyle(ink)
                 .lineLimit(lineLimit)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self, of: \.size.height) { shown = $0; report() }
                 .background(alignment: .topLeading) {
                     if onOverflow != nil {
                         // The same words uncut, unseen: whether the lines above cut them.
-                        label
-                            .font(RFont.sans(14.5, strong ? .semibold : .regular))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .hidden()
+                        label.fixedSize(horizontal: false, vertical: true).hidden()
                             .onGeometryChange(for: CGFloat.self, of: \.size.height) { full = $0; report() }
                     }
                 }
-            if chevron { GlyphIcon(.chevronRight, size: 14).foregroundStyle(ink).padding(.top, 2.5) }
+            if chevron { GlyphIcon(.chevronRight, size: 12).padding(.top, 3).opacity(0.8) }
         }
+        .foregroundStyle(Palette.onField)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .frame(minHeight: 24)
+        .background(Color.white.opacity(strong ? 0.3 : 0.2), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
     private var label: some View {
-        Text(verbatim: text).lineHeight(.multiple(factor: 19 / 14.5))
+        Text(verbatim: text)
+            .font(RFont.sans(12.5, .semibold))
+            .lineHeight(.multiple(factor: 17 / 12.5))
     }
 
     private func report() {
@@ -352,13 +463,13 @@ private struct FieldDownloadLine: View {
             switch (model.state, autopilot.downloadJob) {
             case (.downloading, _):
                 let pct = model.sizeBytes > 0 ? Int(model.downloadedBytes * 100 / model.sizeBytes) : nil
-                FieldVerdictRow(text: pct.map { "Downloading Autopilot · \($0)%" } ?? "Downloading Autopilot…", glyph: .download)
+                FieldFlag(text: pct.map { "Downloading Autopilot · \($0)%" } ?? "Downloading Autopilot…", glyph: .download)
                     .accessibilityIdentifier("modelProgress")
             case (_, .waiting):
-                FieldVerdictRow(text: autopilot.waitingForWifi ? "Autopilot waits for Wi-Fi" : "Autopilot waits for a network", glyph: .download)
+                FieldFlag(text: autopilot.waitingForWifi ? "Autopilot waits for Wi-Fi" : "Autopilot waits for a network", glyph: .download)
                     .accessibilityIdentifier("modelProgress")
             default:
-                FieldVerdictRow(text: "Get Autopilot's score", glyph: .autopilot)
+                FieldFlag(text: "Get Autopilot's score", glyph: .autopilot)
                 Button("Download") {
                     feedback.play(.selection)
                     if autopilot.needsMobileDataConsent() { askMobileData = true } else { autopilot.download() }

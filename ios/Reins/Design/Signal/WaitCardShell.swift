@@ -67,9 +67,17 @@ struct WaitCardButtons: View {
     var pick: AutopilotPick
     var onPick: () -> Void
     var onReview: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        if pick.firm {
+        if pick.firm && typeSize.isAccessibilitySize {
+            // Accessibility sizes: the pick over Review, each the full width.
+            VStack(spacing: 8) {
+                Button(action: onPick) { pickLabel }
+                    .buttonStyle(SignalButtonStyle(.onField, size: .small))
+                review(.onFieldWash)
+            }
+        } else if pick.firm {
             RatioRow(spacing: 8, ratio: 1) {
                 Button(action: onPick) { pickLabel }
                     .buttonStyle(SignalButtonStyle(.onField, size: .small))

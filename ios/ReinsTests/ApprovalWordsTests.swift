@@ -181,7 +181,7 @@ final class ApprovalWordsTests: XCTestCase {
         d.lifetime = .custom
         d.customAmount = 2
         d.customUnit = .weeks
-        XCTAssertEqual(ApprovalWords.rememberButton(push([ref()]), d), "Remember for 2 weeks")
+        XCTAssertEqual(ApprovalWords.rememberButton(push([ref()]), d), "Remember 2 weeks")
         d.allMail = .hour
         XCTAssertEqual(ApprovalWords.customLabel(d), "All mail")
         XCTAssertEqual(ApprovalWords.period(86_400), "1 day")

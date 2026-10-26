@@ -496,34 +496,45 @@ struct CompactBanner: View {
     var symbol: String
     var tint: Color = Palette.warning
     var button: String
-    /// The label line: what is broken.
+    /// What is broken, for VoiceOver ("Reins · Notifications").
     var label = "Reins"
     var action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .textRole(.section)
-                .foregroundStyle(Palette.onField2)
-            HStack(alignment: .center, spacing: 12) {
-                AskText(Self.runs(text), role: .cardAsk)
-                    .foregroundStyle(Palette.onField)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button(button, action: action)
-                    .buttonStyle(SignalButtonStyle(.onField, size: .small, fill: false))
-                    .fixedSize()
-            }
+        // Next-Activity, 02: the amber field under the status bar, the glyph, a few words and the button.
+        HStack(spacing: 12) {
+            GlyphIcon(Self.glyph(symbol), size: 22)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(RFont.sans(16, .semibold))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("\(label): \(text)")
+            Button(button, action: action)
+                .buttonStyle(SignalButtonStyle(.onField, size: .small, fill: false))
+                .fixedSize()
         }
+        .foregroundStyle(Palette.onField)
         .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 18)
+        .padding(.top, 2)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             FieldSurface(kind: tint == Palette.danger ? .delete : .warn)
-                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: SignalField<EmptyView>.radius, bottomTrailingRadius: SignalField<EmptyView>.radius, style: .continuous))
+                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 26, bottomTrailingRadius: 26, style: .continuous))
                 .ignoresSafeArea(edges: .top)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    /// The kit's glyph for the symbol a caller names.
+    static func glyph(_ symbol: String) -> Glyph {
+        switch symbol {
+        case let s where s.hasPrefix("bell"): .bell
+        case let s where s.hasPrefix("lock"): .lockOpen
+        case let s where s.hasPrefix("iphone"): .phone
+        default: .warning
+        }
     }
 
     /// The sentence with its last word in italic: "Notifications are" *off*.
