@@ -1,22 +1,25 @@
 import SwiftUI
 import VisionKit
 
-/// Connecting a computer: scan the QR code `reins login` (or the Reins desktop app) shows, or type the code under
-/// it, and the pairing it stands for takes this sheet's place, to be answered like any other (the number the computer
-/// shows, its key, Face ID). Without a usable camera (the simulator, no permission) the code is typed.
+/// Connecting a computer (the Connect board, 02): scan the QR code `reins login` (or the Reins desktop app) shows, or
+/// type the eight letters under it into the code cells, and the pairing it stands for takes this sheet's place, to be
+/// answered like any other (the number the computer shows, its key, Face ID). Without a usable camera (the simulator,
+/// no permission) the code is typed.
 struct ConnectComputerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var pairing: PairingModel?
     @State private var typing: Bool
+    /// The letters typed so far (no dash), at most eight.
     @State private var code = ""
     @State private var busy = false
     @State private var error: String?
+    @State private var copied = false
     /// The last code the camera read, so one QR code held in view is redeemed once.
     @State private var scanned: String?
     @FocusState private var focused: Bool
 
-    /// `typing`: open on the code field (Settings' "Type code"); without a usable camera it always does.
+    /// `typing`: open on the code cells (Settings' "Type code"); without a usable camera it always does.
     init(typing: Bool = false) {
         startTyped = typing
         _typing = State(initialValue: typing || !QRScanner.available)
@@ -27,58 +30,49 @@ struct ConnectComputerSheet: View {
     var body: some View {
         if let pairing {
             PairingSheet(model: pairing)
+                .presentationDetents([.large])
         } else {
-            ScrollView { content.padding(20).padding(.top, 8) }
+            ScrollView { content.padding(.top, 14).padding(.bottom, 24) }
                 .scrollDismissesKeyboard(.interactively)
+                .scrollBounceBehavior(.basedOnSize)
                 .background(Palette.paper.ignoresSafeArea())
-                .overlay(alignment: .topTrailing) {
-                    GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
-                        .padding(.top, 14)
-                        .padding(.trailing, 14)
-                        .accessibilityIdentifier("closeSheet")
-                }
+                .presentationDetents(typing ? [.height(error == nil ? 452 : 520), .large] : [.height(600), .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
                 .accessibilityContainer("connectComputerSheet")
                 .onAppear {
                     model.connectStartsTyped = false
-                    if startTyped { focused = true }
+                    if typing { focused = true }
                 }
         }
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(Palette.kindPair)
-                .frame(width: 52, height: 52)
-                .background(Palette.kindPair.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityHidden(true)
-            Text("Connect a computer")
-                .font(RFont.sans(26, .semibold))
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            // A key, not a String, so the command shows in code type.
-            Text(LocalizedStringKey(typing
-                ? "Run `reins login` on your computer, or open the Reins desktop app, and type the code it shows."
-                : "Run `reins login` on your computer, or open the Reins desktop app, and point the camera at the QR code it shows."))
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 0) {
+            SheetTitle("Computer") { model.closeSheet() }
             if typing { typed } else { camera }
             if let error {
-                FormBanner(text: error).accessibilityIdentifier("pairingCodeError")
+                FormBanner(text: error)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .accessibilityIdentifier("pairingCodeError")
             }
             if QRScanner.available {
-                Button(typing ? "Scan the QR code instead" : "Type the code instead") {
+                Button {
                     feedback.play(.tap)
                     error = nil
                     typing.toggle()
                     focused = typing
+                } label: {
+                    Label { Text(typing ? "Scan instead" : "Type instead") } icon: { GlyphIcon(typing ? .qrCode : .pencil, size: 18) }
+                        .labelStyle(SignalLabelStyle())
+                        .font(RFont.sans(16, .semibold))
+                        .foregroundStyle(Palette.violet)
+                        .frame(maxWidth: .infinity, minHeight: 46)
                 }
-                .font(RFont.sans(15, .medium))
-                .foregroundStyle(Palette.violet)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .buttonStyle(PressDimsStyle())
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
                 .disabled(busy)
                 .accessibilityIdentifier("switchEntry")
             }
@@ -87,48 +81,108 @@ struct ConnectComputerSheet: View {
         .animation(.smooth(duration: 0.25), value: error)
     }
 
-    private var camera: some View {
-        QRScanner { text in
-            guard let found = PairingCode.parse(text), found != scanned else { return }
-            scanned = found
-            redeem(found)
-        }
-        .frame(height: 320)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            if busy {
-                ProgressView().controlSize(.large).tint(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    /// "Run reins login" and Copy: the command, in code type.
+    private var command: some View {
+        RaisedGroup {
+            HStack(spacing: 8) {
+                Text("Run").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
+                Text(verbatim: "reins login")
+                    .font(RFont.mono(15))
+                    .foregroundStyle(Palette.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                RoundHeaderButton(glyph: copied ? .check : .copy, label: "Copy reins login") {
+                    copyPlain("reins login", feedback: feedback)
+                    copied = true
+                }
+                .accessibilityIdentifier("copyCommand")
             }
+            .padding(.leading, 14)
+            .padding(.trailing, 12)
+            .frame(minHeight: 56)
         }
-        .accessibilityLabel("Camera, looking for the QR code")
+        .padding(.top, 12)
+    }
+
+    private var camera: some View {
+        VStack(spacing: 0) {
+            command
+            QRScanner { text in
+                guard let found = PairingCode.parse(text), found != scanned else { return }
+                scanned = found
+                redeem(found)
+            }
+            .frame(height: 320)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                if busy {
+                    ProgressView().controlSize(.large).tint(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .accessibilityLabel("Camera, looking for the QR code")
+        }
     }
 
     @ViewBuilder private var typed: some View {
-        TextField("BCDF-GHJK", text: $code)
-            .textInputAutocapitalization(.characters)
-            .autocorrectionDisabled()
-            .keyboardType(.asciiCapable)
-            .textContentType(.oneTimeCode)
-            .submitLabel(.go)
-            .focused($focused)
-            .onSubmit(submitTyped)
-            .disabled(busy)
-            .fieldWell(mono: true)
-            .accessibilityLabel("Pairing code")
-            .accessibilityIdentifier("pairingCode")
+        command
+        // The real field sits invisible under the cells, so typing, pasting and the keyboard's suggestions work as usual.
+        ZStack {
+            TextField("BCDF-GHJK", text: Binding(get: { code }, set: { enter($0) }))
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .keyboardType(.asciiCapable)
+                .textContentType(.oneTimeCode)
+                .submitLabel(.go)
+                .focused($focused)
+                .onSubmit(submitTyped)
+                .disabled(busy)
+                .foregroundStyle(.clear)
+                .tint(.clear)
+                .opacity(0.02)
+                .accessibilityLabel("Pairing code")
+                .accessibilityValue(code)
+                .accessibilityIdentifier("pairingCode")
+            HStack(spacing: 6) {
+                let letters = Array(code)
+                ForEach(0..<8, id: \.self) { i in
+                    if i == 4 {
+                        Text("-").font(RFont.mono(22)).foregroundStyle(Palette.inkFaint)
+                    }
+                    CodeCell(character: i < letters.count ? String(letters[i]) : "", next: focused && i == letters.count)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
         let valid = PairingCode.parse(code) != nil
         Button(action: submitTyped) {
             HStack(spacing: 10) {
-                if busy { ProgressView().tint(Palette.paper) }
+                if busy { ProgressView().tint(Palette.onInverse) }
                 Text("Continue")
             }
         }
-        .buttonStyle(CapsuleButtonStyle(kind: .primary))
+        .buttonStyle(SignalButtonStyle(.inverse))
         .disabled(!valid || busy)
-        .opacity(valid ? 1 : 0.45)
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
         .accessibilityIdentifier("pairWithCode")
+    }
+
+    /// What was typed or pasted, as the code's letters: a pasted link or code becomes its eight letters.
+    private func enter(_ text: String) {
+        if let found = PairingCode.parse(text) {
+            code = found.replacingOccurrences(of: "-", with: "")
+        } else {
+            code = String(text.uppercased().filter { $0.isLetter || $0.isNumber }.prefix(PairingCode.length))
+        }
+        error = nil
     }
 
     private func submitTyped() {

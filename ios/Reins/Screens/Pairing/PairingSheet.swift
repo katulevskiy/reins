@@ -38,12 +38,12 @@ enum PairWords {
     static func computer(_ view: PairingView) -> Bool { view.keyFingerprint != nil }
     static func label(_ view: PairingView) -> String { computer(view) ? "Computer · Pair" : "AI app · Pair" }
 
-    /// "Connect a *computer*", "Connect an *AI app*": a laptop or a link, with a plus, on the pair field.
+    /// "Connect a *computer*", "Connect an *AI app*": a laptop or a globe, with the link badge, on the pair field.
     static func line(_ view: PairingView) -> AskLine {
         let computer = computer(view)
         return AskLine(
             kind: label(view), lead: computer ? "Connect a " : "Connect an ", target: computer ? "computer" : "AI app",
-            icon: AskIcon(mark: .glyph(computer ? .laptop : .link), action: .plus, kind: .pair)
+            icon: AskIcon(mark: .glyph(computer ? .laptop : .globe), action: .link, kind: .pair)
         )
     }
 
@@ -194,63 +194,61 @@ private struct PairingContent: View {
     var body: some View {
         DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                SheetField(kind: .pair, ask: PairWords.line(view))
-                // What the other side calls itself: quoted, on rows of their own, never the ask.
-                FactGroup {
-                    FactRow(key: "Calls itself", value: PairWords.quoted(view.clientName), valueId: "pairName")
-                    let host = asciiHost(untrustedName(view.clientHost, limit: 64))
-                    if !host.isEmpty { FactRow(key: "From", value: host, mono: true, valueId: "pairHost") }
-                    if let fingerprint = view.keyFingerprint { DesktopKeyRow(fingerprint: fingerprint) }
+                ConnectField(kind: .pair, ask: PairWords.line(view)) {
+                    if let fingerprint = view.keyFingerprint {
+                        DesktopKey(fingerprint: fingerprint)
+                    }
+                    Text(view.keyFingerprint != nil ? "Started it yourself? Same on your computer? If not, deny." : "Only continue if you just started this.")
+                        .font(RFont.sans(14, .medium))
+                        .foregroundStyle(Palette.onField.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 10)
+                        .accessibilityIdentifier("pairWarning")
                 }
-                .padding(.top, 10)
-                Text("Only continue if you just started this connection yourself. Tap the two-digit code shown on your computer or in your browser.")
-                    .textRole(.body)
-                    .foregroundStyle(Palette.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                codes.padding(.horizontal, 20).padding(.vertical, 18)
-                Text("Name this connection").textRole(.section).foregroundStyle(Palette.inkMeta).padding(.leading, 24).padding(.bottom, 8)
+                // What the other side calls itself: quoted, on rows of their own, never the ask.
+                RaisedGroup(inset: 48) {
+                    GlyphFact(glyph: PairWords.computer(view) ? .laptop : .globe, value: PairWords.quoted(view.clientName), valueId: "pairName")
+                    let host = asciiHost(untrustedName(view.clientHost, limit: 64))
+                    if !host.isEmpty { GlyphFact(glyph: .globe, value: host, mono: true, valueId: "pairHost") }
+                }
+                .padding(.top, 14)
+                SectionHeader("Tap the code it shows")
+                codes.padding(.horizontal, 16)
+                SectionHeader("Name")
                 if vm.sameClient {
                     // Two accounts of one AI look the same to Reins: the name is what tells them apart.
-                    Label {
-                        Text(PairWords.sameClient(view))
-                    } icon: {
-                        Image(systemName: "person.2.fill")
-                    }
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.violet)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 8)
-                    .accessibilityIdentifier("pairSameClient")
+                    Label { Text(PairWords.sameClient(view)) } icon: { GlyphIcon(.person, size: 14) }
+                        .font(RFont.sans(13.5))
+                        .foregroundStyle(Palette.violet)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                        .accessibilityIdentifier("pairSameClient")
                 }
-                TextField(untrustedName(view.clientName, limit: 48), text: Binding(get: { vm.label }, set: { vm.edit($0) }))
-                    .font(RFont.sans(16))
-                    .focused($naming)
-                    .submitLabel(.done)
-                    .textInputAutocapitalization(.words)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
-                    .padding(.horizontal, 20)
-                    .accessibilityLabel("Name this connection")
-                    .accessibilityIdentifier("label")
+                RaisedFields {
+                    InputRow(glyph: .pencil) {
+                        TextField(untrustedName(view.clientName, limit: 48), text: Binding(get: { vm.label }, set: { vm.edit($0) }))
+                            .focused($naming)
+                            .submitLabel(.done)
+                            .textInputAutocapitalization(.words)
+                            .accessibilityLabel("Name this connection")
+                            .accessibilityIdentifier("label")
+                    }
+                }
                 if let note = StartingRuleText.onPairing(model.startingPolicy) {
                     Text(note)
-                        .font(RFont.sans(13.5))
+                        .textRole(.sub)
                         .foregroundStyle(Palette.inkMeta)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 24)
-                        .padding(.top, 12)
+                        .padding(.top, 10)
                         .accessibilityIdentifier("startingRuleNote")
                 }
                 if let error = vm.error {
-                    Banner(error, kind: .error).padding(16).accessibilityIdentifier("pairingError")
+                    FormBanner(text: error).padding(16).accessibilityIdentifier("pairingError")
                 }
             }
         } recap: {
-            Text(PairWords.ask(view)).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
+            Text(PairWords.ask(view)).textRole(.cardAsk).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Connect",
@@ -263,13 +261,16 @@ private struct PairingContent: View {
                 }
             )
         }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(32)
         .accessibilityContainer("pairingSheet")
         // A second account of an AI already connected: the cursor waits in the name field, "Claude 2" selected to type over.
         .task(id: vm.sameClient) { if vm.sameClient { naming = true } }
     }
 
     private var codes: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             ForEach(vm.codes, id: \.self) { code in
                 let label = String(format: "%02d", code)
                 let picked = vm.chosen == code
@@ -277,11 +278,9 @@ private struct PairingContent: View {
                     vm.chosen = code
                     feedback.play(.selection)
                 } label: {
-                    Text(label)
-                        .font(RFont.mono(20, .semibold))
-                        .frame(maxWidth: .infinity)
+                    Text(label).font(RFont.mono(19, .medium)).frame(maxWidth: .infinity)
                 }
-                .buttonStyle(SignalButtonLook(kind: picked ? .inverse : .outline, height: 56))
+                .buttonStyle(SignalButtonLook(kind: picked ? .violet : .outline, height: 48))
                 .accessibilityLabel("Code \(label)")
                 .accessibilityAddTraits(picked ? .isSelected : [])
                 .accessibilityIdentifier("code:\(label)")
@@ -290,31 +289,91 @@ private struct PairingContent: View {
     }
 }
 
-/// The Reins desktop app's key, as eight digits the computer shows too, on a mono row of its own. They come from the
+/// The top of a pairing or joining sheet (the Connect board, 03 and 04): its field running into the sheet's top, the
+/// request icon Reins picked and the close button, Reins' own sentence, then what to compare. Reins alone picks the
+/// field and the words: a name the other side sent never goes here, only quoted on a row of its own below.
+struct ConnectField<Extra: View>: View {
+    var kind: FieldKind
+    var ask: AskLine
+    @ViewBuilder var extra: Extra
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                RequestIcon(spec: ask.icon, size: 40, ring: kind.fill)
+                    .accessibilityIdentifier("requestIcon")
+                Spacer()
+                RoundHeaderButton(glyph: .close, label: "Close", onField: true) { model.closeSheet() }
+                    .accessibilityIdentifier("closeSheet")
+            }
+            ask.runs.reduce(Text(verbatim: "")) { sentence, run in
+                Text("\(sentence)\(Text(verbatim: run.text).font(RFont.display(26.5, target: run.target)))")
+            }
+                .tracking(RFont.displayTracking(26.5))
+                .foregroundStyle(Palette.onField)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(ask.text)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("what")
+            extra
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FieldSurface(kind: kind))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("hero")
+    }
+}
+
+/// A fact with no key (the kit's `fact`): its glyph says what it is, the value beside it. Names from the other side
+/// arrive quoted, cleaned and capped; hosts in mono.
+struct GlyphFact: View {
+    var glyph: Glyph
+    var value: String
+    var mono = false
+    var valueId: String?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            GlyphIcon(glyph, size: 18).foregroundStyle(Palette.inkMeta).frame(width: 20)
+            Text(verbatim: value)
+                .font(mono ? RFont.mono(14) : RFont.sans(15.5, .medium))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.layoutDirection, .leftToRight)
+                .accessibilityIdentifier(valueId ?? "")
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 50)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The Reins desktop app's key, as eight digits the computer shows too, big and mono on the field. They come from the
 /// key this phone verified, not from anything the other side named; matching them is what stops the server from
 /// slipping in a key of its own.
-private struct DesktopKeyRow: View {
+private struct DesktopKey: View {
     var fingerprint: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Key").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
-            Text(fingerprint)
-                .font(RFont.mono(34, .semibold))
-                .tracking(1.5)
-                .foregroundStyle(Palette.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .environment(\.layoutDirection, .leftToRight)
-            Text("Check that your computer shows the same numbers. If they differ, deny.")
-                .textRole(.meta)
-                .foregroundStyle(Palette.inkMeta)
-                .fixedSize(horizontal: false, vertical: true)
+            Label { Text("Key") } icon: { GlyphIcon(.fingerprint, size: 15) }
+                .labelStyle(SignalLabelStyle())
+                .font(RFont.sans(13.5, .semibold))
+                .foregroundStyle(Palette.onField.opacity(0.85))
+            BigCode(code: fingerprint, size: 46)
         }
+        .padding(.top, 22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Key \(fingerprint)")
         .accessibilityIdentifier("keyFingerprint")
     }
 }

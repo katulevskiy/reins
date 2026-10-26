@@ -107,10 +107,10 @@ final class JoinModel {
 /// A join's words: Reins' own sentence; the phone's name only quoted, on a row of its own.
 enum JoinWords {
     static let label = "Account · New phone"
-    /// "Add a phone to *your account*": a phone, with a plus, on the accounts field.
+    /// "Add a phone to *your account*": Reins' shield, with the phone badge, on the accounts field.
     static let line = AskLine(
         kind: label, lead: "Add a phone to ", target: "your account",
-        icon: AskIcon(mark: .glyph(.phone), action: .plus, kind: .accounts)
+        icon: AskIcon(mark: .glyph(.shieldCheck), action: .phone, kind: .accounts)
     )
     static let ask = line.text
 }
@@ -123,39 +123,34 @@ private struct JoinContent: View {
     var body: some View {
         DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                SheetField(kind: .accounts, ask: JoinWords.line)
-                Text("A phone signed in to your account and asks for its keys. Approve only if it is yours and shows this code.")
-                    .textRole(.body)
-                    .foregroundStyle(Palette.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 18)
-                    .padding(.bottom, 6)
-                FactGroup {
-                    FactRow(key: "Calls itself", value: PairWords.quoted(view.deviceName), valueId: "joinPhone")
+                ConnectField(kind: .accounts, ask: JoinWords.line) {
                     // Worked out here from the key the server relayed: a swapped key shows another code.
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Code").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
-                        Text(view.code)
-                            .font(RFont.mono(40, .semibold))
-                            .foregroundStyle(Palette.ink)
-                            .environment(\.layoutDirection, .leftToRight)
-                            .accessibilityLabel("Code \(view.code)")
-                            .accessibilityIdentifier("joinCode")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
+                    BigCode(code: view.code, size: 58)
+                        .padding(.top, 26)
+                        .accessibilityLabel("Code \(view.code)")
+                        .accessibilityIdentifier("joinCode")
+                    Text("Approve only if it's yours and shows this code.")
+                        .font(RFont.sans(14, .medium))
+                        .foregroundStyle(Palette.onField.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 12)
                 }
-                Banner("It can then open your vault, and it becomes the phone that approves once it is set up.")
-                    .padding(.horizontal, 20)
-                    .padding(.top, 14)
+                RaisedGroup(inset: 48) {
+                    GlyphFact(glyph: .phone, value: PairWords.quoted(view.deviceName), valueId: "joinPhone")
+                }
+                .padding(.top, 14)
+                SectionHeader("It gets")
+                RaisedGroup(inset: 48) {
+                    GlyphFact(glyph: .vault, value: "Your vault")
+                    GlyphFact(glyph: .shieldCheck, value: "Approves requests")
+                }
+                .accessibilityIdentifier("joinGets")
                 if let error = vm.error {
-                    Banner(error, kind: .error).padding(16).accessibilityIdentifier("joinError")
+                    FormBanner(text: error).padding(16).accessibilityIdentifier("joinError")
                 }
             }
         } recap: {
-            Text(JoinWords.ask).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
+            Text(JoinWords.ask).textRole(.cardAsk).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Approve",
@@ -165,6 +160,9 @@ private struct JoinContent: View {
                 onApprove: { Task { await vm.approve(model) } }
             )
         }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(32)
         .accessibilityContainer("joinSheet")
     }
 }

@@ -1,39 +1,83 @@
 import SwiftUI
 import UIKit
 
-/// Connections: both ends of the wire (iOS-Connections.png). Who can ask (the AI apps and the computers) on top, what
-/// they can reach (the services and the MCP servers) below, in one list; the plus opens "Connect something". It is
-/// Settings' Connected group and the Integrations page put together, their views moved here as they were.
+/// Connections (the Connections board, 01): a standard tab root. Who can ask (the AI apps, then the computers) and what
+/// they reach (the services with an account, and the MCP servers), each section with its own plus: an AI app and a
+/// computer open "Connect", a service opens the list of every service.
 struct ConnectionsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var connecting = false
+    @State private var addingService = false
     /// What the connect sheet chose; done once it has gone (a sheet cannot open while another is still closing).
     @State private var chosen: ConnectChoice?
+    @State private var chosenService: String?
+    @State private var showAllApps = false
+
+    /// AI apps: connections that did not pin a computer's key.
+    private var apps: [ConnectionView] { model.connections.filter { $0.keyFingerprint == nil } }
+    private var computers: [ConnectionView] { model.connections.filter { $0.keyFingerprint != nil } }
+    private var reach: [ServiceView] { model.services.filter { !$0.accounts.isEmpty } }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    PageHeader(title: "Connections") {
-                        RoundPlusButton(label: "Connect an AI app or a computer") {
-                            connecting = true
-                        }
-                        .accessibilityIdentifier("connect")
-                    }
-                    Text(ConnectionsText.mood(model.connections))
-                        .textRole(.body)
-                        .foregroundStyle(Palette.ink2)
-                        .accessibilityIdentifier("connectionsMood")
-                }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+        NextPage(bottom: 120) {
+            StandardTitle("Connections")
+                .accessibilityIdentifier("connectionsTitle")
+            AddSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
+                connecting = true
             }
-            WhoCanAskSection()
-            ServicesSection(title: "What they can reach")
-            McpServersSection(servers: model.mcpServers)
+            .padding(.top, -4)
+            RaisedGroup {
+                if apps.isEmpty {
+                    EmptyRow(text: "None yet").accessibilityIdentifier("noConnections")
+                }
+                ForEach(showAllApps ? apps : Array(apps.prefix(4)), id: \.id) { ConnectionRow(connection: $0) }
+                if apps.count > 4 && !showAllApps {
+                    Button {
+                        feedback.play(.expand(true))
+                        withAnimation(.smooth(duration: 0.25)) { showAllApps = true }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("Show all").font(RFont.sans(15)).foregroundStyle(Palette.ink2).frame(maxWidth: .infinity, alignment: .leading)
+                            Text("\(apps.count)").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
+                            RowChevron()
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 56)
+                    }
+                    .buttonStyle(RowPressStyle())
+                    .accessibilityIdentifier("showAllApps")
+                }
+            }
+            AddSectionHeader(title: "Computers", glyph: .laptop, count: computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
+                connecting = true
+            }
+            RaisedGroup {
+                if computers.isEmpty {
+                    EmptyRow(text: "None yet").accessibilityIdentifier("noComputers")
+                }
+                ForEach(computers, id: \.id) { ConnectionRow(connection: $0) }
+            }
+            AddSectionHeader(
+                title: "Services", glyph: .link, count: reach.count + model.mcpServers.count, addLabel: "Add a service", addId: "addService"
+            ) {
+                addingService = true
+            }
+            RaisedGroup {
+                if reach.isEmpty && model.mcpServers.isEmpty {
+                    EmptyRow(text: "None yet").accessibilityIdentifier("noServices")
+                }
+                ForEach(reach, id: \.service) { ServiceRow(service: $0) }
+                ForEach(model.mcpServers, id: \.id) { McpRow(server: $0) }
+            }
         }
-        .reinsGrouped()
+        .overlay(alignment: .bottom) {
+            // The fade under the floating tab bar.
+            LinearGradient(colors: [Palette.paper.opacity(0), Palette.paper], startPoint: .top, endPoint: .init(x: 0.5, y: 0.7))
+                .frame(height: 110)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
         .navigationTitle("Connections")
         .rootNavigationBar()
         .refreshable {
@@ -45,6 +89,13 @@ struct ConnectionsScreen: View {
             await model.refreshConnections()
             await model.refreshPending()
             DemoIntegrationsLaunch.openOnce(model)
+            #if DEBUG
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-show"), i + 1 < args.count {
+                if args[i + 1] == "connectSheet" { connecting = true }
+                if args[i + 1] == "addService" { addingService = true }
+            }
+            #endif
         }
         .sheet(isPresented: $connecting, onDismiss: openChosen) {
             ConnectSheet { choice in
@@ -55,6 +106,15 @@ struct ConnectionsScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(connecting)
+        .sheet(isPresented: $addingService, onDismiss: openService) {
+            AddServiceSheet { id in
+                chosenService = id
+                addingService = false
+            }
+            .environment(model)
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(addingService)
     }
 
     private func openChosen() {
@@ -63,9 +123,19 @@ struct ConnectionsScreen: View {
         model.connectStartsTyped = choice == .typeCode
         model.openSheet(.connectComputer)
     }
+
+    private func openService() {
+        guard let id = chosenService else { return }
+        chosenService = nil
+        switch id {
+        case "mcp": model.show(.mcpAdd)
+        case "gmail": model.show(.gmail)
+        default: model.show(.service(id))
+        }
+    }
 }
 
-/// What Connections says in words.
+/// What Connections says in words (VoiceOver's summary of the page).
 enum ConnectionsText {
     /// "Three AIs and a computer can ask.", "Nothing can ask yet."
     static func mood(_ connections: [ConnectionView]) -> String {
@@ -89,191 +159,209 @@ enum ConnectionsText {
         default: (n < words.count ? words[n] : "\(n)") + " " + many
         }
     }
+
+    /// The tag beside an AI that has a mode of its own (Auto, Overnight, Lockdown, Bypass); none for one that follows
+    /// every AI or is Manual on its own.
+    static func ownMode(_ connectionId: String, _ settings: AutopilotSettings?) -> ModeKind? {
+        guard let own = settings?.connections.first(where: { $0.connectionId == connectionId }) else { return nil }
+        if own.bypassUntil != nil { return .bypass }
+        if own.overnightUntil != nil { return .overnight }
+        switch own.baseMode {
+        case .auto?: return .auto
+        case .lockdown?: return .lockdown
+        case .overnight?: return .overnight
+        default: return nil
+        }
+    }
 }
 
-/// Who can ask: the AI apps, then the computers, each opening its page.
-private struct WhoCanAskSection: View {
+/// A row in a raised group pressed: the row dims, as the boards' rows do.
+struct RowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Palette.paperSunken.opacity(0.6) : .clear)
+            .contentShape(Rectangle())
+    }
+}
+
+/// "None yet": a group with nothing in it.
+private struct EmptyRow: View {
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(RFont.sans(15))
+            .foregroundStyle(Palette.ink2)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            .padding(.horizontal, 14)
+    }
+}
+
+/// An AI app or computer: its avatar, its name (cleaned, one line), the tag of a mode of its own, a chevron.
+private struct ConnectionRow: View {
+    var connection: ConnectionView
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
 
-    /// AI apps first, then the computers, which pinned their key when they paired.
-    private var connections: [ConnectionView] {
-        model.connections.filter { $0.keyFingerprint == nil } + model.connections.filter { $0.keyFingerprint != nil }
-    }
-
     var body: some View {
-        Section {
-            if connections.isEmpty {
-                NoAccountsRow(title: "Nothing connected yet", message: "Connect an AI app or a computer with the plus above.")
-                    .accessibilityIdentifier("noConnections")
-                    .cardRow()
-            }
-            ForEach(connections, id: \.id) { connectionRow($0) }
-        } header: {
-            GroupHeader("Who can ask")
-        }
-    }
-
-    private func connectionRow(_ connection: ConnectionView) -> some View {
+        let mode = ConnectionsText.ownMode(connection.id, model.autopilot)
         Button {
             model.show(.connection(connection.id))
             feedback.defaultTap()
         } label: {
-            SettingsRowLabel(title: untrusted(connection.label), subtitle: SettingsText.connectionLine(connection)) {
-                ConnectionAvatar(connection: connection, size: 32)
+            TileRow(untrustedName(connection.label, limit: 40)) {
+                MarkPlate(size: 32) { ConnectionAvatar(connection: connection, size: 32) }
             } trailing: {
-                EmptyView()
+                if let mode { Pill(mode.name, tone: mode == .auto ? .violet : mode == .overnight ? .night : mode == .bypass ? .danger : .warning, mode: mode) }
             }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(untrusted(connection.label)), \(SettingsText.connectionLine(connection))")
+        .buttonStyle(RowPressStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(untrustedName(connection.label, limit: 40) + (mode.map { ", \($0.name)" } ?? ""))
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("connection:\(connection.id)")
-        .cardRow()
+    }
+}
+
+/// A service with an account: its logo, its name, the account (or how many), a chevron.
+private struct ServiceRow: View {
+    var service: ServiceView
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        Button {
+            model.show(service.service == "gmail" ? .gmail : .service(service.service))
+            feedback.defaultTap()
+        } label: {
+            TileRow(service.name) {
+                MarkPlate(size: 32) { ServiceAvatar(service: service.service, size: 32) }
+            } trailing: {
+                if service.accounts.count == 1, let only = service.accounts.first {
+                    Text(ServiceCopy.accountTitle(service, only.account))
+                        .font(RFont.sans(15))
+                        .foregroundStyle(Palette.ink2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .environment(\.layoutDirection, .leftToRight)
+                } else {
+                    HStack(spacing: 4) {
+                        GlyphIcon(.person, size: 14)
+                        Text("\(service.accounts.count)")
+                    }
+                    .font(RFont.sans(15))
+                    .foregroundStyle(Palette.ink2)
+                }
+            }
+        }
+        .buttonStyle(RowPressStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(service.name), \(ServiceCopy.summary(service))")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("service:\(service.service)")
+    }
+}
+
+/// An MCP server the user added: the plug, its name (theirs, cleaned), its status when it is not working.
+private struct McpRow: View {
+    var server: McpServerView
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        Button {
+            model.show(.mcpServer(server.id))
+            feedback.defaultTap()
+        } label: {
+            TileRow(untrustedName(server.name, limit: 40)) {
+                MarkPlate(size: 32) { ServiceAvatar(service: "mcp", size: 32) }
+            } trailing: {
+                if server.status == "ok" {
+                    Text(McpLogic.toolCount(server.tools.count)).font(RFont.sans(15)).foregroundStyle(Palette.ink2).lineLimit(1)
+                } else {
+                    McpStatusPill(status: server.status)
+                }
+            }
+        }
+        .buttonStyle(RowPressStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("mcp:\(server.id)")
     }
 }
 
 private enum ConnectChoice { case scan, typeCode }
 
-/// "+ Connect": an AI app by the address to paste (copied here), or a computer by the code it shows.
+/// "Connect" (the Connect board, 01): an AI app by the address to paste into it (copied here), or a computer by the
+/// code it shows, scanned or typed.
 private struct ConnectSheet: View {
     var onChoose: (ConnectChoice) -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @Environment(\.dismiss) private var dismiss
-    @State private var help = false
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Connect")
-                    .font(RFont.sans(18, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                GlassIconButton(symbol: "xmark", size: 34, label: "Close") { dismiss() }
-                    .accessibilityIdentifier("closeSheet")
-            }
-            .padding(.bottom, 4)
-            aiApp
-            computer
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 20)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(help ? 470 : 400), .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.paper)
-        .accessibilityIdentifier("connectSheet")
-    }
-
-    private var aiApp: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                HStack(spacing: -10) {
-                    ConnectionAvatar(label: "Claude", pick: "claude", size: 34)
-                        .overlay(Circle().strokeBorder(Palette.paperRaised, lineWidth: 2.5))
-                        .zIndex(1)
-                    ConnectionAvatar(label: "ChatGPT", pick: "openai", size: 34)
-                }
-                .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("AI app").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.ink)
-                    Text("Claude, ChatGPT and others").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    let next = !help
-                    withAnimation(.smooth(duration: 0.25)) { help = next }
-                    feedback.play(.expand(next))
-                } label: {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 17))
-                        .foregroundStyle(help ? Palette.violet : Palette.inkMeta)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(help ? "Hide help" : "Help")
-                .accessibilityIdentifier("help")
-            }
-            if help {
-                Text("In Claude.ai, ChatGPT or another AI app, add a custom connector (MCP) and paste this address. It then asks you here before it reads or sends anything.")
-                    .font(RFont.sans(13))
-                    .foregroundStyle(Palette.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 10)
-                    .transition(.opacity)
-            }
-            Button(action: copy) {
-                HStack(spacing: 10) {
-                    Text(SettingsText.host(model.mcpAddress))
-                        .font(RFont.mono(13))
+            SheetTitle("Connect") { dismiss() }
+            SectionHeader("AI app", glyph: .link)
+            RaisedGroup {
+                HStack(spacing: 8) {
+                    Text(verbatim: SettingsText.host(model.mcpAddress))
+                        .font(RFont.mono(14.5))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(RFont.sans(14, .semibold))
-                        .foregroundStyle(Palette.violet)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .accessibilityIdentifier("mcpUrl")
+                    RoundHeaderButton(glyph: copied ? .check : .copy, label: "Copy \(model.mcpAddress)", action: copy)
+                        .accessibilityIdentifier("copyMcpUrl")
                 }
-                .environment(\.layoutDirection, .leftToRight)
                 .padding(.leading, 14)
                 .padding(.trailing, 12)
-                .padding(.vertical, 11)
-                .background(Palette.paper, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .contentShape(Rectangle())
+                .frame(minHeight: 56)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 14)
-            .accessibilityLabel("Copy \(model.mcpAddress)")
-            .accessibilityIdentifier("copyMcpUrl")
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("connectAi")
+            SectionHeader("Computer", glyph: .laptop)
+            RaisedGroup {
+                HStack(spacing: 10) {
+                    Button {
+                        feedback.play(.tap)
+                        onChoose(.scan)
+                    } label: {
+                        Label { Text("Scan") } icon: { GlyphIcon(.qrCode, size: 18) }
+                    }
+                    .buttonStyle(SignalButtonStyle(.inverse, size: .small))
+                    .accessibilityIdentifier("sheetScanQr")
+                    Button {
+                        feedback.play(.tap)
+                        onChoose(.typeCode)
+                    } label: {
+                        Label { Text("Type") } icon: { GlyphIcon(.pencil, size: 18) }
+                    }
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                    .accessibilityIdentifier("sheetTypeCode")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("connectComputerCard")
+            Spacer(minLength: 0)
         }
-        .padding(16)
-        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("connectAi")
-    }
-
-    private var computer: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                SettingsTile(symbol: "laptopcomputer", tint: Palette.kindPair)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Computer").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.ink)
-                    // A key, not a String, so the command shows in code type.
-                    Text(LocalizedStringKey("Desktop app or `reins login`")).font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
-                }
-            }
-            HStack(spacing: 10) {
-                Button {
-                    feedback.play(.tap)
-                    onChoose(.scan)
-                } label: {
-                    Label("Scan QR code", systemImage: "qrcode.viewfinder")
-                }
-                .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 44))
-                .accessibilityIdentifier("sheetScanQr")
-                Button {
-                    feedback.play(.tap)
-                    onChoose(.typeCode)
-                } label: {
-                    Text("Type code").font(RFont.sans(15, .semibold))
-                }
-                .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 44))
-                .frame(width: 124)
-                .accessibilityIdentifier("sheetTypeCode")
-            }
-        }
-        .padding(16)
-        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("connectComputerCard")
+        .padding(.top, 14)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .presentationDetents([.height(372), .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(32)
+        .presentationBackground(Palette.paper)
+        .accessibilityIdentifier("connectSheet")
     }
 
     private func copy() {
-        UIPasteboard.general.string = model.mcpAddress
-        feedback.play(.copied)
+        copyPlain(model.mcpAddress, feedback: feedback)
         withAnimation(.smooth(duration: 0.2)) { copied = true }
         Task {
             try? await Task.sleep(for: .seconds(2))
@@ -282,3 +370,76 @@ private struct ConnectSheet: View {
     }
 }
 
+/// A sheet's title row (the kit's `sheet(…, title)`): display 22 and the round close button.
+struct SheetTitle: View {
+    var title: String
+    var onClose: () -> Void
+
+    init(_ title: String, onClose: @escaping () -> Void) {
+        self.title = title
+        self.onClose = onClose
+    }
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .textRole(.cardAsk)
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            RoundHeaderButton(glyph: .close, label: "Close", action: onClose)
+                .accessibilityIdentifier("closeSheet")
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+}
+
+/// "Add a service": every service Reins can connect (those not available say so), and an MCP server by its address.
+private struct AddServiceSheet: View {
+    var onChoose: (String) -> Void
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    private var services: [ServiceView] { model.services + [ServiceCopy.sms] }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SheetTitle("Add a service") { dismiss() }
+                RaisedGroup {
+                    ForEach(services, id: \.service) { service in
+                        Button { onChoose(service.service) } label: {
+                            TileRow(service.name, chevron: service.available) {
+                                MarkPlate(size: 32) { ServiceAvatar(service: service.service, size: 32) }
+                            } trailing: {
+                                let summary = ServiceCopy.summary(service)
+                                if !summary.isEmpty { Text(summary).font(RFont.sans(15)).foregroundStyle(Palette.ink2).lineLimit(1) }
+                            }
+                        }
+                        .buttonStyle(RowPressStyle())
+                        .disabled(!service.available && service.service == ServiceCopy.sms.service)
+                        .accessibilityIdentifier("addService:\(service.service)")
+                    }
+                    Button { onChoose("mcp") } label: {
+                        TileRow("MCP server") {
+                            MarkPlate(size: 32) { ServiceAvatar(service: "mcp", size: 32) }
+                        } trailing: { EmptyView() }
+                    }
+                    .buttonStyle(RowPressStyle())
+                    .accessibilityIdentifier("addMcp")
+                }
+                .padding(.top, 12)
+            }
+            .padding(.top, 14)
+            .padding(.bottom, 24)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(32)
+        .presentationBackground(Palette.paper)
+        .accessibilityIdentifier("addServiceSheet")
+    }
+}
