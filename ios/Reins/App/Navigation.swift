@@ -93,7 +93,7 @@ enum SheetTarget: Hashable, Identifiable {
     /// Pairing, joining and connecting a computer set their own detents.
     var ownDetents: Bool {
         switch self {
-        case .pairing, .join, .connectComputer: true
+        case .pairing, .join, .connectComputer, .upload: true
         default: false
         }
     }
