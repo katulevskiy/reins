@@ -308,6 +308,7 @@ struct AutopilotWhySheet: View {
     var close: () -> Void
     @Environment(AppModel.self) private var model
     @State private var height: CGFloat = 420
+    @State private var correctionShown = false
 
     var body: some View {
         ScrollView {
@@ -332,9 +333,12 @@ struct AutopilotWhySheet: View {
                 }
                 .padding(.top, 14)
                 .accessibilityIdentifier("autopilotReason")
-                if let entry, ThisWasWrongDock.offered(entry) {
+                // Stays once shown, so its thanks can replace it after the correction (the entry then is no longer
+                // correctable).
+                if let entry, correctionShown || ThisWasWrongDock.offered(entry) {
                     SheetGroup { ThisWasWrongDock(entry: entry) }
                         .padding(.top, 12)
+                        .onAppear { correctionShown = true }
                 }
             }
             .padding(.bottom, 24)

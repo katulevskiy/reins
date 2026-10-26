@@ -437,6 +437,12 @@ final class ActivityFlowTests: XCTestCase {
         let moves: [(dy: CGFloat, speed: CGFloat, pause: TimeInterval)] = [(-200, 2500, 0.02), (200, 900, 0.02), (-200, 900, 0.12), (200, 2500, 0.12)]
         for move in moves {
             centerInList(app, target)
+            if move.dy > 0 {
+                // Rows sit close under the waiting cards: give a drag down room to travel before the list's top
+                // stops it, by moving the row up the open list first (it stays in the open band).
+                nudge(app, dy: -150, avoiding: target)
+                settle(target)
+            }
             XCTAssertFalse(app.menus.firstMatch.exists, "centering did not open a context menu")
             assertDragStartsOnTheList(app, target, at: point)
             let before = target.frame.minY
