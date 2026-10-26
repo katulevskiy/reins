@@ -42,9 +42,13 @@ trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 # Xcode exports SDKROOT and deployment variables for the app's SDK; host build scripts (proc macros, build.rs) must not
 # see them, so cargo runs in a clean environment with the toolchain rustup pins (rust-toolchain.toml).
+# Where rustup put cargo when it is not in ~/.cargo/bin (CI runners set CARGO_HOME and RUSTUP_HOME elsewhere), kept
+# with those two so the clean environment still finds the pinned toolchain.
+CARGO_DIR="$(dirname "$(command -v cargo 2>/dev/null || echo "$HOME/.cargo/bin/cargo")")"
 run_cargo() {
   env -i HOME="$HOME" USER="${USER:-}" TERM="${TERM:-dumb}" \
-    PATH="$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    ${CARGO_HOME:+CARGO_HOME="$CARGO_HOME"} ${RUSTUP_HOME:+RUSTUP_HOME="$RUSTUP_HOME"} \
+    PATH="$CARGO_DIR:$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     IPHONEOS_DEPLOYMENT_TARGET=26.0 \
     CARGO_TARGET_DIR="$ROOT/target" \
     cargo "$@"
