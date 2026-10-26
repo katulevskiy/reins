@@ -134,4 +134,24 @@ final class ApprovalFieldUITests: XCTestCase {
         XCTAssertTrue(band.label.contains("Push 8 commits to octo/app"))
         shot(app, "band-commits")
     }
+
+    /// The kit's ask: the timer at the left and close at the right in the top row, then who asks (by name, with its
+    /// address) on a line of its own above Reins' sentence, which never carries the name.
+    func testWhoAsksStaysOnTheFieldApartFromTheSentence() {
+        let app = open("req20")
+        assertShown(app, "whoAsks", says: "M2A")
+        let who = element(app, "whoAsks")
+        let what = element(app, "what")
+        let close = element(app, "closeSheet")
+        let timer = element(app, "waitLine")
+        XCTAssertTrue(what.exists && close.exists && timer.exists)
+        XCTAssertFalse(what.label.contains("M2A"), "the sentence is Reins' own: \(what.label)")
+        XCTAssertLessThan(who.frame.maxY, what.frame.minY + 1, "who asks reads first")
+        XCTAssertLessThan(close.frame.maxY, who.frame.minY + 1, "the top row is above it")
+        let width = app.windows.firstMatch.frame.width
+        XCTAssertGreaterThan(close.frame.minX, width / 2, "close at the top right")
+        XCTAssertLessThan(timer.frame.maxX, width / 2, "the timer at the top left")
+        XCTAssertTrue(element(app, "suggestion").exists, "Autopilot's pick on the field")
+        shot(app, "field-who-asks")
+    }
 }

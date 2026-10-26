@@ -25,7 +25,7 @@ struct PurchaseFacts: View {
                 Text("Amount").font(RFont.sans(15.5)).foregroundStyle(Palette.ink2)
                 Spacer(minLength: 8)
                 Text(verbatim: "\(untrusted(p.total)) \(untrusted(p.currency))")
-                    .font(RFont.serif(28))
+                    .font(RFont.display(20.5))
                     .foregroundStyle(Palette.ink)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)

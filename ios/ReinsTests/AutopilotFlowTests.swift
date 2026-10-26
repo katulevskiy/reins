@@ -327,6 +327,49 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertTrue(feedback.lastWas(.lockdownOff))
     }
 
+    func testLeavingLockdownWithoutTheOwnerIsRefused() async {
+        await start()
+        await ap.setMode(.lockdown)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        owner.answer = false
+        await ap.setMode(.manual)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown, "picking a mode is no way out of lockdown without the owner")
+        XCTAssertEqual(owner.asked, ["End lockdown"])
+        await ap.endLockdown()
+        XCTAssertEqual(model.autopilot?.mode, .lockdown, "nor is End")
+        owner.answer = true
+        await ap.setMode(.auto)
+        XCTAssertEqual(model.autopilot?.mode, .auto, "with the owner's check it ends")
+        XCTAssertEqual(owner.asked.count, 3, "one check per attempt, never two for one tap")
+    }
+
+    /// A connection's page (ConnectionDetailScreen) changes the AI's own mode through `setMode`: its Unlock and its
+    /// "Like all" never leave that AI's lockdown without the owner.
+    func testLeavingAConnectionsLockdownWithoutTheOwnerIsRefused() async {
+        await start()
+        await ap.setMode(.lockdown, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown)
+        owner.answer = false
+        await ap.setMode(nil, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown, "Unlock is no way out of an AI's lockdown without the owner")
+        await ap.setMode(.auto, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown, "nor is picking Auto")
+        XCTAssertEqual(owner.asked, ["End lockdown", "End lockdown"])
+        owner.answer = true
+        await ap.setMode(nil, connectionId: "c1", label: "Claude")
+        XCTAssertNotEqual(ap.modeOf("c1"), .lockdown, "with the owner's check it ends")
+    }
+
+    func testStartingBypassWithoutTheOwnerIsRefused() async {
+        await start()
+        owner.answer = false
+        await ap.startBypass(minutes: 15)
+        XCTAssertNotEqual(model.autopilot?.mode, .bypass)
+        await ap.setMode(.bypass, minutes: 15)
+        XCTAssertNotEqual(model.autopilot?.mode, .bypass, "setMode goes through the same check")
+        XCTAssertEqual(owner.asked.count, 2)
+    }
+
     func testWithoutTheModelTheModeIsManual() async {
         await start(modelInstalled: false)
         XCTAssertEqual(model.autopilot?.mode, .manual)

@@ -78,33 +78,45 @@ final class SignalFoundationTests: XCTestCase {
     }
 
     func testTheTypeScale() {
+        // The Type board: ask 33, title 30, card ask 22, row 16, meta 12.5, section 13, code 11.5 on 19, codes 24.
         let scale: [(TextRole, CGFloat, CGFloat?)] = [
-            (.ask, 45, 46), (.askSmall, 25, 26), (.title, 44, 44), (.stat, 40, 40), (.sheetTitle, 32, 34), (.mood, 24, 30),
-            (.button, 16.5, nil), (.row, 15.5, nil), (.body, 15, 22), (.meta, 13, 18), (.tag, 11.5, nil), (.label, 11.5, 14),
-            (.value, 13.5, nil),
+            (.ask, 33, 34), (.cardAsk, 22, 23), (.title, 30, 31), (.quietTitle, 24, 25), (.button, 16.5, nil), (.row, 16, nil),
+            (.body, 16, 21.5), (.meta, 12.5, nil), (.section, 13, nil), (.tag, 11.5, nil), (.value, 14, nil), (.detail, 13, nil),
+            (.code, 11.5, 19), (.codes, 24, nil),
         ]
         for (role, size, lineHeight) in scale {
             XCTAssertEqual(role.size, size, "\(role)")
             XCTAssertEqual(role.lineHeight, lineHeight, "\(role)")
         }
-        XCTAssertEqual(TextRole.label.trackingEm, 0.16)
-        XCTAssertTrue(TextRole.mood.italic)
-        XCTAssertEqual(TextRole.ask.family, .serif)
-        XCTAssertEqual(TextRole.label.family, .mono)
+        XCTAssertEqual(TextRole.ask.trackingEm, -0.03)
+        XCTAssertEqual(TextRole.cardAsk.trackingEm, -0.02)
+        XCTAssertEqual(TextRole.section.trackingEm, 0.015)
+        XCTAssertEqual(TextRole.codes.trackingEm, 0.08)
+        XCTAssertEqual(TextRole.ask.family, .display)
+        XCTAssertEqual(TextRole.value.family, .mono)
+        XCTAssertEqual(RFont.displayTrackingEm(30), -0.03, accuracy: 0.0001)
+        XCTAssertEqual(RFont.displayTrackingEm(11.5), 0, accuracy: 0.0001)
     }
 
     func testNoWeightIsBold() {
-        XCTAssertEqual(RFont.SansFamily.instrument.name(.bold), "InstrumentSans-SemiBold")
-        XCTAssertEqual(RFont.SansFamily.geist.name(.bold), "Geist-SemiBold")
-        XCTAssertEqual(RFont.Weight.bold.monoName, "GeistMono-SemiBold")
+        XCTAssertEqual(RFont.Weight.bold.sansName, "Sora-SemiBold")
+        XCTAssertEqual(RFont.Weight.semibold.monoName, "JetBrainsMono-Medium")
+        XCTAssertEqual(RFont.displayName(false), "Sora-Medium")
+        XCTAssertEqual(RFont.displayName(true), "Sora-SemiBold")
     }
 
     func testTheFontsAreRegistered() {
-        var names = RFont.SansFamily.allCases.flatMap { family in [RFont.Weight.regular, .medium, .semibold].map(family.name) }
-        names += [RFont.serifName(false), RFont.serifName(true), "GeistMono-Regular", "GeistMono-Medium", "GeistMono-SemiBold"]
+        let names = ["Sora-Regular", "Sora-Medium", "Sora-SemiBold", "JetBrainsMono-Regular", "JetBrainsMono-Medium"]
         for name in names {
             XCTAssertNotNil(UIFont(name: name, size: 12), "\(name) is in UIAppFonts and the bundle")
         }
+    }
+
+    func testSoraCarriesCyrillic() throws {
+        // Geologica's Cyrillic is merged into each Sora weight, so Russian text never falls back to SF.
+        let font = try XCTUnwrap(UIFont(name: "Sora-Regular", size: 16)) as CTFont
+        var glyphs = [CGGlyph](repeating: 0, count: 2)
+        XCTAssertTrue(CTFontGetGlyphsForCharacters(font, Array("Жa".utf16), &glyphs, 2))
     }
 
     func testEveryGlyphAndTextureShips() {

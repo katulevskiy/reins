@@ -79,6 +79,18 @@ import json, os, subprocess, sys
 def load(kind):
     return json.loads(subprocess.check_output(["xcrun", "simctl", "list", kind, "-j"]))
 
+prefer = (
+    "iPhone-18-Pro-Max",
+    "iPhone-17-Pro-Max",
+    "iPhone-16-Pro-Max",
+    "iPhone-18-Pro",
+    "iPhone-17-Pro",
+    "iPhone-16-Pro",
+)
+types = {item["identifier"]: item["name"] for item in load("devicetypes")["devicetypes"]}
+
+# The newest runtime that runs one of the preferred iPhones (or else any iPhone it supports): a runtime may support
+# only some devices (iOS 27.1 runs only the iPhone Duo), and pairing it with another one is "Incompatible device".
 runtimes = []
 for runtime in load("runtimes")["runtimes"]:
     if not runtime.get("isAvailable"):
@@ -89,31 +101,26 @@ for runtime in load("runtimes")["runtimes"]:
     if not name.startswith("iOS"):
         continue
     parts = [int(piece) for piece in str(runtime.get("version", "0")).split(".") if piece.isdigit()]
-    runtimes.append((tuple(parts), runtime["identifier"], name))
+    supported = [d.get("identifier") for d in runtime.get("supportedDeviceTypes", [])] or list(types)
+    runtimes.append((tuple(parts), runtime["identifier"], name, supported))
 if not runtimes:
     sys.exit("no available iOS simulator runtime")
-runtimes.sort()
-_, runtime_id, runtime_name = runtimes[-1]
+runtimes.sort(key=lambda r: r[0], reverse=True)
 
-prefer = (
-    "iPhone-18-Pro-Max",
-    "iPhone-17-Pro-Max",
-    "iPhone-16-Pro-Max",
-    "iPhone-18-Pro",
-    "iPhone-17-Pro",
-    "iPhone-16-Pro",
-)
-types = {item["identifier"]: item["name"] for item in load("devicetypes")["devicetypes"]}
-device = None
-for suffix in prefer:
-    identifier = "com.apple.CoreSimulator.SimDeviceType." + suffix
-    if identifier in types:
-        device = identifier
+runtime_id = runtime_name = device = None
+for _, rid, rname, supported in runtimes:
+    for suffix in prefer:
+        identifier = "com.apple.CoreSimulator.SimDeviceType." + suffix
+        if identifier in supported and identifier in types:
+            runtime_id, runtime_name, device = rid, rname, identifier
+            break
+    if device:
         break
 if device is None:
-    for identifier, dev_name in types.items():
-        if dev_name.startswith("iPhone"):
-            device = identifier
+    for _, rid, rname, supported in runtimes:
+        phones = [i for i in supported if types.get(i, "").startswith("iPhone") and "Duo" not in types.get(i, "")]
+        if phones:
+            runtime_id, runtime_name, device = rid, rname, phones[0]
             break
 if device is None:
     sys.exit("no iPhone simulator device type")

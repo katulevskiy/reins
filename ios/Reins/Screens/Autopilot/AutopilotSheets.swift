@@ -35,56 +35,6 @@ struct RowDivider: View {
     }
 }
 
-/// A tappable row of a card: a symbol on a tile, a title and subtitle, maybe a chevron.
-struct AutopilotRow: View {
-    var title: String
-    var subtitle: String? = nil
-    var symbol: String
-    var tint: Color = Palette.violet
-    var destructive = false
-    var chevron = false
-    var identifier: String
-    var action: () -> Void
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Button {
-            feedback.play(.tap)
-            action()
-        } label: {
-            HStack(spacing: 14) {
-                IconTile(symbol: symbol, tint: destructive ? Palette.danger : tint, size: 34)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(destructive ? Palette.danger : Palette.ink)
-                    if let subtitle {
-                        Text(subtitle).font(RFont.sans(13)).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 6)
-                if chevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.inkMeta)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(RowPress())
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier(identifier)
-    }
-}
-
-/// A row's pressed state: the control fill behind it.
-struct RowPress: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.background(configuration.isPressed ? Palette.paperSunken : .clear)
-    }
-}
-
 /// How long a bypass runs: a number of minutes, or until the user turns it off.
 enum BypassLength: Hashable {
     case minutes(UInt32)
@@ -114,11 +64,12 @@ enum TimedMode: Hashable {
     var tint: Color { self == .bypass ? Palette.danger : Palette.violet }
 
     /// The lengths offered first, and the one picked at first.
-    var presets: [UInt32] { self == .bypass ? AutopilotText.bypassMinutes : AutopilotText.overnightMinutes }
+    /// The Mode picker board's lengths: 15 min, 1 hour, 4 hours for a bypass; 4, 8 and 12 hours for Overnight.
+    var presets: [UInt32] { self == .bypass ? [15, 60, 240] : AutopilotText.overnightMinutes }
     var initial: UInt32 { self == .bypass ? 60 : 480 }
 
     /// The longer ones its Custom offers.
-    var more: [UInt32] { self == .bypass ? AutopilotText.bypassMoreMinutes : AutopilotText.overnightMoreMinutes }
+    var more: [UInt32] { self == .bypass ? [1_440, 10_080] : AutopilotText.overnightMoreMinutes }
 
     /// "Bypass every AI?", "Overnight for Claude?".
     func title(who: String?) -> String { let t = titleRuns(who: who); return t.lead + t.italic }
@@ -160,71 +111,88 @@ enum TimedMode: Hashable {
     }
 }
 
-/// Turning a bypass on, for every AI (`who` nil) or one (its name): 15 min, 1 hour, 1 day or Custom (which opens
-/// "Bypass for": 4 hours, 1 week, a number and unit of the user's own, or until turned off), held to
-/// confirm. Used by the Autopilot page, the mode pill's menu and an AI's page; no bypass starts with one tap.
+/// Turning a bypass on, for every AI (`who` nil) or one (its name): the Bypass sheet (the Mode picker board, 05): what
+/// still asks, 15 min, 1 hour, 4 hours or Custom (which opens "Bypass for": 1 day, 1 week, a number and unit of the
+/// user's own, or until turned off), then a hold. The phone's owner confirms it too (`AutopilotModel.startBypass`).
 struct BypassSheet: View {
     var who: String?
     var onConfirm: (BypassLength) -> Void
 
     var body: some View {
-        TimedModeSheet(kind: .bypass, who: who, line: "Approved without asking. Sent means sent.", help: AutopilotText.bypassHelp,
-                       onConfirm: onConfirm) { EmptyView() }
+        TimedModeSheet(kind: .bypass, who: who, help: "Approved without asking. Sent means sent. " + AutopilotText.bypassHelp,
+                       onConfirm: onConfirm) {
+            HStack(spacing: 8) {
+                Text("Still asks").font(RFont.sans(13, .semibold)).foregroundStyle(Palette.ink2)
+                Label { Text("New AI") } icon: { GlyphIcon(.link, size: 12) }.labelStyle(StillAsksLabel())
+                Label { Text("New phone") } icon: { GlyphIcon(.phone, size: 12) }.labelStyle(StillAsksLabel())
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 
-/// Turning Overnight on, as a bypass is: 4, 8 or 12 hours or Custom, what to do with what is too risky, held for two
-/// seconds, then the owner's check. Its (?) says it decides like Auto when the model does not rate risk.
+/// A one-word chip of what a bypass still asks, on paper: its glyph and word.
+private struct StillAsksLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
+        .font(RFont.sans(13, .medium))
+        .foregroundStyle(Palette.ink)
+    }
+}
+
+/// Turning Overnight on for one AI or every AI, as a bypass is: 4, 8 or 12 hours or Custom, what to do with what is
+/// too risky, then a hold; the core then asks the owner. Its (?) says it decides like Auto when the model does not rate
+/// risk. (Trust starts Overnight on a tap, for 8 hours; this sheet is the mode pill's and an AI's page's.)
 struct OvernightSheet: View {
     var who: String?
     var ap: AutopilotModel
     var onConfirm: (BypassLength) -> Void
 
     var body: some View {
-        TimedModeSheet(
-            kind: .overnight, who: who, line: AutopilotText.overnightSummary,
-            help: AutopilotText.overnightHelpText(riskRated: ap.settings?.model.risk ?? false), onConfirm: onConfirm
-        ) {
-            WhenRiskyPicker(selected: ap.settings?.overnightWhenRisky ?? .wait) { risky in
-                Task { await ap.setOvernightWhenRisky(risky) }
+        TimedModeSheet(kind: .overnight, who: who, help: AutopilotText.overnightHelpText(riskRated: ap.settings?.model.risk ?? false),
+                       onConfirm: onConfirm) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    GlyphIcon(.warning, size: 15)
+                    Text("Too risky").textRole(.section)
+                }
+                .foregroundStyle(Palette.ink2)
+                WhenRiskyPicker(selected: ap.settings?.overnightWhenRisky ?? .wait) { risky in
+                    Task { await ap.setOvernightWhenRisky(risky) }
+                }
             }
-            .padding(.top, 18)
         }
     }
 }
 
-/// "If something is too risky:" Wait for me, or Deny it (Overnight's setting, for every AI).
+/// What Overnight does with what is too risky: Wait for me, or Deny (Overnight's setting, for every AI).
 struct WhenRiskyPicker: View {
     var selected: OvernightRisky
     var onPick: (OvernightRisky) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(AutopilotText.whenRiskyTitle)
-                .textRole(.meta)
-                .foregroundStyle(Palette.ink2)
-                .padding(.horizontal, 4)
-            Chooser([
-                Chooser.Segment(id: "whenRisky:wait", title: AutopilotText.whenRiskyWait, selected: selected == .wait) {
-                    if selected != .wait { onPick(.wait) }
-                },
-                Chooser.Segment(id: "whenRisky:deny", title: AutopilotText.whenRiskyDeny, selected: selected == .deny) {
-                    if selected != .deny { onPick(.deny) }
-                },
-            ])
-        }
+        Chooser([
+            Chooser.Segment(id: "whenRisky:wait", title: AutopilotText.whenRiskyWait, selected: selected == .wait) {
+                if selected != .wait { onPick(.wait) }
+            },
+            Chooser.Segment(id: "whenRisky:deny", title: AutopilotText.whenRiskyDeny, selected: selected == .deny) {
+                if selected != .deny { onPick(.deny) }
+            },
+        ])
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("whenRisky")
     }
 }
 
-/// A timed mode's sheet (see `BypassSheet`, `OvernightSheet`): its symbol and question, a line with its (?), the
-/// lengths, what `extra` adds, Cancel and the hold that starts it.
+/// A timed mode's sheet (see `BypassSheet`, `OvernightSheet`): its name with a (?) and the close button, who it is
+/// for, what `extra` adds, the lengths, and the hold that starts it.
 struct TimedModeSheet<Extra: View>: View {
     var kind: TimedMode
     var who: String?
-    var line: String
     var help: String
     var onConfirm: (BypassLength) -> Void
     @ViewBuilder var extra: Extra
@@ -235,6 +203,7 @@ struct TimedModeSheet<Extra: View>: View {
     /// What Custom holds once "Bypass for" chose it.
     @State private var custom: BypassLength?
     @State private var choosing = false
+    @State private var helpOpen = false
     /// "Bypass for" was held to confirm: started once it has closed.
     @State private var confirmedInside: BypassLength?
     @Environment(\.dismiss) private var dismiss
@@ -249,25 +218,49 @@ struct TimedModeSheet<Extra: View>: View {
         }
     }
 
+    private var name: String { kind == .bypass ? ModeKind.bypass.name : ModeKind.overnight.name }
+
+    /// "For Claude": an AI's name, one short clean line; nil for every AI.
+    private var forWhom: String? {
+        guard let who else { return nil }
+        let name = untrustedName(who, limit: 40)
+        return name.isEmpty ? nil : name
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // The heaviest decision in the app: the mode's solid tile, the question in the serif.
-                Image(systemName: kind.symbol)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(Palette.onField)
-                    .frame(width: 52, height: 52)
-                    .fieldBackground(kind.field, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .accessibilityHidden(true)
-                let title = kind.titleRuns(who: who)
-                AskText([AskText.Run(text: title.lead), AskText.Run(text: title.italic, target: true)], role: .sheetTitle)
-                    .foregroundStyle(Palette.ink)
-                    .padding(.top, 16)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(title.lead + title.italic)
-                    .accessibilityAddTraits(.isHeader)
-                HelpLine(text: line, help: help, alignment: .leading)
-                    .padding(.top, 8)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 6) {
+                    Text(name)
+                        .textRole(.cardAsk)
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    HelpMark(open: helpOpen) {
+                        let next = !helpOpen
+                        withAnimation(.smooth(duration: 0.25)) { helpOpen = next }
+                        feedback.play(.expand(next))
+                    }
+                    Spacer(minLength: 8)
+                    RoundHeaderButton(glyph: .close, label: "Close") { dismiss() }
+                        .accessibilityIdentifier(kind.id("cancelBypass"))
+                }
+                if helpOpen {
+                    Text(help)
+                        .textRole(.sub)
+                        .foregroundStyle(Palette.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
+                        .accessibilityIdentifier("helpText")
+                }
+                if let forWhom {
+                    // The AI's name in its own run, never part of Reins' words.
+                    HStack(spacing: 4) {
+                        Text("For").foregroundStyle(Palette.ink2)
+                        Text(verbatim: forWhom).foregroundStyle(Palette.ink).lineLimit(1)
+                    }
+                    .font(RFont.sans(15, .medium))
+                }
+                extra
                 Chooser(kind.presets.map { m in
                     Chooser.Segment(id: kind.id("bypass:\(m)"), title: AutopilotText.lengthLabel(minutes: m), selected: pick == .preset(m)) {
                         picked = .preset(m)
@@ -275,25 +268,17 @@ struct TimedModeSheet<Extra: View>: View {
                 } + [Chooser.Segment(id: kind.id("bypass:custom"), title: custom?.label ?? "Custom", selected: pick == .custom, more: true) {
                     choosing = true
                 }])
-                .padding(.top, 20)
-                extra
-                HoldButton(title: kind.holdTitle(length), tint: kind.tint, symbol: kind.symbol) { confirm(length) }
+                HoldButton(title: "Hold to start", tint: kind.tint) { confirm(length) }
+                    .accessibilityLabel(kind.holdTitle(length))
                     .accessibilityIdentifier(kind.id("confirmBypass"))
-                    .padding(.top, 22)
-                Button("Cancel") { dismiss() }
-                    .font(RFont.sans(15, .medium))
-                    .foregroundStyle(Palette.ink2)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier(kind.id("cancelBypass"))
-                    .padding(.top, 4)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
+            .padding(.horizontal, 20)
+            .padding(.top, 22)
             .padding(.bottom, 16)
         }
         .scrollBounceBehavior(.basedOnSize)
         .background(Palette.paper.ignoresSafeArea())
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.height(who == nil ? (kind == .bypass ? 330 : 380) : 380), .large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
         .accessibilityIdentifier(kind.id("bypassDialog"))

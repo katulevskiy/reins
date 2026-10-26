@@ -106,34 +106,71 @@ struct DecisionBar: View {
     var accent = false
     var busy = false
     var approveEnabled = true
+    /// On the kit's dock (Next-Connect 05): paper with round top corners and a hairline ring, as under an ask.
+    var docked = false
     var onDeny: () -> Void
     var onApprove: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        RatioRow(spacing: 10, ratio: 1 / 1.35) {
-            Button(action: onDeny) { Text(denyTitle) }
-                .buttonStyle(SignalButtonLook(kind: .outline))
-                .accessibilityIdentifier("deny")
-
-            Button(action: onApprove) {
-                HStack(spacing: 8) {
-                    if busy {
-                        ProgressView().tint(accent ? .white : Palette.onInverse)
-                    } else {
-                        Image(systemName: Biometry.symbol).font(.system(size: 18, weight: .semibold))
-                    }
-                    Text(approveTitle).lineLimit(1)
+        if docked {
+            buttons
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+                .background {
+                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                        .fill(Palette.paper)
+                        .overlay(alignment: .top) {
+                            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                                .strokeBorder(Palette.rule, lineWidth: 1)
+                        }
+                        .ignoresSafeArea(edges: .bottom)
                 }
-            }
-            .buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse))
-            .disabled(!approveEnabled)
-            .accessibilityIdentifier("approve")
+        } else {
+            buttons
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
         }
-        .disabled(busy)
-        .frame(height: 54)
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if docked && typeSize.isAccessibilitySize {
+            // Approve over Deny, full width (Next-AX).
+            VStack(spacing: 10) {
+                approve.buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse, height: 64))
+                deny.buttonStyle(SignalButtonLook(kind: .outline, height: 64))
+            }
+            .disabled(busy)
+        } else {
+            RatioRow(spacing: 10, ratio: 1 / 1.35) {
+                deny.buttonStyle(SignalButtonLook(kind: .outline))
+                approve.buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse))
+            }
+            .disabled(busy)
+            .frame(height: 54)
+        }
+    }
+
+    private var deny: some View {
+        Button(action: onDeny) { Text(denyTitle) }
+            .accessibilityIdentifier("deny")
+    }
+
+    private var approve: some View {
+        Button(action: onApprove) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().tint(accent ? .white : Palette.onInverse)
+                } else {
+                    BiometryMark()
+                }
+                Text(approveTitle).lineLimit(1)
+            }
+        }
+        .disabled(!approveEnabled)
+        .accessibilityIdentifier("approve")
     }
 }
 
@@ -163,57 +200,6 @@ struct RatioRow: Layout {
             view.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: w, height: bounds.height))
             x += w + spacing
         }
-    }
-}
-
-/// Who asks and what, at the top of a sheet: the connection, when, the operation's tile and its name.
-struct DecisionHeader<Extra: View>: View {
-    var connectionId: String
-    var label: String
-    /// Under the name: when it was asked, or the client's host.
-    var subtitle: String
-    var monoSubtitle = false
-    var kind: ActionKind
-    var count: Int = 1
-    var title: String
-    /// A new client (a pairing, an upload) has no connection yet, so no icon was picked for it.
-    var known = true
-    @ViewBuilder var extra: Extra
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                if known {
-                    ConnectionIcon(connectionId: connectionId, label: label, size: 40)
-                } else {
-                    ConnectionAvatar(label: untrusted(label), pick: nil, size: 40)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(untrusted(label)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                    Text(subtitle)
-                        .font(monoSubtitle ? RFont.mono(13) : RFont.sans(12.5))
-                        .foregroundStyle(monoSubtitle ? Palette.ink2 : Palette.inkMeta)
-                        .lineLimit(1)
-                }
-            }
-            HStack(spacing: 14) {
-                ActionTile(kind: kind, count: count, size: 48)
-                Text(title)
-                    .font(RFont.sans(26, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .accessibilityIdentifier("what")
-                    .accessibilityAddTraits(.isHeader)
-            }
-            .padding(.top, 16)
-            extra
-        }
-        .padding(.leading, 20)
-        .padding(.trailing, 60)
-        .padding(.top, 22)
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -258,22 +244,5 @@ struct DecisionLoading: View {
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.paper.ignoresSafeArea())
-    }
-}
-
-/// A quoted line from the AI ("Claude says it is for").
-struct QuoteBox: View {
-    var caption: String
-    var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Caption(caption)
-            Text("“\(text)”").font(RFont.sans(15)).foregroundStyle(Palette.ink).lineSpacing(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }

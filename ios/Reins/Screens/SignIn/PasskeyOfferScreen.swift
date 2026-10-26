@@ -9,81 +9,73 @@ struct PasskeyOfferScreen: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var vm = VaultPasskeysModel()
 
+    /// The Arrival board, 03: a full field of the account's pink, one illustrated chain (a key, this phone, unlocked),
+    /// "Passkey" and one line; Add passkey or Skip at the bottom. Skip still leads to the recovery code.
     var body: some View {
-        GeometryReader { geo in
+        ZStack {
+            FieldSurface(kind: .accounts).ignoresSafeArea()
             ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: sizeClass == .regular ? 40 : 24)
-                    content
-                        .frame(maxWidth: 440)
-                        .padding(.horizontal, sizeClass == .regular ? 32 : 24)
-                    Spacer(minLength: 24)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 10) {
+                        ArtNode(glyph: .key, size: 72).rotationEffect(.degrees(-14))
+                        ArtDots()
+                        ArtPhone(glyph: .faceId, width: 100, height: 170, shadow: true)
+                        ArtDots()
+                        ArtNode(glyph: .lockOpen, size: 72, ink: Color(red: 21 / 255, green: 128 / 255, blue: 61 / 255))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, sizeClass == .regular ? 80 : 140)
+                    Text("Passkey")
+                        .font(RFont.display(53))
+                        .tracking(RFont.displayTracking(53))
+                        .foregroundStyle(.white)
+                        .padding(.top, 64)
+                        .accessibilityAddTraits(.isHeader)
+                        // On the title, not the screen: a container's identifier would replace its buttons' own.
+                        .accessibilityIdentifier("passkeyOffer")
+                    Text("Your face unlocks the vault.")
+                        .font(RFont.sans(17))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 12)
+                    if let error = vm.error {
+                        FormBanner(text: error)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .padding(.top, 16)
+                            .transition(.opacity)
+                            .accessibilityIdentifier("passkeyError")
+                    }
                 }
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                .frame(maxWidth: 440, alignment: .leading)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .pageBackground()
-        .animation(.smooth(duration: 0.25), value: vm.error)
-        .accessibilityIdentifier("passkeyOffer")
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // On paper, not a field: nothing waits on an AI here. The pink tile says it is an account matter.
-            GlyphIcon(.key, size: 26)
-                .foregroundStyle(Palette.onField)
-                .frame(width: 56, height: 56)
-                .fieldBackground(.accounts, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityHidden(true)
-                .padding(.bottom, 10)
-            AskText([AskText.Run(text: "Protect your vault with a "), AskText.Run(text: "passkey", target: true)], role: .ask, lineLimit: nil)
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text("It unlocks your vault on a new phone, without your other phone or a recovery code. Your password manager keeps it.")
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 0) {
-                fact(.circleCheck, "Works with iCloud Keychain and password managers")
-                fact(.lock, "Reins keeps only a sealed copy of the key")
-            }
-            .padding(.vertical, 8)
-            if let error = vm.error {
-                FormBanner(text: error).transition(.opacity).accessibilityIdentifier("passkeyError")
-            }
-            Button {
-                Task { await vm.add(model) }
-            } label: {
-                HStack(spacing: 10) {
-                    if vm.busy { ProgressView().tint(Palette.onInverse) }
-                    Text("Add a passkey")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                Button {
+                    Task { await vm.add(model) }
+                } label: {
+                    HStack(spacing: 8) {
+                        if vm.busy { ProgressView().tint(Palette.onFieldInk) } else { GlyphIcon(.faceId, size: 18) }
+                        Text("Add passkey")
+                    }
                 }
-            }
-            .buttonStyle(CapsuleButtonStyle(kind: .primary))
-            .disabled(vm.busy)
-            .accessibilityIdentifier("addPasskey")
-            Button("Use the recovery code only") { model.declinePasskeyOffer() }
-                .buttonStyle(SignalButtonStyle(.outline))
+                .buttonStyle(SignalButtonStyle(.onField))
                 .disabled(vm.busy)
-                .accessibilityIdentifier("skipPasskey")
-            Text("A recovery code comes next.")
-                .textRole(.meta)
-                .foregroundStyle(Palette.inkMeta)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("addPasskey")
+                Button("Skip") { model.declinePasskeyOffer() }
+                    .buttonStyle(SignalButtonStyle(.onFieldWash))
+                    .disabled(vm.busy)
+                    .accessibilityHint("A recovery code comes next")
+                    .accessibilityIdentifier("skipPasskey")
+            }
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
         }
-    }
-
-    /// One thing worth knowing about the passkey, on a hairline row.
-    private func fact(_ glyph: Glyph, _ text: String) -> some View {
-        HStack(spacing: 12) {
-            GlyphIcon(glyph, size: 18).foregroundStyle(Palette.ink2)
-            Text(text).textRole(.row).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-        .accessibilityElement(children: .combine)
+        .animation(.smooth(duration: 0.25), value: vm.error)
     }
 }

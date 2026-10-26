@@ -46,6 +46,9 @@ enum AskFormat {
             return line(commits == 0 ? "\(verb) to " : "\(verb) \(plural(commits, "commit")) to ", repo, mono: mono, stand: "a repository")
         }
         if let ask = view.ask {
+            // A change of Autopilot asked from a computer: the core words the question itself from the phone's own state
+            // ("Turn on Auto and leave Lockdown?"), so it is Reins' sentence; the computer is only who asks.
+            if ApprovalWords.autopilotChange(view) { return line(ask.question, nil) }
             if core?.provider == "terminal", let command = core?.command {
                 // The complete actionable command is the first fact, outside the fixed field.
                 return line(command.heading, nil)
@@ -130,6 +133,8 @@ enum AskFormat {
             place = untrustedName(mcp.serverName)
         } else if view.purchase != nil {
             place = "Payments"
+        } else if ApprovalWords.autopilotChange(view) {
+            place = "Autopilot"
         } else if view.ask != nil {
             place = "Computer"
         } else if view.secrets != nil || ApprovalWords.isSecrets(view) {
@@ -145,6 +150,7 @@ enum AskFormat {
     private static func what(_ view: ApprovalView, core: RequestLabel?) -> String {
         if view.mcp != nil { return "MCP tool" }
         if view.purchase != nil { return "Buy" }
+        if ApprovalWords.autopilotChange(view) { return view.op == "autopilot_mode" ? "Mode" : "Correct" }
         if let ask = view.ask {
             guard !ask.uncertain, let core else { return "Asks" }
             switch core.provider {

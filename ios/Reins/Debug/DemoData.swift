@@ -485,6 +485,30 @@ enum DemoData {
             add(buy, "Claude wants to buy at acme.com", "Acme Supply · $63.29")
         }
 
+        // `-demoDesktopAutopilot`: the two changes of Autopilot a paired computer can only ask for (the core's
+        // `desktop_autopilot_mode` / `desktop_autopilot_correct`), worded as the core words them: owner-only, held to
+        // approve, asked every time. Off by default so the waiting count stays as tests expect.
+        if ProcessInfo.processInfo.arguments.contains("-demoDesktopAutopilot") {
+            let asked = "Asked from \(desktop). It changes the mode of every AI on this phone. The computer cannot make Reins more "
+                + "permissive on its own: only your approval here can."
+            add(view(
+                "req60", conn: "c6", label: desktop, kind: .write, action: "grant", service: "desktop", account: nil,
+                createdAt: now - 12, waitUntil: now + 300,
+                op: "autopilot_mode", resources: [ResourceView(id: "autopilot:autopilot_mode", label: "Autopilot", wider: false)], preview: ["Turn on Auto and leave Lockdown?"], noStanding: true, opTitle: "Change Autopilot's mode",
+                ask: AskView(question: "Turn on Auto and leave Lockdown?", detail: asked, topic: nil, destructive: true)
+            ), "\(desktop) wants to change Autopilot's mode", "Turn on Auto and leave Lockdown?")
+            add(view(
+                "req61", conn: "c6", label: desktop, kind: .write, action: "grant", service: "desktop", account: nil,
+                createdAt: now - 20, waitUntil: now + 300,
+                op: "autopilot_correct", resources: [ResourceView(id: "autopilot:autopilot_correct", label: "Autopilot", wider: false)], preview: ["Teach Autopilot to approve requests like this one?"], noStanding: true, opTitle: "Correct Autopilot",
+                ask: AskView(
+                    question: "Teach Autopilot to approve requests like this one?",
+                    detail: "Request: Push 3 commits to dkat/reins\nAutopilot denied it for \(desktop).\nAsked from \(desktop) (\"This was wrong\").",
+                    topic: nil, destructive: true
+                )
+            ), "\(desktop) wants to correct Autopilot", "Teach Autopilot to approve requests like this one?")
+        }
+
         // `-demoAttention` (screenshots): a push and a search where 2 items deserve a closer look. Off by default so
         // the waiting count stays as tests expect.
         if ProcessInfo.processInfo.arguments.contains("-demoAttention") {

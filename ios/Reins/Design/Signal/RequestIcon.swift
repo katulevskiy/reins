@@ -54,7 +54,7 @@ struct RequestIcon: View {
     }
 }
 
-/// A sentence's runs in the serif at a row's size, its target in italic (river rows, lists). `terms`: the words a
+/// A sentence's runs in the row's sans (16 regular, its target in 600: river rows, lists). `terms`: the words a
 /// search found, set apart where a word of the sentence starts with one (`TitleHighlight`).
 struct AskRunsText: View {
     var runs: [AskText.Run]
@@ -64,7 +64,7 @@ struct AskRunsText: View {
     var body: some View {
         if terms.isEmpty {
             runs.reduce(Text(verbatim: "")) { sentence, run in
-                Text("\(sentence)\(Text(verbatim: run.text).font(RFont.serif(size, italic: run.target)))")
+                Text("\(sentence)\(Text(verbatim: run.text).font(RFont.sans(size, run.target ? .semibold : .regular)))")
             }
         } else {
             Text(Self.attributed(runs, size: size, terms: terms))
@@ -77,7 +77,7 @@ struct AskRunsText: View {
         var out = AttributedString()
         for run in runs {
             var part = AttributedString(run.text)
-            part.font = RFont.serif(size, italic: run.target)
+            part.font = RFont.sans(size, run.target ? .semibold : .regular)
             out += part
         }
         TitleHighlight.apply(&out, terms: terms)

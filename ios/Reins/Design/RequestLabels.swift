@@ -193,24 +193,3 @@ struct LabelText: View {
         return out
     }
 }
-
-/// What a waiting request touches with what it does on its corner, and who asks on the other (the AI's avatar over
-/// the bottom-left corner, as the service tile had it).
-struct PendingTile: View {
-    var item: PendingItem
-    var label: RequestLabel
-    var size: CGFloat = 44
-
-    var body: some View {
-        let avatar = size / 2
-        ProviderTile(label: label, size: size)
-            .overlay(alignment: .bottomLeading) {
-                ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: avatar)
-                    .overlay(Circle().strokeBorder(Palette.paper, lineWidth: 2.5).padding(-2.5))
-                    .offset(x: -size * 0.14, y: size * 0.14)
-            }
-            .padding(.leading, size * 0.14)
-            .padding(.bottom, size * 0.14)
-            .accessibilityHidden(true)
-    }
-}

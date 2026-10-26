@@ -32,7 +32,9 @@ enum SnapshotWriter {
             title: entryTitle(label: e.connectionLabel, action: e.action, count: Int(e.count), service: e.service, outcome: e.outcome, title: e.opTitle, op: e.op),
             outcome: e.outcome.capitalized,
             approved: !["denied", "failed", "expired"].contains(e.outcome),
-            at: e.at
+            at: e.at,
+            service: e.service,
+            action: e.action
         )
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// What widgets, controls and Live Activities make of the snapshot, apart from the views so it can be tested. Every
 /// function takes `now` (unix seconds): a timeline entry is drawn for a moment that is not the present.
@@ -27,6 +28,71 @@ enum Glance {
     /// "Claude · me@gmail.com", or whichever of the two there is.
     static func byline(_ item: Snapshot.Item) -> String {
         [item.kind == .pairing || item.kind == .join ? "" : item.connection, item.subtitle].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Who asks, as the who line shows it beside the avatar: one line, at most 28 characters (untrusted text).
+    static func who(_ connection: String) -> String { untrustedName(connection, limit: 28) }
+
+    /// The verb of a label ("GitHub · Push" -> "Push"), lowercased; nil without one.
+    static func verb(_ label: String?) -> String? {
+        guard let label, !label.isEmpty else { return nil }
+        return (label.components(separatedBy: " · ").last ?? label).lowercased()
+    }
+
+    /// The glyph on a request icon's badge: the action's (from a label's verb or the core's action name), else the
+    /// field's own.
+    static func actionGlyph(_ verb: String?, field: FieldKind?) -> Glyph {
+        let v = (verb ?? "").lowercased()
+        let table: [(keys: [String], glyph: Glyph)] = [
+            (["push", "commit", "merge", "branch"], .gitBranch),
+            (["send", "reply", "forward", "email", "message"], .send),
+            (["search", "find"], .search),
+            (["read", "get", "list", "view", "open", "fetch"], .eye),
+            (["delete", "remove", "trash", "archive"], .trash),
+            (["create", "add", "new"], .plus),
+            (["edit", "update", "change", "rename", "label"], .pencil),
+            (["run", "exec", "command", "shell"], .play),
+            (["connect", "pair", "connection"], .link),
+            (["phone"], .phone),
+            (["file", "upload"], .file),
+            (["secret", "password", "vault"], .vault),
+            (["pay", "purchase", "buy"], .card),
+        ]
+        for row in table where row.keys.contains(where: { v.contains($0) }) { return row.glyph }
+        return field?.glyph ?? .help
+    }
+
+    /// The field an activity entry's badge is painted in, from its glyph: writes and sends push, reads read.
+    static func entryField(_ action: String?) -> FieldKind {
+        switch actionGlyph(action, field: nil) {
+        case .eye, .search: .read
+        case .trash: .delete
+        case .link: .pair
+        case .phone: .accounts
+        case .vault: .grant
+        default: .push
+        }
+    }
+
+    /// An item's badge glyph.
+    static func actionGlyph(_ item: Snapshot.Item) -> Glyph {
+        switch item.kind {
+        case .pairing: return .link
+        case .join: return .phone
+        case .blob: return .file
+        case .request: return actionGlyph(verb(item.label), field: field(item))
+        }
+    }
+
+    /// "now", "2m", "25m", "2h", "3d": how long ago, for a widget row.
+    static func shortAgo(_ at: Int64, now: Int64) -> String {
+        let s = max(0, now - at)
+        switch s {
+        case ..<60: return "now"
+        case ..<3_600: return "\(s / 60)m"
+        case ..<86_400: return "\(s / 3_600)h"
+        default: return "\(s / 86_400)d"
+        }
     }
 
     /// The first letter of the AI's name, for the round avatar.
@@ -80,16 +146,6 @@ enum Glance {
             case .overnight: "Decides like Auto, holds what is too risky"
             case .bypass: "Approves everything, for a while"
             case .lockdown: "Denies everything at once"
-            }
-        }
-
-        var symbol: String {
-            switch self {
-            case .manual: "person.fill.checkmark"
-            case .auto: "bolt.fill"
-            case .overnight: AutopilotText.overnightSymbol
-            case .bypass: "bolt.fill"
-            case .lockdown: "lock.fill"
             }
         }
     }
@@ -239,14 +295,13 @@ enum Glance {
         )
     }
 
-    /// "123 MB of 370 MB".
+    /// "126 / 370 MB".
     static func downloadLine(_ s: ModelDownloadActivityAttributes.ContentState) -> String {
         if s.failed { return "The download stopped" }
         if s.finished { return "Autopilot can judge now" }
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        f.allowedUnits = [.useMB]
-        return s.total > 0 ? "\(f.string(fromByteCount: s.downloaded)) of \(f.string(fromByteCount: s.total))" : "Starting"
+        guard s.total > 0 else { return "Starting" }
+        let mb = { (bytes: Int64) in Int((Double(bytes) / 1_000_000).rounded()) }
+        return "\(mb(s.downloaded)) / \(mb(s.total)) MB"
     }
 
     /// What the widget gallery and WidgetKit's placeholders show: two requests, a pairing, a little history.
@@ -256,17 +311,17 @@ enum Glance {
         s.approvalDevice = true
         s.pending = [
             Snapshot.Item(id: "s1", kind: .request, title: "Claude Code: Push 8 commits to octo/app", subtitle: "feature/passkeys", connection: "Claude Code",
-                          service: "github", createdAt: now - 20, expiresAt: now + 100, suggestion: nil, field: "push", label: "GitHub · Push"),
-            Snapshot.Item(id: "s2", kind: .request, title: "My ChatGPT: Send email to Ann", subtitle: "work@corp.example",
+                          service: "github", createdAt: now - 20, expiresAt: now + 100, suggestion: nil, connectionIcon: "claude", field: "push", label: "GitHub · Push"),
+            Snapshot.Item(id: "s2", kind: .request, title: "My ChatGPT: Email Ann", subtitle: "work@corp.example",
                           connection: "My ChatGPT", service: "gmail", createdAt: now - 60, expiresAt: now + 240, suggestion: nil,
-                          field: "push", label: "Gmail · Send"),
+                          connectionIcon: "openai", field: "push", label: "Gmail · Send"),
             Snapshot.Item(id: "s3", kind: .pairing, title: "Connect Gemini to Reins?", subtitle: "gemini.google.com",
                           connection: "Gemini", service: "", createdAt: now - 90, expiresAt: now + 510, suggestion: nil),
         ]
         s.latest = [
-            Snapshot.Entry(id: 3, title: "Claude: Read 3 emails", outcome: "Released", approved: true, at: now - 120),
-            Snapshot.Entry(id: 2, title: "Cursor: Commit to octo-cat/app", outcome: "Sent", approved: true, at: now - 1_500),
-            Snapshot.Entry(id: 1, title: "notes-bot: Search email", outcome: "Denied", approved: false, at: now - 7_200),
+            Snapshot.Entry(id: 3, title: "Claude read 3 emails", outcome: "Released", approved: true, at: now - 120, service: "gmail", action: "read"),
+            Snapshot.Entry(id: 2, title: "Cursor pushed to octo-cat/app", outcome: "Sent", approved: true, at: now - 1_500, service: "github", action: "push"),
+            Snapshot.Entry(id: 1, title: "notes-bot searched email", outcome: "Denied", approved: false, at: now - 7_200, service: "gmail", action: "search"),
         ]
         s.autopilotMode = "manual"
         s.baseMode = "manual"
@@ -279,5 +334,41 @@ enum Glance {
         if s.finished { return 1 }
         guard s.total > 0 else { return 0 }
         return min(1, max(0, Double(s.downloaded) / Double(s.total)))
+    }
+}
+
+/// How the Control Center controls look: SF Symbols (controls take only symbols) as close as there are to the glyphs
+/// the boards draw, the state line under the title, and a tint only while the control's state is on.
+enum ControlLook {
+    /// Lockdown's circle with a slash.
+    static let lockdownSymbol = "nosign"
+    static let waitingSymbol = "tray"
+    /// Bypass's shield with a mark.
+    static let bypassSymbol = "exclamationmark.shield"
+
+    static func modeSymbol(_ mode: Glance.Mode) -> String {
+        switch mode {
+        case .manual: "person"
+        case .auto: "bolt.fill"
+        case .overnight: "moon"
+        case .bypass: bypassSymbol
+        case .lockdown: lockdownSymbol
+        }
+    }
+
+    /// The mode control's tint: none for the calm modes (Manual, Auto), the mode's field colour for the others.
+    static func modeTint(_ mode: Glance.Mode) -> Color? {
+        switch mode {
+        case .manual, .auto: nil
+        case .overnight: Palette.modeOvernight
+        case .bypass: Palette.fieldDelete
+        case .lockdown: Palette.fieldWarn
+        }
+    }
+
+    /// The Stop bypass control's state line: "42 min left", "until you stop it", or "Off" with none running.
+    static func stopState(_ s: Snapshot, now: Int64) -> String {
+        guard let end = Glance.bypassEnd(s, now: now) else { return "Off" }
+        return AutopilotText.timeLeft(until: end, now: now)
     }
 }

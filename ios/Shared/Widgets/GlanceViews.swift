@@ -3,10 +3,14 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-// The views of every widget and Live Activity. They live in Shared so the app's debug gallery (`-widgetGallery`)
-// draws exactly what the widget extension draws. Fixed type sizes (widgets do not follow Dynamic Type the way
-// screens do), Signal's paper, ink and fields, and in the accented and vibrant rendering modes no colour that carries
-// meaning.
+// The views of every widget and Live Activity (the Outside board). They live in Shared so the app's debug gallery
+// (`-widgetGallery`) draws exactly what the widget extension draws. Fixed type sizes (widgets do not follow Dynamic Type
+// the way screens do), Next's paper, ink and fields, and in the accented and vibrant rendering modes no colour that
+// carries meaning.
+//
+// Who asks stays visible wherever something can be approved: the Live Activity and the expanded Dynamic Island show
+// the request's icon and the AI's avatar and name (the who line) above the ask. The compact and minimal island, the
+// widgets and the Lock Screen accessories have no room for it and offer no approval.
 
 enum GlanceStyle {
     /// The widget plate: paper. A field takes its place only while something waits.
@@ -16,20 +20,55 @@ enum GlanceStyle {
 
     static func tint(_ mode: Glance.Mode) -> Color {
         switch mode {
-        case .manual: Palette.kindRead
+        case .manual: Palette.ink
         case .auto: Palette.violet
-        case .overnight: Palette.violet
+        case .overnight: Palette.nightText
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
+        }
+    }
+
+    static func kind(_ mode: Glance.Mode) -> ModeKind {
+        switch mode {
+        case .manual: .manual
+        case .auto: .auto
+        case .overnight: .overnight
+        case .bypass: .bypass
+        case .lockdown: .lockdown
         }
     }
 }
 
 // MARK: Pieces
 
+/// A glyph at a fixed size (widgets do not scale with Dynamic Type).
+struct FixedGlyph: View {
+    var glyph: Glyph
+    var size: CGFloat
+
+    init(_ glyph: Glyph, size: CGFloat) {
+        self.glyph = glyph
+        self.size = size
+    }
+
+    var body: some View {
+        Image(glyph: glyph).resizable().scaledToFit().frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+/// A mode's glyph at a fixed size; Autopilot's bolt is filled.
+struct FixedModeGlyph: View {
+    var mode: ModeKind
+    var size: CGFloat
+
+    var body: some View {
+        if mode == .auto { Bolt(size: size).accessibilityHidden(true) } else { FixedGlyph(mode.glyph, size: size) }
+    }
+}
+
 /// The connection behind an item, as the app draws it: its provider's or its platform's logo on the app's round plate,
-/// else its blobatar, the same figure the app draws (in the tinted and vibrant renderings, its initial in a disc; a
-/// link glyph for pairings, which have no AI yet).
+/// else its blobatar (in the tinted and vibrant renderings, its initial in a disc; a link glyph for pairings, which
+/// have no AI yet).
 struct GlanceAvatar: View {
     var label: String
     var kind: Snapshot.Item.Kind = .request
@@ -89,8 +128,7 @@ struct GlanceAvatar: View {
             .overlay {
                 Group {
                     if kind == .pairing || kind == .join || Glance.initial(label).isEmpty {
-                        Image(systemName: kind == .pairing ? "link" : kind == .join ? "iphone.gen3" : "key.fill")
-                            .font(.system(size: size * 0.4, weight: .semibold))
+                        FixedGlyph(kind == .pairing ? .link : kind == .join ? .phone : .key, size: size * 0.5)
                     } else {
                         Text(Glance.initial(label)).font(RFont.fixedSans(size * 0.44, .semibold))
                     }
@@ -103,16 +141,100 @@ struct GlanceAvatar: View {
     }
 }
 
+/// A request's icon (ASK-TEXT): the service's mark on a white plate, the action as a round badge in the field's
+/// colour at its corner, ringed in what is behind it. A pairing or a new phone has a glyph for a mark.
+struct GlanceRequestIcon: View {
+    var service: String
+    var glyph: Glyph
+    var field: FieldKind?
+    var size: CGFloat = 26
+    var ring: Color = Palette.paper
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        let full = renderingMode == .fullColor
+        let badge = (size * 0.5).rounded()
+        let plate = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+        ZStack {
+            plate.fill(full ? Color.white : Color.primary.opacity(0.16))
+            if full { plate.strokeBorder(Color.black.opacity(0.08), lineWidth: 1) }
+            mark(full)
+        }
+        .frame(width: size, height: size)
+        .overlay(alignment: .bottomTrailing) {
+            FixedGlyph(glyph, size: badge * 0.56)
+                .foregroundStyle(Color.white)
+                .frame(width: badge, height: badge)
+                .background(full ? field?.fill ?? Palette.ink2 : Color.primary.opacity(0.5), in: Circle())
+                .padding(1.5)
+                .background(full ? ring : .clear, in: Circle())
+                .offset(x: badge * 0.32, y: badge * 0.32)
+        }
+        .widgetAccentable()
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func mark(_ full: Bool) -> some View {
+        let key = service.hasPrefix("mcp") ? "mcp" : service
+        if !key.isEmpty, UIImage(named: "service-\(key)") != nil {
+            Image("service-\(key)")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(full ? (key == "github" ? Palette.onFieldInk : serviceColor(key)) : Color.primary)
+                .frame(width: size * 0.56, height: size * 0.56)
+        } else {
+            FixedGlyph(glyph == .phone ? .phone : glyph == .link ? .link : .help, size: size * 0.5)
+                .foregroundStyle(full ? Palette.onFieldInk : Color.primary)
+        }
+    }
+}
+
+/// Who asks, on one short line above the ask (the board's who line): the request's icon · the AI's avatar and its
+/// name. A pairing or a new phone has no AI yet: its icon and Reins' own word for it.
+struct GlanceWhoLine: View {
+    var kind: Snapshot.Item.Kind
+    var service: String
+    var glyph: Glyph
+    var field: FieldKind
+    var connection: String
+    var icon: String?
+    var blobatar: BlobatarLook?
+    var label: String
+    /// What the icon's badge sits on.
+    var ring: Color
+    var color: Color = .white
+
+    var body: some View {
+        HStack(spacing: 8) {
+            GlanceRequestIcon(service: service, glyph: glyph, field: field, size: 24, ring: ring)
+                .padding(.trailing, 4)
+            if kind == .pairing || kind == .join || connection.isEmpty {
+                Text(label).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
+            } else {
+                Text("·").font(RFont.fixedSans(14, .semibold)).opacity(0.6).accessibilityHidden(true)
+                // On its white plate, as the boards draw it on a field and on the island's black.
+                GlanceAvatar(label: connection, kind: kind, icon: icon, blobatar: blobatar, size: 20)
+                    .environment(\.colorScheme, .light)
+                Text(Glance.who(connection)).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
+            }
+        }
+        .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Time left in an answer window, counting down by itself ("0:45", "1:02:03").
 struct Countdown: View {
     var from: Date
     var to: Date
     var size: CGFloat = 12
     var color: Color = Palette.ink2
+    var weight: RFont.Weight = .medium
 
     var body: some View {
         Text(timerInterval: min(from, to)...to, countsDown: true)
-            .font(RFont.fixedMono(size, .medium))
+            .font(RFont.fixedMono(size, weight))
             .monospacedDigit()
             .foregroundStyle(color)
             .multilineTextAlignment(.trailing)
@@ -153,7 +275,7 @@ struct TimerRing: View {
             let total = max(1, to.timeIntervalSince(min(from, to)))
             let left = min(1, max(0, to.timeIntervalSince(context.date) / total))
             ZStack {
-                Circle().stroke(tint.opacity(0.2), lineWidth: lineWidth)
+                Circle().stroke(tint.opacity(0.28), lineWidth: lineWidth)
                 Circle().trim(from: 0, to: left).stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)).rotationEffect(.degrees(-90))
             }
             .padding(lineWidth / 2)
@@ -162,23 +284,18 @@ struct TimerRing: View {
     }
 }
 
-/// The answer window's ring with the time left inside.
-struct CountdownRing: View {
+/// The answer window as the asks show it: a small draining ring and the time left (the board's `timer`).
+struct RingTimer: View {
     var from: Date
     var to: Date
-    var size: CGFloat = 44
-    var tint: Color = Palette.violet
+    var color: Color = .white
+    var size: CGFloat = 13.5
 
     var body: some View {
-        ZStack {
-            TimerRing(from: from, to: to, tint: tint)
-            Text(timerInterval: min(from, to)...to, countsDown: true, showsHours: false)
-                .font(RFont.fixedMono(size * 0.24, .semibold))
-                .monospacedDigit()
-                .multilineTextAlignment(.center)
-                .frame(width: size * 0.8)
+        HStack(spacing: 6) {
+            TimerRing(from: from, to: to, tint: color, lineWidth: 2.2).frame(width: 18, height: 18)
+            Countdown(from: from, to: to, size: size, color: color).frame(maxWidth: 58, alignment: .leading)
         }
-        .frame(width: size, height: size)
     }
 }
 
@@ -194,51 +311,57 @@ struct GlanceField: View {
     }
 }
 
-/// The spaced label over an ask or a widget ("GITHUB · PUSH", "WAITING").
-struct GlanceLabel: View {
+/// A widget's quiet heading ("Latest", "Mode", "3 waiting"), with an optional glyph.
+struct GlanceHeading: View {
     var text: String
-    var color: Color
+    var glyph: Glyph? = nil
+    var color: Color = Palette.inkMeta
 
     var body: some View {
-        Text(text.uppercased())
-            .font(RFont.fixedMono(10.5, .medium))
-            .tracking(1.2)
-            .foregroundStyle(color)
-            .lineLimit(1)
+        HStack(spacing: 6) {
+            if let glyph { FixedGlyph(glyph, size: 16) }
+            Text(text).font(RFont.fixedSans(13, .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(color)
     }
 }
 
-/// The capsule on widget and Live Activity buttons: words only, in the colours the place gives it.
+/// The capsule on widget and Live Activity buttons, in the colours the place gives it.
 struct GlanceButtonLabel: View {
     var title: String
     var foreground: Color
     var background: Color
-    var height: CGFloat = 36
+    var height: CGFloat = 40
+    var glyph: Glyph? = nil
+    var mode: ModeKind? = nil
 
     var body: some View {
-        Text(title)
-            .font(RFont.fixedSans(14, .semibold))
-            .lineLimit(1)
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
-            .background(Capsule().fill(background))
-            .contentShape(Capsule())
+        HStack(spacing: 6) {
+            if let mode { FixedModeGlyph(mode: mode, size: 16) } else if let glyph { FixedGlyph(glyph, size: 16) }
+            Text(title).font(RFont.fixedSans(14.5, .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
+        .background(Capsule().fill(background))
+        .contentShape(Capsule())
     }
 }
 
-/// A mode's dot in its colour (Manual has none of its own: ink).
-struct ModeDot: View {
-    var mode: Glance.Mode
-    var size: CGFloat = 8
-    @Environment(\.widgetRenderingMode) private var renderingMode
+/// "+2": how many more wait, on a field or the island's black.
+struct MorePill: View {
+    var count: Int
+    var background: Color = Color.white.opacity(0.22)
 
     var body: some View {
-        Circle()
-            .fill(renderingMode == .fullColor ? GlanceStyle.tint(mode) : Color.primary)
-            .frame(width: size, height: size)
-            .widgetAccentable()
-            .accessibilityHidden(true)
+        Text("+\(count)")
+            .font(RFont.fixedSans(13, .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .frame(minWidth: 30, minHeight: 24)
+            .background(Capsule().fill(background))
+            .accessibilityLabel("\(count) more waiting")
     }
 }
 
@@ -260,7 +383,7 @@ struct GlanceEmpty: View {
                     .accessibilityHidden(true)
                     .padding(.bottom, 2)
             }
-            Text(title).font(RFont.fixedSerif(compact ? 22 : 20)).foregroundStyle(Palette.ink)
+            Text(title).font(RFont.fixedDisplay(compact ? 16 : 15)).foregroundStyle(Palette.ink)
             Text(message)
                 .font(RFont.fixedSans(11))
                 .foregroundStyle(Palette.ink2)
@@ -288,35 +411,30 @@ extension GlanceEmpty {
 
 // MARK: Waiting
 
-/// One waiting item in a list: a bar in its field's colour, the ask, who and for which account, time left.
+/// One waiting item in a list: its request icon, the ask, who asks (the avatar), time left. Opens the item; nothing is
+/// approved from here.
 struct WaitingRow: View {
     var item: Snapshot.Item
-    @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
         HStack(spacing: 10) {
-            Capsule()
-                .fill(renderingMode == .fullColor ? Glance.field(item).fill : Color.primary)
-                .frame(width: 4, height: 30)
-                .widgetAccentable()
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(Glance.operation(item)).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                Text([Glance.label(item), Glance.byline(item)].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(RFont.fixedSans(11))
-                    .foregroundStyle(Palette.ink2)
-                    .lineLimit(1)
+            GlanceRequestIcon(service: item.service, glyph: Glance.actionGlyph(item), field: Glance.field(item), size: 26)
+                .padding(.trailing, 3)
+            Text(Glance.operation(item)).font(RFont.fixedSans(13.5, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if item.kind != .pairing, item.kind != .join, !item.connection.isEmpty {
+                GlanceAvatar(label: item.connection, kind: item.kind, icon: item.connectionIcon, blobatar: item.connectionBlobatar, size: 20)
             }
-            Spacer(minLength: 6)
-            Countdown(item, color: Palette.ink2)
-                .frame(maxWidth: 56, alignment: .trailing)
+            Countdown(item, size: 12, color: Palette.ink2)
+                .frame(width: 40, alignment: .trailing)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.kind == .request && !item.connection.isEmpty ? "\(Glance.who(item.connection)): \(Glance.operation(item))" : Glance.operation(item))
     }
 }
 
-/// "Waiting", small: a field on the Home Screen only while something waits (the newest's colour, its count and its
-/// ask in the serif); with nothing waiting, paper and the pond.
+/// "Waiting", small: a field on the Home Screen only while something waits (the newest's colour), how many, the newest
+/// ask; with nothing waiting, paper and the pond.
 struct WaitingSmallView: View {
     var snapshot: Snapshot
     var now: Int64
@@ -327,33 +445,37 @@ struct WaitingSmallView: View {
         if !snapshot.signedIn {
             GlanceEmpty.signedOut(compact: true)
         } else if let newest = list.first {
-            let full = renderingMode == .fullColor
+            let ink: Color = renderingMode == .fullColor ? Palette.onField : .primary
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    GlanceLabel(text: "Waiting", color: full ? Palette.onField2 : .secondary)
+                    FixedGlyph(.tray, size: 18)
                     Spacer(minLength: 4)
-                    Countdown(newest, size: 11, color: full ? Palette.onField : .primary)
-                        .frame(maxWidth: 52, alignment: .trailing)
+                    RingTimer(
+                        from: Date(timeIntervalSince1970: TimeInterval(newest.createdAt)),
+                        to: Date(timeIntervalSince1970: TimeInterval(newest.expiresAt)), color: ink
+                    )
+                    .fixedSize()
                 }
                 Text("\(list.count)")
-                    .font(RFont.fixedSerif(44))
-                    .foregroundStyle(full ? Palette.onField : .primary)
+                    .font(RFont.fixedDisplay(42))
+                    .padding(.top, 2)
                     .widgetAccentable()
-                Spacer(minLength: 4)
+                Spacer(minLength: 2)
                 Text(Glance.operation(newest))
-                    .font(RFont.fixedSerif(17))
-                    .foregroundStyle(full ? Palette.onField : .primary)
-                    .lineLimit(3)
+                    .font(RFont.fixedDisplay(15.5))
+                    .lineLimit(2)
                     .minimumScaleFactor(0.85)
             }
+            .foregroundStyle(ink)
             .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(Glance.countLine(list.count)). Newest: \(Glance.operation(newest))")
         } else {
             GlanceEmpty.nothingWaits(snapshot, compact: true)
         }
     }
 }
 
-/// "Waiting", medium and large: the list on paper, each row opening its item.
+/// "Waiting", medium and large: how many, then the list on paper, each row opening its item.
 struct WaitingListView: View {
     var snapshot: Snapshot
     var now: Int64
@@ -362,22 +484,22 @@ struct WaitingListView: View {
     var body: some View {
         let list = Glance.waiting(snapshot, now: now)
         VStack(alignment: .leading, spacing: 0) {
-            GlanceLabel(text: list.isEmpty ? "Waiting" : "Waiting · \(list.count)", color: Palette.inkMeta)
+            GlanceHeading(text: list.isEmpty ? "Waiting" : Glance.countLine(list.count), glyph: .tray)
             if !snapshot.signedIn {
                 GlanceEmpty.signedOut()
             } else if list.isEmpty {
                 GlanceEmpty.nothingWaits(snapshot)
             } else {
                 Spacer(minLength: 6)
-                VStack(alignment: .leading, spacing: rows > 3 ? 10 : 8) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(list.prefix(rows)) { item in
                         Link(destination: Glance.link(item)) { WaitingRow(item: item) }
                     }
                 }
                 Spacer(minLength: 0)
                 if list.count > rows {
-                    Text("and \(list.count - rows) more")
-                        .font(RFont.fixedSans(11, .medium))
+                    Text("+\(list.count - rows) more")
+                        .font(RFont.fixedSans(11.5, .medium))
                         .foregroundStyle(Palette.inkMeta)
                         .padding(.top, 4)
                 }
@@ -388,8 +510,8 @@ struct WaitingListView: View {
 
 // MARK: Autopilot
 
-/// "Autopilot": the mode in force in the serif, a bypass's countdown, and Lock down / Stop bypass as buttons that run
-/// their App Intents without opening Reins.
+/// "Mode": the mode in force with its glyph, a bypass's countdown, and Lock down / End lockdown / Stop bypass as
+/// buttons that run their App Intents (which ask for the phone's owner) without opening Reins.
 struct AutopilotWidgetView: View {
     var snapshot: Snapshot
     var now: Int64
@@ -405,7 +527,7 @@ struct AutopilotWidgetView: View {
                     Spacer(minLength: 0)
                     buttons
                 }
-                .frame(width: 128)
+                .frame(width: 140)
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
@@ -421,15 +543,17 @@ struct AutopilotWidgetView: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: 2) {
-            GlanceLabel(text: "Autopilot", color: Palette.inkMeta)
-                .padding(.bottom, 4)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            GlanceHeading(text: "Mode")
+            Spacer(minLength: 4)
+            HStack(spacing: 8) {
+                FixedModeGlyph(mode: GlanceStyle.kind(mode), size: 20)
+                    .foregroundStyle(mode == .manual ? Palette.ink : GlanceStyle.tint(mode))
+                    .widgetAccentable()
                 Text(mode.name)
-                    .font(RFont.fixedSerif(medium ? 32 : 28))
+                    .font(RFont.fixedDisplay(25.5))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                ModeDot(mode: mode)
+                    .minimumScaleFactor(0.6)
             }
             if let end = bypassEnd {
                 let someAIs = Glance.connectionBypassOnly(snapshot, now: now)
@@ -437,25 +561,25 @@ struct AutopilotWidgetView: View {
                     if AutopilotText.isUntilOff(end) {
                         // No end to count down to.
                         Text(someAIs ? "Bypass for some AIs · until you stop it" : "Until you stop it")
-                            .font(RFont.fixedSans(11))
+                            .font(RFont.fixedSans(11.5))
                             .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
                     } else {
                         Text(someAIs ? "Bypass for some AIs" : "Ends in")
-                            .font(RFont.fixedSans(11))
+                            .font(RFont.fixedSans(11.5))
                             .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
-                        Countdown(from: Date(timeIntervalSince1970: TimeInterval(now)), to: Date(timeIntervalSince1970: TimeInterval(end)), size: 11, color: Palette.danger)
-                            .frame(maxWidth: 44, alignment: .leading)
+                        Countdown(from: Date(timeIntervalSince1970: TimeInterval(now)), to: Date(timeIntervalSince1970: TimeInterval(end)), size: 11.5, color: Palette.danger)
+                            .frame(maxWidth: 48, alignment: .leading)
                     }
                 }
-            } else {
-                Text(mode.line).font(RFont.fixedSans(11)).foregroundStyle(Palette.ink2).lineLimit(2)
+            } else if medium {
+                Text(mode.line).font(RFont.fixedSans(11.5)).foregroundStyle(Palette.ink2).lineLimit(2)
             }
             if medium {
                 Spacer(minLength: 0)
                 Text(snapshot.activeGrants == 1 ? "1 active grant" : "\(snapshot.activeGrants) active grants")
-                    .font(RFont.fixedSans(11, .medium))
+                    .font(RFont.fixedSans(11.5, .medium))
                     .foregroundStyle(Palette.inkMeta)
             }
         }
@@ -478,7 +602,6 @@ struct AutopilotWidgetView: View {
 
     private var stopButton: some View {
         Button(intent: StopBypassIntent()) {
-            // Words only: stopping a bypass carries no icon anywhere.
             GlanceButtonLabel(title: "Stop bypass", foreground: Palette.onField, background: Palette.fieldDelete)
         }
         .buttonStyle(.plain)
@@ -486,12 +609,13 @@ struct AutopilotWidgetView: View {
 
     private var lockdownButton: some View {
         let on = mode == .lockdown
+        // Both ways run `SetLockdownIntent`, which asks for the phone's owner first.
         return Button(intent: SetLockdownIntent(value: !on)) {
-            // Lockdown's own colour only while it is on.
             GlanceButtonLabel(
                 title: on ? "End lockdown" : "Lock down",
                 foreground: on ? Palette.onField : Palette.onInverse,
-                background: on ? Palette.fieldWarn : Palette.inverse
+                background: on ? Palette.fieldWarn : Palette.inverse,
+                mode: on ? nil : .lockdown
             )
         }
         .buttonStyle(.plain)
@@ -506,14 +630,21 @@ struct GlanceActivityRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            GlyphIcon(entry.approved ? .check : .close, size: 14)
+            GlanceRequestIcon(
+                service: entry.service ?? "", glyph: Glance.actionGlyph(entry.action, field: nil),
+                field: Glance.entryField(entry.action), size: 26
+            )
+            .padding(.trailing, 3)
+            Text(entry.title).font(RFont.fixedSans(13.5, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(Glance.shortAgo(entry.at, now: now)).font(RFont.fixedMono(11.5)).foregroundStyle(Palette.inkMeta)
+            FixedGlyph(entry.approved ? .check : .close, size: entry.approved ? 17 : 16)
                 .foregroundStyle(entry.approved ? Palette.success : Palette.danger)
+                .frame(width: 18)
                 .widgetAccentable()
-            Text(entry.title).font(RFont.fixedSans(13, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
-            Spacer(minLength: 6)
-            Text(Glance.ago(entry.at, now: now)).font(RFont.fixedMono(11)).foregroundStyle(Palette.inkMeta)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.title), \(entry.approved ? "went through" : entry.outcome.lowercased())")
     }
 }
 
@@ -524,14 +655,14 @@ struct LatestActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            GlanceLabel(text: "Latest", color: Palette.inkMeta)
+            GlanceHeading(text: "Latest")
             if !snapshot.signedIn {
                 GlanceEmpty.signedOut()
             } else if snapshot.latest.isEmpty {
                 GlanceEmpty(title: "Nothing happened yet", message: "What your AIs did shows up here.")
             } else {
                 Spacer(minLength: 6)
-                VStack(alignment: .leading, spacing: rows > 3 ? 12 : 9) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(snapshot.latest.prefix(rows)) { entry in
                         Link(destination: DeepLink.activity(id: entry.id).url) { GlanceActivityRow(entry: entry, now: now) }
                     }
@@ -552,35 +683,40 @@ struct WaitingCircularView: View {
     var body: some View {
         let n = Glance.waiting(snapshot, now: now).count
         if snapshot.signedIn {
-            Gauge(value: Double(n), in: 0...Double(max(5, n))) {
-                Image(systemName: "tray.full")
-            } currentValueLabel: {
-                Text("\(n)").font(RFont.fixedMono(18, .semibold))
+            ZStack {
+                AccessoryWidgetBackground()
+                Gauge(value: Double(n), in: 0...Double(max(5, n))) {
+                    FixedGlyph(.tray, size: 12)
+                } currentValueLabel: {
+                    Text("\(n)").font(RFont.fixedMono(18, .semibold))
+                }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .padding(4)
+                .widgetAccentable()
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .widgetAccentable()
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(Glance.countLine(n))
         } else {
             ZStack {
                 AccessoryWidgetBackground()
-                Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 22))
+                FixedGlyph(.person, size: 22)
             }
             .accessibilityLabel("Sign in to Reins")
         }
     }
 }
 
-/// The newest request: what, who, time left.
+/// The newest request: how many, time left, what. Opens it.
 struct WaitingRectangularView: View {
     var snapshot: Snapshot
     var now: Int64
 
     var body: some View {
         let list = Glance.waiting(snapshot, now: now)
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Image(systemName: "tray.full.fill").font(.system(size: 11, weight: .semibold))
-                Text(snapshot.signedIn ? Glance.countLine(list.count) : "Reins").font(RFont.fixedSans(13, .semibold)).lineLimit(1)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                FixedGlyph(.tray, size: 14)
+                Text(snapshot.signedIn ? "\(list.count)" : "Reins").font(RFont.fixedSans(13, .semibold)).lineLimit(1)
                 Spacer(minLength: 2)
                 if let newest = list.first {
                     Countdown(newest, size: 12, color: .primary).frame(maxWidth: 48, alignment: .trailing)
@@ -590,13 +726,13 @@ struct WaitingRectangularView: View {
             if !snapshot.signedIn {
                 Text("Open the app to sign in").font(RFont.fixedSans(13)).foregroundStyle(.secondary).lineLimit(2)
             } else if let newest = list.first {
-                Text(Glance.operation(newest)).font(RFont.fixedSans(13, .medium)).lineLimit(1)
-                Text(Glance.byline(newest)).font(RFont.fixedSans(12)).foregroundStyle(.secondary).lineLimit(1)
+                Text(Glance.operation(newest)).font(RFont.fixedSans(14, .medium)).lineLimit(2)
             } else {
-                Text("Requests from your AIs show up here").font(RFont.fixedSans(12)).foregroundStyle(.secondary).lineLimit(2)
+                Text("Nothing waits").font(RFont.fixedSans(13)).foregroundStyle(.secondary).lineLimit(2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -607,20 +743,19 @@ struct WaitingInlineView: View {
     var body: some View {
         let list = Glance.waiting(snapshot, now: now)
         if !snapshot.signedIn {
-            Label("Sign in to Reins", systemImage: "tray")
-        } else if let newest = list.first, newest.kind != .pairing, !newest.connection.isEmpty {
-            Label("\(Glance.countLine(list.count)) · \(newest.connection)", systemImage: "tray.full.fill")
+            Label { Text("Sign in to Reins") } icon: { Image(glyph: .tray) }
         } else {
-            Label(Glance.countLine(list.count), systemImage: list.isEmpty ? "tray" : "tray.full.fill")
+            Label { Text(Glance.countLine(list.count)) } icon: { Image(glyph: .tray) }
         }
     }
 }
 
 // MARK: Live Activity: requests waiting
 
-/// The field leaves the app: a waiting request is a Live Activity in its own field's colour, grain and all, with the
-/// ask in the serif. One no longer waiting is plain paper. The Dynamic Island stays black; the field arrives there as
-/// a dot, the timer and the Review button.
+/// The field leaves the app: a waiting request is a Live Activity in its own field's colour, grain and all: the time
+/// left and how many more wait, who asks (icon · avatar Name), the ask, its detail, Deny and Review (and Approve for a
+/// routine one). One no longer waiting is plain paper. The Dynamic Island stays black; the field arrives there as a
+/// dot, the timer and the Review button.
 struct ApprovalLiveViews {
     var state: ApprovalActivityAttributes.ContentState
     var stale: Bool
@@ -632,30 +767,38 @@ struct ApprovalLiveViews {
 
     var label: String {
         if let label = state.label, !label.isEmpty { return label }
-        return Glance.label(Snapshot.Item(
+        return Glance.label(item)
+    }
+
+    private var item: Snapshot.Item {
+        Snapshot.Item(
             id: state.itemId, kind: state.kind, title: state.title, subtitle: state.subtitle, connection: state.connection,
-            service: state.service, createdAt: 0, expiresAt: 0, suggestion: nil
-        ))
+            service: state.service, createdAt: 0, expiresAt: 0, suggestion: nil, field: state.field, label: state.label
+        )
     }
 
-    /// "Push", the label's last word, for the island's small space.
-    var verb: String { label.components(separatedBy: " · ").last ?? label }
-
-    var byline: String {
-        [state.kind == .pairing || state.kind == .join ? "" : state.connection, state.suggestion ?? state.subtitle]
-            .filter { !$0.isEmpty }
-            .joined(separator: " · ")
-    }
+    var glyph: Glyph { Glance.actionGlyph(item) }
 
     var title: String { stale ? "No longer waiting" : state.title }
 
-    var more: String? { state.count > 1 ? "+\(state.count - 1) more waiting" : nil }
+    var more: Int { max(0, state.count - 1) }
+
+    /// One-tap Approve: only a routine request, only while it waits, and only where who asks is shown with it.
+    var offersApprove: Bool { state.kind == .request && state.quick == true && !stale }
+
+    /// The who line, on `ring` (the field, or the island's black).
+    func who(ring: Color, color: Color = .white) -> GlanceWhoLine {
+        GlanceWhoLine(
+            kind: state.kind, service: state.service, glyph: glyph, field: field, connection: state.connection,
+            icon: state.connectionIcon, blobatar: state.connectionBlobatar, label: label, ring: ring, color: color
+        )
+    }
 
     /// Deny (requests only: pairings and files are answered in the app), Approve for a routine request (the same
     /// one-tap answer as the notification's), and Review. On the field, or on the island's black.
     @ViewBuilder func buttons(island: Bool) -> some View {
-        let quick = state.kind == .request && state.quick == true && !stale
-        let wash = island ? Color.white.opacity(0.16) : Palette.onFieldWash
+        let quick = offersApprove
+        let wash = island ? Color.white.opacity(0.16) : Color.white.opacity(0.18)
         let solidText = island ? Color.white : field.fill
         let solid = island ? field.fill : Palette.onField
         HStack(spacing: 10) {
@@ -679,30 +822,33 @@ struct ApprovalLiveViews {
 
     var lockScreen: some View {
         let ink: Color = stale ? Palette.ink : Palette.onField
-        let ink2: Color = stale ? Palette.ink2 : Palette.onField2
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                GlanceLabel(text: label, color: ink2)
-                Spacer(minLength: 6)
-                if !stale {
-                    Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: ink)
-                        .frame(maxWidth: 60, alignment: .trailing)
+        return VStack(alignment: .leading, spacing: 10) {
+            if !stale {
+                HStack {
+                    RingTimer(from: state.createdAt, to: state.expiresAt, color: ink).fixedSize()
+                    Spacer(minLength: 6)
+                    if more > 0 { MorePill(count: more) }
                 }
             }
+            who(ring: stale ? Palette.paper : field.fill, color: ink)
             Text(title)
-                .font(RFont.fixedSerif(stale ? 20 : 25))
+                .font(RFont.fixedDisplay(stale ? 16 : 22.5))
                 .foregroundStyle(ink)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
-            if !byline.isEmpty {
-                Text(byline).font(RFont.fixedSans(12.5)).foregroundStyle(ink2).lineLimit(1)
+            if !state.subtitle.isEmpty, !stale {
+                Text(state.subtitle)
+                    .font(RFont.fixedMono(13))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.top, -4)
             }
-            if let more, !stale {
-                Text(more).font(RFont.fixedSans(12, .medium)).foregroundStyle(ink)
-            }
-            if !stale { buttons(island: false).padding(.top, 6) }
+            if !stale { buttons(island: false) }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
         .background { if !stale { WidgetGrain() } }
     }
 
@@ -723,7 +869,7 @@ struct ApprovalLiveViews {
     var compactLeading: some View { dot(10).padding(.leading, 4) }
 
     var compactTrailing: some View {
-        Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: field.ink)
+        Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: field.ink, weight: .semibold)
             .environment(\.colorScheme, .dark)
             .frame(maxWidth: 46)
     }
@@ -733,44 +879,39 @@ struct ApprovalLiveViews {
     }
 
     var expandedLeading: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(state.kind == .pairing || state.kind == .join ? label : state.connection)
-                .font(RFont.fixedSans(12, .medium))
-                .foregroundStyle(.white.opacity(0.7))
-                .lineLimit(1)
-            GlanceLabel(text: verb, color: field.ink)
-                .environment(\.colorScheme, .dark)
-        }
-        .padding(.leading, 6)
-        .padding(.top, 4)
+        who(ring: .black)
+            .padding(.leading, 6)
+            .padding(.top, 4)
     }
 
     var expandedTrailing: some View {
-        Countdown(from: state.createdAt, to: state.expiresAt, size: 15, color: field.ink)
-            .environment(\.colorScheme, .dark)
-            .frame(maxWidth: 70, alignment: .trailing)
-            .padding(.trailing, 6)
-            .padding(.top, 4)
+        HStack(spacing: 8) {
+            if more > 0 { MorePill(count: more, background: Color.white.opacity(0.2)) }
+            Countdown(from: state.createdAt, to: state.expiresAt, size: 15, color: field.ink, weight: .semibold)
+                .environment(\.colorScheme, .dark)
+                .frame(maxWidth: 52, alignment: .trailing)
+        }
+        .padding(.trailing, 6)
+        .padding(.top, 4)
     }
 
     var expandedCenter: some View { EmptyView() }
 
     var expandedBottom: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // The same sentence as everywhere else, in the serif.
-            Text(title).font(RFont.fixedSerif(21)).foregroundStyle(.white).lineLimit(2)
-            if let more { Text(more).font(RFont.fixedSans(12)).foregroundStyle(.white.opacity(0.65)) }
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(RFont.fixedDisplay(19.5)).foregroundStyle(.white).lineLimit(2)
             buttons(island: true)
         }
         .padding(.horizontal, 6)
-        .padding(.top, 2)
+        .padding(.top, 4)
     }
 }
 
 // MARK: Live Activity: bypass
 
-/// A running bypass: a red field with the time left in the serif and Stop; an Overnight the same in its violet. One
-/// that runs until turned off says so instead of counting down. Ended, it is paper.
+/// A running bypass: a red field with its glyph and name, what it approved so far, the time left big and Stop now; an
+/// Overnight the same in its colours, with the moon. One that runs until turned off says so instead of counting down.
+/// Ended, it is paper.
 struct BypassLiveViews {
     var state: BypassActivityAttributes.ContentState
     var stale: Bool
@@ -781,12 +922,24 @@ struct BypassLiveViews {
 
     var ended: Bool { stale || (!untilOff && state.until <= Date()) }
 
+    var mode: ModeKind { overnight ? .overnight : .bypass }
+
     var name: String { overnight ? AutopilotText.overnightName : "Bypass" }
 
-    var field: FieldKind { overnight ? .grant : .delete }
+    /// The field: red for a bypass, Overnight's night blue.
+    var fill: Color { overnight ? Palette.modeOvernight : Palette.fieldDelete }
+
+    /// Its colour on the island's black.
+    var islandInk: Color { overnight ? Color(uiColor: UIColor(hex: 0x9DB1EA)) : Color(uiColor: UIColor(hex: 0xF87171)) }
 
     /// The colour the system tints its own controls with.
-    var tint: Color { field.fill }
+    var tint: Color { fill }
+
+    /// "Bypass", or "Bypass · Claude" when it is not for every AI.
+    var heading: String {
+        if ended { return "\(name) ended" }
+        return state.scope == Glance.bypassScope(global: true, connections: []) ? name : "\(name) · \(state.scope)"
+    }
 
     var title: String {
         if ended { return "\(name) ended" }
@@ -800,93 +953,97 @@ struct BypassLiveViews {
     @ViewBuilder func timer(size: CGFloat, color: Color) -> some View {
         if untilOff {
             Text("Until you stop it")
-                .font(RFont.fixedSerif(size * 0.6))
+                .font(RFont.fixedDisplay(size * 0.5))
                 .foregroundStyle(color)
                 .lineLimit(1)
         } else {
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                // A timer text takes the widest width it could ever need: give it the one it needs now, so "left"
-                // sits beside it ("47:12", or "1:47:12" with hours).
-                Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
-                    .font(RFont.fixedSerif(size))
-                    .monospacedDigit()
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .frame(width: size * (state.until.timeIntervalSinceNow >= 3_600 ? 3.0 : 2.0), alignment: .leading)
-                Text("left").font(RFont.fixedSerif(size * 0.5, italic: true)).foregroundStyle(color)
-            }
+            Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
+                .font(RFont.fixedDisplay(size))
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
         }
     }
 
     @ViewBuilder func stop(island: Bool) -> some View {
-        let foreground = island ? Color.white : field.fill
-        let background = island ? field.fill : Palette.onField
+        let foreground = island ? Color.white : fill
+        let background = island ? fill : Palette.onField
         Group {
             if overnight {
                 Button(intent: StopOvernightIntent()) {
-                    GlanceButtonLabel(title: "Stop", foreground: foreground, background: background)
+                    GlanceButtonLabel(title: island ? "Stop" : "Stop now", foreground: foreground, background: background, height: island ? 40 : 44)
                 }
             } else {
                 Button(intent: StopBypassIntent()) {
-                    GlanceButtonLabel(title: "Stop", foreground: foreground, background: background)
+                    GlanceButtonLabel(title: island ? "Stop" : "Stop now", foreground: foreground, background: background, height: island ? 40 : 44)
                 }
             }
         }
         .buttonStyle(.plain)
-        .frame(width: 96)
     }
 
     var lockScreen: some View {
         let ink: Color = ended ? Palette.ink : Palette.onField
-        let ink2: Color = ended ? Palette.ink2 : Palette.onField2
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                GlanceLabel(text: title, color: ink2)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                FixedModeGlyph(mode: mode, size: 17)
+                Text(heading).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
                 Spacer(minLength: 6)
-                if !ended { stop(island: false) }
+                if !ended {
+                    HStack(spacing: 4) {
+                        FixedGlyph(.check, size: 14)
+                        Text("\(state.approvedCount)").font(RFont.fixedSans(13.5, .semibold)).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(approved)
+                }
             }
-            if !ended { timer(size: 42, color: ink) }
-            Text(ended ? line : "\(approved) · \(line)")
-                .font(RFont.fixedSans(12))
-                .foregroundStyle(ink2)
-                .lineLimit(2)
+            if !ended {
+                timer(size: 48, color: ink)
+                Text(line).font(RFont.fixedSans(12)).foregroundStyle(ink.opacity(0.82)).lineLimit(1)
+                stop(island: false)
+            } else {
+                Text(line).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(2)
+            }
         }
-        .padding(16)
+        .foregroundStyle(ink)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
         .background { if !ended { WidgetGrain() } }
     }
 
-    var background: Color { ended ? Palette.paper : field.fill }
+    var background: Color { ended ? Palette.paper : fill }
 
-    func dot(_ size: CGFloat) -> some View {
-        Circle()
-            .fill(field.fill)
-            .frame(width: size, height: size)
-            .shadow(color: field.fill.opacity(0.9), radius: size * 0.45)
-            .accessibilityHidden(true)
+    var compactLeading: some View {
+        FixedModeGlyph(mode: mode, size: 17).foregroundStyle(islandInk).padding(.leading, 4)
     }
-
-    var compactLeading: some View { dot(10).padding(.leading, 4) }
 
     @ViewBuilder var compactTrailing: some View {
         if untilOff {
-            Text("on").font(RFont.fixedMono(13, .semibold)).foregroundStyle(field.ink).environment(\.colorScheme, .dark)
+            Text("on").font(RFont.fixedMono(13, .semibold)).foregroundStyle(islandInk)
         } else {
             Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
                 .font(RFont.fixedMono(13, .semibold))
                 .monospacedDigit()
-                .foregroundStyle(field.ink)
-                .environment(\.colorScheme, .dark)
+                .foregroundStyle(islandInk)
                 .frame(maxWidth: 46)
         }
     }
 
-    var minimal: some View { dot(12).accessibilityLabel(untilOff && !ended ? "\(title), until you stop it" : title) }
+    var minimal: some View {
+        FixedModeGlyph(mode: mode, size: 15).foregroundStyle(islandInk)
+            .accessibilityLabel(untilOff && !ended ? "\(title), until you stop it" : title)
+    }
 
     var expandedLeading: some View {
-        GlanceLabel(text: name, color: field.ink)
-            .environment(\.colorScheme, .dark)
-            .padding(.leading, 6)
-            .padding(.top, 6)
+        HStack(spacing: 6) {
+            FixedModeGlyph(mode: mode, size: 16)
+            Text(heading).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(islandInk)
+        .padding(.leading, 6)
+        .padding(.top, 6)
     }
 
     var expandedTrailing: some View { EmptyView() }
@@ -896,11 +1053,11 @@ struct BypassLiveViews {
     var expandedBottom: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
-                timer(size: 30, color: .white)
+                timer(size: 34, color: .white)
                 Spacer(minLength: 8)
-                stop(island: true)
+                stop(island: true).frame(width: 110)
             }
-            Text("For \(state.scope) · \(approved.lowercased())").font(RFont.fixedSans(12)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            Text(approved).font(RFont.fixedSans(12)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
         }
         .padding(.horizontal, 6)
     }
@@ -908,71 +1065,95 @@ struct BypassLiveViews {
 
 // MARK: Live Activity: model download
 
-/// Autopilot's model coming down: nothing to decide, so paper.
+/// Autopilot's model coming down: nothing to decide, so paper. Its bolt on a violet tile with a download badge, the
+/// percentage, a bar and the megabytes.
 struct ModelDownloadLiveViews {
     var state: ModelDownloadActivityAttributes.ContentState
 
     var title: String {
         if state.failed { return "The model did not download" }
         if state.finished { return "Autopilot's model is ready" }
-        return "Downloading Autopilot's model"
+        return "Autopilot model"
     }
 
-    var glyph: Glyph { state.failed ? .warning : state.finished ? .check : .download }
+    var badgeGlyph: Glyph { state.failed ? .warning : state.finished ? .check : .download }
 
     var tint: Color { state.failed ? Palette.warning : Palette.violet }
 
     var percent: String { "\(Int((Glance.downloadFraction(state) * 100).rounded()))%" }
 
-    var badge: some View {
-        GlyphIcon(glyph, size: 18)
-            .foregroundStyle(tint)
-            .frame(width: 40, height: 40)
-            .background(Circle().fill(Palette.paperSunken))
+    var tile: some View {
+        Bolt(size: 20)
+            .foregroundStyle(Palette.violet)
+            .frame(width: 38, height: 38)
+            .background(Palette.violet.opacity(0.14), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                FixedGlyph(badgeGlyph, size: 11)
+                    .foregroundStyle(.white)
+                    .frame(width: 18, height: 18)
+                    .background(state.failed ? Palette.fieldWarn : Palette.violetFill, in: Circle())
+                    .padding(2)
+                    .background(Palette.paper, in: Circle())
+                    .offset(x: 7, y: 7)
+            }
             .accessibilityHidden(true)
     }
 
     var bar: some View {
-        ProgressView(value: Glance.downloadFraction(state)).progressViewStyle(.linear).tint(tint)
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Palette.rule2)
+                Capsule().fill(tint).frame(width: geo.size.width * Glance.downloadFraction(state))
+            }
+        }
+        .frame(height: 6)
     }
 
     var lockScreen: some View {
-        HStack(spacing: 12) {
-            badge
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+        HStack(spacing: 14) {
+            tile
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).font(RFont.fixedSans(14.5, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                     Spacer(minLength: 4)
                     if !state.finished && !state.failed {
-                        Text(percent).font(RFont.fixedMono(13, .semibold)).foregroundStyle(Palette.ink2)
+                        Text(percent).font(RFont.fixedMono(13, .semibold)).foregroundStyle(Palette.ink)
                     }
                 }
+                .padding(.bottom, 8)
                 if !state.finished && !state.failed { bar }
-                Text(Glance.downloadLine(state)).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(1)
+                Text(Glance.downloadLine(state)).font(RFont.fixedMono(12)).foregroundStyle(Palette.inkMeta).lineLimit(1).padding(.top, 6)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
     }
 
     var compactLeading: some View {
-        GlyphIcon(glyph, size: 15).foregroundStyle(tint).environment(\.colorScheme, .dark)
+        Bolt(size: 16).foregroundStyle(Color(uiColor: UIColor(hex: 0xA196FF))).padding(.leading, 4)
     }
 
     var compactTrailing: some View {
-        Text(state.finished ? "Ready" : percent).font(RFont.fixedMono(13, .semibold)).foregroundStyle(.white)
+        HStack(spacing: 5) {
+            if !state.finished { FixedGlyph(.download, size: 14) }
+            Text(state.finished ? "Ready" : percent).font(RFont.fixedMono(13, .semibold))
+        }
+        .foregroundStyle(.white)
     }
 
     /// A drawn ring: the app updates the activity on every whole percent.
     var minimal: some View {
         ZStack {
             Circle().stroke(Color.white.opacity(0.25), lineWidth: 3)
-            Circle().trim(from: 0, to: Glance.downloadFraction(state)).stroke(Color.white, style: StrokeStyle(lineWidth: 3, lineCap: .round)).rotationEffect(.degrees(-90))
+            Circle().trim(from: 0, to: Glance.downloadFraction(state)).stroke(Color(uiColor: UIColor(hex: 0xA196FF)), style: StrokeStyle(lineWidth: 3, lineCap: .round)).rotationEffect(.degrees(-90))
         }
         .padding(1.5)
         .accessibilityLabel(title)
     }
 
-    var expandedLeading: some View { badge.environment(\.colorScheme, .dark).padding(.leading, 4).padding(.top, 4) }
+    var expandedLeading: some View {
+        tile.environment(\.colorScheme, .dark).padding(.leading, 4).padding(.top, 4)
+    }
 
     var expandedTrailing: some View {
         Text(state.finished ? "" : percent).font(RFont.fixedMono(17, .semibold)).foregroundStyle(.white).padding(.trailing, 6).padding(.top, 12)
@@ -981,14 +1162,14 @@ struct ModelDownloadLiveViews {
     var expandedCenter: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(.white).lineLimit(1)
-            Text(Glance.downloadLine(state)).font(RFont.fixedSans(12)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            Text(Glance.downloadLine(state)).font(RFont.fixedMono(12)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 
     @ViewBuilder var expandedBottom: some View {
-        if !state.finished && !state.failed { bar.padding(.top, 8) }
+        if !state.finished && !state.failed { bar.environment(\.colorScheme, .dark).padding(.top, 8) }
     }
 }
 #endif

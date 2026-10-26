@@ -2,21 +2,6 @@ import SwiftUI
 
 // Rows and tags for operations (the Android app's ui/common Rows.kt, Connections.kt and design/Tags.kt).
 
-/// The integration and the account an operation used: "Gmail" "me@gmail.com".
-struct ConnectorTags: View {
-    var service: String
-    var account: String?
-    /// Overrides the integration's name (an MCP server's own).
-    var name: String?
-
-    var body: some View {
-        FlowRow(spacing: 6, lineSpacing: 6) {
-            if !service.trimmingCharacters(in: .whitespaces).isEmpty { ServiceTag(text: name ?? serviceName(service)) }
-            if let account, !account.trimmingCharacters(in: .whitespaces).isEmpty { AccountTag(text: account) }
-        }
-    }
-}
-
 /// The connection an entry belongs to: by id, or, for entries logged before ids were recorded (an empty id), by the
 /// label it had then, when exactly one connection carries it.
 func findConnection(_ connections: [ConnectionView], id: String, label: String) -> ConnectionView? {
@@ -158,37 +143,8 @@ enum EntryText {
     }
 }
 
-/// The trailing mark of a river row, always with its word where colour would say it alone: a green check, "Denied",
-/// "Auto" in violet, a key for a grant, "Overnight", "Bypass", "Lockdown".
-struct EntryMark: View {
-    var mark: EntryText.Mark
-
-    var body: some View {
-        Group {
-            switch mark {
-            case .approved: GlyphIcon(.check, size: 18).foregroundStyle(Palette.success)
-            case .permission: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
-            case .grant: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
-            case .denied: word("Denied", Palette.danger)
-            case .failed: word("Failed", Palette.warning)
-            case .started: word("Awaiting outcome", Palette.warning)
-            case .unknown: word("Outcome unknown", Palette.warning)
-            case .withheld: word("Response withheld", Palette.warning)
-            case .auto: word("Auto", Palette.violet)
-            case .overnight: word(AutopilotText.overnightName, Palette.violet)
-            case .bypass: word("Bypass", Palette.danger)
-            case .lockdown: word("Lockdown", Palette.warning)
-            }
-        }
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.spoken(mark))
-    }
-
-    private func word(_ text: String, _ tint: Color) -> some View {
-        Text(text).font(RFont.sans(12, .semibold)).foregroundStyle(tint)
-    }
-
+/// What VoiceOver says of how an entry ended.
+enum EntryMark {
     static func spoken(_ mark: EntryText.Mark) -> String {
         switch mark {
         case .approved: "Approved"
@@ -204,6 +160,66 @@ struct EntryMark: View {
         case .bypass: "Approved by a bypass"
         case .lockdown: "Denied by Lockdown"
         }
+    }
+}
+
+/// An entry as its Activity row writes it (pure, unit-tested): who did it, as its own run; what, as the past or
+/// "tried to"; the outcome mark; the short risk line; the time.
+enum EntryRowText {
+    /// The agent as it named itself, else the connection: one short clean line, nil when empty or mixed-script.
+    static func who(_ e: ActivityEntry) -> String? {
+        let agent = untrustedName(e.request?.agent ?? "", limit: 32)
+        let name = agent.isEmpty ? untrustedName(e.connectionLabel, limit: 32) : agent
+        guard !name.isEmpty, mixedScriptRaw(name) == nil else { return nil }
+        return name
+    }
+
+    /// The sentence after the name: "pushed 3 commits to **dkat/reins**", "tried to send an email"; capitalised when
+    /// there is no name.
+    static func runs(_ e: ActivityEntry, who: String?) -> [AskText.Run] {
+        var runs = EntryLook.line(e).runs
+        guard let first = runs.first, !first.target else { return runs }
+        var lead = first.text
+        if lead.hasPrefix("Asked to ") { lead = "Tried to " + lead.dropFirst("Asked to ".count) }
+        if who != nil { lead = lead.prefix(1).lowercased() + lead.dropFirst() }
+        runs[0].text = lead
+        return runs
+    }
+
+    static func outcome(_ e: ActivityEntry) -> Outcome {
+        let mark = EntryText.mark(e)
+        switch mark {
+        case .approved: return .approved
+        case .denied: return .denied
+        case .auto: return e.outcome == "denied" ? .autoDenied : .autoApproved
+        case .grant, .permission: return .grant
+        case .overnight: return .night
+        case .bypass: return .bypass
+        case .lockdown: return .locked
+        case .failed: return .failed
+        case .started: return .attention(word: "Waiting", spoken: EntryMark.spoken(mark))
+        case .unknown: return .attention(word: "Unknown", spoken: EntryMark.spoken(mark))
+        case .withheld: return .attention(word: "Withheld", spoken: EntryMark.spoken(mark))
+        }
+    }
+
+    /// The amber line under a risky entry: the fact that weighed most (else the level), and that Overnight held it.
+    static func risk(_ e: ActivityEntry) -> String? {
+        guard let risk = e.autopilot?.risk, RiskLook.listed(risk) else { return nil }
+        var why = untrustedName(risk.why, limit: 60)
+        why = why.prefix(1).uppercased() + why.dropFirst()
+        let first = why.isEmpty ? (risk.level == .benign ? nil : "Risk: \(AutopilotText.riskWord(risk.level))") : why
+        return [first, risk.held ? AutopilotText.heldLine : nil].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// "now", "5m", "2h" today; the time of day before.
+    static func time(_ at: Int64, now: Int64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(at))
+        guard Calendar.current.isDate(date, inSameDayAs: Date(timeIntervalSince1970: TimeInterval(now))) else {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        let d = max(now - at, 0)
+        return d < 60 ? "now" : d < 3_600 ? "\(d / 60)m" : "\(d / 3_600)h"
     }
 }
 
@@ -238,60 +254,42 @@ enum EntryLook {
     }
 }
 
-/// One operation in the river (iOS-Activity.png): its kind tile, what happened in a line or two, who and when, and how
-/// it ended. Hairlines, never cards. The newest row glows faintly in its kind colour for a moment after an answer
-/// folds into it.
+/// One operation in the river (Next-Activity): `ActivityRowView` with the request's icon, who and what in one
+/// sentence, the risk line, the time and the outcome. Where a search matched outside the sentence, the place and the
+/// match under it. The row glows faintly in its kind colour for a moment after an answer folds into it.
 struct HistoryRow: View {
     var entry: ActivityEntry
     var selected = false
     var glowing = false
     var now: Int64 = Timers.nowSeconds()
-    /// The words a search found: set apart in the title.
+    /// The words a search found: set apart in the sentence.
     var terms: [String] = []
-    /// Where the search matched outside the title, as one line under the row.
+    /// Where the search matched outside the sentence, as one line under it.
     var snippet: ActivitySnippet? = nil
 
     var body: some View {
         let field = EntryLook.field(entry)
         let line = EntryLook.line(entry)
-        HStack(alignment: .center, spacing: 14) {
-            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.violetWash : Palette.paper)
+        let who = EntryRowText.who(entry)
+        ActivityRowView(
+            runs: EntryRowText.runs(entry, who: who), who: who, time: EntryRowText.time(entry.at, now: now), outcome: EntryRowText.outcome(entry),
+            risk: EntryRowText.risk(entry), terms: terms
+        ) {
+            RequestIcon(spec: line.icon, size: 36, ring: Palette.paperRaised)
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                AskRunsText(runs: line.runs, size: 18, terms: terms)
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .accessibilityLabel(line.text)
-                    .accessibilityIdentifier("entryTitle:\(entry.id)")
-                if let mono = line.mono {
-                    Text(verbatim: mono)
-                        .font(RFont.mono(12))
-                        .foregroundStyle(Palette.inkMeta)
-                        .lineLimit(1)
-                        .environment(\.layoutDirection, .leftToRight)
-                        .accessibilityIdentifier("entryDetails:\(entry.id)")
+        } extra: {
+            if let snippet {
+                HStack(spacing: 6) {
+                    GlyphIcon(ActivitySearchText.glyph(snippet.field), size: 13).foregroundStyle(Palette.inkMeta)
+                        .accessibilityLabel(ActivitySearchText.field(snippet.field).capitalized)
+                    Text(ActivitySearchText.snippet(snippet)).lineLimit(1).environment(\.layoutDirection, .leftToRight)
                 }
-                Text(EntryText.byline(entry, now: now))
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
-                    .lineLimit(1)
-                if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
-                    RiskLine(risk: risk)
-                }
-                if let snippet {
-                    Text(ActivitySearchText.snippet(snippet))
-                        .lineLimit(2)
-                        .padding(.top, 2)
-                        .accessibilityIdentifier("snippet:\(entry.id)")
-                }
+                .padding(.top, 1)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("snippet:\(entry.id)")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            EntryMark(mark: EntryText.mark(entry))
         }
-        .padding(.vertical, 10)
-        .frame(minHeight: 60)
-        .padding(.horizontal, 24)
         .background {
             if selected {
                 Palette.violetWash
@@ -301,7 +299,6 @@ struct HistoryRow: View {
         }
         .animation(.easeOut(duration: 1.2), value: glowing)
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
     }
 
     /// What happened, in a line (ASK-TEXT): in the past when it was carried out, else what was asked.

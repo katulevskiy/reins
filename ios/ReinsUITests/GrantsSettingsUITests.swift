@@ -115,7 +115,7 @@ final class GrantsSettingsUITests: XCTestCase {
         tap("resumeMore")
         wait("customAmount")
         shot("resume-more")
-        app.buttons["Cancel"].tap()
+        tap("closeResume")
         if !pad {
             app.navigationBars.buttons.firstMatch.tap()
             XCTAssertTrue(element("expiredList").waitForNonExistence(timeout: 3))
@@ -185,7 +185,7 @@ final class GrantsSettingsUITests: XCTestCase {
         section("trust")
         tap("grant:g1")
         wait("grantTitle")
-        XCTAssertTrue(app.staticTexts["Used 12 times"].exists)
+        XCTAssertTrue(app.staticTexts["12 uses"].exists)
         // Ending a grant is held, not tapped: a tap does nothing.
         tap("revoke")
         XCTAssertTrue(element("grantTitle").exists, "a tap ends nothing")

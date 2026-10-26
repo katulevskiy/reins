@@ -201,7 +201,11 @@ struct HoldButton: View {
 
     private func confirmed() {
         if doneTitle != nil { done = true }
-        onConfirm()
+        // On the next turn of the main actor, not inside the gesture's own callback: what it confirms often removes
+        // this button (a sheet closes, a row goes), and taking a gesture's view away while it is being handled trips a
+        // SwiftUI precondition.
+        let confirm = onConfirm
+        Task { @MainActor in confirm() }
     }
 
     /// The pause after a tick at `fraction` of the hold: 0.26 s at the start, 0.07 s at the end.

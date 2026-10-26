@@ -83,18 +83,11 @@
 	<string>$(REINS_TELEGRAM_API_ID)</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>Geist.ttf</string>
-		<string>Geist-Medium.ttf</string>
-		<string>Geist-SemiBold.ttf</string>
-		<string>Geist-Bold.ttf</string>
-		<string>GeistMono.ttf</string>
-		<string>GeistMono-Medium.ttf</string>
-		<string>GeistMono-SemiBold.ttf</string>
-		<string>InstrumentSerif-Regular.ttf</string>
-		<string>InstrumentSerif-Italic.ttf</string>
-		<string>InstrumentSans-Regular.ttf</string>
-		<string>InstrumentSans-Medium.ttf</string>
-		<string>InstrumentSans-SemiBold.ttf</string>
+		<string>Sora-Regular.ttf</string>
+		<string>Sora-Medium.ttf</string>
+		<string>Sora-SemiBold.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-Medium.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
@@ -119,8 +112,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

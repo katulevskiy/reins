@@ -29,8 +29,10 @@ struct Illustration: View {
 extension Image {
     /// A Signal glyph as a template image: it takes the foreground style. It is an image, so `.font` does not size it:
     /// use `GlyphIcon`, or `.resizable().frame(…)`.
+    /// Decorative: a glyph never becomes an accessibility element of its own (nor carries its asset's name as an
+    /// identifier, which UI tests would find as "server" or "check").
     init(glyph: Glyph) {
-        self.init(glyph.rawValue)
+        self.init(decorative: glyph.rawValue)
     }
 }
 

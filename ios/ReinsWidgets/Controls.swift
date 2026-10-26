@@ -12,7 +12,7 @@ struct LockdownControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind, provider: Provider()) { on in
             ControlWidgetToggle("Lockdown", isOn: on, action: SetLockdownIntent()) { isOn in
-                Label(isOn ? "On" : "Off", systemImage: isOn ? "lock.fill" : "lock.open")
+                Label(isOn ? "On" : "Off", systemImage: ControlLook.lockdownSymbol)
             }
             .tint(Palette.fieldWarn)
         }
@@ -37,7 +37,8 @@ struct WaitingControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind, provider: Provider()) { count in
             ControlWidgetButton(action: ShowWaitingIntent()) {
-                Label(Glance.countLine(count), systemImage: count == 0 ? "tray" : "tray.full.fill")
+                Label(Glance.countLine(count), systemImage: ControlLook.waitingSymbol)
+                Text("Requests")
             }
             .tint(count > 0 ? Palette.fieldPush : .gray)
         }
@@ -59,22 +60,31 @@ struct StopBypassControl: ControlWidget {
     static let kind = "com.reins2fa.app.control.stopBypass"
 
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: Self.kind, provider: Provider()) { running in
+        StaticControlConfiguration(kind: Self.kind, provider: Provider()) { state in
             ControlWidgetButton(action: StopBypassIntent()) {
-                Label(running ? "Stop bypass" : "No bypass", systemImage: "bolt.slash.fill")
+                Label(state.running ? "Stop bypass" : "No bypass", systemImage: ControlLook.bypassSymbol)
+                Text(state.line)
             }
-            .tint(running ? Palette.fieldDelete : .gray)
+            .tint(state.running ? Palette.fieldDelete : .gray)
         }
         .displayName("Stop bypass")
         .description("Ends every bypass now; requests wait for you again.")
     }
 
-    struct Provider: ControlValueProvider {
-        var previewValue: Bool { true }
+    struct State {
+        var running: Bool
+        /// "42 min left", "until you stop it", "Off".
+        var line: String
+    }
 
-        func currentValue() async throws -> Bool {
+    struct Provider: ControlValueProvider {
+        var previewValue: State { State(running: true, line: "47 min left") }
+
+        func currentValue() async throws -> State {
             let s = Snapshot.load()
-            return s.signedIn && Glance.bypassEnd(s, now: Glance.now()) != nil
+            let now = Glance.now()
+            let running = s.signedIn && Glance.bypassEnd(s, now: now) != nil
+            return State(running: running, line: running ? ControlLook.stopState(s, now: now) : "Off")
         }
     }
 }
@@ -86,9 +96,10 @@ struct ModeControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind, provider: Provider()) { mode in
             ControlWidgetButton(action: ShowAutopilotIntent()) {
-                Label(mode.map { $0.name } ?? "Sign in", systemImage: mode?.symbol ?? "person.crop.circle")
+                Label(mode.map { $0.name } ?? "Sign in", systemImage: mode.map(ControlLook.modeSymbol) ?? "person.crop.circle")
+                Text("Mode")
             }
-            .tint(mode.map { $0 == .manual ? Color.gray : GlanceStyle.tint($0) } ?? .gray)
+            .tint(mode.flatMap(ControlLook.modeTint) ?? .gray)
         }
         .displayName("Autopilot mode")
         .description("Shows Autopilot's mode and opens Reins where it is changed.")
