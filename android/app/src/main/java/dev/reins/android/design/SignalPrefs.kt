@@ -21,8 +21,9 @@ data class SignalPrefs(
     /** The grain on colour fields: the Appearance switch, and off when the system asks for more contrast. */
     val grain: Boolean = true,
     /**
-     * Frosted panes over the wallpaper. Off (solid panes, the art unchanged) when the system turns window blurs off
-     * (Reduce transparency, Battery Saver) or asks for more contrast.
+     * Frosted panes over the wallpaper. Off (solid panes, the art unchanged) only when the system asks for more
+     * contrast. Battery Saver and phones without window blurs keep them: the frost is the app's own pre-blurred copy
+     * of the art, not a window blur.
      */
     val frosted: Boolean = true,
 )
@@ -105,37 +106,4 @@ fun rememberHighContrast(): Boolean {
         onDispose { ui.removeContrastChangeListener(listener) }
     }
     return high
-}
-
-/**
- * Whether panes should be solid: the system has window blurs off (Android's Reduce transparency or "Allow window-level
- * blurs" off, and Battery Saver, which turns them off too) or Battery Saver is on. Kept up to date.
- */
-@Composable
-fun rememberReduceTransparency(): Boolean {
-    val context = LocalContext.current
-    val wm = remember(context) { context.getSystemService(android.view.WindowManager::class.java) }
-    val power = remember(context) { context.getSystemService(android.os.PowerManager::class.java) }
-    var blurOff by remember(wm) { mutableStateOf(runCatching { wm?.isCrossWindowBlurEnabled == false }.getOrDefault(false)) }
-    var saver by remember(power) { mutableStateOf(power?.isPowerSaveMode == true) }
-    DisposableEffect(wm, power) {
-        val listener = java.util.function.Consumer<Boolean> { enabled -> blurOff = !enabled }
-        runCatching { wm?.addCrossWindowBlurEnabledListener(ContextCompat.getMainExecutor(context), listener) }
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(c: Context, i: android.content.Intent) {
-                saver = power?.isPowerSaveMode == true
-            }
-        }
-        ContextCompat.registerReceiver(
-            context,
-            receiver,
-            android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
-        onDispose {
-            runCatching { wm?.removeCrossWindowBlurEnabledListener(listener) }
-            runCatching { context.unregisterReceiver(receiver) }
-        }
-    }
-    return blurOff || saver
 }
