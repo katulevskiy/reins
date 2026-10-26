@@ -1,51 +1,26 @@
 import SwiftUI
 
-/// Signal's three voices (design/signal/screens/png/Type.png): Instrument Serif for what you decide on (asks, titles,
-/// big numbers, the mood line), a sans for everything you read (Instrument Sans, or Geist from Appearance), and
-/// Geist Mono for labels in capitals and machine values. No weight 700: `.bold` draws semibold, and the serif is never
-/// bold. Sizes follow Dynamic Type relative to the text style closest to them.
+/// Reins Next's type (design/next/iphone, the Type board): one face, Sora, for everything you read and decide on, and
+/// JetBrains Mono for machine values (branches, hashes, addresses, codes, diffs). Sora has no Cyrillic, so each Sora
+/// file carries Geologica's at the same weight (ios/scripts/make-fonts.py); Latin stays Sora. Display text (asks,
+/// titles, big numbers) is Sora 500 with its target in 600, tracked tighter as it grows. No 700: `.bold` draws
+/// semibold. Sizes follow Dynamic Type relative to the text style closest to them.
 enum RFont {
     enum Weight {
         case regular, medium, semibold
-        /// Signal has no 700; kept so older call sites draw semibold.
+        /// Next has no 700; kept so older call sites draw semibold.
         case bold
 
-        var sansName: String { RFont.sansFamily.name(self) }
-
-        var monoName: String {
+        var sansName: String {
             switch self {
-            case .regular: "GeistMono-Regular"
-            case .medium: "GeistMono-Medium"
-            case .semibold, .bold: "GeistMono-SemiBold"
+            case .regular: "Sora-Regular"
+            case .medium: "Sora-Medium"
+            case .semibold, .bold: "Sora-SemiBold"
             }
         }
-    }
 
-    /// The sans you read in (Settings > Appearance): Instrument Sans, or Geist.
-    enum SansFamily: String, CaseIterable {
-        case instrument, geist
-
-        var title: String { self == .instrument ? "Instrument" : "Geist" }
-
-        func name(_ weight: Weight) -> String {
-            switch (self, weight) {
-            case (.instrument, .regular): "InstrumentSans-Regular"
-            case (.instrument, .medium): "InstrumentSans-Medium"
-            case (.instrument, .semibold), (.instrument, .bold): "InstrumentSans-SemiBold"
-            case (.geist, .regular): "Geist-Regular"
-            case (.geist, .medium): "Geist-Medium"
-            case (.geist, .semibold), (.geist, .bold): "Geist-SemiBold"
-            }
-        }
-    }
-
-    static let sansFamilyKey = "appearance.sans"
-
-    /// Read from the App Group, so widgets speak in the same sans as the app. Views pick a change up when they next
-    /// draw; Appearance redraws the app when it changes.
-    static var sansFamily: SansFamily {
-        get { AppGroup.defaults.string(forKey: sansFamilyKey).flatMap(SansFamily.init(rawValue:)) ?? .instrument }
-        set { AppGroup.defaults.set(newValue.rawValue, forKey: sansFamilyKey) }
+        /// JetBrains Mono ships 400 and 500; heavier asks draw 500.
+        var monoName: String { self == .regular ? "JetBrainsMono-Regular" : "JetBrainsMono-Medium" }
     }
 
     static func sans(_ size: CGFloat, _ weight: Weight = .regular) -> Font {
@@ -56,12 +31,13 @@ enum RFont {
         .custom(weight.monoName, size: size, relativeTo: style(for: size))
     }
 
-    /// Instrument Serif, 400 only; `italic` for the target of an ask and the one italic word of a sheet title.
-    static func serif(_ size: CGFloat, italic: Bool = false) -> Font {
-        .custom(serifName(italic), size: size, relativeTo: style(for: size))
+    /// Display text: Sora 500, or 600 for the target of an ask ("Push 8 commits to **octo/app**"). Pair it with
+    /// `displayTracking(size)`, or use a `TextRole`, which does.
+    static func display(_ size: CGFloat, target: Bool = false) -> Font {
+        .custom(displayName(target), size: size, relativeTo: style(for: size))
     }
 
-    /// The same face at a fixed size (widgets, Live Activities, fixed-height chrome).
+    /// The same faces at a fixed size (widgets, Live Activities, fixed-height chrome).
     static func fixedSans(_ size: CGFloat, _ weight: Weight = .regular) -> Font {
         .custom(weight.sansName, fixedSize: size)
     }
@@ -70,11 +46,20 @@ enum RFont {
         .custom(weight.monoName, fixedSize: size)
     }
 
-    static func fixedSerif(_ size: CGFloat, italic: Bool = false) -> Font {
-        .custom(serifName(italic), fixedSize: size)
+    static func fixedDisplay(_ size: CGFloat, target: Bool = false) -> Font {
+        .custom(displayName(target), fixedSize: size)
     }
 
-    static func serifName(_ italic: Bool) -> String { italic ? "InstrumentSerif-Italic" : "InstrumentSerif-Regular" }
+    static func displayName(_ target: Bool) -> String { target ? Weight.semibold.sansName : Weight.medium.sansName }
+
+    /// Display tracking in points: -0.03 em from 30 pt up (titles, asks), easing to none at 12 pt (the boards' rule).
+    static func displayTracking(_ size: CGFloat) -> CGFloat {
+        size * displayTrackingEm(size)
+    }
+
+    static func displayTrackingEm(_ size: CGFloat) -> CGFloat {
+        -0.03 * min(1, max(0, (size / 0.74 - 16) / 24))
+    }
 
     static func style(for size: CGFloat) -> Font.TextStyle {
         switch size {
@@ -91,91 +76,91 @@ enum RFont {
     }
 }
 
-/// The type scale (signal.tokens.json `type`), as named roles: `Text("Activity").textRole(.title)`.
+/// The type scale (the Type board), as named roles: `Text("Activity").textRole(.title)`.
 enum TextRole: CaseIterable {
-    /// Serif 64/62: asks on desktop and iPad.
-    case askXL
-    /// Serif 45/46: the ask on a field; the target in italic.
+    /// Display 33: the ask on a field; its target in 600.
     case ask
-    /// Serif 25/26: the ask on a waiting card.
-    case askSmall
-    /// Serif 44/44: screen titles.
+    /// Display 22: the ask on a waiting card, a mode's name on its card, a sheet's title.
+    case cardAsk
+    /// Display 30: a tab's title (Activity, Trust, Connections, Vault, Settings).
     case title
-    /// Serif 40: numbers that are the point (142 requests, 94 %, 5h left).
-    case stat
-    /// Serif 32/34: sheet titles, with one italic word.
-    case sheetTitle
-    /// Serif italic 24/30 in ink-2: one quiet line under a title.
-    case mood
+    /// Display 24: a pushed page's title (everything under Settings, service details, forms).
+    case quietTitle
+    /// Display 41: an onboarding page's title.
+    case hero
+    /// Display 71, tabular: a running mode's clock (47:12).
+    case clock
     /// Sans 16.5 semibold: decision buttons.
     case button
-    /// Sans 14.5 semibold: small buttons.
+    /// Sans 15 semibold: small buttons (on cards, Change, Stop).
     case buttonSmall
-    /// Sans 15.5 medium: row titles.
+    /// Sans 16 medium: row titles.
     case row
-    /// Sans 15/22: explanations in sheets and pages.
+    /// Sans 16 regular, 1.35: a row's sentence (who did what), its target in 600; explanations.
     case body
-    /// Sans 13/18: row subtitles, hints.
+    /// Sans 13 regular: the line under a row title (a mode's effect, a kind).
+    case sub
+    /// Sans 12.5 medium, +0.01 em: times, counts, small meta.
     case meta
-    /// Sans 11.5 semibold: tags (Auto, Ready, Code).
+    /// Sans 13 semibold, +0.015 em, never capitals: a section's header over its group.
+    case section
+    /// Sans 11.5 semibold: outcome tags (Auto, Bypass, Grant).
     case tag
-    /// Mono 11.5 medium, capitals tracked 0.16 em: the label line on a field, section labels.
-    case label
-    /// Mono 13.5: branches, accounts, addresses, SHAs, the timer.
+    /// Mono 14: branches, accounts, addresses, SHAs, the timer.
     case value
+    /// Mono 13: a value's detail line.
+    case detail
+    /// Mono 11.5 on 19: code and diffs.
+    case code
+    /// Mono 24 medium, +0.08 em: codes to read out or compare (4821 9930).
+    case codes
 
-    enum Family { case serif, sans, mono }
+    enum Family { case display, sans, mono }
 
     var family: Family {
         switch self {
-        case .askXL, .ask, .askSmall, .title, .stat, .sheetTitle, .mood: .serif
-        case .button, .buttonSmall, .row, .body, .meta, .tag: .sans
-        case .label, .value: .mono
+        case .ask, .cardAsk, .title, .quietTitle, .hero, .clock: .display
+        case .button, .buttonSmall, .row, .body, .sub, .meta, .section, .tag: .sans
+        case .value, .detail, .code, .codes: .mono
         }
     }
 
     var size: CGFloat {
         switch self {
-        case .askXL: 64
-        case .ask: 45
-        case .askSmall: 25
-        case .title: 44
-        case .stat: 40
-        case .sheetTitle: 32
-        case .mood: 24
+        case .ask: 33
+        case .cardAsk: 22
+        case .title: 30
+        case .quietTitle: 24
+        case .hero: 41
+        case .clock: 71
         case .button: 16.5
-        case .buttonSmall: 14.5
-        case .row: 15.5
-        case .body: 15
-        case .meta: 13
-        case .tag, .label: 11.5
-        case .value: 13.5
+        case .buttonSmall: 15
+        case .row, .body: 16
+        case .sub: 13
+        case .meta: 12.5
+        case .section: 13
+        case .tag, .code: 11.5
+        case .value: 14
+        case .detail: 13
+        case .codes: 24
         }
     }
 
     var weight: RFont.Weight {
         switch self {
-        case .button, .buttonSmall, .tag: .semibold
-        case .row, .label: .medium
+        case .button, .buttonSmall, .section, .tag: .semibold
+        case .row, .meta, .codes: .medium
         default: .regular
         }
     }
 
-    var italic: Bool { self == .mood }
-
     /// Line height in points, where the scale sets one.
     var lineHeight: CGFloat? {
         switch self {
-        case .askXL: 62
-        case .ask: 46
-        case .askSmall: 26
-        case .title: 44
-        case .stat: 40
-        case .sheetTitle: 34
-        case .mood: 30
-        case .body: 22
-        case .meta: 18
-        case .label: 14
+        case .ask, .cardAsk, .title, .quietTitle, .hero: (size * 1.04).rounded()
+        case .body: 21.5
+        case .sub: 17
+        case .code: 19
         default: nil
         }
     }
@@ -183,38 +168,41 @@ enum TextRole: CaseIterable {
     /// Letter spacing in em.
     var trackingEm: CGFloat {
         switch self {
-        case .askXL: -0.015
-        case .ask: -0.012
-        case .askSmall, .title, .stat, .sheetTitle: -0.01
-        case .label: 0.16
+        case .ask, .title, .hero, .clock: -0.03
+        case .cardAsk, .quietTitle: -0.02
+        case .section: 0.015
+        case .meta: 0.01
+        case .codes: 0.08
         default: 0
         }
     }
 
-    var uppercased: Bool { self == .label }
-
-    func font(italic: Bool? = nil) -> Font {
+    func font(target: Bool = false) -> Font {
         switch family {
-        case .serif: RFont.serif(size, italic: italic ?? self.italic)
-        case .sans: RFont.sans(size, weight)
+        case .display: RFont.display(size, target: target)
+        case .sans: RFont.sans(size, target ? .semibold : weight)
         case .mono: RFont.mono(size, weight)
         }
     }
 }
 
 extension View {
-    /// Sets a role's face, size, line height and tracking. A `.label` also wants its text in capitals: use
-    /// `Text(role: .label, …)` or `.textCase(.uppercase)`.
+    /// Sets a role's face, size, line height and tracking.
     func textRole(_ role: TextRole) -> some View {
         font(role.font())
             .tracking(role.trackingEm * role.size)
             .lineHeight(role.lineHeight.map { .multiple(factor: $0 / role.size) })
-            .textCase(role.uppercased ? .uppercase : nil)
+            .tabular(role == .clock)
+    }
+
+    /// Tabular figures where digits tick (timers, clocks), so they don't jitter.
+    @ViewBuilder func tabular(_ on: Bool = true) -> some View {
+        if on { monospacedDigit() } else { self }
     }
 }
 
-/// An ask: one sentence in the serif, its target in italic ("Push 8 commits to *octo/app*"). It reflows to three lines
-/// before it shrinks, and never shrinks below 32 pt (20 pt on a waiting card).
+/// An ask: one sentence in the display face, its target in 600 ("Push 8 commits to **octo/app**"). It reflows to
+/// three lines before it shrinks, and never shrinks below 24 pt (16 pt on a waiting card).
 struct AskText: View {
     struct Run: Equatable {
         var text: String
@@ -241,9 +229,9 @@ struct AskText: View {
 
     var body: some View {
         let size = role.size * scale
-        let floor: CGFloat = role == .askSmall ? 20 : 32
+        let floor: CGFloat = role == .ask ? 24 : 16
         runs.reduce(Text(verbatim: "")) { sentence, run in
-            Text("\(sentence)\(Text(verbatim: run.text).font(RFont.fixedSerif(size, italic: run.target)))")
+            Text("\(sentence)\(Text(verbatim: run.text).font(RFont.fixedDisplay(size, target: run.target)))")
         }
         .tracking(role.trackingEm * size)
         .lineHeight(role.lineHeight.map { .multiple(factor: $0 / role.size) })

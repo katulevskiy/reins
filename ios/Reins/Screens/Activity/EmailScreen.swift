@@ -50,14 +50,14 @@ struct EmailScreen: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(([serviceName(entry.service.isEmpty ? "gmail" : entry.service)] + [entry.account ?? ""].filter { !$0.isEmpty }).joined(separator: " · "))
-                    .textRole(.label)
+                    .textRole(.section)
                     .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .environment(\.layoutDirection, .leftToRight)
                 let subject = untrusted(email?.subject ?? logged.subject)
                 Text(subject.isEmpty ? "(no subject)" : subject)
-                    .textRole(.sheetTitle)
+                    .textRole(.cardAsk)
                     .foregroundStyle(Palette.ink)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("emailSubject")

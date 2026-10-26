@@ -172,3 +172,15 @@ EFF large wordlist (crates/reins-core/src/connector/vault/eff_large_wordlist.txt
 The passphrase generator uses the EFF's Large Wordlist for Passphrases, https://www.eff.org/dice
 Copyright Electronic Frontier Foundation. Licensed under the Creative Commons Attribution 3.0 United States License,
 https://creativecommons.org/licenses/by/3.0/us/ (unmodified).
+
+
+================================================================================================================
+Sora, Geologica and JetBrains Mono fonts (ios/Shared/Fonts/)
+================================================================================================================
+
+Sora: Copyright 2019 The Sora Project Authors, https://github.com/sora-xor/sora-font
+Geologica: Copyright 2020 The Geologisk Project Authors, https://github.com/monokromskriftforlag/geologisk
+JetBrains Mono: Copyright 2020 The JetBrains Mono Project Authors, https://github.com/JetBrains/JetBrainsMono
+Licensed under the SIL Open Font License 1.1, https://openfontlicense.org (the full texts are beside the fonts in
+ios/Shared/Fonts/OFL-*.txt). The iOS files are static instances of the variable fonts in github.com/google/fonts;
+each Sora file carries Geologica's Cyrillic at the same weight (ios/scripts/make-fonts.py).

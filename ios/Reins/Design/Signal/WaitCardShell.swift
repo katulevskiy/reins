@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// A waiting ask as a card in its field colour (Components.png, Waiting cards): the AI's mark, the label line and the
-/// timer; the ask in `ask-small`; then the buttons, Autopilot's pick first. Radius 26, 16 / 18 pt inside, 12 pt between
-/// its lines, grain on the field. The Activity stack fills it in phase 2.
+/// A waiting ask as a card in its field colour (the System board's hero template): the request's icon at the left, who
+/// asks and the timer at the right; the ask in `cardAsk`; then the buttons, Autopilot's pick first. Radius 26, 16 pt
+/// inside, 12 pt between its lines, the field's texture. The label line ("Gmail · Send") is gone from the card: the
+/// icon says it, and VoiceOver reads it.
 struct WaitCardShell<Avatar: View, Timer: View, Actions: View>: View {
     var kind: FieldKind
-    /// "Gmail · Send": set in mono capitals.
+    /// "Gmail · Send": what the icon shows, for VoiceOver.
     var label: String
     var ask: AskText
     /// The ask's accessibility identifier (UI tests open a card by it).
@@ -17,20 +18,15 @@ struct WaitCardShell<Avatar: View, Timer: View, Actions: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                avatar
-                Text(label)
-                    .textRole(.label)
-                    .foregroundStyle(Palette.onField2)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                avatar.accessibilityElement(children: .ignore).accessibilityLabel(label)
+                Spacer(minLength: 0)
                 timer
             }
             ask.foregroundStyle(Palette.onField)
                 .accessibilityIdentifier(askIdentifier ?? "")
             actions
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(16)
         .fieldBackground(kind, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .accessibilityElement(children: .contain)
     }
@@ -49,8 +45,8 @@ enum AutopilotPick: Equatable {
 
     var title: String {
         switch self {
-        case .allow(let p): "Allow · \(p)%"
-        case .deny(let p): "Deny · \(p)%"
+        case .allow(let p): "Allow \(p)%"
+        case .deny(let p): "Deny \(p)%"
         case .unsure: "Unsure"
         case .alwaysAsks: "Always asks"
         }
@@ -116,7 +112,16 @@ struct WaitCardButtons: View {
             case .unsure: ArcRing(fraction: 0.5, color: .white, track: .white.opacity(0.35), lineWidth: 2).frame(width: 16, height: 16)
             case .alwaysAsks: GlyphIcon(.lock, size: 16)
             }
-            Text(pick.title).lineLimit(1)
+            switch pick {
+            case .allow(let p), .deny(let p):
+                HStack(spacing: 6) {
+                    Text(pick == .allow(p) ? "Allow" : "Deny")
+                    Text("\(p)%").font(RFont.sans(15, .medium)).opacity(0.55)
+                }
+                .lineLimit(1)
+            default:
+                Text(pick.title).lineLimit(1)
+            }
         }
     }
 }

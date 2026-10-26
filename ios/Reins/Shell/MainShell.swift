@@ -108,13 +108,17 @@ private struct TabShell: View {
         AppSection.allCases.map { section in
             SignalTabBar.Item(
                 tab: section, title: section.title, glyph: section.glyph, identifier: section.identifier,
-                badge: section == .trust && bypassRunning, count: section == .activity ? model.pending.count : 0
+                dot: section == .trust ? runningMode?.fill : nil, count: section == .activity ? model.pending.count : 0
             )
         }
     }
 
-    /// A bypass is on: its dot breathes on Trust.
-    private var bypassRunning: Bool { model.autopilot?.mode == .bypass }
+    /// Overnight, Lockdown or Bypass runs: a dot in its colour on Trust.
+    private var runningMode: ModeKind? {
+        guard let mode = model.autopilot?.mode else { return nil }
+        let kind = ModeKind(mode)
+        return kind.calm ? nil : kind
+    }
 
     /// The tab bar floats this far above the bottom safe area.
     private static let barGap: CGFloat = 4

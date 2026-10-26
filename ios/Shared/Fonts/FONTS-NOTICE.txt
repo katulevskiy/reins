@@ -1,5 +1,16 @@
-Fonts in this folder, all licensed under the SIL Open Font License 1.1 (https://openfontlicense.org; the full text
-is in design/signal/fonts/OFL.txt and in each font's metadata):
+Fonts in this folder, all licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+
+The app's fonts (Reins Next), from github.com/google/fonts, made static by ios/scripts/make-fonts.py:
+
+- Sora (Sora-Regular.ttf, Sora-Medium.ttf, Sora-SemiBold.ttf): Copyright 2019 The Sora Project Authors
+  (https://github.com/sora-xor/sora-font). Licence: OFL-Sora.txt. Each file also carries the Cyrillic of:
+- Geologica, at the same weight: Copyright 2020 The Geologisk Project Authors
+  (https://github.com/monokromskriftforlag/geologisk). Licence: OFL-Geologica.txt.
+- JetBrains Mono (JetBrainsMono-Regular.ttf, JetBrainsMono-Medium.ttf): Copyright 2020 The JetBrains Mono Project
+  Authors (https://github.com/JetBrains/JetBrainsMono). Licence: OFL-JetBrainsMono.txt.
+
+The Signal fonts, which the app no longer uses; the desktop app (crates/reins-desktop-app) still embeds them from
+here (the full text of their licence is in design/signal/fonts/OFL.txt and in each font's metadata):
 
 - Instrument Serif (InstrumentSerif-Regular.ttf, InstrumentSerif-Italic.ttf): Copyright 2022 The Instrument Serif
   Project Authors (https://github.com/Instrument/instrument-serif).
@@ -7,5 +18,3 @@ is in design/signal/fonts/OFL.txt and in each font's metadata):
   The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans).
 - Geist and Geist Mono (Geist*.ttf, GeistMono*.ttf): Copyright 2024 The Geist Project Authors
   (https://github.com/vercel/geist-font), (c) Vercel.
-
-The desktop app (crates/reins-desktop-app) embeds these files too.

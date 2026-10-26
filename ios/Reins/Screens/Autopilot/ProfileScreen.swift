@@ -198,7 +198,7 @@ private struct ProfileHeader: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(untrusted(profile.name))
-                            .font(RFont.serif(40))
+                            .font(RFont.display(29.5))
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
@@ -234,8 +234,8 @@ private extension ProfileHeader {
     func stat(_ value: String, _ label: String, tint: Color = Palette.ink, suffix: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .lastTextBaseline, spacing: 1) {
-                Text(value).font(RFont.serif(32)).foregroundStyle(tint)
-                if let suffix { Text(suffix).font(RFont.serif(20)).foregroundStyle(Palette.inkMeta) }
+                Text(value).font(RFont.display(23.5)).foregroundStyle(tint)
+                if let suffix { Text(suffix).font(RFont.display(15)).foregroundStyle(Palette.inkMeta) }
             }
             .lineLimit(1)
             Text(label).textRole(.meta).foregroundStyle(Palette.inkMeta).lineLimit(1)

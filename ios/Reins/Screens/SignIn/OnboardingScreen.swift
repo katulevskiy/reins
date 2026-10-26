@@ -241,7 +241,7 @@ private struct Eyebrow: View {
 
     var body: some View {
         Text(text.uppercased())
-            .textRole(.label)
+            .textRole(.section)
             .foregroundStyle(Palette.inkMeta)
             .padding(.top, 14)
             .accessibilityAddTraits(.isHeader)
@@ -544,10 +544,10 @@ private struct RulesPage: View {
             StartingRuleChooser().padding(.horizontal, -16).padding(.top, 8)
             Eyebrow("Autopilot · a private model")
             HStack(spacing: 8) {
-                ModeTile(mode: .manual, line: "You decide, with a hint", chosen: model.autopilot?.mode == .manual) {
+                OnboardingModeTile(mode: .manual, line: "You decide, with a hint", chosen: model.autopilot?.mode == .manual) {
                     Task { await ap.setMode(.manual) }
                 }
-                ModeTile(mode: .auto, line: "Decides the easy ones", chosen: model.autopilot?.mode == .auto) {
+                OnboardingModeTile(mode: .auto, line: "Decides the easy ones", chosen: model.autopilot?.mode == .auto) {
                     Task { await ap.setMode(.auto) }
                 }
             }
@@ -588,7 +588,7 @@ private struct RulesPage: View {
 }
 
 /// Manual or Auto as a tile, its name in the serif as on the Trust tab.
-private struct ModeTile: View {
+private struct OnboardingModeTile: View {
     var mode: AutopilotMode
     var line: String
     var chosen: Bool
@@ -603,7 +603,7 @@ private struct ModeTile: View {
             action()
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(AutopilotText.name(mode)).font(RFont.serif(28)).foregroundStyle(Palette.ink)
+                Text(AutopilotText.name(mode)).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
                 Text(line).textRole(.meta).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)

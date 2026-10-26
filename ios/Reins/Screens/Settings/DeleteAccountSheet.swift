@@ -24,7 +24,7 @@ struct DeleteAccountSheet: View {
                         RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 34, action: onClose)
                             .disabled(busy)
                             .accessibilityIdentifier("closeDeleteAccount")
-                        Text("Account · Delete").textRole(.label).foregroundStyle(Palette.onField2).padding(.top, 22)
+                        Text("Account · Delete").textRole(.section).foregroundStyle(Palette.onField2).padding(.top, 22)
                         AskText([AskText.Run(text: "Delete "), AskText.Run(text: email, target: true)], role: .ask, lineLimit: nil)
                             .foregroundStyle(Palette.onField)
                             .padding(.top, 8)

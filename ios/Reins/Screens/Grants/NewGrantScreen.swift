@@ -241,7 +241,7 @@ struct NewGrantScreen: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(title).textRole(.label).foregroundStyle(Palette.inkMeta)
+                Text(title).textRole(.section).foregroundStyle(Palette.inkMeta)
                 Spacer(minLength: 8)
                 trailing()
             }

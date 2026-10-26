@@ -78,7 +78,7 @@ struct GrantDetailScreen: View {
                     }
 
                     Text(used.isEmpty ? "Used for" : "Used for · \(used.count)")
-                        .textRole(.label)
+                        .textRole(.section)
                         .foregroundStyle(Palette.inkMeta)
                         .padding(.horizontal, 24)
                         .padding(.top, 26)
@@ -220,7 +220,7 @@ private struct GrantField: View {
         SignalField(kind: .grant) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Grant · \(grant.service.isEmpty ? "Reins" : serviceName(grant.service))")
-                    .textRole(.label)
+                    .textRole(.section)
                     .foregroundStyle(Palette.onField2)
                     .lineLimit(1)
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -228,9 +228,9 @@ private struct GrantField: View {
                     HStack(alignment: .center) {
                         HStack(alignment: .lastTextBaseline, spacing: 6) {
                             Text(grant.active ? GrantText.ringLabel(clock).replacingOccurrences(of: " ", with: "") : GrantText.inactiveWord(grant))
-                                .font(RFont.serif(grant.active ? 52 : 40))
+                                .font(RFont.display(grant.active ? 38 : 30))
                             if grant.active && clock.remaining != nil {
-                                Text("left").font(RFont.serif(24, italic: true))
+                                Text("left").font(RFont.display(18, target: true))
                             }
                         }
                         .lineLimit(1)
@@ -248,7 +248,7 @@ private struct GrantField: View {
                 }
                 .padding(.top, 18)
                 Text(verbatim: untrusted(grant.summary))
-                    .font(RFont.serif(36))
+                    .font(RFont.display(26.5))
                     .lineHeight(.multiple(factor: 38 / 36))
                     .foregroundStyle(Palette.onField)
                     .lineLimit(4)

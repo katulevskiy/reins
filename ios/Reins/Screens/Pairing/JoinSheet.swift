@@ -155,7 +155,7 @@ private struct JoinContent: View {
                 }
             }
         } recap: {
-            Text(JoinWords.ask).font(RFont.serif(28)).foregroundStyle(Palette.ink)
+            Text(JoinWords.ask).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Approve",

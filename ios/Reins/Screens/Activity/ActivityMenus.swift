@@ -10,11 +10,27 @@ extension ModeChip.Mode {
         switch settings.mode {
         case .manual: self = .manual
         case .auto: self = .auto
+        case .overnight: self = .overnight(left: Self.left(settings.overnightUntil, now: now))
+        case .lockdown: self = .lockdown
+        case .bypass: self = .bypass(left: Self.left(settings.bypassUntil, now: now))
+        }
+    }
+
+    /// "47:12" left, "∞" for one without an end, nothing when the end is unknown.
+    static func left(_ until: Int64?, now: Int64) -> String {
+        guard let until else { return "" }
+        return AutopilotText.isUntilOff(until) ? "∞" : ModeLook.clock(until: until, now: now)
+    }
+}
+
+extension ModeKind {
+    init(_ mode: AutopilotMode) {
+        switch mode {
+        case .manual: self = .manual
+        case .auto: self = .auto
         case .overnight: self = .overnight
         case .lockdown: self = .lockdown
-        case .bypass:
-            let until = settings.bypassUntil
-            self = .bypass(left: until.map { AutopilotText.isUntilOff($0) ? "∞" : ModeLook.clock(until: $0, now: now) } ?? "")
+        case .bypass: self = .bypass
         }
     }
 }

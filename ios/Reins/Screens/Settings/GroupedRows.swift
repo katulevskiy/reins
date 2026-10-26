@@ -29,7 +29,7 @@ struct GroupHeader: View {
 
     var body: some View {
         Text(text)
-            .textRole(.label)
+            .textRole(.section)
             .foregroundStyle(Palette.inkMeta)
             .accessibilityAddTraits(.isHeader)
     }

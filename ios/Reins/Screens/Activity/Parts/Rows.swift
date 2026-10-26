@@ -259,7 +259,7 @@ struct HistoryRow: View {
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                AskRunsText(runs: line.runs, size: 18, terms: terms)
+                AskRunsText(runs: line.runs, size: TextRole.body.size, terms: terms)
                     .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .accessibilityLabel(line.text)

@@ -163,7 +163,7 @@ struct UnlockScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
             // The hero: serif, spaced, impossible to misread.
             Text(code)
-                .font(RFont.serif(64))
+                .font(RFont.display(47.5))
                 .tracking(4)
                 .monospacedDigit()
                 .foregroundStyle(Palette.ink)

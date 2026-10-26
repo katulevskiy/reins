@@ -149,11 +149,11 @@ struct TimerPill: View {
         let hot = u?.urgent == true
         return HStack(spacing: 6) {
             if let u, !hot {
-                ArcRing(fraction: u.stale ? 0 : u.fraction, color: .white, track: .white.opacity(0.25), lineWidth: 2.2)
+                ArcRing(fraction: u.stale ? 0 : u.fraction, color: .white, track: .white.opacity(0.28), lineWidth: 2.2)
                     .frame(width: 18, height: 18)
             }
             Text(text)
-                .font(RFont.mono(13, hot ? .medium : .regular))
+                .font(RFont.mono(13.5, .medium))
                 .monospacedDigit()
                 .lineLimit(1)
         }
@@ -469,7 +469,7 @@ struct PageSectionHeader<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .textRole(.label)
+                .textRole(.section)
                 .foregroundStyle(Palette.inkMeta)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
@@ -503,10 +503,10 @@ struct CompactBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .textRole(.label)
+                .textRole(.section)
                 .foregroundStyle(Palette.onField2)
             HStack(alignment: .center, spacing: 12) {
-                AskText(Self.runs(text), role: .askSmall)
+                AskText(Self.runs(text), role: .cardAsk)
                     .foregroundStyle(Palette.onField)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button(button, action: action)

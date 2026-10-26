@@ -174,7 +174,7 @@ struct TrustScreen: View {
         let mood = runningMode.flatMap { TrustText.running($0, listed: $0.entries(model.activity, settings: s), now: now) }
             ?? TrustText.decided(model.activity, now: now)
         Text(mood)
-            .textRole(.mood)
+            .textRole(.body)
             .foregroundStyle(Palette.ink2)
             .accessibilityIdentifier("trustMood")
             .plainRow(EdgeInsets(top: 0, leading: 24, bottom: 4, trailing: 24))

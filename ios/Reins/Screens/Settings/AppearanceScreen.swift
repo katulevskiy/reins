@@ -1,11 +1,10 @@
 import SwiftUI
 
 /// Settings > Appearance (iOS-Settings.png, 04): a small room of your own. The theme (the phone's, Paper or Graphite)
-/// as three small phones, grain on fields, and the sans you read in. Changes apply live, no restart.
+/// as three small phones, and grain on fields. Changes apply live, no restart.
 struct AppearanceScreen: View {
     @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue
     @AppStorage(Appearance.grainKey, store: AppGroup.defaults) private var grain = true
-    @AppStorage(RFont.sansFamilyKey, store: AppGroup.defaults) private var sans = RFont.SansFamily.instrument.rawValue
     @Environment(\.feedback) private var feedback
 
     var body: some View {
@@ -38,29 +37,6 @@ struct AppearanceScreen: View {
                     .padding(.vertical, 12)
                     .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
                     .accessibilityIdentifier("grainSwitch")
-                    HStack {
-                        Text("Sans for reading").font(TextRole.row.font()).foregroundStyle(Palette.ink)
-                        Spacer()
-                        Menu {
-                            ForEach(RFont.SansFamily.allCases, id: \.self) { family in
-                                Button(family.title) {
-                                    feedback.play(.selection)
-                                    sans = family.rawValue
-                                }
-                                .accessibilityIdentifier("sans:\(family.rawValue)")
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(RFont.SansFamily(rawValue: sans)?.title ?? "Instrument")
-                                GlyphIcon(.chevronDown, size: 14)
-                            }
-                            .font(RFont.sans(14.5, .medium))
-                            .foregroundStyle(Palette.ink)
-                        }
-                        .accessibilityIdentifier("sansMenu")
-                    }
-                    .padding(.vertical, 14)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 26)

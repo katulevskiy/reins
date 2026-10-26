@@ -170,7 +170,7 @@ struct FieldWaitCard: View {
     var body: some View {
         let line = AskLabels.pending(item, field: field)
         WaitCardShell(
-            kind: field, label: line.kind, ask: AskText(ActivityText.ask(group, line: line), role: .askSmall),
+            kind: field, label: line.kind, ask: AskText(ActivityText.ask(group, line: line), role: .cardAsk),
             askIdentifier: "pendingTitle:\(item.id)"
         ) {
             RequestIcon(spec: line.icon, size: 30, ring: field.fill)

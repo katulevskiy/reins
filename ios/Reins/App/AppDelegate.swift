@@ -48,13 +48,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 extension AppDelegate {
-    /// A page's large title is set in the serif, as Signal's titles are; the small one in the bar in the sans.
+    /// A page's large title in the display face, as Next's titles are; the small one in the bar in the sans.
     static func styleNavigationBars() {
         let bar = UINavigationBar.appearance()
-        if let serif = UIFont(name: RFont.serifName(false), size: 40) {
-            bar.largeTitleTextAttributes = [.font: UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: serif)]
+        if let display = UIFont(name: RFont.displayName(false), size: TextRole.title.size) {
+            bar.largeTitleTextAttributes = [
+                .font: UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: display),
+                .kern: RFont.displayTracking(TextRole.title.size),
+            ]
         }
-        if let sans = UIFont(name: RFont.sansFamily.name(.semibold), size: 16) {
+        if let sans = UIFont(name: RFont.Weight.semibold.sansName, size: 16) {
             bar.titleTextAttributes = [.font: UIFontMetrics(forTextStyle: .headline).scaledFont(for: sans)]
         }
     }

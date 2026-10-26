@@ -176,7 +176,7 @@ struct TrustRunningField: View {
             } else {
                 GlyphIcon(.lock, size: 14)
             }
-            Text(running.label).textRole(.label).foregroundStyle(Palette.onField2).lineLimit(1)
+            Text(running.label).textRole(.section).foregroundStyle(Palette.onField2).lineLimit(1)
             Spacer(minLength: 0)
             if let until = until, AutopilotText.isUntilOff(until) {
                 GlyphIcon(.infinity, size: 20)
@@ -197,9 +197,9 @@ struct TrustRunningField: View {
         LiveClock(interval: 1) { now in
             HStack(alignment: .lastTextBaseline, spacing: 6) {
                 Text(verbatim: AutopilotText.clock(until: until, now: Int64(now)))
-                    .font(RFont.serif(58))
+                    .font(RFont.display(43))
                     .monospacedDigit()
-                Text("left").font(RFont.serif(26, italic: true))
+                Text("left").font(RFont.display(19, target: true))
             }
             .foregroundStyle(Palette.onField)
             .lineLimit(1)

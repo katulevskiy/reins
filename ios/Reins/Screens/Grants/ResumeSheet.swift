@@ -29,7 +29,7 @@ struct ResumeSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     // "Extend *for*": the sheet's title in the serif, one italic word; what it is for under it.
-                    AskText([AskText.Run(text: extending ? "Extend " : "Resume "), AskText.Run(text: "for", target: true)], role: .sheetTitle)
+                    AskText([AskText.Run(text: extending ? "Extend " : "Resume "), AskText.Run(text: "for", target: true)], role: .cardAsk)
                         .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     Text(verbatim: untrusted(grant.summary))
@@ -248,7 +248,7 @@ struct ResumeSheet: View {
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .textRole(.label)
+            .textRole(.section)
             .foregroundStyle(Palette.inkMeta)
             .padding(.top, 18)
             .padding(.bottom, 8)

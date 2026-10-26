@@ -65,7 +65,7 @@ private struct ConnectionHeader: View {
                 ConnectionAvatar(connection: connection, size: 56)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(untrustedName(connection.label, limit: 40))
-                        .font(RFont.serif(40))
+                        .font(RFont.display(29.5))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)

@@ -147,10 +147,10 @@ private struct VerdictCard: View {
                     Image(systemName: AutopilotStyle.symbol(s.verdict)).font(.system(size: 22, weight: .bold)).foregroundStyle(tint)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Autopilot would").textRole(.label).foregroundStyle(Palette.inkMeta)
+                    Text("Autopilot would").textRole(.section).foregroundStyle(Palette.inkMeta)
                     // "Deny *91%*": the verdict in the serif, how sure in italic.
-                    (Text(s.judged ? AutopilotText.verdictWord(s.verdict) : "Leave it to you").font(RFont.serif(38))
-                        + Text(s.judged ? " \(AutopilotText.percent(s.verdict == .deny ? s.pDeny : s.pApprove))" : "").font(RFont.serif(38, italic: true)))
+                    (Text(s.judged ? AutopilotText.verdictWord(s.verdict) : "Leave it to you").font(RFont.display(28))
+                        + Text(s.judged ? " \(AutopilotText.percent(s.verdict == .deny ? s.pDeny : s.pApprove))" : "").font(RFont.display(28, target: true)))
                         .foregroundStyle(tint)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)

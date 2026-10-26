@@ -7,7 +7,7 @@ import SwiftUI
 
 extension AskLine {
     /// A long ask (a question from the computer in its own words) is set smaller, never cut.
-    var role: TextRole { text.count > 80 ? .sheetTitle : .ask }
+    var role: TextRole { text.count > 80 ? .cardAsk : .ask }
 }
 
 /// One warning line on the field: its own words, how it reads, and (for some) a longer reason behind its (?).
@@ -157,7 +157,7 @@ struct AskHead: View {
                 RequestIcon(spec: ask.icon, size: 34, ring: field.fill)
                     .accessibilityIdentifier("requestIcon")
                 Text(ask.kind)
-                    .textRole(.label)
+                    .textRole(.section)
                     .foregroundStyle(Palette.onField2)
                     .lineLimit(1)
                     .accessibilityIdentifier("fieldLabel")

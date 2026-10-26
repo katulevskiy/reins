@@ -22,7 +22,7 @@ struct ConnectionsScreen: View {
                         .accessibilityIdentifier("connect")
                     }
                     Text(ConnectionsText.mood(model.connections))
-                        .textRole(.mood)
+                        .textRole(.body)
                         .foregroundStyle(Palette.ink2)
                         .accessibilityIdentifier("connectionsMood")
                 }

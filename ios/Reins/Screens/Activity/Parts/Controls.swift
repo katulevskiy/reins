@@ -125,10 +125,9 @@ struct CheckRow<Label: View>: View {
     }
 }
 
-/// One choice among a few (who a grant is for, which emails, how long, a filter), the same on every screen (the
-/// Android app's `SelectChip`): the chosen one is tinted in the accent with a 1.5 pt accent edge and a check after its
-/// words; the others are clear with a hairline edge. Never a white or grey fill, so which one is on is never a guess
-/// between two greys. `leading` is an avatar or a small icon before the words.
+/// One choice among a few (who a grant is for, which emails, how long, a filter), the same on every screen (the kit's
+/// selectable chip): a capsule, 38 pt; the chosen one is violet-washed with a 1.5 pt violet edge and ink words, the
+/// others raised paper with a `rule-2` edge and ink-2 words. `leading` is an avatar or a small icon before the words.
 struct SelectChip<Leading: View>: View {
     var title: String
     var selected: Bool
@@ -154,7 +153,7 @@ struct SelectChip<Leading: View>: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let shape = Capsule()
         Button {
             action()
             feedback.play(.selection)
@@ -165,18 +164,11 @@ struct SelectChip<Leading: View>: View {
                     .font(RFont.sans(14, .semibold))
                     .foregroundStyle(selected ? Palette.ink : Palette.ink2)
                     .lineLimit(1)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11.5, weight: .bold))
-                        .foregroundStyle(SelectChipLook.check)
-                        .transition(.scale(scale: 0.5).combined(with: .opacity))
-                        .accessibilityHidden(true)
-                }
             }
             .padding(.leading, hasLeading ? 8 : 13)
             .padding(.trailing, 13)
             .frame(minHeight: 38)
-            .background(selected ? SelectChipLook.fill : Color.clear, in: shape)
+            .background(selected ? SelectChipLook.fill : Palette.paperRaised, in: shape)
             .overlay(shape.strokeBorder(selected ? Palette.violet : SelectChipLook.edge, lineWidth: selected ? 1.5 : 1))
             .contentShape(shape)
         }
@@ -192,10 +184,10 @@ extension SelectChip where Leading == EmptyView {
     }
 }
 
-/// The chip's colours: the accent at 12 % (light) or 18 % (dark) when chosen, a hairline edge when not.
+/// The chip's colours: violet at 12 % when chosen, a `rule-2` edge when not.
 enum SelectChipLook {
-    static let fill = Palette.dual(UIColor(hex: 0x5B43E8, alpha: 0.12), UIColor(hex: 0x8B7CF6, alpha: 0.18))
-    static let edge = Palette.dynamic(0xDCDCE2, 0x34343A)
+    static let fill = Palette.dual(UIColor(hex: 0x5B43E8, alpha: 0.12), UIColor(hex: 0xA196FF, alpha: 0.12))
+    static let edge = Palette.rule2
     /// The check after the chosen one's words: lighter than the accent on dark, so it reads on the tint.
     static let check = Palette.dynamic(0x5B43E8, 0xA99BFA)
 }

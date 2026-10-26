@@ -233,7 +233,7 @@ private struct GitHubConnect: View {
 
     var body: some View {
         Text("Add an account")
-            .textRole(.label)
+            .textRole(.section)
             .foregroundStyle(Palette.inkMeta)
             .accessibilityAddTraits(.isHeader)
         ActionButton(title: "Chosen repositories", enabled: !accounts.busy) {
@@ -471,7 +471,7 @@ private struct DigitBoxes<Field: View>: View {
                     let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
                     let next = i == digits.count && focused
                     Text(i < digits.count ? String(digits[i]) : " ")
-                        .font(RFont.serif(34))
+                        .font(RFont.display(25))
                         .foregroundStyle(Palette.ink)
                         .frame(maxWidth: 56, minHeight: 62)
                         .frame(maxWidth: .infinity)

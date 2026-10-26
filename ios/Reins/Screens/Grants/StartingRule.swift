@@ -53,7 +53,7 @@ struct StartingRuleChooser: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(StartingRuleText.header.uppercased())
-                    .textRole(.label)
+                    .textRole(.section)
                     .foregroundStyle(Palette.inkMeta)
                     .accessibilityAddTraits(.isHeader)
                 // The (?) right beside the words it explains.

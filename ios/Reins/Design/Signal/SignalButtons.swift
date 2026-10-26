@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Signal's buttons (Components.png, Buttons): inverse for the action, outline for Deny, soft for quiet ones, a danger
+// The kit's buttons (the System board, Buttons): inverse for the action, outline for Deny, soft for quiet ones, a danger
 // wash for End now, violet for Allow, and on a field white (Review) or a white wash (Deny). Pressed content dims to 55 %,
 // disabled to 40 %; focus is a 2 pt violet ring at a 3 pt offset (white on fields).
 
@@ -49,10 +49,10 @@ enum SignalButtonKind: CaseIterable {
 enum SignalButtonSize {
     /// 54 pt, 16.5 semibold: the decision bar.
     case regular
-    /// 40 pt, 14.5 semibold: in cards and rows.
+    /// 42 pt, 15 semibold: in cards and rows (Change, Stop, Allow on a waiting card).
     case small
 
-    var height: CGFloat { self == .regular ? 54 : 40 }
+    var height: CGFloat { self == .regular ? 54 : 42 }
     var role: TextRole { self == .regular ? .button : .buttonSmall }
     var padding: CGFloat { self == .regular ? 22 : 16 }
 }

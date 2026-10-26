@@ -213,20 +213,15 @@ struct AutopilotChip: View {
     }
 }
 
-/// A round selection mark that fills with a spring.
+/// A radio (the kit's `rad`): 22 pt, a 1.5 pt faint ring; chosen, a ring 7 pt deep in `tint` (violet), on a spring.
 struct RadioDot: View {
     var selected: Bool
-    var tint: Color
+    var tint: Color = Palette.violetFill
 
     var body: some View {
         Circle()
-            .strokeBorder(selected ? tint : Palette.inkMeta.opacity(0.6), lineWidth: 1.75)
+            .strokeBorder(selected ? tint : Palette.inkFaint, lineWidth: selected ? 7 : 1.5)
             .frame(width: 22, height: 22)
-            .overlay {
-                Circle().fill(tint)
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(selected ? 1 : 0.001)
-            }
             .animation(.spring(response: 0.3, dampingFraction: 0.55), value: selected)
             .accessibilityHidden(true)
     }

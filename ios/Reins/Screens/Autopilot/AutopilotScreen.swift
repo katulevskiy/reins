@@ -23,8 +23,8 @@ struct ModeHero: View {
         } else {
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    ModeTile(mode: .manual, selected: mode == .manual, dimmed: false) { onPick(.manual) }
-                    ModeTile(mode: .auto, selected: mode == .auto, dimmed: !modelReady) { onPick(.auto) }
+                    ModeChoiceTile(mode: .manual, selected: mode == .manual, dimmed: false) { onPick(.manual) }
+                    ModeChoiceTile(mode: .auto, selected: mode == .auto, dimmed: !modelReady) { onPick(.auto) }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
@@ -70,7 +70,7 @@ struct ModeHero: View {
 
 /// Manual or Auto as a tile: its glyph, its name in the serif, what it does; the one in force has a 2 pt ring (violet
 /// for Auto, with its check). Auto without the model is faded, still there to tap.
-private struct ModeTile: View {
+private struct ModeChoiceTile: View {
     var mode: AutopilotMode
     var selected: Bool
     var dimmed: Bool
@@ -92,7 +92,7 @@ private struct ModeTile: View {
                     if selected && auto { GlyphIcon(.check, size: 18).foregroundStyle(Palette.violet) }
                 }
                 Text(AutopilotText.name(mode))
-                    .font(RFont.serif(26))
+                    .font(RFont.display(19))
                     .foregroundStyle(Palette.ink)
                     .padding(.top, 8)
                 Text(dimmed ? "Needs the model" : auto ? AutopilotText.cardLine(mode) : "You decide, with a hint")
@@ -135,7 +135,7 @@ struct WeekStats: View {
 
     private func stat(_ value: String, _ label: String, tint: Color = Palette.ink) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(RFont.serif(32)).foregroundStyle(tint).contentTransition(.numericText()).lineLimit(1)
+            Text(value).font(RFont.display(23.5)).foregroundStyle(tint).contentTransition(.numericText()).lineLimit(1)
             Text(label).textRole(.meta).foregroundStyle(Palette.inkMeta).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -331,7 +331,7 @@ struct ModelSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center) {
-                    AskText([AskText.Run(text: "On-device "), AskText.Run(text: "model", target: true)], role: .sheetTitle)
+                    AskText([AskText.Run(text: "On-device "), AskText.Run(text: "model", target: true)], role: .cardAsk)
                         .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()

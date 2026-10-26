@@ -260,7 +260,7 @@ struct TimedModeSheet<Extra: View>: View {
                     .fieldBackground(kind.field, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .accessibilityHidden(true)
                 let title = kind.titleRuns(who: who)
-                AskText([AskText.Run(text: title.lead), AskText.Run(text: title.italic, target: true)], role: .sheetTitle)
+                AskText([AskText.Run(text: title.lead), AskText.Run(text: title.italic, target: true)], role: .cardAsk)
                     .foregroundStyle(Palette.ink)
                     .padding(.top, 16)
                     .accessibilityElement(children: .ignore)

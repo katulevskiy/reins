@@ -210,7 +210,7 @@ private struct PairingContent: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
                 codes.padding(.horizontal, 20).padding(.vertical, 18)
-                Text("Name this connection").textRole(.label).foregroundStyle(Palette.inkMeta).padding(.leading, 24).padding(.bottom, 8)
+                Text("Name this connection").textRole(.section).foregroundStyle(Palette.inkMeta).padding(.leading, 24).padding(.bottom, 8)
                 if vm.sameClient {
                     // Two accounts of one AI look the same to Reins: the name is what tells them apart.
                     Label {
@@ -250,7 +250,7 @@ private struct PairingContent: View {
                 }
             }
         } recap: {
-            Text(PairWords.ask(view)).font(RFont.serif(28)).foregroundStyle(Palette.ink)
+            Text(PairWords.ask(view)).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Connect",

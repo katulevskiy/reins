@@ -260,7 +260,7 @@ struct GlanceEmpty: View {
                     .accessibilityHidden(true)
                     .padding(.bottom, 2)
             }
-            Text(title).font(RFont.fixedSerif(compact ? 22 : 20)).foregroundStyle(Palette.ink)
+            Text(title).font(RFont.fixedDisplay(compact ? 16 : 15)).foregroundStyle(Palette.ink)
             Text(message)
                 .font(RFont.fixedSans(11))
                 .foregroundStyle(Palette.ink2)
@@ -336,12 +336,12 @@ struct WaitingSmallView: View {
                         .frame(maxWidth: 52, alignment: .trailing)
                 }
                 Text("\(list.count)")
-                    .font(RFont.fixedSerif(44))
+                    .font(RFont.fixedDisplay(32.5))
                     .foregroundStyle(full ? Palette.onField : .primary)
                     .widgetAccentable()
                 Spacer(minLength: 4)
                 Text(Glance.operation(newest))
-                    .font(RFont.fixedSerif(17))
+                    .font(RFont.fixedDisplay(12.5))
                     .foregroundStyle(full ? Palette.onField : .primary)
                     .lineLimit(3)
                     .minimumScaleFactor(0.85)
@@ -425,7 +425,7 @@ struct AutopilotWidgetView: View {
                 .padding(.bottom, 4)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(mode.name)
-                    .font(RFont.fixedSerif(medium ? 32 : 28))
+                    .font(RFont.fixedDisplay(medium ? 24 : 21))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -690,7 +690,7 @@ struct ApprovalLiveViews {
                 }
             }
             Text(title)
-                .font(RFont.fixedSerif(stale ? 20 : 25))
+                .font(RFont.fixedDisplay(stale ? 15 : 18.5))
                 .foregroundStyle(ink)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
@@ -758,7 +758,7 @@ struct ApprovalLiveViews {
     var expandedBottom: some View {
         VStack(alignment: .leading, spacing: 8) {
             // The same sentence as everywhere else, in the serif.
-            Text(title).font(RFont.fixedSerif(21)).foregroundStyle(.white).lineLimit(2)
+            Text(title).font(RFont.fixedDisplay(15.5)).foregroundStyle(.white).lineLimit(2)
             if let more { Text(more).font(RFont.fixedSans(12)).foregroundStyle(.white.opacity(0.65)) }
             buttons(island: true)
         }
@@ -800,7 +800,7 @@ struct BypassLiveViews {
     @ViewBuilder func timer(size: CGFloat, color: Color) -> some View {
         if untilOff {
             Text("Until you stop it")
-                .font(RFont.fixedSerif(size * 0.6))
+                .font(RFont.fixedDisplay(size * 0.44))
                 .foregroundStyle(color)
                 .lineLimit(1)
         } else {
@@ -808,12 +808,12 @@ struct BypassLiveViews {
                 // A timer text takes the widest width it could ever need: give it the one it needs now, so "left"
                 // sits beside it ("47:12", or "1:47:12" with hours).
                 Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
-                    .font(RFont.fixedSerif(size))
+                    .font(RFont.fixedDisplay(size * 0.74))
                     .monospacedDigit()
                     .foregroundStyle(color)
                     .lineLimit(1)
                     .frame(width: size * (state.until.timeIntervalSinceNow >= 3_600 ? 3.0 : 2.0), alignment: .leading)
-                Text("left").font(RFont.fixedSerif(size * 0.5, italic: true)).foregroundStyle(color)
+                Text("left").font(RFont.fixedDisplay(size * 0.37)).foregroundStyle(color)
             }
         }
     }

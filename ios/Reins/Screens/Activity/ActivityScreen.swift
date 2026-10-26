@@ -192,7 +192,7 @@ struct ActivityScreen: View {
     /// "Two things wait for you.", "All quiet. Three AIs are connected."
     private var mood: some View {
         Text(ActivityText.mood(waiting: model.pending.count, connections: model.connections.count))
-            .textRole(.mood)
+            .textRole(.body)
             .foregroundStyle(Palette.ink2)
             .padding(.horizontal, 24)
             .padding(.top, 14)
@@ -623,7 +623,7 @@ private struct DayHeader: View {
         Button(action: toggle) {
             HStack(spacing: 8) {
                 Text(title)
-                    .textRole(.label)
+                    .textRole(.section)
                     .foregroundStyle(Palette.inkMeta)
                 Spacer(minLength: 8)
                 Text(ActivityDays.summary(day))
@@ -657,7 +657,7 @@ private struct NewMarker: View {
     var body: some View {
         HStack(spacing: 10) {
             Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
-            Text("New above").textRole(.label).foregroundStyle(Palette.violet).fixedSize()
+            Text("New above").textRole(.section).foregroundStyle(Palette.violet).fixedSize()
             Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
         }
         .padding(.horizontal, 24)

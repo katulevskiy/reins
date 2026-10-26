@@ -83,7 +83,7 @@ private struct HeaderText: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).textRole(.label).foregroundStyle(Palette.inkMeta)
+        Text(text).textRole(.section).foregroundStyle(Palette.inkMeta)
     }
 }
 

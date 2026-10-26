@@ -98,7 +98,7 @@ struct RecoveryCodeSheet: View {
             // An account field: pink, because it changes how the account opens.
             SignalField(kind: .accounts) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Account · Recovery").textRole(.label).foregroundStyle(Palette.onField2)
+                    Text("Account · Recovery").textRole(.section).foregroundStyle(Palette.onField2)
                     AskText([AskText.Run(text: "Write down your "), AskText.Run(text: "recovery code", target: true)], role: .ask, lineLimit: nil)
                         .foregroundStyle(Palette.onField)
                         .padding(.top, 8)

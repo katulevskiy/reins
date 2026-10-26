@@ -215,7 +215,7 @@ extension View {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 0) {
                         Text(verbatim: title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.onField)
-                        Text(verbatim: ask).font(RFont.serif(13)).foregroundStyle(Palette.onField2)
+                        Text(verbatim: ask).font(RFont.display(9.5)).foregroundStyle(Palette.onField2)
                     }
                     .lineLimit(1)
                     .accessibilityElement(children: .combine)
