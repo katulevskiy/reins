@@ -40,21 +40,33 @@ struct Banner: View {
 /// A grouped card with an optional small-caps header and footer.
 struct GroupCard<Content: View>: View {
     var header: String?
+    var glyph: Glyph? = nil
     var footer: String?
     @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    init(header: String? = nil, glyph: Glyph? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.header = header
+        self.glyph = glyph
+        self.footer = footer
+        self.content = content()
+    }
 
     var body: some View {
+        // The kit's `sec` over a raised group (radius 20, a hairline ring in light).
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             if let header {
-                SectionHeader(header)
-                    .padding(.leading, 12)
-                    .padding(.top, 22)
-                    .padding(.bottom, 8)
+                SectionHeader(header, glyph: glyph)
+                    .padding(.horizontal, -16)
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background {
+                    shape.fill(Palette.paperRaised)
+                    if scheme == .light { shape.strokeBorder(Palette.rule, lineWidth: 1) }
+                }
+                .clipShape(shape)
             if let footer {
                 GroupFooter(footer).padding(.horizontal, 12).padding(.top, 4)
             }

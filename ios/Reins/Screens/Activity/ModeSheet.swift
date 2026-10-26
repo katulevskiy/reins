@@ -122,6 +122,10 @@ struct ModeChipButton: View {
         .accessibilityLabel("Mode: \(ModeLook.name(settings.mode))")
         .accessibilityHint("Opens the modes")
         .accessibilityIdentifier("modePill")
+        #if DEBUG
+        // `-openModeSheet` (screenshots): the sheet opens with the page.
+        .onAppear { if ProcessInfo.processInfo.arguments.contains("-openModeSheet") { open = true } }
+        #endif
         .modeSheet(isPresented: $open)
     }
 }

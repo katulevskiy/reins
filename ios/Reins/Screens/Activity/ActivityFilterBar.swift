@@ -46,14 +46,14 @@ struct ActivityFilterBar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                outcome
                 who
+                outcome
                 if !kindChoices.services.isEmpty || !kindChoices.actions.isEmpty { kind }
                 if !aiChoices.isEmpty { ai }
                 when
                 if !filters.isEmpty { clear }
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 20)
         }
         .scrollClipDisabled()
     }
@@ -90,7 +90,7 @@ struct ActivityFilterBar: View {
             title: ActivitySearchText.chip("Who", filters.deciders.map(ActivitySearchText.decider)), active: !filters.deciders.isEmpty,
             menu: "whoMenu", items: items,
             chosen: filters.deciders.isEmpty ? ["who:any"] : Set(filters.deciders.map(ActivitySearchText.id)), multiple: true,
-            label: "Who decided", identifier: "filter:who"
+            label: "Who decided", identifier: "filter:who", lead: filters.deciders.count == 1 ? Self.glyph(filters.deciders[0]) : nil
         ) { id in
             change { f in
                 if let d = ActivityFilters.deciderOrder.first(where: { ActivitySearchText.id($0) == id }) { f.toggle(d) } else { f.deciders = [] }
@@ -195,7 +195,7 @@ struct ActivityFilterBar: View {
     static func glyph(_ d: ActivityDecider) -> Glyph {
         switch d {
         case .you: .person
-        case .autopilot: .shield
+        case .autopilot: .autopilot
         case .bypass: .autopilotOff
         case .lockdown: .lock
         }
@@ -226,17 +226,21 @@ struct FilterMenuChip: View {
     /// What the chip filters, for VoiceOver.
     var label: String
     var identifier: String
+    /// The glyph of the value it is set to (Autopilot's bolt).
+    var lead: Glyph? = nil
     var onPick: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        // The kit's chip, 40 pt: set, it is ink-inverse with its value (and its glyph) and a cross; unset, a chevron.
+        HStack(spacing: 6) {
+            if active, let lead { GlyphIcon(lead, size: 14) }
             Text(title).lineLimit(1)
-            GlyphIcon(.chevronDown, size: 14)
+            GlyphIcon(active ? .close : .chevronDown, size: 13)
         }
-        .font(RFont.sans(14, .medium))
+        .font(RFont.sans(14, .semibold))
         .foregroundStyle(active ? Palette.onInverse : Palette.ink)
         .padding(.horizontal, 13)
-        .frame(height: 34)
+        .frame(height: 40)
         .background(active ? Palette.inverse : Palette.paperRaised, in: Capsule())
         .overlay {
             if !active { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }

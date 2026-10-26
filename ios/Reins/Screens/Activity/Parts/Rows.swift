@@ -221,7 +221,8 @@ enum EntryRowText {
     /// The amber line under a risky entry: the fact that weighed most (else the level), and that Overnight held it.
     static func risk(_ e: ActivityEntry) -> String? {
         guard let risk = e.autopilot?.risk, RiskLook.listed(risk) else { return nil }
-        let why = untrustedName(risk.why, limit: 60)
+        var why = untrustedName(risk.why, limit: 60)
+        why = why.prefix(1).uppercased() + why.dropFirst()
         let first = why.isEmpty ? (risk.level == .benign ? nil : "Risk: \(AutopilotText.riskWord(risk.level))") : why
         return [first, risk.held ? AutopilotText.heldLine : nil].compactMap { $0 }.joined(separator: " · ")
     }

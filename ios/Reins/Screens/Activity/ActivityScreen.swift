@@ -157,6 +157,18 @@ struct ActivityScreen: View {
         .task(id: InFront(key: model.activity.map(\.id), background: model.inBackground)) { await loadRiver() }
         .task(id: InFront(key: searchKey, background: model.inBackground)) { await search(searchKey) }
         .onChange(of: atTop) { markSeenSoon() }
+        #if DEBUG
+        // `-openSearch <words>` and `-demoFilter auto` (screenshots): the search bar with those words, the Who chip
+        // set to Autopilot.
+        .onAppear {
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-openSearch"), i + 1 < args.count {
+                searchOpen = true
+                model.activitySearchText = args[i + 1]
+            }
+            if args.contains("-demoFilter") { model.activityFilters.deciders = [.autopilot] }
+        }
+        #endif
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searchOpen)
         .background {
@@ -206,7 +218,8 @@ struct ActivityScreen: View {
         }
         .padding(.horizontal, 20)
         .frame(minHeight: 44)
-        .padding(.top, bannerShown ? 14 : 0)
+        // The boards' title row starts 59 pt down the screen; this phone's safe area ends 3 pt lower.
+        .padding(.top, bannerShown ? 11 : -3)
     }
 
     /// "Activity" in the title role; at accessibility sizes it grows less, so the chip and search stay beside it.
@@ -223,11 +236,10 @@ struct ActivityScreen: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             if let autopilot = model.autopilot {
                 ModeChipButton(settings: autopilot)
                     .dynamicTypeSize(...DynamicTypeSize.xxLarge)
-                    .padding(.trailing, 4)
             }
             RoundHeaderButton(glyph: .search, label: "Search") { openSearch() }
                 .accessibilityIdentifier("activitySearch")

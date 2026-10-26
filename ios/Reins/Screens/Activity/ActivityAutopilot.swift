@@ -255,8 +255,8 @@ struct RiskLine: View {
     }
 }
 
-/// "Why Autopilot allowed it ›": opens in place to how sure it was, its reason, the decisions of yours it was like and
-/// the profile. Only for entries Autopilot looked at.
+/// "Why Autopilot denied ›" (Next-Activity, 06): a fact row in Autopilot's violet that opens its reasons in a sheet.
+/// Only for entries Autopilot looked at.
 struct AutopilotWhyRow: View {
     var note: AutopilotNote
     var title: String
@@ -267,71 +267,137 @@ struct AutopilotWhyRow: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.spring(duration: 0.35, bounce: 0.1)) { open.toggle() }
-                feedback.play(.expand(open))
-            } label: {
-                HStack(spacing: 8) {
-                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.inkMeta)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .padding(.horizontal, 16)
-                .frame(minHeight: 52)
-                .contentShape(Rectangle())
+        Button {
+            open = true
+            feedback.play(.tap)
+        } label: {
+            HStack(spacing: 12) {
+                ModeGlyph(.auto, size: 18).foregroundStyle(Palette.violet).frame(width: 20)
+                Text(title).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                RowChevron()
             }
-            .buttonStyle(RowButtonStyle())
-            .accessibilityIdentifier("entryAutopilotTitle")
-            .accessibilityValue(open ? "Open" : "Closed")
-            if open {
-                detail.transition(.opacity)
-            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(RowButtonStyle())
+        .accessibilityIdentifier("entryAutopilotTitle")
         .task(id: entry?.id) {
             if let entry { await model.reasons.explain(entry, model: model) }
         }
-        .accessibilityContainer("entryAutopilot")
-    }
-
-    private var detail: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if note.pApprove > 0 || note.pDeny > 0 {
-                LikelihoodRow(label: "Approve", p: note.pApprove, color: Palette.success)
-                LikelihoodRow(label: "Deny", p: note.pDeny, color: Palette.danger)
-                LikelihoodRow(label: "Confidence", p: note.confidence, color: Palette.violet)
-            }
-            // The decisions of yours it was like, counted here ("Like 11 pushes to feature branches of acme/web you
-            // approved."), else the core's own reason.
-            let reason = entry.flatMap { model.reasons.lines[$0.id] } ?? untrusted(note.reason)
-            if !reason.isEmpty {
-                Text(reason).textRole(.body).foregroundStyle(Palette.ink2).accessibilityIdentifier("autopilotReason")
-            }
-            if !note.neighbours.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Caption("Like these decisions of yours")
-                    ForEach(Array(note.neighbours.enumerated()), id: \.offset) { _, line in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.inkMeta)
-                            Text(untrusted(line)).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).lineLimit(2)
-                        }
-                    }
-                }
-            }
-            Text((["In \(ModeLook.name(note.mode))"] + [untrusted(note.profileName)].filter { !$0.isEmpty }.map { "profile \($0)" }).joined(separator: " · "))
-                .font(RFont.sans(12.5))
-                .foregroundStyle(Palette.inkMeta)
+        #if DEBUG
+        // `-openWhy` (screenshots): the reasons open with the page.
+        .onAppear { if ProcessInfo.processInfo.arguments.contains("-openWhy") { open = true } }
+        #endif
+        .sheet(isPresented: $open) {
+            AutopilotWhySheet(note: note, title: title, entry: entry) { open = false }
+                .environment(\.feedback, feedback)
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
+        .presentationFeedback(open)
     }
 }
 
-/// "This was wrong", pinned at the bottom of an entry Autopilot (or a bypass) decided: asks what should have
-/// happened, teaches the profile and locks the kind again. What was done stays done.
+/// Why Autopilot decided (Next-Activity, 07): its verdict and how sure it was, its reasons as facts (the risk it saw,
+/// its own reason, the decisions of yours it was like, the profile), and last, quietly, "This was wrong" for an entry
+/// the core says can still be corrected.
+struct AutopilotWhySheet: View {
+    var note: AutopilotNote
+    var title: String
+    var entry: ActivityEntry?
+    var close: () -> Void
+    @Environment(AppModel.self) private var model
+    @State private var height: CGFloat = 420
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    Text(Self.heading(title))
+                        .textRole(.cardAsk)
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    RoundHeaderButton(glyph: .close, label: "Close") { close() }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                verdict
+                    .padding(.horizontal, 20)
+                    .padding(.top, 2)
+                SheetGroup {
+                    ForEach(Array(reasons.enumerated()), id: \.offset) { _, r in
+                        GlyphFact(glyph: r.glyph, value: r.text, tint: r.tint)
+                    }
+                }
+                .padding(.top, 14)
+                .accessibilityIdentifier("autopilotReason")
+                if let entry, ThisWasWrongDock.offered(entry) {
+                    SheetGroup { ThisWasWrongDock(entry: entry) }
+                        .padding(.top, 12)
+                }
+            }
+            .padding(.bottom, 24)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .presentationDetents([.height(height), .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(32)
+        .presentationBackground(Palette.paperRaised)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("entryAutopilot")
+    }
+
+    /// "Why Autopilot denied it" reads "Why Autopilot denied" as a title.
+    static func heading(_ title: String) -> String { title.hasSuffix(" it") ? String(title.dropLast(3)) : title }
+
+    private var denied: Bool { entry?.outcome == "denied" || (entry == nil && note.suggested == .deny) }
+
+    @ViewBuilder private var verdict: some View {
+        let p = denied ? note.pDeny : note.pApprove
+        HStack(spacing: 8) {
+            OutcomeMark(denied ? .autoDenied : .autoApproved)
+            Text(denied ? "Denied" : "Allowed")
+                .font(RFont.sans(15, .semibold))
+                .foregroundStyle(denied ? Palette.danger : Palette.success)
+            if p > 0 {
+                Text("\(SuggestionText.percent(p)) sure").font(RFont.mono(13.5)).foregroundStyle(Palette.inkMeta)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private struct Reason {
+        var glyph: Glyph
+        var text: String
+        var tint: Color? = nil
+    }
+
+    /// The facts behind it: the risk first, then its reason, the decisions it was like, the mode and profile.
+    private var reasons: [Reason] {
+        var out: [Reason] = []
+        if let risk = note.risk, RiskLook.listed(risk) {
+            let raw = untrustedName(risk.why, limit: 80)
+            let why = raw.prefix(1).uppercased() + raw.dropFirst()
+            out.append(Reason(glyph: .warning, text: why.isEmpty ? "Risk: \(AutopilotText.riskWord(risk.level))" : why, tint: Palette.warning))
+            if risk.held { out.append(Reason(glyph: .moon, text: AutopilotText.heldLine)) }
+        }
+        let reason = entry.flatMap { model.reasons.lines[$0.id] } ?? untrusted(note.reason)
+        if !reason.isEmpty { out.append(Reason(glyph: denied ? .close : .check, text: reason)) }
+        for line in note.neighbours.prefix(3) {
+            let text = untrusted(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { out.append(Reason(glyph: .chevronRight, text: text)) }
+        }
+        let profile = untrusted(note.profileName)
+        out.append(Reason(glyph: .person, text: (["In \(ModeLook.name(note.mode))"] + (profile.isEmpty ? [] : ["profile \(profile)"])).joined(separator: " · ")))
+        return out
+    }
+}
+
+/// "This was wrong · Next time it asks you" (Next-Activity, 07): the last row of Autopilot's reasons on an entry it
+/// (or a bypass) decided: asks what should have happened, teaches the profile and locks the kind again. What was done
+/// stays done.
 struct ThisWasWrongDock: View {
     var entry: ActivityEntry
     @Environment(AppModel.self) private var model
@@ -346,30 +412,34 @@ struct ThisWasWrongDock: View {
 
     var body: some View {
         let should = correctionFor(entry)
-        VStack(spacing: 10) {
-            if let error { Banner(error, kind: .error) }
+        VStack(spacing: 0) {
             if thanked {
-                Banner(Correction.thanks)
+                GlyphFact(glyph: .check, value: Correction.thanks, tint: Palette.success, glyphTint: Palette.success)
                     .accessibilityIdentifier("corrected")
             } else {
-                // A normal neutral button like Deny: only its undo mark is in Autopilot's violet, since it teaches Autopilot.
                 Button {
                     asking = true
                     feedback.play(.tap)
                 } label: {
-                    ZStack {
-                        Label {
-                            Text("This was wrong")
-                        } icon: {
-                            GlyphIcon(.undo, size: 18).foregroundStyle(Palette.violet)
+                    HStack(spacing: 12) {
+                        GlyphIcon(.undo, size: 20).foregroundStyle(Palette.violet).frame(width: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("This was wrong").textRole(.row).foregroundStyle(Palette.violet)
+                            Text("Next time it asks you").textRole(.sub).foregroundStyle(Palette.inkMeta)
                         }
-                        .opacity(busy ? 0 : 1)
-                        if busy { ProgressView() }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        if busy { ProgressView() } else { RowChevron() }
                     }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 56)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(DockButtonStyle(kind: .neutral))
+                .buttonStyle(RowButtonStyle())
                 .disabled(busy)
                 .accessibilityIdentifier("thisWasWrong")
+            }
+            if let error {
+                GlyphFact(glyph: .circleAlert, value: error, tint: Palette.danger, glyphTint: Palette.danger)
             }
         }
         .alert(Correction.question(entry), isPresented: $asking) {
