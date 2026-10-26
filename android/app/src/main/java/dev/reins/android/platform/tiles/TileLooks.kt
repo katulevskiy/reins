@@ -27,6 +27,12 @@ enum class TileTap {
 
     /** Opens Reins on the stack of what waits. */
     OpenStack,
+
+    /** Stops the bypass in force: it only takes power away. */
+    StopBypass,
+
+    /** Stops the Overnight in force, back to the mode it interrupted: it only takes power away. */
+    StopOvernight,
 }
 
 /** The modes a tile may set by itself: never one that lets more happen. */
@@ -37,11 +43,37 @@ fun lockdownLook(s: AutopilotSettings?): TileLook =
 
 fun lockdownTap(s: AutopilotSettings?): TileTap = if (s?.mode == AutopilotMode.LOCKDOWN) TileTap.OpenTrust else TileTap.LockDown
 
-fun waitingLook(waiting: Int): TileLook = TileLook(waiting > 0, "Reins", if (waiting == 0) "Nothing waits" else "$waiting waiting")
+fun waitingLook(waiting: Int): TileLook = if (waiting == 0) TileLook(false, "Reins", "Nothing waits") else TileLook(true, "$waiting waiting", "Open Reins")
+
+/** Bypass (Next, Outside 04): lit only while it runs, with its time left ("47:12 left", "On"). */
+fun bypassLook(s: AutopilotSettings?, nowSeconds: Long): TileLook {
+    val until = s?.bypassUntil?.takeIf { s.mode == AutopilotMode.BYPASS }
+    return when {
+        until == null -> TileLook(false, "Bypass", "Off")
+        AutopilotText.isUntilOff(until) -> TileLook(true, "Bypass", "On")
+        else -> TileLook(true, "Bypass", "${AutopilotText.clock(until, nowSeconds)} left")
+    }
+}
+
+/** A tap on the Bypass tile: stops a running one; never starts one (that opens Trust and asks the owner). */
+fun bypassTap(s: AutopilotSettings?): TileTap = if (s?.mode == AutopilotMode.BYPASS) TileTap.StopBypass else TileTap.OpenTrust
+
+/** Overnight: lit only while it runs, with when it ends ("Until 7:00 AM"). */
+fun overnightLook(s: AutopilotSettings?, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): TileLook {
+    val until = s?.overnightUntil?.takeIf { s.mode == AutopilotMode.OVERNIGHT }
+    return when {
+        until == null -> TileLook(false, "Overnight", "Off")
+        AutopilotText.isUntilOff(until) -> TileLook(true, "Overnight", "On")
+        else -> TileLook(true, "Overnight", "Until " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).apply { timeZone = zone }.format(java.util.Date(until * 1000)))
+    }
+}
+
+fun overnightTap(s: AutopilotSettings?): TileTap = if (s?.mode == AutopilotMode.OVERNIGHT) TileTap.StopOvernight else TileTap.OpenTrust
 
 fun autopilotLook(s: AutopilotSettings?): TileLook {
     val mode = s?.mode ?: AutopilotMode.MANUAL
-    return TileLook(mode != AutopilotMode.MANUAL, "Autopilot", AutopilotText.name(mode))
+    // Next: the tile is Auto, lit only while Auto is on.
+    return TileLook(mode == AutopilotMode.AUTO, "Auto", if (mode == AutopilotMode.AUTO) "On" else "Off")
 }
 
 fun autopilotTap(s: AutopilotSettings?): TileTap = if (s?.mode == AutopilotMode.AUTO) TileTap.SetManual else TileTap.OpenTrust

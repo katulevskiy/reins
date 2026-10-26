@@ -213,6 +213,13 @@ object IntegrationBitmap {
         return bitmap
     }
 
+    /** A glyph alone, [px] square, filled in [color] (for widgets, which draw no Compose). */
+    fun glyph(glyph: Glyph, px: Int, color: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(px.coerceAtLeast(1), px.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        drawGlyph(AndroidCanvas(bitmap), glyph, 0f, px.toFloat(), color, 1f)
+        return bitmap
+    }
+
     private fun drawGlyph(canvas: AndroidCanvas, glyph: Glyph, x: Float, size: Float, color: Int, weight: Float) {
         val k = size / 24f
         canvas.save()

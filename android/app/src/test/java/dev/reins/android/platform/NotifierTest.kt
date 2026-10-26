@@ -102,17 +102,17 @@ class NotifierTest {
     }
 
     @Test
-    fun `a routine request can be approved or denied right from the notification, once the phone is unlocked`() {
+    fun `a routine request can be denied from the notification and Review opens it, never approved there`() {
         notifier.createChannels()
         notifier.itemPending(TestData.pending("req1", "search", 2u, headline = "Claude gets the 2 emails found.", quick = true))
         val posted = shadowOf(manager).allNotifications.single()
         val actions = posted.actions.orEmpty()
-        assertEquals(listOf("Deny", "Approve"), actions.map { it.title.toString() })
-        assertEquals(false, actions[0].isAuthenticationRequired)
-        assertEquals(true, actions[1].isAuthenticationRequired)
-        val approve = shadowOf(actions[1].actionIntent).savedIntent
-        assertEquals(ApprovalActionReceiver.ACTION_APPROVE, approve.action)
-        assertEquals("req1", approve.getStringExtra(AppNotifier.EXTRA_ID))
+        assertEquals(listOf("Deny", "Review"), actions.map { it.title.toString() })
+        val deny = shadowOf(actions[0].actionIntent).savedIntent
+        assertEquals(ApprovalActionReceiver.ACTION_DENY, deny.action)
+        val review = shadowOf(actions[1].actionIntent).savedIntent
+        assertEquals(AppNotifier.ACTION_OPEN_ITEM, review.action)
+        assertEquals("req1", review.getStringExtra(AppNotifier.EXTRA_ID))
         val big = posted.extras.getCharSequence("android.bigText").toString()
         assertEquals("in:inbox\nClaude gets the 2 emails found.", big)
     }
