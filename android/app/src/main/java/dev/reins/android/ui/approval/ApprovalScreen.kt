@@ -223,7 +223,7 @@ fun ApprovalScreen(
                 } else {
                     // Drilled in: the field becomes a band with the ask and the timer.
                     val (ask, target) = askWords(view)
-                    AskBand(askField(view), ask, target, onBack = {
+                    AskBand(askField(view), ask, target, title = pageTitle(view, page), onBack = {
                         feedback.play(Event.Close)
                         nav.back()
                     }) { TimerPill(view) }
@@ -239,15 +239,11 @@ fun ApprovalScreen(
                     label = "page",
                 ) { (_, shown) ->
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        if (shown != null) {
-                            RText(
-                                pageTitle(view, shown),
-                                RType.serif(28f, 32f, italic = shown !is ApprovalPage.Text),
-                                c.ink,
-                                Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 4.dp).testTag("pageTitle"),
-                                maxLines = 2,
-                            )
+                        // The page's title rides in the band (Next); a text page also names itself on paper.
+                        if (shown is ApprovalPage.Text) {
+                            RText(shown.title, RType.pageTitle, c.ink, Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 4.dp), maxLines = 2)
                         }
+                        if (shown != null) Spacer(Modifier.height(8.dp))
                         when (shown) {
                             null -> {
                                 record?.header?.invoke()

@@ -235,12 +235,12 @@ class ActivitySearchLogicTest {
     }
 
     @Test
-    fun theTitleKeepsItsItalicTargetUnderTheHighlight() {
-        val hit = SpanStyle(fontWeight = FontWeight.SemiBold)
+    fun theTitleKeepsItsEmphasisedTargetUnderTheHighlight() {
+        val hit = SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
         val s = askTitle("Searched mail for invoice 42", "invoice 42", listOf("inv", "mail"), hit)
         assertEquals("Searched mail for invoice 42", s.text)
-        val italic = s.spanStyles.single { it.item.fontStyle == FontStyle.Italic }
-        assertEquals("invoice 42", s.text.substring(italic.start, italic.end))
+        val target = s.spanStyles.single { it.item.fontWeight == FontWeight.SemiBold }
+        assertEquals("invoice 42", s.text.substring(target.start, target.end))
         assertEquals(listOf("mail", "inv"), s.spanStyles.filter { it.item == hit }.map { s.text.substring(it.start, it.end) })
         // No words, no highlight.
         assertTrue(askTitle("Searched mail", null, emptyList(), hit).spanStyles.isEmpty())

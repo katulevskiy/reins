@@ -1,5 +1,16 @@
 package dev.reins.android.ui.signin
 
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.imePadding
+import dev.reins.android.design.pane
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.layout.ContentScale
@@ -12,6 +23,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.auth.AuthTabIntent
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -147,68 +160,61 @@ private fun WelcomePage(
     val noBrowserSignIn = serverInfo?.let { (asked, info) -> asked == url && info.browserSignIn == false } == true
     // Passwords are for servers people run themselves; the hosted server signs in through "Continue" only.
     val passwordForms = (custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)) || noBrowserSignIn
-    Screen(title = null, modifier = Modifier.testTag("welcome")) {
-        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // The kite (iOS-Arrival 01): the AI flies, you hold the line.
-            Spacer(Modifier.height(24.dp))
-            Image(
-                painterResource(dev.reins.android.design.Illustration.Kite.res),
-                contentDescription = null,
-                modifier = Modifier.fillMaxWidth().aspectRatio(dev.reins.android.design.Illustration.Kite.aspect).testTag("kite"),
-                contentScale = ContentScale.Fit,
-            )
-            dev.reins.android.design.AskText(
-                "Your AIs ask. You decide.",
-                c.ink,
-                Modifier.padding(top = 8.dp).semantics { heading() },
-                target = "You decide.",
-                style = RType.serif(44f, 46f),
-                minSize = 34.sp,
-            )
-            RText(
-                "Reins sits between your AI agents and your accounts. When one wants to read, send or change something, this phone asks you first.",
-                RType.sans(16f, lineHeight = 23f),
-                c.ink2,
-            )
-            if (linkWaiting) {
-                Banner("Sign in, then your computer connects.", Modifier.padding(top = 6.dp), tag = "linkWaiting")
-            }
-            Spacer(Modifier.height(36.dp))
-            ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
-            // A server without SSO would only answer "Continue" with an error page: it is not offered there.
-            if (!noBrowserSignIn) {
-                CapsuleButton(
-                    "Continue",
-                    Modifier.fillMaxWidth().testTag("continue"),
-                    style = ButtonStyle.Primary,
-                    enabled = valid,
-                    busy = ui.busy,
-                ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
-            }
-            ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
-            if (passwordForms) {
-                RText(
-                    if (noBrowserSignIn) "Email and master password" else "Or with email and master password",
-                    RType.sans(13.5f, lineHeight = 19f),
-                    c.secondary,
-                    Modifier.padding(start = 4.dp, top = 8.dp).testTag("passwordFormsNote"),
+    // Next (Arrive 01): the theme's wallpaper fills the page; a frosted pane at the foot says it in two lines and
+    // holds Continue and Other server.
+    val appearance by dev.reins.android.design.Appearance.state(context)
+    dev.reins.android.design.WallpaperPage(appearance.wallpaper(c.dark), Modifier.fillMaxSize().testTag("welcome"), artHeight = null) {
+        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.systemBars)) {
+            Spacer(Modifier.weight(1f).heightIn(min = 280.dp))
+            if (linkWaiting) Banner("Sign in, then your computer connects.", Modifier.padding(horizontal = 16.dp).padding(bottom = 10.dp), tag = "linkWaiting")
+            Column(
+                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth().pane(radius = 32.dp).padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 12.dp).testTag("kite"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val headline = androidx.compose.ui.text.buildAnnotatedString {
+                    append("Your AI asks,\n")
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = c.kindAccounts, fontWeight = FontWeight.SemiBold)) { append("You decide.") }
+                }
+                androidx.compose.foundation.text.BasicText(
+                    headline,
+                    Modifier.semantics { heading() }.testTag("welcomeHeadline"),
+                    style = RType.display(48f).copy(color = c.ink, lineHeight = 38.sp),
                 )
-                CapsuleButton(
-                    "Sign in",
-                    Modifier.fillMaxWidth().testTag("startSignIn"),
-                    style = if (noBrowserSignIn) ButtonStyle.Primary else ButtonStyle.Secondary,
-                    enabled = !ui.busy,
-                    onClick = onSignIn,
-                )
-                CapsuleButton(
-                    "Create account",
-                    Modifier.fillMaxWidth().testTag("createAccount"),
-                    style = ButtonStyle.Secondary,
-                    enabled = !ui.busy,
-                    onClick = onCreate,
-                )
+                Spacer(Modifier.height(6.dp))
+                ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
+                // A server without SSO would only answer "Continue" with an error page: it is not offered there.
+                if (!noBrowserSignIn) {
+                    dev.reins.android.design.SignalButton(
+                        "Continue",
+                        Modifier.fillMaxWidth().testTag("continue"),
+                        enabled = valid && !ui.busy,
+                        leading = if (ui.busy) ({ dev.reins.android.design.Spinner(c.onInverse, size = 18.dp) }) else null,
+                    ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
+                }
+                ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
+                if (passwordForms) {
+                    RText(
+                        if (noBrowserSignIn) "Email and master password" else "Or with email and master password",
+                        RType.sans(13.5f, lineHeight = 19f),
+                        c.ink2,
+                        Modifier.padding(start = 4.dp, top = 4.dp).testTag("passwordFormsNote"),
+                    )
+                    dev.reins.android.design.SignalButton(
+                        "Sign in",
+                        Modifier.fillMaxWidth().testTag("startSignIn"),
+                        style = if (noBrowserSignIn) ButtonStyle.Inverse else ButtonStyle.Soft,
+                        enabled = !ui.busy,
+                        onClick = onSignIn,
+                    )
+                    dev.reins.android.design.SignalButton(
+                        "Create account",
+                        Modifier.fillMaxWidth().testTag("createAccount"),
+                        style = ButtonStyle.Soft,
+                        enabled = !ui.busy,
+                        onClick = onCreate,
+                    )
+                }
             }
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -230,46 +236,130 @@ private fun CreateAccountPage(
     var terms by rememberSaveable { mutableStateOf(false) }
     val ready = AccountRules.createProblem(email, password, confirm, terms) == null && AccountRules.serverUrl(server) != null
 
-    Screen(title = "Create account", onBack = onBack) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            EmailField(email, onEmail, enabled = !ui.busy)
-            RTextField(
-                password, { password = it }, "Master password", tag = "password", enabled = !ui.busy, password = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-            )
-            if (password.isNotEmpty()) StrengthMeter(password)
-            RTextField(
-                confirm, { confirm = it }, "Master password again", tag = "confirmPassword", enabled = !ui.busy, password = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-            )
+    // Arrive 02: the accounts tile and "New account"; the server, email and passwords as rows of one group (the
+    // strength as a short meter on its row); Terms · Privacy with a switch; Create account at the foot.
+    Column(Modifier.fillMaxSize().background(c.paper).windowInsetsPadding(WindowInsets.systemBars).imePadding()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            dev.reins.android.design.BackArrow(onBack, Modifier.padding(start = 12.dp, top = 8.dp))
+            Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                dev.reins.android.design.RowTile(Glyph.Person, size = 44.dp, fill = c.fieldAccounts)
+                RText("New account", RType.pageTitle, c.ink, Modifier.semantics { heading() }, maxLines = 1)
+            }
+            dev.reins.android.design.PaneGroup {
+                FormRow(Glyph.Server, first = true) {
+                    RText(AccountRules.displayHost(server), RType.mono(13.5f), c.ink2, Modifier.testTag("serverName"), maxLines = 1, ltr = true)
+                }
+                FormRow(Glyph.Mail) {
+                    FormField(
+                        email, onEmail, "Email", "email", !ui.busy,
+                        KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None),
+                    )
+                }
+                FormRow(Glyph.Lock, trailing = { if (password.isNotEmpty()) StrengthMeter(password) }) {
+                    FormField(
+                        password, { password = it }, "Master password", "password", !ui.busy,
+                        KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false), password = true,
+                    )
+                }
+                FormRow(
+                    Glyph.Lock,
+                    trailing = {
+                        if (confirm.isNotEmpty() && confirm == password) GlyphIcon(Glyph.Check, c.success, size = 18.dp)
+                    },
+                ) {
+                    FormField(
+                        confirm, { confirm = it }, "Again", "confirmPassword", !ui.busy,
+                        KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false), password = true,
+                    )
+                }
+            }
             if (confirm.isNotEmpty() && confirm != password) {
-                RText("The passwords don't match.", RType.sans(13.5f), c.danger, Modifier.padding(start = 4.dp).testTag("mismatch"))
+                RText("The passwords don't match.", RType.meta, c.danger, Modifier.padding(start = 24.dp, top = 8.dp).testTag("mismatch"))
             }
-            Banner(
-                "Nobody can reset your master password. Forget it and the account is lost. Write it down.",
-                kind = BannerKind.Warning,
-                tag = "noRecovery",
+            RText(
+                "Nobody can reset your master password. Write it down.",
+                RType.meta,
+                c.inkMeta,
+                Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp).testTag("noRecovery"),
             )
-            CheckRow(terms, { terms = it }, Modifier.fillMaxWidth().padding(top = 4.dp, start = 4.dp), enabled = !ui.busy, tag = "acceptTerms") {
-                RText("I accept the Terms of Service and the Privacy Policy.", RType.sans(15f, lineHeight = 21f), c.text, Modifier.weight(1f))
+            dev.reins.android.design.PaneGroup(Modifier.padding(top = 14.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        TextLink("Terms", "openTerms") { Browser.open(context, ReinsLinks.TERMS) }
+                        RText("·", RType.sans(14f), c.inkMeta)
+                        TextLink("Privacy", "openPrivacy") { Browser.open(context, ReinsLinks.PRIVACY) }
+                    }
+                    dev.reins.android.design.Toggle(
+                        terms,
+                        Modifier.semantics { contentDescription = "I accept the Terms of Service and the Privacy Policy" }.testTag("acceptTerms"),
+                        enabled = !ui.busy,
+                    ) { terms = it }
+                }
             }
-            Row(Modifier.padding(start = 36.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TextLink("Terms of Service", "openTerms") { Browser.open(context, ReinsLinks.TERMS) }
-                TextLink("Privacy Policy", "openPrivacy") { Browser.open(context, ReinsLinks.PRIVACY) }
-            }
-            ServerLine(server)
-            ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
-            Spacer(Modifier.height(4.dp))
-            CapsuleButton(
-                "Create account",
-                Modifier.fillMaxWidth().testTag("create"),
-                style = ButtonStyle.Primary,
-                enabled = ready,
-                busy = ui.busy,
-            ) { viewModel.createAccount(server, email, password, confirm, terms) }
-            Spacer(Modifier.height(24.dp))
+            ui.error?.let { Banner(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), kind = BannerKind.Error, tag = "signInError") }
+            Spacer(Modifier.height(16.dp))
         }
+        CapsuleButton(
+            "Create account",
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp).fillMaxWidth().testTag("create"),
+            style = ButtonStyle.Primary,
+            enabled = ready,
+            busy = ui.busy,
+        ) { viewModel.createAccount(server, email, password, confirm, terms) }
     }
+}
+
+/** A row of the account form: its glyph, then the field or value, and an optional mark at the end. */
+@Composable
+private fun FormRow(glyph: Glyph, first: Boolean = false, trailing: (@Composable () -> Unit)? = null, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (first) Modifier else Modifier.drawBehind { drawLine(c.rule, Offset(48.dp.toPx(), 0f), Offset(size.width, 0f), 1.dp.toPx()) })
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        GlyphIcon(glyph, c.inkMeta, size = 18.dp)
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { content() }
+        trailing?.invoke()
+    }
+}
+
+/** A bare field for a [FormRow]: the words, or the placeholder in meta. */
+@Composable
+private fun FormField(
+    value: String,
+    onChange: (String) -> Unit,
+    placeholder: String,
+    tag: String,
+    enabled: Boolean,
+    keyboardOptions: KeyboardOptions,
+    password: Boolean = false,
+) {
+    val c = LocalColors.current
+    androidx.compose.foundation.text.BasicTextField(
+        value,
+        onChange,
+        Modifier.fillMaxWidth().testTag(tag),
+        enabled = enabled,
+        singleLine = true,
+        textStyle = RType.sans(15.5f).copy(color = c.ink),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(c.violet),
+        keyboardOptions = keyboardOptions,
+        visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        decorationBox = { inner ->
+            Box(contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) RText(placeholder, RType.sans(15.5f), c.inkFaint, maxLines = 1)
+                inner()
+            }
+        },
+    )
 }
 
 @Composable
@@ -285,47 +375,53 @@ private fun SignInPage(
     var password by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
 
-    Screen(title = "Sign in", onBack = onBack) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            EmailField(email, onEmail, enabled = !ui.busy)
-            RTextField(
-                password, { password = it }, "Master password", tag = "password", enabled = !ui.busy, password = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-            )
-            if (ui.needsTotp) {
-                RTextField(
-                    totp, { totp = it }, "Two-step code", tag = "totp", enabled = !ui.busy, mono = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false),
-                )
+    // As New account (Arrive 02): the server, email and password as rows of one group; Sign in at the foot.
+    Column(Modifier.fillMaxSize().background(c.paper).windowInsetsPadding(WindowInsets.systemBars).imePadding()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            dev.reins.android.design.BackArrow(onBack, Modifier.padding(start = 12.dp, top = 8.dp))
+            Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                dev.reins.android.design.RowTile(Glyph.Person, size = 44.dp, fill = c.fieldAccounts)
+                RText("Sign in", RType.pageTitle, c.ink, Modifier.semantics { heading() }, maxLines = 1)
             }
-            ServerLine(server)
-            ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
-            Spacer(Modifier.height(4.dp))
-            CapsuleButton(
-                "Sign in",
-                Modifier.fillMaxWidth().testTag("signIn"),
-                style = ButtonStyle.Primary,
-                enabled = AccountRules.serverUrl(server) != null && email.isNotBlank() && password.isNotEmpty(),
-                busy = ui.busy,
-            ) { viewModel.signIn(server, email, password, totp) }
-            Spacer(Modifier.height(24.dp))
+            dev.reins.android.design.PaneGroup {
+                FormRow(Glyph.Server, first = true) {
+                    RText(AccountRules.displayHost(server), RType.mono(13.5f), c.ink2, Modifier.testTag("serverName"), maxLines = 1, ltr = true)
+                }
+                FormRow(Glyph.Mail) {
+                    FormField(
+                        email, onEmail, "Email", "email", !ui.busy,
+                        KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None),
+                    )
+                }
+                FormRow(Glyph.Lock) {
+                    FormField(
+                        password, { password = it }, "Master password", "password", !ui.busy,
+                        KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false), password = true,
+                    )
+                }
+                if (ui.needsTotp) {
+                    FormRow(Glyph.Token) {
+                        FormField(
+                            totp, { totp = it }, "Two-step code", "totp", !ui.busy,
+                            KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false),
+                        )
+                    }
+                }
+            }
+            ui.error?.let { Banner(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), kind = BannerKind.Error, tag = "signInError") }
+            Spacer(Modifier.height(16.dp))
         }
+        CapsuleButton(
+            "Sign in",
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp).fillMaxWidth().testTag("signIn"),
+            style = ButtonStyle.Primary,
+            enabled = AccountRules.serverUrl(server) != null && email.isNotBlank() && password.isNotEmpty(),
+            busy = ui.busy,
+        ) { viewModel.signIn(server, email, password, totp) }
     }
 }
 
-@Composable
-private fun EmailField(email: String, onEmail: (String) -> Unit, enabled: Boolean) {
-    RTextField(
-        email, onEmail, "Email", tag = "email", enabled = enabled,
-        keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Email,
-            autoCorrectEnabled = false,
-            capitalization = KeyboardCapitalization.None,
-        ),
-    )
-}
-
-/** Three bars and a word, with one line of advice. */
+/** Three short bars and the word (Weak, Fair, Strong) at the end of the password's row. */
 @Composable
 private fun StrengthMeter(password: String) {
     val c = LocalColors.current
@@ -335,17 +431,13 @@ private fun StrengthMeter(password: String) {
         Strength.Fair -> Triple("Fair", c.warning, 2)
         Strength.Strong -> Triple("Strong", c.success, 3)
     }
-    Column(Modifier.padding(horizontal = 4.dp).testTag("strength")) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            repeat(3) { i ->
-                if (i > 0) Spacer(Modifier.width(6.dp))
-                Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(if (i < filled) tone else c.controlFill))
-            }
-            Spacer(Modifier.width(12.dp))
-            RText(label, RType.sans(13.5f, FontWeight.SemiBold), tone, Modifier.testTag("strengthLabel"))
+    Row(Modifier.testTag("strength"), verticalAlignment = Alignment.CenterVertically) {
+        repeat(3) { i ->
+            if (i > 0) Spacer(Modifier.width(3.dp))
+            Box(Modifier.width(12.dp).height(3.dp).clip(CircleShape).background(if (i < filled) tone else c.paperSunken))
         }
-        // A strong password needs no advice: the meter says it.
-        AccountRules.strengthHint(password).takeIf { it.isNotEmpty() }?.let { RText(it, RType.sans(13f), c.secondary, Modifier.padding(top = 6.dp)) }
+        Spacer(Modifier.width(8.dp))
+        RText(label, RType.sans(12.5f, FontWeight.SemiBold), tone, Modifier.testTag("strengthLabel"), maxLines = 1)
     }
 }
 
@@ -370,24 +462,22 @@ private fun ServerChoice(server: String, onServer: (String) -> Unit, custom: Boo
             }
         }
     } else {
-        Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            RText("Server: $defaultHost", RType.sans(13f), c.tertiary, Modifier.weight(1f).testTag("serverName"), maxLines = 1, ltr = true)
-            TextLink("Use another server", "useAnotherServer", enabled) { onCustom(true) }
+        // "Other server" alone, centred; the server in use is what a screen reader hears on it.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 46.dp)
+                .clip(CircleShape)
+                .pressable(enabled = enabled, shape = CircleShape, label = "Other server") { onCustom(true) }
+                .semantics(mergeDescendants = true) { contentDescription = "Other server. Now $defaultHost" }
+                .testTag("useAnotherServer"),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.Server, c.ink2, size = 18.dp)
+            RText("Other server", RType.sans(16f, FontWeight.SemiBold), c.ink2, maxLines = 1)
         }
     }
-}
-
-/** Which server a password form uses (chosen on the welcome page). */
-@Composable
-private fun ServerLine(server: String) {
-    RText(
-        "Server: ${AccountRules.displayHost(server)}",
-        RType.sans(13f),
-        LocalColors.current.tertiary,
-        Modifier.padding(start = 4.dp).testTag("serverName"),
-        maxLines = 1,
-        ltr = true,
-    )
 }
 
 /** A small accent-coloured text button. */

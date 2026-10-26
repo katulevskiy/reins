@@ -49,6 +49,22 @@ abstract class ReinsTile : TileService() {
             TileTap.SetManual -> setMode(AutopilotMode.MANUAL)
             TileTap.OpenTrust -> open(Intent(this, MainActivity::class.java).setAction(AppNotifier.ACTION_OPEN_AUTOPILOT))
             TileTap.OpenStack -> open(Intent(this, MainActivity::class.java))
+            TileTap.StopBypass -> stop { container.stopBypasses() }
+            TileTap.StopOvernight -> stop { container.stopOvernight(null) }
+        }
+    }
+
+    /** Ends a running mode right here (it only takes power away), then redraws. */
+    private fun stop(block: suspend () -> Unit) {
+        container.appScope.launch {
+            runCatching {
+                block()
+                container.refreshAutopilot()
+            }
+            withContext(Dispatchers.Main) {
+                render()
+                Tiles.refresh(this@ReinsTile)
+            }
         }
     }
 
@@ -114,8 +130,28 @@ class AutopilotTileService : ReinsTile() {
     override fun tap() = autopilotTap(container.state.autopilot.value)
 }
 
+/** Bypass: lit with its time left while it runs; a tap stops it. Off, a tap opens Trust (starting asks the owner). */
+class BypassTileService : ReinsTile() {
+    override fun look() = bypassLook(container.state.autopilot.value, System.currentTimeMillis() / 1000)
+
+    override fun tap() = bypassTap(container.state.autopilot.value)
+}
+
+/** Overnight: lit with when it ends while it runs; a tap stops it. Off, a tap opens Trust. */
+class OvernightTileService : ReinsTile() {
+    override fun look() = overnightLook(container.state.autopilot.value)
+
+    override fun tap() = overnightTap(container.state.autopilot.value)
+}
+
 object Tiles {
-    private val services = listOf(LockdownTileService::class.java, WaitingTileService::class.java, AutopilotTileService::class.java)
+    private val services = listOf(
+        LockdownTileService::class.java,
+        WaitingTileService::class.java,
+        AutopilotTileService::class.java,
+        BypassTileService::class.java,
+        OvernightTileService::class.java,
+    )
 
     /** Asks the system to redraw the tiles (what waits or the mode changed). */
     fun refresh(context: Context) {

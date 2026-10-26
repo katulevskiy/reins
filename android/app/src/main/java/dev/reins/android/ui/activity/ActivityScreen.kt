@@ -1,5 +1,9 @@
 package dev.reins.android.ui.activity
 
+import dev.reins.android.design.fieldSurface
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.focus.focusRequester
+import dev.reins.android.design.pane
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -114,7 +119,7 @@ private sealed interface RiverItem {
     }
 
     /** An entry; [first]: the first of its day's (tagged "dayEntries:<day>"); [index]: its place among those shown. */
-    data class Entry(val entry: ActivityEntry, val index: Int, val day: Long, val first: Boolean, val snippet: ActivitySnippet? = null) : RiverItem {
+    data class Entry(val entry: ActivityEntry, val index: Int, val day: Long, val first: Boolean, val snippet: ActivitySnippet? = null, val atTop: Boolean = false) : RiverItem {
         override val key get() = "e:${entry.id}"
     }
 
@@ -125,7 +130,13 @@ private sealed interface RiverItem {
 }
 
 /** Something broken that a warn field names: what it is, in a few words, and the one thing to do. */
-private data class Warning(val tag: String, val label: String, val ask: String, val target: String?, val action: String?, val actionTag: String?, val onAction: () -> Unit)
+private data class Warning(val tag: String, val label: String, val ask: String, val target: String?, val action: String?, val actionTag: String?, val onAction: () -> Unit) {
+    val glyph: Glyph get() = when (tag) {
+        "notificationsOff" -> Glyph.Bell
+        "screenLockOff" -> Glyph.Lock
+        else -> Glyph.Phone
+    }
+}
 
 /**
  * The first tab (Reins Signal, iOS-Activity / And-Core 01): what waits, as a stack of cards in their field colours;
@@ -165,6 +176,8 @@ fun ActivityScreen(
     val search by state.activitySearch.collectAsStateWithLifecycle()
     val opened by state.activityDays.collectAsStateWithLifecycle()
     var filtersShown by rememberSaveable { mutableStateOf(false) }
+    // Search is a button beside the title; open, the field takes the header (Next, Activity 04).
+    var searchOpen by rememberSaveable { mutableStateOf(state.activitySearch.value.text.isNotBlank()) }
     // The words as typed (the app state follows them; the search waits for a pause).
     var text by remember { mutableStateOf(state.activitySearch.value.text) }
     val filtersOpen = filtersShown || search.filtered
@@ -231,7 +244,7 @@ fun ActivityScreen(
     val warnings = buildList {
         if (replaced) add(Warning("replaced", "Reins · Approvals", "Another phone approves", "approves", "Switch", "switchBack", onOpenSettings))
         registrationError?.let { add(Warning("registration", "Reins · Approvals", "Not your approval phone yet", null, null, null) {}) }
-        if (!notifications.enabled) add(Warning("notificationsOff", "Reins · Notifications", "Notifications are off", "off", "Turn on", "turnOnNotifications", notifications::request))
+        if (!notifications.enabled) add(Warning("notificationsOff", "Reins · Notifications", "Notifications off", "off", "Turn on", "turnOnNotifications", notifications::request))
         if (!screenLock.set) add(Warning("screenLockOff", "Reins · Screen lock", "No screen lock", "lock", "Set one", "setScreenLock", screenLock::openSettings))
     }
     // The items above the river, in the order the list lays them out.
@@ -263,6 +276,15 @@ fun ActivityScreen(
     }
     val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
+    val appearance by dev.reins.android.design.Appearance.state(context)
+    // The art shows while browsing; a search is plain paper (Next, Activity 04).
+    val art = if (searchOpen) null else appearance.wallpaper(c.dark)
+    val computers = connections.count { it.keyFingerprint != null }
+    val ais = connections.size - computers
+    // Which pane each item belongs to, and whether it holds the pane's top or bottom edge.
+    val edges = remember(rows) { paneEdges(rows) }
+
+    dev.reins.android.design.WallpaperPage(art, Modifier.fillMaxSize()) {
     PullToRefreshBox(
         isRefreshing = refreshing,
         onRefresh = {
@@ -272,7 +294,7 @@ fun ActivityScreen(
                 refreshing = false
             }
         },
-        modifier = Modifier.fillMaxSize().background(c.paper),
+        modifier = Modifier.fillMaxSize(),
     ) {
         LazyColumn(
             state = listState,
@@ -281,19 +303,27 @@ fun ActivityScreen(
         ) {
             if (warnings.isNotEmpty()) item(key = "warn") { WarnField(warnings, registrationError) }
             item(key = "title") {
-                RootHeader(
-                    "Activity",
-                    mood = if (pending.isNotEmpty()) waitingMood(pending.size).let { (lead, rest) -> mood(lead, rest) } else null,
-                    underField = warnings.isNotEmpty(),
-                ) {
-                    modeChip()
-                    FilterButton(filtersOpen) { filtersShown = !filtersOpen }
-                }
-            }
-            item(key = "search") {
-                SearchField(text, Modifier.padding(horizontal = 24.dp).padding(top = 14.dp)) {
-                    text = it
-                    state.setActivitySearch(state.activitySearch.value.copy(text = it))
+                if (searchOpen) {
+                    SearchHeader(
+                        text,
+                        underField = warnings.isNotEmpty(),
+                        onChange = {
+                            text = it
+                            state.setActivitySearch(state.activitySearch.value.copy(text = it))
+                        },
+                        onCancel = {
+                            text = ""
+                            state.setActivitySearch(state.activitySearch.value.copy(text = ""))
+                            searchOpen = false
+                        },
+                        filter = { FilterButton(filtersOpen) { filtersShown = !filtersOpen } },
+                    )
+                } else {
+                    RootHeader("Activity", underField = warnings.isNotEmpty()) {
+                        modeChip()
+                        HeaderButton(Glyph.Search, "Search", "openSearch") { searchOpen = true }
+                        FilterButton(filtersOpen) { filtersShown = !filtersOpen }
+                    }
                 }
             }
             notice?.let { item(key = "notice") { NoticeRow(it, onDismissNotice) } }
@@ -311,7 +341,13 @@ fun ActivityScreen(
             }
             if (!searching) {
                 item(key = "stack") {
-                    Column(Modifier.padding(top = if (pending.isEmpty()) 0.dp else 18.dp)) {
+                    // The art stays open above what waits (Next: 168 dp with nothing waiting, 70 over the cards).
+                    val open = when {
+                        art == null || filtersOpen -> 14.dp
+                        pending.isEmpty() && (ais > 0 && computers > 0) -> 168.dp
+                        else -> 70.dp
+                    }
+                    Column(Modifier.padding(top = open)) {
                         WaitingStack(
                             cards,
                             details,
@@ -321,12 +357,13 @@ fun ActivityScreen(
                                 onAnswerBurst(burst, approve)
                             },
                         )
+                        if (pending.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
                         AnimatedVisibility(
                             pending.isEmpty() && loaded && !filtersOpen,
                             enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
                             exit = fadeOut(Motion.reduced()),
                         ) {
-                            Quiet(connections.size, entries.isEmpty(), onConnectComputer, onConnectAi)
+                            Quiet(ais, computers, entries.isEmpty(), onConnectComputer, onConnectAi)
                         }
                     }
                 }
@@ -342,24 +379,31 @@ fun ActivityScreen(
                 }
             }
             val terms = results?.terms.orEmpty()
-            rows.forEach { row ->
+            rows.forEachIndexed { at, row ->
+                val (top, bottom) = edges[at]
+                val gap = top && at > 0
                 when (row) {
                     is RiverItem.Day -> item(key = row.key, contentType = "day") {
-                        DayHeader(row.day, row.label, row.open, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = placement(reduce))) {
-                            state.setActivityDayOpen(row.day.day, !row.open)
+                        Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = placement(reduce)).riverPiece(top, bottom, gap)) {
+                            DayHeader(row.day, row.label, row.open) {
+                                state.setActivityDayOpen(row.day.day, !row.open)
+                            }
                         }
                     }
                     is RiverItem.Label -> item(key = row.key, contentType = "label") {
-                        DayLabel(
-                            row.label,
-                            row.total?.let { if (it == 1) "1 found" else "$it found" },
-                            if (row.total != null) Modifier.testTag("searchResults") else Modifier,
-                        )
+                        Box(Modifier.riverPiece(top, bottom, gap)) {
+                            DayLabel(
+                                row.label,
+                                row.total?.let { if (it == 1) "1 found" else "$it found" },
+                                if (row.total != null) Modifier.testTag("searchResults") else Modifier,
+                            )
+                        }
                     }
                     is RiverItem.Entry -> item(key = row.key, contentType = "entry") {
                         Column(
                             Modifier
                                 .animateItem(fadeInSpec = fade(reduce), placementSpec = placement(reduce), fadeOutSpec = fade(reduce))
+                                .riverPiece(top, bottom, gap)
                                 .then(if (row.first && !searching) Modifier.testTag("dayEntries:${row.day}") else Modifier),
                         ) {
                             if (row.index == newMarkerAt) NewMarker()
@@ -371,13 +415,14 @@ fun ActivityScreen(
                                     showShare = showShare,
                                     terms = if (searching) terms else emptyList(),
                                     snippet = row.snippet,
+                                    divider = !top && rows.getOrNull(at - 1) is RiverItem.Entry && row.index != newMarkerAt,
                                 ) { onOpenEntry(row.entry.id) }
                             }
                         }
                     }
                     is RiverItem.More -> item(key = row.key, contentType = "more") {
                         LaunchedEffect(row) { if (row.day == null) river.loadMoreResults() else river.loadMoreDay(row.day) }
-                        Box(Modifier.fillMaxWidth().height(1.dp))
+                        Box(Modifier.riverPiece(top, bottom, gap).fillMaxWidth().height(10.dp))
                     }
                 }
             }
@@ -401,6 +446,23 @@ fun ActivityScreen(
             }
         }
     }
+    }
+}
+
+/** A piece of a day's pane: each day is its own pane, 16 in from the edges; panes stand 10 apart ([gap]). */
+@Composable
+private fun Modifier.riverPiece(top: Boolean, bottom: Boolean, gap: Boolean): Modifier =
+    padding(start = 16.dp, end = 16.dp, top = if (gap) 10.dp else 0.dp).pane(top = top, bottom = bottom)
+
+/**
+ * For each river item, whether it holds the top and the bottom edge of its pane: a day (or a search's day label) starts
+ * a pane, which runs to the item before the next day.
+ */
+private fun paneEdges(rows: List<RiverItem>): List<Pair<Boolean, Boolean>> = rows.indices.map { i ->
+    val starts = { r: RiverItem? -> r is RiverItem.Day || r is RiverItem.Label }
+    val top = i == 0 || starts(rows[i])
+    val bottom = i == rows.lastIndex || starts(rows[i + 1])
+    top to bottom
 }
 
 private fun fade(reduce: Boolean): FiniteAnimationSpec<Float> = if (reduce) Motion.reduced() else tween(Motion.FADE_MS * 2)
@@ -576,43 +638,67 @@ private fun rememberRiver(container: AppContainer, entries: List<ActivityEntry>,
     return river
 }
 
-/** The search field under the title: a sunken well, the search glyph, and a clear button once something is typed. */
+/**
+ * The header while searching (Next, Activity 04): the field (a sunken well with the search glyph and a clear button
+ * once something is typed) and Cancel in violet, which clears the words and closes the search.
+ */
 @Composable
-private fun SearchField(text: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+private fun SearchHeader(text: String, underField: Boolean, onChange: (String) -> Unit, onCancel: () -> Unit, filter: @Composable () -> Unit = {}) {
     val c = LocalColors.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     val style = RType.sans(16f)
     Row(
-        modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(c.paperSunken).padding(start = 14.dp, end = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(if (underField) Modifier.padding(top = 18.dp) else Modifier.windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(top = 8.dp))
+            .padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(Glyph.Search, c.inkMeta, size = 18.dp)
-        Box(Modifier.weight(1f).padding(vertical = 11.dp)) {
-            if (text.isEmpty()) RText("Search", style, c.inkMeta, maxLines = 1)
-            BasicTextField(
-                text,
-                onChange,
-                Modifier.fillMaxWidth().testTag("activitySearch").semantics { contentDescription = "Search Activity" },
-                textStyle = style.copy(color = c.ink),
-                cursorBrush = SolidColor(c.violet),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-            )
+        Row(
+            Modifier.weight(1f).heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(c.paperSunken).padding(start = 12.dp, end = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GlyphIcon(Glyph.Search, c.inkMeta, size = 18.dp)
+            Box(Modifier.weight(1f).padding(vertical = 11.dp)) {
+                if (text.isEmpty()) RText("Search", style, c.inkMeta, maxLines = 1)
+                BasicTextField(
+                    text,
+                    onChange,
+                    Modifier.fillMaxWidth().focusRequester(focus).testTag("activitySearch").semantics { contentDescription = "Search Activity" },
+                    textStyle = style.copy(color = c.ink),
+                    cursorBrush = SolidColor(c.violet),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                )
+            }
+            if (text.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .pressable(shape = CircleShape, label = "Clear search") { onChange("") }
+                        .semantics { contentDescription = "Clear search" }
+                        .testTag("activitySearchClear"),
+                    contentAlignment = Alignment.Center,
+                ) { GlyphIcon(Glyph.CircleClose, c.inkMeta, size = 18.dp) }
+            }
         }
-        if (text.isNotEmpty()) {
-            Box(
-                Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .pressable(shape = CircleShape, label = "Clear search") { onChange("") }
-                    .semantics { contentDescription = "Clear search" }
-                    .testTag("activitySearchClear"),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(Glyph.CircleClose, c.inkMeta, size = 18.dp) }
-        }
+        // The filters narrow a search too (the board draws none here; they stay one tap away).
+        filter()
+        RText(
+            "Cancel",
+            RType.sans(16f, FontWeight.SemiBold),
+            c.violet,
+            Modifier.pressable(shape = RoundedCornerShape(8.dp), label = "Cancel search", onClick = onCancel).padding(vertical = 8.dp).testTag("searchCancel"),
+            maxLines = 1,
+        )
     }
+    // Opened by the button (not restored with words in it): the keyboard comes up.
+    LaunchedEffect(Unit) { if (text.isEmpty()) runCatching { focus.requestFocus() } }
 }
 
 /** A search or filters that match nothing. */
@@ -625,44 +711,56 @@ private fun NothingFound(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         GlyphIcon(Glyph.Search, c.inkFaint, size = 28.dp)
-        RText("Nothing found", MoodStyle, c.ink2)
+        RText("Nothing found", RType.sans(16f, FontWeight.Medium), c.ink2)
     }
 }
 
 /** How long the words must stay still before they are searched. */
 private const val SEARCH_DEBOUNCE_MS = 200L
 
-/** The round filter button beside the mode chip: ink when the filters are open. */
+/** A round 40 dp header button (`.ib`): raised with a hairline. */
 @Composable
-private fun FilterButton(open: Boolean, onClick: () -> Unit) {
+private fun HeaderButton(glyph: Glyph, label: String, tag: String, on: Boolean = false, dot: Boolean = false, onClick: () -> Unit) {
     val c = LocalColors.current
     Box(
         Modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(if (open) c.inverse else c.paperRaised)
-            .then(if (open) Modifier else Modifier.border(1.dp, c.rule, CircleShape))
-            .pressable(shape = CircleShape, label = "Filter", onClick = onClick)
-            .semantics { contentDescription = "Filter" }
-            .testTag("filters"),
+            .background(if (on) c.inverse else c.paperRaised)
+            .then(if (on) Modifier else Modifier.border(1.dp, c.rule, CircleShape))
+            .pressable(shape = CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label }
+            .testTag(tag),
         contentAlignment = Alignment.Center,
-    ) { GlyphIcon(Glyph.Filter, if (open) c.onInverse else c.ink, size = 20.dp) }
+    ) { GlyphIcon(glyph, if (on) c.onInverse else c.ink, size = 20.dp) }
 }
 
+/** The round filter button beside the mode chip: ink when the filters are open. */
+@Composable
+private fun FilterButton(open: Boolean, onClick: () -> Unit) = HeaderButton(Glyph.Filter, "Filter", "filters", on = open, onClick = onClick)
+
 /**
- * The warn field: Reins is broken and needs you, the only colour on the screen when nothing waits. Each problem is
- * its label line, a few words in the serif, and the one thing to do.
+ * Reins is broken and needs you (Next, Activity 02): an amber bar under the status bar, its bottom corners round, each
+ * problem a line with its glyph and the one thing to do on a white button.
  */
 @Composable
 private fun WarnField(warnings: List<Warning>, detail: String?) {
     val c = LocalColors.current
-    FieldHeader(Field.Warn, Modifier.testTag("warnField")) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .fieldSurface(Field.Warn, RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp))
+            .windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets)
+            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp)
+            .testTag("warnField"),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         warnings.forEach { w ->
             Row(Modifier.fillMaxWidth().testTag(w.tag), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                GlyphIcon(w.glyph, c.onField, size = 20.dp)
                 Column(Modifier.weight(1f)) {
-                    LabelText(w.label, c.onField2)
-                    BasicText(askString(w.ask, w.target), Modifier.padding(top = 6.dp), style = RType.serif(23f, 26f, -0.01f).copy(color = c.onField))
-                    if (w.tag == "registration" && detail != null) RText(detail, RType.sans(13.5f), c.onField2, Modifier.padding(top = 4.dp), maxLines = 3)
+                    RText(w.ask, RType.sans(16f, FontWeight.SemiBold), c.onField, maxLines = 2)
+                    if (w.tag == "registration" && detail != null) RText(detail, RType.sans(13f), c.onField2, Modifier.padding(top = 2.dp), maxLines = 3)
                 }
                 if (w.action != null) {
                     SignalButton(w.action, if (w.actionTag != null) Modifier.testTag(w.actionTag) else Modifier, style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, onClick = w.onAction)
@@ -694,18 +792,53 @@ private fun NoticeRow(
     }
 }
 
-/** Nothing waits: the pond and the mood line; with nothing connected, the two ways to connect something. */
+/**
+ * Nothing waits. With an AI app and a computer both connected the art stays open and this is empty; with one of them
+ * missing, the missing half takes the action slot (Next, "Activity with a wallpaper" 05 and 05b): a raised card that
+ * connects an AI app, or an ink card that connects a computer.
+ */
 @Composable
-private fun Quiet(connections: Int, noHistory: Boolean, onConnectComputer: () -> Unit, onConnectAi: () -> Unit) {
+private fun Quiet(ais: Int, computers: Int, noHistory: Boolean, onConnectComputer: () -> Unit, onConnectAi: () -> Unit) {
+    val c = LocalColors.current
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 10.dp, bottom = 4.dp).testTag(if (noHistory) "noActivity" else "allQuiet"),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = if (ais == 0 || computers == 0) 12.dp else 0.dp).testTag(if (noHistory) "noActivity" else "allQuiet"),
     ) {
-        Calm(quietMood(connections), moodStyle = MoodStyle, drawingWidth = 300.dp, gap = 4.dp)
-        if (connections == 0) {
-            Column(Modifier.padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                SignalButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), size = ButtonSize.Small, glyph = Glyph.Laptop, onClick = onConnectComputer)
-                SignalButton("Connect Claude.ai or ChatGPT", Modifier.testTag("emptyConnectAi"), style = ButtonStyle.Soft, size = ButtonSize.Small, glyph = Glyph.Link, onClick = onConnectAi)
+        val shape = RoundedCornerShape(26.dp)
+        if (ais == 0) {
+            Column(
+                Modifier.fillMaxWidth().clip(shape).background(c.paperRaised).then(if (!c.dark) Modifier.border(1.dp, c.rule, shape) else Modifier).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+                    dev.reins.android.design.ProviderAvatar(dev.reins.android.design.Providers.byKey("claude")!!, size = 34.dp)
+                    dev.reins.android.design.ProviderAvatar(dev.reins.android.design.Providers.byKey("openai")!!, size = 34.dp)
+                }
+                RText("Connect an AI app", RType.askSmall, c.ink, maxLines = 2)
+                SignalButton("Connect", Modifier.fillMaxWidth().testTag("emptyConnectAi"), size = ButtonSize.Small, glyph = Glyph.Plus, onClick = onConnectAi)
+            }
+        }
+        if (ais == 0 && computers == 0) Spacer(Modifier.height(10.dp))
+        if (computers == 0) {
+            // An ink card: the computer's own command in mono, then the two ways to pair.
+            Column(
+                Modifier.fillMaxWidth().clip(shape).background(c.inverse).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(c.onInverse), contentAlignment = Alignment.Center) {
+                        GlyphIcon(Glyph.Laptop, c.inverse, size = 18.dp)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    RText("reins login", RType.mono(13f), c.onInverse.copy(alpha = 0.7f), maxLines = 1, ltr = true)
+                }
+                RText("Connect a computer", RType.askSmall, c.onInverse, maxLines = 2)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SignalButton("Scan", Modifier.weight(1f).testTag("emptyConnectComputer"), style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.QrCode, onClick = onConnectComputer)
+                    SignalButton(
+                        "Type code", Modifier.weight(1f).testTag("emptyTypeCode"),
+                        style = if (c.dark) ButtonStyle.Soft else ButtonStyle.OnFieldWash, size = ButtonSize.Small, glyph = Glyph.Pencil, onClick = onConnectComputer,
+                    )
+                }
             }
         }
     }
@@ -715,9 +848,9 @@ private fun Quiet(connections: Int, noHistory: Boolean, onConnectComputer: () ->
 @Composable
 private fun NewMarker() {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp).testTag("newMarker"), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp).testTag("newMarker"), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f).height(1.dp).background(c.violet.copy(alpha = 0.4f)))
-        RText("NEW ABOVE", RType.label.copy(fontSize = 10.5.sp), c.violet, Modifier.padding(horizontal = 10.dp))
+        RText("New above", RType.sans(11.5f, FontWeight.SemiBold), c.violet, Modifier.padding(horizontal = 10.dp))
         Box(Modifier.weight(1f).height(1.dp).background(c.violet.copy(alpha = 0.4f)))
     }
 }

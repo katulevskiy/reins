@@ -19,6 +19,9 @@ sealed interface Route {
     /** Settings > Appearance: paper or graphite, the grain on fields, the sans. */
     data object Appearance : Route
 
+    /** Settings > Wallpaper: the art behind Activity, one for dark and one for light, or the owner's own photo. */
+    data object Wallpaper : Route
+
     /** Settings > Account > Vault passkeys: the passkeys that open the vault on a new phone. */
     data object VaultPasskeys : Route
 

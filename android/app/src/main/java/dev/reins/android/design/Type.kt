@@ -12,7 +12,6 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -26,23 +25,28 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
 /**
- * Type, three voices (Reins Signal, `tokens/signal.tokens.json`): Instrument Serif for what you decide on, the sans
- * (Instrument Sans, or Geist) for what you read, Geist Mono in capitals for what the machine says. The named styles are
- * getters, so they follow the Appearance sans.
+ * Type (Reins Next, the Type board): Sora for everything you read and decide on, Geologica under it for Cyrillic, and
+ * JetBrains Mono for what the machine says. Display text (titles, asks, numbers) is Sora 500 at 0.74 of its board
+ * size, tracked tighter as it grows; the emphasised words of an ask are Sora 600, never italic. The named styles are
+ * getters, so they follow the font family once it has loaded.
  */
 object RType {
     private val trim = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
-    fun sans(size: Float, weight: FontWeight = FontWeight.Normal, lineHeight: Float? = null): TextStyle = TextStyle(
+    /** The boards draw display text at `--s × 0.74`. */
+    const val DISPLAY_SCALE = 0.74f
+
+    fun sans(size: Float, weight: FontWeight = FontWeight.Normal, lineHeight: Float? = null, tracking: Float = 0f): TextStyle = TextStyle(
         fontFamily = Fonts.sans,
         fontWeight = weight.capped(),
         fontSize = size.sp,
         lineHeight = lineHeight?.sp ?: TextUnit.Unspecified,
+        letterSpacing = if (tracking != 0f) tracking.em else TextUnit.Unspecified,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
         lineHeightStyle = trim,
     )
 
-    /** Geist Mono comes in 400 and 500 only: heavier asks get 500, never a synthesised bold. */
+    /** JetBrains Mono comes in 400 and 500 only: heavier text gets 500, never a synthesised bold. */
     fun mono(size: Float, weight: FontWeight = FontWeight.Normal): TextStyle = TextStyle(
         fontFamily = Fonts.mono,
         fontWeight = if (weight > FontWeight.Medium) FontWeight.Medium else weight,
@@ -51,59 +55,76 @@ object RType {
         lineHeightStyle = trim,
     )
 
-    /** Instrument Serif, always 400. [tracking] in em. */
-    fun serif(size: Float, lineHeight: Float? = null, tracking: Float = 0f, italic: Boolean = false): TextStyle = TextStyle(
-        fontFamily = Fonts.serif,
-        fontWeight = FontWeight.Normal,
-        fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
-        fontSize = size.sp,
-        lineHeight = lineHeight?.sp ?: TextUnit.Unspecified,
-        letterSpacing = if (tracking != 0f) tracking.em else TextUnit.Unspecified,
-        platformStyle = PlatformTextStyle(includeFontPadding = false),
-        lineHeightStyle = trim,
-    )
+    /**
+     * Display text at board size [s] (`.d`, `--s`): Sora 500 at `s × 0.74`, line height 1.04, tracked −0.03 em from
+     * s = 40 up (none at 16, linear between).
+     */
+    fun display(s: Float, weight: FontWeight = FontWeight.Medium): TextStyle {
+        val size = s * DISPLAY_SCALE
+        val track = -0.03f * ((s - 16f) / 24f).coerceIn(0f, 1f)
+        return sans(size, weight, lineHeight = size * 1.04f, tracking = track)
+    }
 
-    // Serif.
-    /** The ask on a field, 45/46; the target in italic (see [AskText]). */
-    val ask: TextStyle get() = serif(45f, 46f, -0.012f)
+    /** A style from before Next, at the Signal serif's [size]: now [display] at that board size. */
+    @Suppress("UNUSED_PARAMETER")
+    fun serif(size: Float, lineHeight: Float? = null, tracking: Float = 0f, italic: Boolean = false): TextStyle = display(size)
 
-    /** The ask on a waiting card, 25/26. */
-    val askSmall: TextStyle get() = serif(25f, 26f, -0.01f)
+    // Display.
+    /** The ask on a field (`--s 45`, 33). */
+    val ask: TextStyle get() = display(45f)
 
-    /** Screen titles, 44/44. */
-    val title: TextStyle get() = serif(44f, 44f, -0.01f)
+    /** The ask on a waiting card (`--s 30`, 22). */
+    val askSmall: TextStyle get() = display(30f)
 
-    /** Numbers that are the point, 40 (54 on a grant field). */
-    val stat: TextStyle get() = serif(40f, 40f, -0.01f)
+    /** Tab page titles (`--s 40`, 30). */
+    val title: TextStyle get() = display(40f)
 
-    /** Sheet titles, 32/34, with one italic word. */
-    val sheetTitle: TextStyle get() = serif(32f, 34f, -0.01f)
+    /** Pushed page titles (`--s 32`, 24). */
+    val pageTitle: TextStyle get() = display(32f)
 
-    /** One quiet line under a title, italic 24/30, in ink-2. */
-    val mood: TextStyle get() = serif(24f, 30f, italic = true)
+    /** Numbers that are the point (`--s 64`). */
+    val stat: TextStyle get() = display(64f)
+
+    /** Sheet titles (`--s 30`, 22). */
+    val sheetTitle: TextStyle get() = display(30f)
+
+    /** Kept for callers from before Next: Next has no mood line, so it reads as body. */
+    val mood: TextStyle get() = sans(17f, lineHeight = 23f)
 
     // Sans.
-    /** Decision buttons, 16.5 / 600 (14.5 on small ones). */
+    /** Decision buttons, 16.5 / 600 (15 on small ones). */
     val button: TextStyle get() = sans(16.5f, FontWeight.SemiBold)
 
-    /** Row titles, 15.5 / 500. */
-    val row: TextStyle get() = sans(15.5f, FontWeight.Medium, 20f)
+    /** Row titles, 16 / 500. */
+    val row: TextStyle get() = sans(16f, FontWeight.Medium, 21.6f)
+
+    /** Row sentences (Activity), 16 / 400. */
+    val rowSentence: TextStyle get() = sans(16f, lineHeight = 21.6f)
 
     /** Explanations, 15/22. */
     val body: TextStyle get() = sans(15f, lineHeight = 22f)
 
-    /** Row subtitles, hints, verdict lines, 13/18. */
-    val meta: TextStyle get() = sans(13f, lineHeight = 18f)
+    /** Row subtitles, hints, times, 12.5 / 17. */
+    val meta: TextStyle get() = sans(12.5f, lineHeight = 17f, tracking = 0.01f)
 
     /** Tags (Auto, Ready), 11.5 / 600. */
     val tag: TextStyle get() = sans(11.5f, FontWeight.SemiBold)
 
-    // Mono.
-    /** Label lines and section labels: 11.5/14, 500, tracked 0.16em, set in capitals (see [LabelText]). */
-    val label: TextStyle get() = mono(11.5f, FontWeight.Medium).copy(lineHeight = 14.sp, letterSpacing = 0.16.em)
+    /** Section headers (`.sec`): 13 / 600, tracked 0.015 em, sentence case. */
+    val section: TextStyle get() = sans(13f, FontWeight.SemiBold, tracking = 0.015f)
 
-    /** Branches, accounts, addresses, SHAs, the timer: 13.5. */
-    val value: TextStyle get() = mono(13.5f)
+    // Mono.
+    /** Kept for callers from before Next: the section header. */
+    val label: TextStyle get() = section
+
+    /** Branches, accounts, addresses, SHAs, the timer: 13. */
+    val value: TextStyle get() = mono(13f)
+
+    /** Code and diffs, 11.5. */
+    val code: TextStyle get() = mono(11.5f)
+
+    /** Codes you compare (pairing, join): 24 mono 500. */
+    val codes: TextStyle get() = mono(24f, FontWeight.Medium)
 
     private fun FontWeight.capped(): FontWeight = if (this > FontWeight.SemiBold) FontWeight.SemiBold else this
 }
@@ -126,19 +147,19 @@ fun RText(
     BasicText(text = text, modifier = modifier, style = s, maxLines = maxLines, overflow = overflow, softWrap = maxLines != 1)
 }
 
-/** A [RType.label] line: mono capitals, tracked. */
+/** A section header line ([RType.section]): sentence case, as written. */
 @Composable
 fun LabelText(text: String, color: Color, modifier: Modifier = Modifier, maxLines: Int = 1) {
-    RText(text.uppercase(), RType.label, color, modifier, maxLines = maxLines)
+    RText(text, RType.section, color, modifier, maxLines = maxLines)
 }
 
-/** [text] with the last occurrence of [target] set in italic ("Push 8 commits to *octo/app*"). */
+/** [text] with the last occurrence of [target] emphasised: Sora 600 ("Push 8 commits to **octo/app**"). */
 fun askString(text: String, target: String?): AnnotatedString {
     val at = if (target.isNullOrEmpty()) -1 else text.lastIndexOf(target)
     if (at < 0) return AnnotatedString(text)
     return buildAnnotatedString {
         append(text.substring(0, at))
-        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(target!!) }
+        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(target!!) }
         append(text.substring(at + target!!.length))
     }
 }
@@ -157,8 +178,8 @@ internal fun askFontSize(lines: (TextUnit) -> Int, size: TextUnit, minSize: Text
 }
 
 /**
- * An ask: serif, the target in italic, wrapping to [maxLines] (3) before it shrinks, and never shrinking below
- * [minSize] (32 sp): at that size it takes the lines it needs.
+ * An ask: display type, the target emphasised, wrapping to [maxLines] (3) before it shrinks, and never shrinking
+ * below [minSize] (24 sp): at that size it takes the lines it needs.
  */
 @Composable
 fun AskText(
@@ -167,7 +188,7 @@ fun AskText(
     modifier: Modifier = Modifier,
     target: String? = null,
     style: TextStyle = RType.ask,
-    minSize: TextUnit = 32.sp,
+    minSize: TextUnit = 24.sp,
     maxLines: Int = 3,
     align: TextAlign? = null,
 ) {

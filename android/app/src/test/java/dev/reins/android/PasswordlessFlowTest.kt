@@ -584,7 +584,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
         assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
-        assertTrue(showsText("Write down your recovery code", substring = true))
+        assertTrue(showsText("Recovery code", substring = true))
         tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())

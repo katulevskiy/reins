@@ -1,5 +1,9 @@
 package dev.reins.android.ui.connections
 
+import androidx.compose.ui.draw.drawBehind
+import dev.reins.android.design.PaneRow
+import dev.reins.android.design.PaneGroup
+import dev.reins.android.design.SectionHeader
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -108,35 +113,62 @@ fun ConnectionsScreen(
     LaunchedEffect(connectOpen) { onCovered(connectOpen) }
     DisposableEffect(Unit) { onDispose { onCovered(false) } }
     val mcpUrl = serverUrl?.let(AccountRules::mcpUrl)
-    // AI apps first, then the computers, which pinned their key when they paired.
-    val askers = remember(connections) { connections.sortedBy { it.keyFingerprint != null } }
+    // Next (Connections 01): AI apps, computers (they pinned a key when they paired) and services, each its own group
+    // under a header whose + adds to it.
+    val ais = remember(connections) { connections.filter { it.keyFingerprint == null } }
+    val computers = remember(connections) { connections.filter { it.keyFingerprint != null } }
     val (connected, quiet) = remember(services) { services.partition { it.accounts.isNotEmpty() || it.service == "vault" } }
+    var servicesOpen by remember { mutableStateOf(false) }
+    var allAis by remember { mutableStateOf(false) }
+    LaunchedEffect(servicesOpen) { onCovered(connectOpen || servicesOpen) }
 
     Box(Modifier.fillMaxSize().background(c.paper).testTag("connections")) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            RootHeader("Connections", mood = mood(null, askersLine(connections))) {
-                RoundIconButton(Glyph.Plus, "Connect something", Modifier.testTag("connect")) { connectOpen = true }
+            RootHeader("Connections")
+            SectionHeader("AI apps", glyph = Glyph.Globe, count = ais.size.toString(), onAdd = { connectOpen = true }, addLabel = "Connect something", addTag = "connect")
+            PaneGroup {
+                val shown = if (allAis || ais.size <= AI_ROWS + 1) ais else ais.take(AI_ROWS)
+                shown.forEachIndexed { i, connection -> AskerRow(connection, autopilot, first = i == 0) { onConnection(connection.id) } }
+                if (shown.size < ais.size) {
+                    PaneRow("Show all", value = ais.size.toString(), chevron = true, tag = "showAllAis") { allAis = true }
+                }
+                if (ais.isEmpty()) QuietRow("Connect an AI app", "connectEmpty", first = true) { connectOpen = true }
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 18.dp)) {
-                LabelText("Who can ask", c.inkMeta)
-                askers.forEach { connection ->
-                    AskerRow(connection, autopilot) { onConnection(connection.id) }
-                }
-                if (askers.isEmpty()) {
-                    QuietRow("Connect an AI or a computer", "connectEmpty") { connectOpen = true }
-                }
-                LabelText("What they can reach", c.inkMeta, Modifier.padding(top = 22.dp))
-                connected.forEach { service -> ServiceRow(service) { onService(service.service) } }
-                mcp.forEach { server -> McpRow(server) { onMcp(server.id) } }
-                quiet.forEach { service -> ServiceRow(service, quiet = true) { onService(service.service) } }
+            SectionHeader("Computers", glyph = Glyph.Laptop, count = computers.size.toString(), onAdd = { connectOpen = true }, addLabel = "Connect a computer", addTag = "connectComputer")
+            PaneGroup {
+                computers.forEachIndexed { i, connection -> AskerRow(connection, autopilot, first = i == 0) { onConnection(connection.id) } }
+                if (computers.isEmpty()) QuietRow("Connect a computer", "connectComputerEmpty", first = true) { connectOpen = true }
+            }
+            SectionHeader("Services", glyph = Glyph.Link, count = (connected.size + mcp.size).toString(), onAdd = { servicesOpen = true }, addLabel = "Add a service", addTag = "addService")
+            PaneGroup {
+                connected.forEachIndexed { i, service -> ServiceRow(service, first = i == 0) { onService(service.service) } }
+                mcp.forEachIndexed { i, server -> McpRow(server, first = connected.isEmpty() && i == 0) { onMcp(server.id) } }
+                // An MCP server is added from here until there is one (then from the +).
                 if (mcp.isEmpty()) {
-                    Box(Modifier.testTag("noMcp")) { QuietRow("MCP server", "addMcpRow", glyph = Glyph.Server, onClick = onAddMcp) }
+                    Box(Modifier.testTag("noMcp")) { QuietRow("MCP server", "addMcpRow", glyph = Glyph.Server, first = connected.isEmpty(), onClick = onAddMcp) }
                 }
             }
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
         }
 
-        BottomSheet(connectOpen, "Connect something", onClose = { connectOpen = false }, tag = "connectSheet") {
+        // The services not connected yet, and an MCP server, behind the Services header's +.
+        BottomSheet(servicesOpen, "Add", onClose = { servicesOpen = false }, tag = "servicesSheet") {
+            PaneGroup {
+                quiet.forEachIndexed { i, service ->
+                    ServiceRow(service, quiet = true, first = i == 0) {
+                        servicesOpen = false
+                        onService(service.service)
+                    }
+                }
+                QuietRow("MCP server", "addMcpSheet", glyph = Glyph.Server, first = quiet.isEmpty()) {
+                    servicesOpen = false
+                    onAddMcp()
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        BottomSheet(connectOpen, "Connect", onClose = { connectOpen = false }, tag = "connectSheet") {
             ConnectSheetContent(
                 mcpUrl = mcpUrl,
                 copied = copied,
@@ -165,6 +197,9 @@ fun ConnectionsScreen(
     }
 }
 
+/** How many AI apps show before "Show all". */
+private const val AI_ROWS = 4
+
 /** "Three AIs and a computer can ask." */
 internal fun askersLine(connections: List<ConnectionView>): String {
     val computers = connections.count { it.keyFingerprint != null }
@@ -179,12 +214,12 @@ internal fun askersLine(connections: List<ConnectionView>): String {
 
 /** An AI app or a computer (its icon: a logo or its blobatar): name, where and when it was last used, its own mode. */
 @Composable
-private fun AskerRow(connection: ConnectionView, autopilot: AutopilotSettings?, onClick: () -> Unit) {
+private fun AskerRow(connection: ConnectionView, autopilot: AutopilotSettings?, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalColors.current
     val own = autopilot?.connections?.firstOrNull { it.connectionId == connection.id }
-    ConnectionRowFrame(Modifier.testTag("connection:${connection.id}"), onClick) {
+    ConnectionRowFrame(Modifier.testTag("connection:${connection.id}"), first, onClick) {
         androidx.compose.runtime.CompositionLocalProvider(LocalColors provides dev.reins.android.design.RColors.Light) {
-            ConnectionAvatar(connection, Modifier.border(1.dp, c.rule, CircleShape).testTag("avatar:${connection.id}:${shownIcon(connection)}"), size = 36.dp)
+            ConnectionAvatar(connection, Modifier.border(1.dp, c.rule, CircleShape).testTag("avatar:${connection.id}:${shownIcon(connection)}"), size = 32.dp)
         }
         Column(Modifier.weight(1f)) {
             RText(untrusted(connection.label), RType.row, c.ink, maxLines = 1)
@@ -192,28 +227,28 @@ private fun AskerRow(connection: ConnectionView, autopilot: AutopilotSettings?, 
         }
         val mode = own?.mode?.takeIf { own.baseMode != null || AutopilotText.isTimed(it) }
         when (mode) {
-            AutopilotMode.AUTO, AutopilotMode.OVERNIGHT -> Pill(AutopilotText.name(mode), c.violet)
-            AutopilotMode.BYPASS -> Pill(AutopilotText.name(mode), c.danger)
-            AutopilotMode.LOCKDOWN -> Pill(AutopilotText.name(mode), c.warning)
-            AutopilotMode.MANUAL -> Pill(AutopilotText.name(mode), c.inkMeta)
+            AutopilotMode.AUTO -> dev.reins.android.ui.activity.OutcomeTag(AutopilotText.name(mode), Glyph.AutopilotFilled, c.violet)
+            AutopilotMode.OVERNIGHT -> dev.reins.android.ui.activity.OutcomeTag(AutopilotText.name(mode), Glyph.Moon, c.violet)
+            AutopilotMode.BYPASS -> dev.reins.android.ui.activity.OutcomeTag(AutopilotText.name(mode), Glyph.Bypass, c.danger)
+            AutopilotMode.LOCKDOWN -> dev.reins.android.ui.activity.OutcomeTag(AutopilotText.name(mode), Glyph.Block, c.warning)
+            AutopilotMode.MANUAL -> dev.reins.android.ui.activity.OutcomeTag(AutopilotText.name(mode), Glyph.Person, c.inkMeta)
             null -> Unit
         }
-        GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 16.dp)
+        GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
     }
 }
 
 /** A service: its mark, its name, its accounts in a word; a quiet one (nothing connected yet) offers Connect. */
 @Composable
-private fun ServiceRow(service: ServiceView, quiet: Boolean = false, onClick: () -> Unit) {
+private fun ServiceRow(service: ServiceView, quiet: Boolean = false, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalColors.current
-    ConnectionRowFrame(Modifier.testTag("service:${service.service}"), onClick) {
-        BrandTile(service.service, size = 36.dp, dim = quiet)
-        Column(Modifier.weight(1f)) {
-            RText(service.name, RType.row, if (quiet) c.ink2 else c.ink, maxLines = 1)
-            serviceLine(service)?.let { RText(it, RType.meta, c.inkMeta, maxLines = 1) }
-        }
-        if (quiet && service.available) RText("Connect", RType.sans(13.5f, FontWeight.Medium), c.violet, maxLines = 1)
-        GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 16.dp)
+    ConnectionRowFrame(Modifier.testTag("service:${service.service}"), first, onClick) {
+        BrandTile(service.service, size = 32.dp, dim = quiet && !service.available)
+        RText(service.name, RType.row, c.ink, Modifier.weight(1f), maxLines = 1)
+        // Next: the account on the right ("octo-cat"), quiet.
+        serviceLine(service)?.let { RText(it, RType.sans(15f), c.inkMeta, Modifier.widthIn(max = 160.dp), maxLines = 1, ltr = true) }
+        if (quiet && service.available) RText("Connect", RType.sans(14f, FontWeight.SemiBold), c.violet, maxLines = 1)
+        GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
     }
 }
 
@@ -229,10 +264,10 @@ internal fun serviceLine(service: ServiceView): String? = when {
 
 /** An MCP server the user added: "MCP · 12 tools", and a word when it needs something ("Needs sign-in"). */
 @Composable
-private fun McpRow(server: McpServerView, onClick: () -> Unit) {
+private fun McpRow(server: McpServerView, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalColors.current
-    ConnectionRowFrame(Modifier.testTag("mcp:${server.id}"), onClick) {
-        BrandTile("mcp", size = 36.dp)
+    ConnectionRowFrame(Modifier.testTag("mcp:${server.id}"), first, onClick) {
+        BrandTile("mcp", size = 32.dp)
         Column(Modifier.weight(1f)) {
             RText(untrusted(server.name), RType.row, c.ink, maxLines = 1)
             RText("MCP · ${toolCount(server.tools.size)}", RType.meta, c.inkMeta, maxLines = 1)
@@ -246,28 +281,28 @@ private fun McpRow(server: McpServerView, onClick: () -> Unit) {
 
 /** A quiet row that offers to add something, in violet. */
 @Composable
-private fun QuietRow(title: String, tag: String, glyph: Glyph = Glyph.Plus, onClick: () -> Unit) {
+private fun QuietRow(title: String, tag: String, glyph: Glyph = Glyph.Plus, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalColors.current
-    ConnectionRowFrame(Modifier.testTag(tag), onClick) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
-            GlyphIcon(glyph, c.ink2, size = 19.dp)
+    ConnectionRowFrame(Modifier.testTag(tag), first, onClick) {
+        Box(Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+            GlyphIcon(glyph, c.ink2, size = 18.dp)
         }
         RText(title, RType.row, c.ink2, Modifier.weight(1f), maxLines = 1)
         RText("Add", RType.sans(13.5f, FontWeight.Medium), c.violet, maxLines = 1)
     }
 }
 
-/** A hairline row of this list (min 56, 12 between its parts). */
+/** A row of a group (`.r`: min 56, 12 between its parts, a hairline above unless [first]). */
 @Composable
-private fun ConnectionRowFrame(modifier: Modifier, onClick: () -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+private fun ConnectionRowFrame(modifier: Modifier, first: Boolean, onClick: () -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     val c = LocalColors.current
     Row(
         modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .hairlineBelow(c.rule)
+            .then(if (!first) Modifier.drawBehind { drawLine(c.rule, androidx.compose.ui.geometry.Offset(58.dp.toPx(), 0f), androidx.compose.ui.geometry.Offset(size.width, 0f), 1.dp.toPx()) } else Modifier)
             .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
@@ -282,76 +317,38 @@ private fun ConnectionRowFrame(modifier: Modifier, onClick: () -> Unit, content:
 private fun ConnectSheetContent(mcpUrl: String?, copied: Boolean, onCopy: () -> Unit, onScan: () -> Unit, onType: () -> Unit, onAddMcp: () -> Unit) {
     val c = LocalColors.current
     var help by remember { mutableStateOf(false) }
-    Column(Modifier.padding(horizontal = 24.dp)) {
-        Column(Modifier.fillMaxWidth().hairlineBelow(c.rule).padding(vertical = 14.dp).testTag("connectAi")) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.width(56.dp)) {
-                    Box(Modifier.padding(start = 22.dp)) { dev.reins.android.design.ConnectionAvatar("ChatGPT", "openai", size = 34.dp) }
-                    Box(Modifier.border(2.5.dp, c.paperRaised, CircleShape)) { dev.reins.android.design.ConnectionAvatar("Claude", "claude", size = 34.dp) }
-                }
-                Column(Modifier.weight(1f)) {
-                    RText("AI app", RType.row, c.ink, maxLines = 1)
-                    RText("Claude, ChatGPT and others", RType.meta, c.inkMeta, maxLines = 1)
-                }
-                dev.reins.android.ui.settings.HelpIcon(help, "AI apps") { help = it }
+    // Next (Pair and join 01): the address an AI app pastes, a computer's Scan or Type, and an MCP server.
+    SectionHeader("AI app", glyph = Glyph.Link, quiet = true, trailing = { dev.reins.android.ui.settings.HelpIcon(help, "AI apps") { help = it } })
+    dev.reins.android.design.HelpText(
+        "In Claude.ai, ChatGPT or another AI app, add a custom connector (MCP) and paste this address. It then asks you here before it reads or sends anything.",
+        help,
+        Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp),
+    )
+    PaneGroup(Modifier.testTag("connectAi")) {
+        if (mcpUrl != null) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 14.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RText(mcpUrl.removePrefix("https://"), RType.mono(14f), c.ink, Modifier.weight(1f), maxLines = 1, ltr = true)
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape).background(c.paperRaised).border(1.dp, c.rule, CircleShape)
+                        .pressable(shape = CircleShape, label = "Copy MCP address", onClick = onCopy).testTag("copyMcpUrl"),
+                    contentAlignment = Alignment.Center,
+                ) { GlyphIcon(if (copied) Glyph.Check else Glyph.Copy, c.ink, size = 18.dp) }
             }
-            dev.reins.android.design.HelpText(
-                "In Claude.ai, ChatGPT or another AI app, add a custom connector (MCP) and paste this address. It then asks you here before it reads or sends anything.",
-                help,
-                Modifier.padding(top = 10.dp),
-            )
-            if (mcpUrl != null) {
-                Row(
-                    Modifier
-                        .padding(top = 12.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(c.paperSunken)
-                        .pressable(shape = RoundedCornerShape(14.dp), label = "Copy MCP address", onClick = onCopy)
-                        .padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
-                        .testTag("copyMcpUrl"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RText(mcpUrl.removePrefix("https://"), RType.value, c.ink, Modifier.weight(1f), maxLines = 1, ltr = true)
-                    Spacer(Modifier.width(10.dp))
-                    GlyphIcon(if (copied) Glyph.Check else Glyph.Copy, c.violet, size = 16.dp)
-                    Spacer(Modifier.width(6.dp))
-                    RText(if (copied) "Copied" else "Copy", RType.sans(14f, FontWeight.SemiBold), c.violet, maxLines = 1)
-                }
-            }
-        }
-        Column(Modifier.fillMaxWidth().hairlineBelow(c.rule).padding(vertical = 14.dp).testTag("connectComputerCard")) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                KindTile(Field.Pair, Glyph.Laptop, size = 36.dp)
-                Column(Modifier.weight(1f)) {
-                    RText("Computer", RType.row, c.ink, maxLines = 1)
-                    Row {
-                        RText("Desktop app or ", RType.meta, c.inkMeta, maxLines = 1)
-                        RText("reins login", RType.mono(12.5f), c.inkMeta, maxLines = 1, ltr = true)
-                    }
-                }
-            }
-            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SignalButton("Scan QR code", Modifier.weight(1f).testTag("sheetScanQr"), size = ButtonSize.Small, glyph = Glyph.QrCode, onClick = onScan)
-                SignalButton("Type code", Modifier.testTag("sheetTypeCode"), style = ButtonStyle.Soft, size = ButtonSize.Small, onClick = onType)
-            }
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onAddMcp)
-                .testTag("addMcp")
-                .padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BrandTile("mcp", size = 36.dp)
-            Column(Modifier.weight(1f)) {
-                RText("MCP server", RType.row, c.ink, maxLines = 1)
-                RText("Its tools, through Reins", RType.meta, c.inkMeta, maxLines = 1)
-            }
-            GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 16.dp)
         }
     }
+    SectionHeader("Computer", glyph = Glyph.Laptop, quiet = true)
+    PaneGroup(Modifier.testTag("connectComputerCard")) {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SignalButton("Scan", Modifier.weight(1f).testTag("sheetScanQr"), size = ButtonSize.Small, glyph = Glyph.QrCode, onClick = onScan)
+            SignalButton("Type", Modifier.weight(1f).testTag("sheetTypeCode"), style = ButtonStyle.Soft, size = ButtonSize.Small, glyph = Glyph.Pencil, onClick = onType)
+        }
+    }
+    SectionHeader("MCP server", glyph = Glyph.Server, quiet = true)
+    PaneGroup {
+        PaneRow("Add a server", leading = { BrandTile("mcp", size = 32.dp) }, chevron = true, first = true, tag = "addMcp", onClick = onAddMcp)
+    }
+    Spacer(Modifier.height(8.dp))
 }

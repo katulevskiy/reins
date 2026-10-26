@@ -173,6 +173,7 @@ fun ActivityDetailScreen(
                     DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd))
                 },
                 below = {
+                  androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
                     AskedSections(entry, includeCommand = false)
                     if (entry.grantId != null || entry.autopilot != null) {
                         SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant) }
@@ -185,6 +186,7 @@ fun ActivityDetailScreen(
                             Modifier.padding(top = 18.dp),
                         )
                     }
+                  }
                 },
                 footer = dock,
                 label = entry.label,
@@ -201,8 +203,11 @@ fun ActivityDetailScreen(
                         EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
                     } else {
                         DecidedHeader(entry)
-                        AskedSections(entry)
-                        Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
+                        // Activity 06: the facts in raised groups, as on the boards.
+                        androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
+                            AskedSections(entry)
+                            Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
+                        }
                         Spacer(Modifier.height(if (dock != null) 120.dp else 32.dp))
                     }
                 }
@@ -410,23 +415,24 @@ fun answeredIn(askedAt: Long, decidedAt: Long): String {
 private fun OutcomeLine(entry: ActivityEntry) {
     val c = LocalColors.current
     val tint = when (outcomeOf(entry)) {
-        Outcome.Auto, Outcome.Overnight, Outcome.Grant, Outcome.Permission -> c.accent
+        Outcome.Auto, Outcome.Grant, Outcome.Permission -> c.violet
+        Outcome.Overnight -> c.kindNight
         Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
         Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld -> c.warning
         Outcome.Approved -> c.ink2
     }
-    Row(Modifier.testTag("entryOutcome"),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (entry.decidedBy.isNotEmpty()) {
-            dev.reins.android.design.GlyphIcon(when (entry.decidedBy) {
-                "overnight" -> Glyph.Moon
-                "lockdown" -> Glyph.Lock
-                "account_permission", "temporary_permission" -> Glyph.Key
-                "autopilot", "bypass" -> Glyph.Autopilot
-                else -> Glyph.Shield
-            }, tint, size = 16.dp)
-        }
-        RText(outcomeLine(entry), RType.sans(14.5f, FontWeight.Medium), tint, Modifier.testTag("entryAutopilotTitle"))
+    // Activity 06: how it ended as a pill in its colour, with who decided as its mark.
+    val glyph = when (entry.decidedBy) {
+        "overnight" -> Glyph.Moon
+        "lockdown" -> Glyph.Block
+        "account_permission", "temporary_permission" -> Glyph.Key
+        "autopilot" -> Glyph.AutopilotFilled
+        "bypass" -> Glyph.Bypass
+        "" -> if (entry.grantId != null) Glyph.Timer else null
+        else -> Glyph.Shield
+    }
+    Box(Modifier.testTag("entryOutcome")) {
+        dev.reins.android.design.NextPill(outcomeLine(entry), if (tint == c.ink2) null else tint, glyph = glyph, textTag = "entryAutopilotTitle")
     }
 }
 

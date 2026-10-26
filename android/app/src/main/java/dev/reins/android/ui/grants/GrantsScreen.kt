@@ -1,5 +1,9 @@
 package dev.reins.android.ui.grants
 
+import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.design.MiniLogo
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,30 +62,54 @@ import kotlinx.coroutines.launch
 // The grants' part of Trust (Reins Signal, iOS-Trust 01 and 05): the grants that run, as hairline rows with their time
 // left, and the "Ended" page to resume or delete the rest. What the Grants tab did, moved; its lambdas unchanged.
 
-/** The grants that run, soonest end first; "Ended" opens the ones that ended. */
+/**
+ * The grants that run, soonest end first (Next, Trust 01): a section header with how many and a + for a new one, then
+ * a group of rows and, last, "Ended" with how many, which opens the ones that ended.
+ */
 @Composable
-fun GrantsSection(state: AppState, onOpen: (String) -> Unit, onEnded: () -> Unit) {
+fun GrantsSection(state: AppState, onOpen: (String) -> Unit, onEnded: () -> Unit, onNew: () -> Unit = {}) {
     val c = LocalColors.current
     val grants by state.grants.collectAsStateWithLifecycle()
     val running = remember(grants) { grants.filter { it.active }.sortedBy { it.expiresAt ?: Long.MAX_VALUE } }
     val ended = remember(grants) { grants.count { !it.active } }
-    TrustLabel("Active grants · ${running.size}", Modifier.padding(top = 26.dp, bottom = 2.dp)) {
-        if (ended > 0) LabelLink("Ended", "expiredHeader", onClick = onEnded)
+    dev.reins.android.design.SectionHeader(
+        "Grants",
+        glyph = Glyph.Key,
+        count = running.size.toString(),
+        onAdd = onNew,
+        addLabel = "New grant",
+        addTag = "newGrant",
+    )
+    dev.reins.android.design.PaneGroup {
+        if (running.isEmpty()) {
+            RText(
+                if (grants.isEmpty()) "No grants yet." else "None running.",
+                RType.sans(15f),
+                c.inkMeta,
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 16.dp).testTag("noGrants"),
+            )
+        }
+        running.forEachIndexed { i, grant -> GrantRow(grant, Modifier.testTag("grant:${grant.id}"), first = i == 0) { onOpen(grant.id) } }
+        if (ended > 0) {
+            dev.reins.android.design.PaneRow(
+                "Ended",
+                leading = { dev.reins.android.design.RowTile(Glyph.TimerOff) },
+                value = ended.toString(),
+                chevron = true,
+                first = running.isEmpty() && false,
+                tag = "expiredHeader",
+                onClick = onEnded,
+            )
+        }
     }
-    if (running.isEmpty()) {
-        RText(
-            if (grants.isEmpty()) "No grants yet." else "None running.",
-            RType.meta,
-            c.inkMeta,
-            Modifier.fillMaxWidth().hairlineBelow(c.rule).padding(vertical = 14.dp).testTag("noGrants"),
-        )
-    }
-    running.forEach { grant -> GrantRow(grant, Modifier.testTag("grant:${grant.id}")) { onOpen(grant.id) } }
 }
 
-/** A running grant: its service, what it allows, who and how much is used (or "ends soon"), and its time left. */
+/**
+ * A running grant (Next, Trust 01): the service's tile with the AI's mark on its corner, what it allows, who and how
+ * much it is used (uses as bars when capped), and its time left as a ring; the ring turns red when it ends soon.
+ */
 @Composable
-fun GrantRow(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun GrantRow(grant: GrantView, modifier: Modifier = Modifier, first: Boolean = true, onClick: () -> Unit) {
     val c = LocalColors.current
     // A grant without an end has nothing to count down; the clock lives in this row only.
     val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
@@ -90,15 +118,19 @@ fun GrantRow(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Uni
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .hairlineBelow(c.rule)
+            .heightIn(min = 60.dp)
+            .then(if (!first) Modifier.drawBehind { drawLine(c.rule, androidx.compose.ui.geometry.Offset(62.dp.toPx(), 0f), androidx.compose.ui.geometry.Offset(size.width, 0f), 1.dp.toPx()) } else Modifier)
             .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
             .semantics(mergeDescendants = true) {}
-            .padding(vertical = 9.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BrandTile(grant.service.ifBlank { "gmail" })
+        MiniLogo(
+            grant.service.ifBlank { "gmail" },
+            face = { size -> ConnectionIcon(grant.connectionId, grant.connectionLabel, size = size) },
+            ring = c.paperRaised,
+        )
         Column(Modifier.weight(1f)) {
             RText(untrusted(grant.summary), RType.row, c.ink, maxLines = 2)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -107,6 +139,13 @@ fun GrantRow(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Uni
                     RText("ends soon", RType.meta, c.danger, Modifier.testTag("endsSoon"), maxLines = 1)
                 } else {
                     RText(grantUseLine(grant), RType.meta, c.inkMeta, Modifier.testTag("uses"), maxLines = 1)
+                }
+            }
+            val max = grant.maxUses?.toInt()
+            if (max != null && max > 1) {
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    UseDots(grant.uses.toInt(), max)
+                    RText("${grant.uses}/$max", RType.sans(12.5f, FontWeight.Medium), c.inkMeta, maxLines = 1)
                 }
             }
         }
@@ -142,7 +181,7 @@ fun EndedGrantsScreen(
         ) {
             item(key = "back") {
                 Box(Modifier.windowInsetsPadding(HeaderInsets).padding(top = 8.dp, start = 0.dp)) {
-                    RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+                    dev.reins.android.design.BackArrow(onBack, Modifier)
                 }
             }
             item(key = "title") {

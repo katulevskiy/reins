@@ -76,8 +76,8 @@ class VaultPasskeyFlowTest : FlowHarness() {
     @Test
     fun aNewAccountAddsAPasskeyThenRecordsTheCodeThenSetsUp() {
         signUpWithoutPasskey()
-        assertTrue(showsText("Protect your vault with a passkey"))
-        assertTrue(showsText("It unlocks your vault on a new phone", substring = true))
+        assertTrue(showsText("Passkey"))
+        assertTrue(showsText("Opens your vault on a new phone", substring = true))
         assertFalse(has("recoveryRecorded"))
         assertEquals("Nothing polls before the recovery code is recorded", 0, core.syncStarts.get())
 

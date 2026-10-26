@@ -38,11 +38,12 @@ class DevicesFlowTest : FlowHarness() {
     @Test
     fun thisPhoneTheOthersAndTheComputersAreListed() {
         openDevices()
-        awaitText("Your approval device", substring = true)
-        assertTrue(showsText("Key for reins vault add: 4821-9930-1274", substring = true))
+        // This phone: Approves, and its key for reins vault add.
+        awaitText("Approves")
+        assertTrue(showsText("4821-9930-1274", substring = true))
         assertTrue(has("device:d-old") && has("device:d-web"))
         assertFalse("this phone is not offered for signing out", has("signOutDevice:d-this"))
-        assertTrue(showsText("Android · last seen", substring = true))
+        assertTrue(showsText("Android · ", substring = true))
         assertTrue(has("deviceComputer:d1"))
         assertFalse("an AI app is not a computer", has("deviceComputer:c1"))
         tap("deviceComputer:d1")

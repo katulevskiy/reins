@@ -175,6 +175,13 @@ class AppFlowTest {
         rule.waitForIdle()
     }
 
+    /** A service's row on Connections: the connected ones are in the Services group, the rest behind its +. */
+    private fun openService(id: String) {
+        rule.waitUntil(10_000) { has("addService") }
+        if (!has("service:$id")) tap("addService")
+        tap("service:$id")
+    }
+
     private fun has(tag: String): Boolean {
         settle()
         return rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
@@ -292,7 +299,7 @@ class AppFlowTest {
         rule.onNodeWithTag("signIn").assertIsNotEnabled()
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
-        rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        rule.onNodeWithTag("signIn").assertIsEnabled().performClick()
         skipSetup()
         awaitTag("noActivity")
         assertEquals(listOf("https://s.example.com", "me@example.com", "hunter2", null), core.logins.single())
@@ -316,11 +323,11 @@ class AppFlowTest {
         openSignIn()
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
-        rule.onNodeWithTag("signIn").performScrollTo().performClick()
+        rule.onNodeWithTag("signIn").performClick()
         awaitTag("totp")
         core.loginError = null
         rule.onNodeWithTag("totp").performTextReplacement("123456")
-        rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        rule.onNodeWithTag("signIn").assertIsEnabled().performClick()
         skipSetup()
         awaitTag("noActivity")
         assertEquals("123456", core.logins.last()[3])
@@ -333,7 +340,7 @@ class AppFlowTest {
         openSignIn()
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("nope")
-        rule.onNodeWithTag("signIn").performScrollTo().performClick()
+        rule.onNodeWithTag("signIn").performClick()
         awaitText("Wrong email, password or two-factor code.")
     }
 
@@ -349,8 +356,8 @@ class AppFlowTest {
         awaitTag("entry:1")
         // The waiting card says what it wants; the history says what was done.
         rule.onNodeWithTag("sentence:req1", useUnmergedTree = true).assertTextContains("Search Gmail", substring = true)
-        rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextEquals("Searched Gmail")
-        rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextEquals("Sent an email")
+        rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextContains(" searched Gmail", substring = true)
+        rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextContains(" sent an email", substring = true)
     }
 
     /** The number on a nav item, read from its (merged) text; null when there is none. */
@@ -834,10 +841,10 @@ class AppFlowTest {
         launch()
         openPairing("pair1")
         awaitTag("keyFingerprint")
-        rule.onNodeWithTag("keyFingerprint").assertTextContains("DESKTOP KEY")
+        rule.onNodeWithTag("keyFingerprint").assertTextContains("Desktop key")
         rule.onNodeWithTag("keyFingerprint").assertTextContains("4821 9930")
         rule.onNodeWithTag("keyFingerprint")
-            .assertTextContains("This computer's key must match. If it differs, deny.")
+            .assertTextContains("Same on your computer? If not, deny.")
         // It sits above the codes, so it is read before anything can be approved.
         val card = rule.onNodeWithTag("keyFingerprint").fetchSemanticsNode().boundsInRoot
         val codes = rule.onNodeWithTag("code:42").fetchSemanticsNode().boundsInRoot
@@ -1034,7 +1041,7 @@ class AppFlowTest {
         launch()
         awaitTag("pending:req21")
         rule.onNodeWithTag("sentence:req21", useUnmergedTree = true).assertTextContains("Clone and fetch with git", substring = true)
-        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Pushed with git")
+        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextContains(" pushed with git", substring = true)
         assertTrue(rule.onAllNodes(hasText("Reins desktop app on laptop", substring = true)).fetchSemanticsNodes().isNotEmpty())
         tap("entry:7")
         awaitTag("detailTitle")
@@ -1406,10 +1413,12 @@ class AppFlowTest {
     }
 
     @Test
-    fun withAnAiConnectedTheEmptyActivityHasNoConnectButtons() {
+    fun withAnAiConnectedTheEmptyActivityProposesTheComputer() {
+        // Next ("Activity with a wallpaper" 05b): the missing half takes the action slot.
         launch()
         awaitTag("noActivity")
-        assertFalse(has("emptyConnectComputer"))
+        assertFalse(has("emptyConnectAi"))
+        assertTrue(has("emptyConnectComputer"))
     }
 
     @Test
@@ -1516,7 +1525,7 @@ class AppFlowTest {
         tap("tabConnections")
         awaitTag("service:gmail")
         rule.onNodeWithText("2 accounts").assertExists()
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("account:me@gmail.com")
         awaitTag("account:work@gmail.com")
         awaitTag("addAccount")
@@ -1533,7 +1542,7 @@ class AppFlowTest {
         core.grants = listOf(TestData.grant("g1"), TestData.grant("gw").copy(account = "work@gmail.com"))
         launch()
         tap("tabConnections")
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("reconnect:work@gmail.com")
         assertFalse(has("reconnect:me@gmail.com"))
         // What happened, in amber (as on iOS); "Allow again" is only the button beside it.
@@ -1552,7 +1561,7 @@ class AppFlowTest {
         core.accounts = emptyList()
         launch()
         tap("tabConnections")
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("noAccounts")
         awaitTag("addAccount")
     }
@@ -1561,7 +1570,7 @@ class AppFlowTest {
     fun addingAGoogleAccountSaysWhatGoogleWillShow() {
         launch()
         tap("tabConnections")
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("googleSignInNote")
         // A short line; the way through Google's warning is behind its (?).
         awaitText("Google may warn you first")
@@ -1574,7 +1583,7 @@ class AppFlowTest {
     fun calendarSaysWhatGoogleWillShowToo() {
         launch()
         tap("tabConnections")
-        tap("service:gcalendar")
+        openService("gcalendar")
         awaitTag("googleSignInNote")
     }
 
@@ -1582,7 +1591,7 @@ class AppFlowTest {
     fun anAccountTheUserPickedIsConnectedThroughTheCore() {
         launch()
         tap("tabConnections")
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("addAccount")
         val container = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(container).connect("Work@Gmail.com") }
@@ -1597,8 +1606,12 @@ class AppFlowTest {
     fun everyIntegrationIsListedAndOpensItsOwnScreen() {
         launch()
         tap("tabConnections")
-        // Text messages are listed in the `full` build only (DistributionTest).
-        for (id in listOf("gmail", "gcalendar", "gcontacts", "telegram", "github", "device_calendar", "device_contacts", "vault")) {
+        // Text messages are listed in the `full` build only (DistributionTest). Connected ones are in the group, the
+        // rest behind the Services header's +.
+        awaitTag("service:gmail")
+        awaitTag("service:vault")
+        tap("addService")
+        for (id in listOf("gcalendar", "gcontacts", "telegram", "github", "device_calendar", "device_contacts")) {
             awaitTag("service:$id")
         }
         tap("service:telegram")
@@ -1610,7 +1623,7 @@ class AppFlowTest {
     fun aTelegramAccountSignsInWithPhoneCodeAndPassword() {
         launch()
         tap("tabConnections")
-        tap("service:telegram")
+        openService("telegram")
         awaitTag("phone")
         rule.onNodeWithTag("sendCode").assertIsNotEnabled()
         rule.onNodeWithTag("phone").performTextReplacement("+1 555 010 0100")
@@ -1633,7 +1646,7 @@ class AppFlowTest {
     fun aWrongTelegramCodeIsExplainedAndTheNumberCanBeChanged() {
         launch()
         tap("tabConnections")
-        tap("service:telegram")
+        openService("telegram")
         awaitTag("phone")
         rule.onNodeWithTag("phone").performTextReplacement("+15550100")
         tap("sendCode")
@@ -1649,7 +1662,7 @@ class AppFlowTest {
     fun aGithubTokenIsSentOnceAndTheFieldIsEmptiedAtOnce() {
         launch()
         tap("tabConnections")
-        tap("service:github")
+        openService("github")
         awaitTag("openGithub")
         awaitTag("openGithubClassic")
         awaitText("Chosen repositories")
@@ -1668,7 +1681,7 @@ class AppFlowTest {
     fun theVaultIsUnlockedWithTheMasterPasswordAndOnlyOnce() {
         launch()
         tap("tabConnections")
-        tap("service:vault")
+        openService("vault")
         awaitTag("secret")
         rule.onNodeWithTag("secret").performTextReplacement("correct horse")
         tap("connectSecret")
@@ -1683,7 +1696,7 @@ class AppFlowTest {
         core.serviceFailure = CoreException.Invalid("Wrong password")
         launch()
         tap("tabConnections")
-        tap("service:github")
+        openService("github")
         tap("pasteManually")
         awaitTag("secret")
         rule.onNodeWithTag("secret").performTextReplacement("ghp_bad")
@@ -1696,7 +1709,7 @@ class AppFlowTest {
     fun thePhonesOwnServicesConnectOnceAndroidAllowedThem() {
         launch()
         tap("tabConnections")
-        tap("service:device_contacts")
+        openService("device_contacts")
         awaitTag("allowDevice")
         val container = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "device_contacts").addDevice() }
@@ -1712,7 +1725,7 @@ class AppFlowTest {
         core.accounts = core.accounts + AccountView("telegram", "+15550100", 1_700_000_000)
         launch()
         tap("tabConnections")
-        tap("service:telegram")
+        openService("telegram")
         awaitTag("account:+15550100")
         tap("removeAccount:+15550100")
         awaitText("Remove +15550100?")
@@ -1935,7 +1948,7 @@ class AppFlowTest {
         )
         launch()
         awaitTag("entry:5")
-        rule.onNodeWithTag("entryTitle:5", useUnmergedTree = true).assertTextEquals("Deleted a GitHub repository")
+        rule.onNodeWithTag("entryTitle:5", useUnmergedTree = true).assertTextContains(" deleted a GitHub repository", substring = true)
         tap("entry:5")
         awaitTag("detailTitle")
         rule.onNodeWithTag("detailTitle").assertTextContains("Deleted a GitHub repository")

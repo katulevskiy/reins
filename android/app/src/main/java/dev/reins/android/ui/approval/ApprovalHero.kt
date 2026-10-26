@@ -94,6 +94,7 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.autopilot.verdictTint
 import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.IntegrationIcon
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ApprovalView
 import dev.reins.core.AskRuleView
@@ -153,9 +154,10 @@ internal fun Hero(
         askTag = if (view.ask != null) "askQuestion" else "what",
         closeGlyph = if (back) Glyph.ArrowBack else Glyph.Close,
         closeLabel = if (back) "Back" else "Close",
+        timer = { TimerPill(view) },
+        icon = { IntegrationIcon(sentence.provider, sentence.action, size = 26.dp, ring = field.fill(), field = field) },
         top = {
-            AskWho(untrusted(view.connectionLabel), host) { ConnectionIcon(view.connectionId, view.connectionLabel, size = 28.dp) }
-            TimerPill(view)
+            AskWho(untrusted(view.connectionLabel), host) { ConnectionIcon(view.connectionId, view.connectionLabel, size = 22.dp) }
         },
         verdict = { HeroVerdict(view, ui, viewModel, nav) },
         entered = entered,
@@ -180,8 +182,8 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
         nav.overlay = ApprovalOverlay.Autopilot
         feedback.play(Event.Open)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Every warning, each on its own line (see fieldWarnings).
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Every warning, each its own pill (see fieldWarnings).
         fieldWarnings(view, s, risk, nav.riskInFacts).forEach { w ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val isRisk = w.tag == "risk"
@@ -198,7 +200,7 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
             }
         }
         if (view.kind == ApprovalKind.GRANT) FieldVerdict("Nothing is shared now. Matches are answered for you.", Modifier.testTag("grantLine"))
-        if (heldByDanger(view)) return@Column
+        if (heldByDanger(view)) return@FlowRow
         when {
             s != null && s.judged && !s.floor -> {
                 val p = if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove
@@ -207,18 +209,19 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
                     Verdict.DENY -> "Autopilot would deny"
                     Verdict.ASK -> "Autopilot is unsure"
                 }
+                // Next: Autopilot's share as a pill ("⚡ 97%"); its words are what a screen reader hears.
                 FieldVerdict(
-                    "$words · ${AutopilotText.percent(p)}",
+                    if (s.verdict == Verdict.DENY) "Deny ${AutopilotText.percent(p)}" else AutopilotText.percent(p),
                     Modifier.testTag("suggestion"),
-                    glyph = if (s.verdict == Verdict.ASK) null else Glyph.Autopilot,
+                    glyph = if (s.verdict == Verdict.ASK) null else Glyph.AutopilotFilled,
                     ring = if (s.verdict == Verdict.ASK) p else null,
-                    chevron = true,
                     textTag = "suggestionHeadline",
+                    spoken = "$words · ${AutopilotText.percent(p)}",
                     onClick = openAutopilot,
                 )
             }
             s != null && s.floor && danger == null && alwaysAskReason(view) == null ->
-                FieldVerdict("Always asks", Modifier.testTag("suggestion"), glyph = Glyph.Lock, chevron = true, onClick = openAutopilot)
+                FieldVerdict("Always asks", Modifier.testTag("suggestion"), glyph = Glyph.Lock, onClick = openAutopilot)
             model != null && !AutopilotText.modelUsable(model) && s?.floor != true -> DownloadLine(ui, viewModel::downloadModel)
             else -> Unit
         }

@@ -153,12 +153,10 @@ internal fun ApprovalOverlays(view: ApprovalView, ui: ApprovalUi, viewModel: App
 @Composable
 private fun SheetHead(title: String, onClose: () -> Unit) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText(title, RType.sans(18f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
-        Box(
-            Modifier.size(44.dp).pressable(shape = CircleShape, label = "Close", onClick = onClose).semantics { contentDescription = "Close" }.testTag("closeOverlay"),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Close, null, Modifier.size(24.dp), tint = c.text) }
+    // Next: the display title (`--s 30`) and a round close button.
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        RText(title, RType.sheetTitle, c.ink, Modifier.weight(1f), maxLines = 1)
+        dev.reins.android.design.RoundIconButton(dev.reins.android.design.Glyph.Close, "Close", Modifier.testTag("closeOverlay"), onClick = onClose)
     }
 }
 
@@ -182,29 +180,24 @@ private fun RememberSheet(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
         onClose()
     }
     Column(Modifier.testTag("rememberSheet")) {
-        SheetHead("Remember for", onClose)
+        SheetHead("Remember", onClose)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            // Next (Approve 04): the lengths as rows, each with its glyph, and Until I revoke last, in red.
             FactGroup(
                 rows = sheetLifetimes(view).map { kind ->
-                    { LifetimeOption(kind, pending == kind && draft.allMail == null, draft, viewModel) { pending = kind } }
+                    @Composable { LifetimeOption(kind, pending == kind && draft.allMail == null, draft, viewModel) { pending = kind } }
+                } + if (offersUntilRevoked(view)) {
+                    listOf<@Composable () -> Unit> {
+                        OptionRow(forever && draft.allMail == null, "lifetime:UNTIL_REVOKED", danger = true, onSelect = { pending = LifetimeKind.UNTIL_REVOKED }) {
+                            dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.Infinity, c.danger, size = 18.dp)
+                            Spacer(Modifier.width(12.dp))
+                            RText("Until I revoke", RType.sans(16f, FontWeight.Medium), c.danger, Modifier.weight(1f), maxLines = 1)
+                        }
+                    }
+                } else {
+                    emptyList()
                 },
             )
-            if (offersUntilRevoked(view)) {
-                Spacer(Modifier.height(12.dp))
-                FactGroup(
-                    borderTint = c.danger.copy(alpha = 0.3f),
-                    rows = listOf {
-                        OptionRow(forever && draft.allMail == null, "lifetime:UNTIL_REVOKED", danger = true, onSelect = { pending = LifetimeKind.UNTIL_REVOKED }) {
-                            Icon(Icons.Rounded.AllInclusive, null, Modifier.size(20.dp), tint = c.danger)
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                RText("Until I revoke", RType.sans(15.5f, FontWeight.SemiBold), c.danger, maxLines = 1)
-                                RText("Never expires", RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
-                            }
-                        }
-                    },
-                )
-            }
             AnimatedVisibility(forever, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                 Row(
                     Modifier
@@ -285,7 +278,7 @@ private fun OptionRow(
                 onSelect()
                 feedback.play(Event.Selection)
             }
-            .padding(start = 18.dp, end = 16.dp, top = 10.dp, bottom = 10.dp)
+            .padding(top = 10.dp, bottom = 10.dp)
             .testTag(tag),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -298,10 +291,8 @@ private fun OptionRow(
 @Composable
 private fun Radio(on: Boolean, tint: Color) {
     val c = LocalColors.current
-    Box(
-        Modifier.size(22.dp).clip(CircleShape).border(2.dp, if (on) tint else (if (c.dark) Color(0xFF4A4A52) else c.tertiary), CircleShape),
-        contentAlignment = Alignment.Center,
-    ) { if (on) Box(Modifier.size(11.dp).clip(CircleShape).background(tint)) }
+    // Next (`.rad`): a 7 dp ring in the tint when chosen, a faint 1.5 dp ring when not.
+    Box(Modifier.size(22.dp).clip(CircleShape).border(if (on) 7.dp else 1.5.dp, if (on) tint else c.inkFaint, CircleShape))
 }
 
 @Composable
@@ -315,7 +306,16 @@ private fun LifetimeOption(kind: LifetimeKind, selected: Boolean, draft: Approva
             LifetimeKind.USES -> "Number of uses"
             else -> kind.label
         }
-        RText(title, RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
+        dev.reins.android.design.GlyphIcon(
+            when (kind) {
+                LifetimeKind.USES -> dev.reins.android.design.Glyph.Token
+                else -> dev.reins.android.design.Glyph.Timer
+            },
+            c.inkMeta,
+            size = 18.dp,
+        )
+        Spacer(Modifier.width(12.dp))
+        RText(title, RType.sans(16f, FontWeight.Medium), c.ink, Modifier.weight(1f), maxLines = 1)
         when (kind) {
             LifetimeKind.CUSTOM -> {
                 Stepper(draft.customAmount, 1, draft.customUnit.max, "custom") { n -> viewModel.edit { it.copy(customAmount = n) }; onSelect() }
@@ -402,8 +402,8 @@ private fun MoreToggle(open: Boolean, onToggle: () -> Unit) {
             .testTag("moreToggle"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText("What it covers", RType.sans(15f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
-        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp).rotate(turn), tint = c.accent)
+        RText("Covers", RType.section, c.ink2, Modifier.weight(1f), maxLines = 1)
+        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp).rotate(turn), tint = c.ink2)
     }
 }
 
@@ -625,66 +625,68 @@ private fun AutopilotSheet(s: SuggestionView, onClose: () -> Unit, onSettings: (
     val tint = if (s.judged && !s.floor) verdictTint(s.verdict, c) else c.secondary
     val p = if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove
     Column(Modifier.testTag("suggestionDetail")) {
-        SheetHead("Autopilot", onClose)
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)) {
+        // Next (Approve 05): the verdict is the title: its glyph, its word and how likely, in its colour.
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             if (s.judged && !s.floor) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    RText(verdictLabel(s.verdict), RType.sans(30f, FontWeight.SemiBold), tint, maxLines = 1)
-                    Spacer(Modifier.width(8.dp))
-                    RText(AutopilotText.percent(p), RType.mono(24f, FontWeight.SemiBold), tint, Modifier.padding(bottom = 2.dp), maxLines = 1)
-                }
+                dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.AutopilotFilled, tint, size = 24.dp)
+                Spacer(Modifier.width(8.dp))
+                RText(verdictLabel(s.verdict), RType.display(36f), tint, Modifier.weight(1f), maxLines = 1)
+                RText(AutopilotText.percent(p), RType.display(36f), tint, maxLines = 1)
             } else {
-                RText(if (s.floor) "Always asked" else "Not scored", RType.sans(26f, FontWeight.SemiBold), tint, maxLines = 1)
+                RText(if (s.floor) "Always asked" else "Not scored", RType.display(36f), tint, Modifier.weight(1f), maxLines = 1)
             }
+            Spacer(Modifier.width(12.dp))
+            dev.reins.android.design.RoundIconButton(dev.reins.android.design.Glyph.Close, "Close", Modifier.testTag("closeOverlay"), onClick = onClose)
+        }
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             if (s.reason.isNotBlank()) {
-                RText(untrusted(s.reason), RType.sans(14.5f, lineHeight = 20f), c.secondary, Modifier.padding(top = 4.dp), maxLines = 3)
+                RText(untrusted(s.reason), RType.sans(14.5f, lineHeight = 20f), c.ink2, Modifier.padding(horizontal = 20.dp), maxLines = 3)
             }
             if (s.judged) {
-                Column(Modifier.padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Likelihood("Approve", s.pApprove, c.success)
-                    Likelihood("Deny", s.pDeny, c.danger)
-                    Likelihood("Confidence", s.confidence, c.accent)
+                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Likelihood("Approve", s.pApprove, c.success, dev.reins.android.design.Glyph.Check)
+                    Likelihood("Deny", s.pDeny, c.danger, dev.reins.android.design.Glyph.Close)
+                    Likelihood("Sure", s.confidence, c.violetFill, dev.reins.android.design.Glyph.ShieldCheck)
                 }
             }
             if (s.neighbours.isNotEmpty()) {
-                RText(
-                    "YOUR PAST DECISIONS",
-                    RType.sans(12f, FontWeight.SemiBold).copy(letterSpacing = 1.sp),
-                    c.tertiary,
-                    Modifier.padding(top = 24.dp, bottom = 4.dp),
-                )
-                s.neighbours.take(4).forEachIndexed { i, n -> NeighbourRow(n, Modifier.testTag("neighbour:$i")) }
+                dev.reins.android.design.SectionHeader("Similar", glyph = dev.reins.android.design.Glyph.Activity)
+                FactGroup(rows = s.neighbours.take(4).mapIndexed { i, n -> @Composable { NeighbourRow(n, Modifier.testTag("neighbour:$i")) } })
             }
             AutopilotText.suggestionNotes(s).forEach { note ->
-                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Rounded.Info, null, Modifier.size(16.dp), tint = c.secondary)
+                Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp), verticalAlignment = Alignment.Top) {
+                    dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.Info, c.ink2, size = 16.dp)
                     Spacer(Modifier.width(8.dp))
-                    RText(note, RType.sans(13.5f, lineHeight = 18f), c.secondary)
+                    RText(note, RType.sans(13.5f, lineHeight = 18f), c.ink2)
                 }
             }
-            Box(Modifier.padding(top = 14.dp).fillMaxWidth().height(1.dp).background(c.hairline))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .pressable(shape = RoundedCornerShape(8.dp), onClick = onSettings)
-                    .padding(vertical = 14.dp)
-                    .testTag("autopilotSettings"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RText("Autopilot settings", RType.sans(15f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
-                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.accent)
-            }
+            FactGroup(
+                Modifier.padding(top = 12.dp),
+                rows = listOf {
+                    dev.reins.android.design.PaneRow(
+                        "Autopilot",
+                        leading = { dev.reins.android.design.RowTile(dev.reins.android.design.Glyph.AutopilotFilled, tint = c.violet) },
+                        chevron = true,
+                        first = true,
+                        flat = true,
+                        tag = "autopilotSettings",
+                        onClick = onSettings,
+                    )
+                },
+            )
         }
     }
 }
 
 @Composable
-private fun Likelihood(label: String, p: Float, color: Color) {
+private fun Likelihood(label: String, p: Float, color: Color, glyph: dev.reins.android.design.Glyph) {
     val c = LocalColors.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        RText(label, RType.sans(14f, FontWeight.Medium), c.secondary, Modifier.width(96.dp), maxLines = 1)
+        dev.reins.android.design.GlyphIcon(glyph, color, size = 16.dp)
+        Spacer(Modifier.width(6.dp))
+        RText(label, RType.sans(15f, FontWeight.SemiBold), c.ink, Modifier.width(74.dp), maxLines = 1)
         MeterBar(p, color, Modifier.weight(1f))
-        RText(AutopilotText.percent(p), RType.mono(14f, FontWeight.Medium), c.text, Modifier.width(48.dp), maxLines = 1, align = androidx.compose.ui.text.style.TextAlign.End)
+        RText(AutopilotText.percent(p), RType.mono(12.5f), c.ink2, Modifier.width(48.dp), maxLines = 1, align = androidx.compose.ui.text.style.TextAlign.End)
     }
 }
 
