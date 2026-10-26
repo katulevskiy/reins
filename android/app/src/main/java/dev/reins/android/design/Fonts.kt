@@ -5,7 +5,9 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.Typeface
+import androidx.compose.ui.text.font.AndroidFont
+import androidx.compose.ui.text.font.FontLoadingStrategy
+import androidx.compose.ui.text.font.FontVariation
 import android.graphics.fonts.Font as PlatformFont
 import android.graphics.fonts.FontFamily as PlatformFamily
 import android.graphics.fonts.FontStyle as PlatformStyle
@@ -30,20 +32,24 @@ object Fonts {
     private const val GEOLOGICA = "fonts/Geologica-Medium-Cyrillic.ttf"
 
     /**
-     * Sora with Geologica as its fallback: one platform typeface whose first family is Sora's three weights and whose
-     * custom fallback is Geologica, so a Cyrillic letter is drawn in Geologica inside the same line as Sora. Compose
-     * asks the platform for each weight of it. Plain Sora where the platform cannot build the chain.
+     * Sora with Geologica as its fallback: for each weight, a platform typeface whose first family is that Sora and
+     * whose custom fallback is Geologica, so a Cyrillic letter is drawn in Geologica inside the same line as Sora.
+     * Plain Sora where the platform cannot build the chain.
      */
     val sans: FontFamily by lazy {
         runCatching {
             val assets = app.assets
-            val sora = SORA.drop(1).fold(PlatformFamily.Builder(platformFont(SORA[0]))) { b, w -> b.addFont(platformFont(w)) }.build()
             val geologica = PlatformFamily.Builder(PlatformFont.Builder(assets, GEOLOGICA).setWeight(500).build()).build()
-            val typeface = android.graphics.Typeface.CustomFallbackBuilder(sora)
-                .addCustomFallback(geologica)
-                .setStyle(PlatformStyle(PlatformStyle.FONT_WEIGHT_NORMAL, PlatformStyle.FONT_SLANT_UPRIGHT))
-                .build()
-            FontFamily(Typeface(typeface))
+            FontFamily(
+                SORA.map { w ->
+                    val sora = PlatformFamily.Builder(platformFont(w)).build()
+                    val typeface = android.graphics.Typeface.CustomFallbackBuilder(sora)
+                        .addCustomFallback(geologica)
+                        .setStyle(PlatformStyle(w.first.weight, PlatformStyle.FONT_SLANT_UPRIGHT))
+                        .build()
+                    LoadedFont(typeface, w.first)
+                },
+            )
         }.getOrElse { soraOnly }
     }
 
@@ -74,5 +80,17 @@ object Fonts {
         for (weight in listOf(FontWeight.Normal, FontWeight.Medium)) {
             runCatching { resolver.resolve(mono, weight) }
         }
+    }
+}
+
+/** A font whose platform typeface is already built (Sora with its Cyrillic fallback, at one weight). */
+private class LoadedFont(val typeface: android.graphics.Typeface, override val weight: FontWeight) :
+    AndroidFont(FontLoadingStrategy.Blocking, Loader, FontVariation.Settings()) {
+    override val style: FontStyle = FontStyle.Normal
+
+    private object Loader : AndroidFont.TypefaceLoader {
+        override fun loadBlocking(context: Context, font: AndroidFont): android.graphics.Typeface = (font as LoadedFont).typeface
+
+        override suspend fun awaitLoad(context: Context, font: AndroidFont): android.graphics.Typeface = (font as LoadedFont).typeface
     }
 }

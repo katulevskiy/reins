@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -146,7 +147,8 @@ fun IntegrationIcon(
     val words = actionWords(provider, action)
     Box(modifier.size(size).semantics { contentDescription = words }.testTag("integrationIcon:$provider:$action")) {
         Box(
-            Modifier.size(size).clip(CircleShape).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.08f), CircleShape),
+            // Next: a white tile with rounded corners (11 on 36), ringed faintly, the same in both themes.
+            Modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.08f), RoundedCornerShape(size * 0.3f)),
             contentAlignment = Alignment.Center,
         ) {
             if (logo != null) {
@@ -159,7 +161,7 @@ fun IntegrationIcon(
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = size * 0.1f, y = size * 0.1f)
+                .offset(x = size * 0.14f + 2.dp, y = size * 0.14f + 2.dp)
                 .size(badge + 4.dp)
                 .clip(CircleShape)
                 .background(ring)

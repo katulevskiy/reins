@@ -231,7 +231,12 @@ private fun SignedInContent(
     var covered by remember { mutableStateOf(false) }
     // The mode menu's Overnight and Bypass open their hold sheets over everything.
     var timedSheet by remember { mutableStateOf<AutopilotMode?>(null) }
-    LaunchedEffect(route, sheet) { timedSheet = null }
+    // The mode chip's one sheet.
+    var modeSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(route, sheet) {
+        timedSheet = null
+        modeSheet = false
+    }
     BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
     // Back on another tab's root goes to Activity first, then leaves the app.
     BackHandler(enabled = app.stack.isEmpty() && app.tab != Tab.Activity && !setup) { app.selectTab(Tab.Activity) }
@@ -242,7 +247,7 @@ private fun SignedInContent(
             if (setup && route == null) {
                 SetupScreen(app, container, autopilot, serverUrl)
             } else if (route == null) {
-                val bar = !covered && timedSheet == null
+                val bar = !covered && timedSheet == null && !modeSheet
                 Column(Modifier.fillMaxSize()) {
                     Box(
                         Modifier
@@ -250,7 +255,7 @@ private fun SignedInContent(
                             .fillMaxWidth()
                             .then(if (bar) Modifier.consumeWindowInsets(WindowInsets.navigationBars) else Modifier),
                     ) {
-                        TabContent(container, app, authenticator, serverUrl, autopilot, settings, mcp, notice, onCovered = { covered = it }, onTimed = { timedSheet = it })
+                        TabContent(container, app, authenticator, serverUrl, autopilot, settings, mcp, notice, onCovered = { covered = it }, onModeSheet = { modeSheet = true })
                         // Above the tab bar, and never while an approval sheet is up.
                         container.updates?.let {
                             UpdatePromptHost(it, allowed = sheet == null && bar, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
@@ -263,6 +268,16 @@ private fun SignedInContent(
             }
             val apSettings by state.autopilot.collectAsStateWithLifecycle()
             val apUi by autopilot.ui.collectAsStateWithLifecycle()
+            dev.reins.android.ui.main.ModeSheet(
+                open = modeSheet,
+                settings = apSettings,
+                modelReady = AutopilotText.modelUsable(apUi.model ?: apSettings?.model),
+                onSet = { mode -> autopilot.setMode(mode) },
+                onTimed = { timedSheet = it },
+                onStop = { mode -> if (mode == AutopilotMode.BYPASS) autopilot.stopBypass() else autopilot.stopOvernight() },
+                onSettings = { app.selectTab(Tab.Trust) },
+                onClose = { modeSheet = false },
+            )
             BypassSheets(
                 timedSheet == AutopilotMode.BYPASS,
                 who = null,
@@ -326,7 +341,7 @@ private fun TabContent(
     mcp: McpViewModel,
     notice: String?,
     onCovered: (Boolean) -> Unit,
-    onTimed: (AutopilotMode) -> Unit,
+    onModeSheet: () -> Unit,
 ) {
     val state = container.state
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -339,15 +354,7 @@ private fun TabContent(
             onOpenEntry = { app.open(Route.ActivityDetail(it)) },
             modeChip = {
                 val apSettings by state.autopilot.collectAsStateWithLifecycle()
-                val apUi by autopilot.ui.collectAsStateWithLifecycle()
-                HeaderModeChip(
-                    apSettings,
-                    modelReady = AutopilotText.modelUsable(apUi.model ?: apSettings?.model),
-                    onSet = { mode -> autopilot.setMode(mode) },
-                    onTimed = onTimed,
-                    onStop = { mode -> if (mode == AutopilotMode.BYPASS) autopilot.stopBypass() else autopilot.stopOvernight() },
-                    onSettings = { app.selectTab(Tab.Trust) },
-                )
+                HeaderModeChip(apSettings, onOpen = onModeSheet)
             },
             onAnswerBurst = { burst, approve ->
                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)

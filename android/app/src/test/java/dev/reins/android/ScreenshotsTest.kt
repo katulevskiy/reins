@@ -2804,9 +2804,11 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dayHistory()
         launch()
         top()
-        await("activitySearch")
+        await("openSearch")
         // The list at rest first: what it shows counts as seen.
         frames()
+        tap("openSearch")
+        await("activitySearch")
         rule.onNodeWithTag("activitySearch").performTextInput("invoice")
         await("searchResults")
         tap("filters")

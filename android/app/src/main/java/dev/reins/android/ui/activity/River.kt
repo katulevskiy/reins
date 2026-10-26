@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
@@ -78,22 +79,27 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import kotlin.math.roundToInt
 
-// The river (Reins Signal, iOS-Activity 01, 02 and 04): what was decided, as paper rows. A kind tile, what it did,
-// who and when, and how it ended; the row the last answer folded into glows in its kind colour for 4 s.
+// The river (Reins Next, Activity and "Activity with a wallpaper"): what was decided, by day, each day a pane (frosted
+// over the wallpaper). A row is the integration's tile with what it did on its corner, who did what in one sentence,
+// and on the right when and how it ended; the row the last answer folded into glows in its kind colour for 4 s.
 
-/** A day's label in mono capitals, with its count at the end on Today ("12 asked · 9 by Autopilot"). */
+/** A label over search results, as the top of its pane: the day and how many were found. */
 @Composable
 fun DayLabel(label: String, count: String?, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    Row(modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 22.dp, bottom = 6.dp).semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
-        LabelText(label, c.inkMeta, Modifier.weight(1f))
-        count?.let { RText(it, RType.meta, c.inkMeta, maxLines = 1) }
+    Row(
+        modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp).semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LabelText(label, c.ink2, Modifier.weight(1f))
+        count?.let { RText(it, RType.section, c.ink2, maxLines = 1) }
     }
 }
 
 /**
- * A day of the river that opens and closes: its label in mono capitals, its count and what went wrong ("14 · 2
- * denied"), and a chevron that turns as it opens. A heading that says whether it is open.
+ * A day of the river that opens and closes, as the top of its pane (the whole pane while closed): the day, then what
+ * it holds (approved, decided by Autopilot, denied, needs attention, each with its glyph and colour) and a chevron
+ * that turns as it opens. A heading that says whether it is open and what it holds.
  */
 @Composable
 fun DayHeader(day: DayCount, label: String, open: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
@@ -110,20 +116,63 @@ fun DayHeader(day: DayCount, label: String, open: Boolean, modifier: Modifier = 
                 stateDescription = if (open) "Expanded" else "Collapsed"
             }
             .testTag("day:${day.day}")
-            .padding(start = 24.dp, end = 20.dp, top = 22.dp, bottom = 8.dp),
+            .padding(start = 14.dp, end = 12.dp, top = if (open) 12.dp else 14.dp, bottom = if (open) 4.dp else 14.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LabelText(label, if (open) c.inkMeta else c.ink2, Modifier.weight(1f))
-        RText(daySummary(day), RType.meta, c.inkMeta, Modifier.testTag("daySummary:${day.day}"), maxLines = 1)
-        GlyphIcon(Glyph.ChevronDown, c.inkFaint, size = 14.dp, modifier = Modifier.graphicsLayer { rotationZ = turn })
+        LabelText(label, c.ink2, Modifier.weight(1f))
+        DayCounts(day, Modifier.testTag("daySummary:${day.day}"))
+        GlyphIcon(Glyph.ChevronDown, c.inkMeta, size = 16.dp, modifier = Modifier.graphicsLayer { rotationZ = turn })
+    }
+}
+
+/** ✓ 7  ⚡ 2  ✕ 1  ! 1: what a day holds, each count in its colour with its glyph, tabular. Zeros are left out. */
+@Composable
+fun DayCounts(day: DayCount, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        @Composable
+        fun count(n: Int, glyph: Glyph, tint: Color) {
+            if (n <= 0) return
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                GlyphIcon(glyph, tint, size = 13.dp)
+                RText(n.toString(), RType.section.copy(fontFeatureSettings = "tnum"), tint, maxLines = 1)
+            }
+        }
+        count(day.approved, Glyph.Check, c.success)
+        count(day.auto, Glyph.AutopilotFilled, c.violet)
+        count(day.denied, Glyph.Close, c.danger)
+        count(day.failed, Glyph.CircleAlert, c.warning)
+    }
+}
+
+/** What a row says: who did what, the AI's own name first ("My ChatGPT read **2 emails**"). */
+internal fun rowSentence(label: String, text: String): String {
+    val who = untrusted(label).trim()
+    if (who.isEmpty()) return text
+    // "Read 3 emails" becomes "read 3 emails"; a word in capitals ("SSH key") keeps them.
+    val lower = if (text.length > 1 && text[0].isUpperCase() && text[1].isLowerCase()) text[0].lowercaseChar() + text.substring(1) else text
+    return "$who $lower"
+}
+
+/** When, at the end of a row: "now", "5m", "2h" today; the time of day before that. */
+fun compactTime(epochSeconds: Long, nowSeconds: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
+    val d = nowSeconds - epochSeconds
+    val sameDay = java.time.Instant.ofEpochSecond(epochSeconds).atZone(zone.toZoneId()).toLocalDate() ==
+        java.time.Instant.ofEpochSecond(nowSeconds).atZone(zone.toZoneId()).toLocalDate()
+    return when {
+        d in 0 until 60 -> "now"
+        d in 60 until 3_600 -> "${d / 60}m"
+        d in 3_600 until 86_400 && sameDay -> "${d / 3_600}h"
+        else -> java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).apply { timeZone = zone }.format(java.util.Date(epochSeconds * 1000))
     }
 }
 
 /**
- * One decided entry: its kind tile, what it did (the row's words), who and when (and "under a grant", Autopilot's
- * share when filtering by it), and how it ended. [landed]: the fold just put it here; its tile is the solid field and
- * the row glows faintly, then both settle to paper.
+ * One decided entry, as a row of its day's pane: its integration tile (what it did on the corner), who did what (the
+ * target in 600), the machine detail in mono, a risk line in amber, and on the right when and how it ended. A hairline
+ * above it unless it is the first ([divider]). [landed]: the fold just put it here; its tile grows into place and the
+ * row glows faintly in its kind colour, then settles.
  */
 @Composable
 fun RiverRow(
@@ -136,6 +185,7 @@ fun RiverRow(
     terms: List<String> = emptyList(),
     /** Where a search matched outside what the row shows: one more line under it. */
     snippet: ActivitySnippet? = null,
+    divider: Boolean = true,
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -144,7 +194,7 @@ fun RiverRow(
     val sentence = remember(entry) { askSentence(entry) }
     val field = actionField(sentence.action)
     val ink = field.kindInk(c)
-    val wash by animateColorAsState(if (landed) ink.copy(alpha = 0.07f) else Color.Transparent, Motion.fade(), label = "landedWash")
+    val wash by animateColorAsState(if (landed) ink.copy(alpha = 0.08f) else Color.Transparent, Motion.fade(), label = "landedWash")
     // Landing: the tile grows out of the fold (from 1.6 times its size, 360 ms).
     val pop = remember { Animatable(1f) }
     LaunchedEffect(landed) {
@@ -153,56 +203,67 @@ fun RiverRow(
             pop.animateTo(1f, Motion.fold(false))
         }
     }
+    val words = remember(sentence, entry.connectionLabel) { sentence.copy(text = rowSentence(entry.connectionLabel, sentence.text)) }
     Row(
         modifier
             .fillMaxWidth()
             .background(wash)
-            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
-            .padding(horizontal = 24.dp),
+            .then(if (divider) Modifier.ruleAbove(c) else Modifier)
+            .pressable(highlight = c.paperSunken.copy(alpha = 0.6f), shape = RoundedCornerShape(0.dp), onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.weight(1f).heightIn(min = 56.dp).hairlineBelow(c.rule).padding(vertical = 9.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .graphicsLayer {
-                        scaleX = pop.value
-                        scaleY = pop.value
-                    }
-                    .testTag("tile:${entry.id}"),
-            ) { IntegrationIcon(sentence.provider, sentence.action, size = 38.dp, ring = c.paper, field = field) }
-            Column(Modifier.weight(1f)) {
-                AskSentenceText(
-                    sentence,
-                    style = RType.serif(19f, 22f),
-                    color = c.ink,
-                    detailsColor = c.inkMeta,
-                    maxLines = 2,
-                    detailsMaxLines = 1,
-                    tag = "entryTitle:${entry.id}",
-                    detailsTag = "entryDetails:${entry.id}",
-                    terms = terms,
-                    highlight = hit.title,
-                )
-                val meta = buildAnnotatedString {
-                    append(AnnotatedString(untrusted(entry.connectionLabel)).highlighted(terms, hit.text))
-                    append(" · ")
-                    append(rowTime(entry.at, nowSeconds))
-                    if (entry.grantId != null && entry.decidedBy.isEmpty()) append(" · under a grant")
-                    if (showShare) share(entry)?.let { append(" · $it") }
-                    if (landed) withStyle(SpanStyle(color = c.violet)) { append(" · ${outcomeLine(entry)}") }
+        Box(
+            Modifier
+                .padding(end = 5.dp, bottom = 5.dp)
+                .graphicsLayer {
+                    scaleX = pop.value
+                    scaleY = pop.value
                 }
-                androidx.compose.material3.Text(meta, color = c.inkMeta, style = RType.meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                snippet?.let { SnippetLine(it, hit, Modifier.padding(top = 3.dp).testTag("snippet:${entry.id}")) }
-                entry.autopilot?.risk?.takeIf { AutopilotText.riskWorthListing(it) }?.let { risk ->
-                    dev.reins.android.ui.autopilot.RiskChip(risk, Modifier.padding(top = 4.dp).testTag("rowRisk:${entry.id}"), small = true)
-                }
+                .testTag("tile:${entry.id}"),
+        ) { IntegrationIcon(sentence.provider, sentence.action, size = 36.dp, ring = c.paperRaised, field = field) }
+        Column(Modifier.weight(1f)) {
+            AskSentenceText(
+                words,
+                style = RType.rowSentence,
+                color = c.ink,
+                detailsColor = c.inkMeta,
+                detailsStyle = RType.mono(12f),
+                maxLines = 3,
+                detailsMaxLines = 1,
+                tag = "entryTitle:${entry.id}",
+                detailsTag = "entryDetails:${entry.id}",
+                terms = terms,
+                highlight = hit.title,
+            )
+            snippet?.let { SnippetLine(it, hit, Modifier.padding(top = 3.dp).testTag("snippet:${entry.id}")) }
+            entry.autopilot?.risk?.takeIf { AutopilotText.riskWorthListing(it) }?.let { risk ->
+                RiskLine(AutopilotText.riskLine(risk), Modifier.padding(top = 3.dp).testTag("rowRisk:${entry.id}"))
             }
-            OutcomeEnd(outcomeOf(entry), Modifier.testTag("outcome:${entry.id}"))
+            if (landed) RText(outcomeLine(entry), RType.meta, c.violet, Modifier.padding(top = 2.dp), maxLines = 1)
         }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            RText(compactTime(entry.at, nowSeconds), RType.sans(12.5f, FontWeight.Medium, tracking = 0.01f).copy(fontFeatureSettings = "tnum"), c.inkMeta, maxLines = 1)
+            OutcomeEnd(outcomeOf(entry), Modifier.testTag("outcome:${entry.id}"), share = if (showShare) share(entry) else null)
+        }
+    }
+}
+
+/** A hairline above a row of a pane: from past the tile to 16 dp short of the right edge. */
+fun Modifier.ruleAbove(c: dev.reins.android.design.RColors, start: androidx.compose.ui.unit.Dp = 62.dp): Modifier = drawBehind {
+    val y = 0.5.dp.toPx()
+    drawLine(c.rule, androidx.compose.ui.geometry.Offset(start.toPx(), y), androidx.compose.ui.geometry.Offset(size.width - 16.dp.toPx(), y), strokeWidth = 1.dp.toPx())
+}
+
+/** What made a row risky, in amber under it: the warning glyph and a few words ("Not in your contacts"). */
+@Composable
+fun RiskLine(text: String, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        GlyphIcon(Glyph.Warning, c.warning, size = 13.dp)
+        RText(text, RType.sans(12.5f, FontWeight.Medium), c.warning, Modifier.testTag("riskLine"), maxLines = 2)
     }
 }
 
@@ -245,23 +306,43 @@ private fun share(e: ActivityEntry): String? {
     return "${(p * 100).roundToInt()}%" + if (denied) " deny" else ""
 }
 
-/** How an entry ended, at the end of its row: a word in its colour, or a glyph for an approval or a grant. */
+/** How an entry ended, at the end of its row: a tick or a cross when you decided, else a small tag saying who did. */
 @Composable
-fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier) {
+fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier, share: String? = null) {
     val c = LocalColors.current
     when (outcome) {
         Outcome.Approved -> GlyphIcon(Glyph.Check, c.success, modifier = modifier.semantics { this.contentDescription = "Approved" }, size = 18.dp)
-        Outcome.Permission -> GlyphIcon(Glyph.Key, c.violet, modifier = modifier.semantics { this.contentDescription = "Permission" }, size = 18.dp)
-        Outcome.Grant -> GlyphIcon(Glyph.Key, c.violet, modifier = modifier.semantics { this.contentDescription = "Grant" }, size = 18.dp)
-        Outcome.Auto -> StatusWord("Auto", c.violet, modifier)
-        Outcome.Overnight -> StatusWord(AutopilotText.OVERNIGHT, c.violet, modifier)
-        Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied -> StatusWord("Denied", c.danger, modifier)
-        Outcome.Bypass -> StatusWord("Bypass", c.danger, modifier)
-        Outcome.Lockdown -> StatusWord("Lockdown", c.inkMeta, modifier)
-        Outcome.Failed -> StatusWord("Failed", c.warning, modifier)
-        Outcome.Started -> StatusWord("Awaiting outcome", c.warning, modifier.clearAndSetSemantics { contentDescription = "Attempted; awaiting outcome" })
-        Outcome.Unknown -> StatusWord("Outcome unknown", c.warning, modifier.clearAndSetSemantics { contentDescription = "Outcome unknown; do not repeat" })
-        Outcome.Withheld -> StatusWord("Response withheld", c.warning, modifier.clearAndSetSemantics { contentDescription = "Completed; response withheld; do not repeat" })
+        Outcome.Denied -> GlyphIcon(Glyph.Close, c.danger, modifier = modifier.semantics { this.contentDescription = "Denied" }, size = 18.dp)
+        Outcome.Permission -> OutcomeTag("Permission", Glyph.Shield, c.violet, modifier, spoken = "Permission")
+        Outcome.Grant -> OutcomeTag("Grant", Glyph.Key, c.violet, modifier, spoken = "Grant")
+        Outcome.Auto -> OutcomeTag(listOfNotNull("Auto", share).joinToString(" "), Glyph.AutopilotFilled, c.violet, modifier, spoken = "Approved by Autopilot")
+        Outcome.AutoDenied -> OutcomeTag(listOfNotNull("Auto", share).joinToString(" "), Glyph.AutopilotFilled, c.danger, modifier, spoken = "Denied by Autopilot")
+        Outcome.Overnight -> OutcomeTag(AutopilotText.OVERNIGHT, Glyph.Moon, c.violet, modifier)
+        Outcome.OvernightDenied -> OutcomeTag(AutopilotText.OVERNIGHT, Glyph.Moon, c.danger, modifier, spoken = "Denied overnight")
+        Outcome.Bypass -> OutcomeTag("Bypass", Glyph.Bypass, c.danger, modifier)
+        Outcome.Lockdown -> OutcomeTag("Locked", Glyph.Block, c.warning, modifier, spoken = "Denied in lockdown")
+        Outcome.Failed -> OutcomeTag("Failed", Glyph.CircleAlert, c.warning, modifier)
+        Outcome.Started -> OutcomeTag("Awaiting outcome", Glyph.CircleAlert, c.warning, modifier, spoken = "Attempted; awaiting outcome")
+        Outcome.Unknown -> OutcomeTag("Outcome unknown", Glyph.CircleAlert, c.warning, modifier, spoken = "Outcome unknown; do not repeat")
+        Outcome.Withheld -> OutcomeTag("Response withheld", Glyph.CircleAlert, c.warning, modifier, spoken = "Completed; response withheld; do not repeat")
+    }
+}
+
+/** A small outcome tag (`.otag`): 20 dp, the glyph and the word in [tint] on its 12 % wash. */
+@Composable
+fun OutcomeTag(text: String, glyph: Glyph?, tint: Color, modifier: Modifier = Modifier, spoken: String? = null) {
+    Row(
+        modifier
+            .heightIn(min = 20.dp)
+            .clip(CircleShape)
+            .background(tint.copy(alpha = 0.12f))
+            .then(if (spoken != null) Modifier.clearAndSetSemantics { contentDescription = spoken } else Modifier)
+            .padding(horizontal = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        glyph?.let { GlyphIcon(it, tint, size = 11.dp) }
+        RText(text, RType.tag, tint, maxLines = 1)
     }
 }
 

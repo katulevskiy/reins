@@ -349,8 +349,8 @@ class AppFlowTest {
         awaitTag("entry:1")
         // The waiting card says what it wants; the history says what was done.
         rule.onNodeWithTag("sentence:req1", useUnmergedTree = true).assertTextContains("Search Gmail", substring = true)
-        rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextEquals("Searched Gmail")
-        rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextEquals("Sent an email")
+        rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextContains(" searched Gmail", substring = true)
+        rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextContains(" sent an email", substring = true)
     }
 
     /** The number on a nav item, read from its (merged) text; null when there is none. */
@@ -1034,7 +1034,7 @@ class AppFlowTest {
         launch()
         awaitTag("pending:req21")
         rule.onNodeWithTag("sentence:req21", useUnmergedTree = true).assertTextContains("Clone and fetch with git", substring = true)
-        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Pushed with git")
+        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextContains(" pushed with git", substring = true)
         assertTrue(rule.onAllNodes(hasText("Reins desktop app on laptop", substring = true)).fetchSemanticsNodes().isNotEmpty())
         tap("entry:7")
         awaitTag("detailTitle")
@@ -1406,10 +1406,12 @@ class AppFlowTest {
     }
 
     @Test
-    fun withAnAiConnectedTheEmptyActivityHasNoConnectButtons() {
+    fun withAnAiConnectedTheEmptyActivityProposesTheComputer() {
+        // Next ("Activity with a wallpaper" 05b): the missing half takes the action slot.
         launch()
         awaitTag("noActivity")
-        assertFalse(has("emptyConnectComputer"))
+        assertFalse(has("emptyConnectAi"))
+        assertTrue(has("emptyConnectComputer"))
     }
 
     @Test
@@ -1935,7 +1937,7 @@ class AppFlowTest {
         )
         launch()
         awaitTag("entry:5")
-        rule.onNodeWithTag("entryTitle:5", useUnmergedTree = true).assertTextEquals("Deleted a GitHub repository")
+        rule.onNodeWithTag("entryTitle:5", useUnmergedTree = true).assertTextContains(" deleted a GitHub repository", substring = true)
         tap("entry:5")
         awaitTag("detailTitle")
         rule.onNodeWithTag("detailTitle").assertTextContains("Deleted a GitHub repository")

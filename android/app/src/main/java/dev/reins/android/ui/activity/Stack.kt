@@ -36,12 +36,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,7 +101,7 @@ private val WaitCard.first: PendingItem get() = when (this) {
 private const val LAYERS = 3
 
 /** How far each card below peeks out, and how much narrower it is on each side. */
-private val PEEK = 9.dp
+private val PEEK = 8.dp
 private val INSET = 10.dp
 
 /** A flick past this share of the card's width answers. */
@@ -150,6 +155,21 @@ fun WaitingStack(
         }
         departing?.let { card ->
             key("departing:${card.key}") { FoldingCard(card, details, reduce) { departing = null } }
+        }
+        // How many more wait under the top card: an ink pill on the stack's lower edge (Next: "+2").
+        if (cards.size > 1) {
+            val c = LocalColors.current
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = (-2).dp, y = 11.dp)
+                    .heightIn(min = 22.dp)
+                    .clip(CircleShape)
+                    .background(c.inverse)
+                    .padding(horizontal = 7.dp)
+                    .testTag("stackMore"),
+                contentAlignment = Alignment.Center,
+            ) { RText("+${cards.size - 1}", RType.sans(12f, androidx.compose.ui.text.font.FontWeight.SemiBold), c.onInverse, maxLines = 1) }
         }
     }
 }
@@ -265,7 +285,17 @@ private fun StackCard(
             .graphicsLayer {
                 translationX = dx
                 rotationZ = (dx / widthPx).coerceIn(-1f, 1f) * MAX_TILT
-                alpha = fade.value * if (d > 1.5f) 0.9f else 1f
+                alpha = fade.value
+            }
+            // The cards below are their field a shade darker each (Next: brightness 0.88, then 0.76).
+            .drawWithContent {
+                drawContent()
+                if (d > 0.01f) {
+                    drawRoundRect(
+                        androidx.compose.ui.graphics.Color.Black.copy(alpha = (0.12f * d).coerceAtMost(0.3f)),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(26.dp.toPx()),
+                    )
+                }
             }
             .then(if (flickable) Modifier.draggable(drag, Orientation.Horizontal, onDragStopped = { v -> settle(v) }) else Modifier),
         propagateMinConstraints = true,
@@ -337,20 +367,27 @@ private fun CardFace(
     Column(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 196.dp)
             .fieldSurface(field, shape)
             .clip(shape)
             .then(if (showContent) Modifier.testTag(tag).pressable(shape = shape, label = "Review", onClick = onReview) else Modifier)
-            .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 16.dp),
+            .padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         if (!showContent) return@Column
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val sentence = remember(first, details.views[first.id]) { askSentence(first, details.views[first.id]) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 // What it touches with what it does on the corner, ringed in the field (ASK-TEXT.md).
                 IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("cardIcon:${first.id}"), size = 34.dp, ring = field.fill(), field = field)
-                LabelText(sentence.kind, c.onField2, Modifier.weight(1f))
+                Spacer(Modifier.weight(1f))
+                // Who asks: their mark on its disc (Next draws it beside the timer; pairings and new phones have none).
+                if (first.kind != PendingKind.PAIRING && first.kind != PendingKind.JOIN) {
+                    Box(Modifier.semantics { contentDescription = cardWho(first) }) {
+                        CompositionLocalProvider(LocalColors provides RColors.Light) {
+                            ConnectionIcon(first.connectionId, first.connectionLabel, size = 26.dp)
+                        }
+                    }
+                }
                 val waitUntil = when (card) {
                     is WaitCard.One -> first.waitUntil.takeIf { first.kind != PendingKind.BLOB }
                     is WaitCard.Group -> card.items.mapNotNull { it.waitUntil }.minOrNull()
@@ -371,31 +408,16 @@ private fun CardFace(
             )
             // The machine part (the command that matched, the branch, the address) in mono; the card opens it whole.
             ask.details?.let {
-                RText(it, RType.mono(13f), c.onField, Modifier.testTag("cardDetails:${first.id}"), maxLines = 2, ltr = true)
+                RText(it, RType.mono(13f), c.onField.copy(alpha = 0.85f), Modifier.padding(top = 0.dp).testTag("cardDetails:${first.id}"), maxLines = 2, ltr = true)
             }
-            when (card) {
-                is WaitCard.One -> {
-                    // Who asks, with their mark on its white disc (the same in both themes).
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        if (first.kind != PendingKind.PAIRING && first.kind != PendingKind.JOIN) {
-                            CompositionLocalProvider(LocalColors provides RColors.Light) {
-                                ConnectionIcon(first.connectionId, first.connectionLabel, size = 18.dp)
-                            }
-                        }
-                        RText(cardWho(first), RType.sans(13.5f), c.onField2, maxLines = 1)
-                    }
-                    details.reasons[first.id]?.let { RText(it, RType.sans(13.5f), c.onField2, Modifier.testTag("reason:${first.id}"), maxLines = 2) }
+            if (card is WaitCard.Group) {
+                card.items.take(3).forEach { item ->
+                    RText(groupLine(item, details.views[item.id]), RType.sans(13.5f), c.onField2, Modifier.testTag("burstItem:${item.id}"), maxLines = 1)
                 }
-                is WaitCard.Group -> {
-                    RText(dev.reins.android.ui.common.untrusted(first.connectionLabel), RType.sans(13.5f), c.onField2, maxLines = 1)
-                    card.items.take(3).forEach { item ->
-                        RText("· " + groupLine(item, details.views[item.id]), RType.sans(13.5f), c.onField2, Modifier.testTag("burstItem:${item.id}"), maxLines = 1)
-                    }
-                    if (card.items.size > 3) RText("+${card.items.size - 3} more", RType.sans(13.5f), c.onField2, maxLines = 1)
-                }
+                if (card.items.size > 3) RText("+${card.items.size - 3} more", RType.sans(13.5f), c.onField2, maxLines = 1)
             }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         val count = if (card is WaitCard.Group) card.items.size else 1
         val percent = when (action) {
             WaitAction.Allow -> when (card) {
@@ -411,24 +433,24 @@ private fun CardFace(
         val one = card is WaitCard.One
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val many = if (count > 1) " $count" else ""
-            val pct = percent?.let { " · $it%" }.orEmpty()
+            val pct = percent?.let { "$it%" }
             when (action) {
                 WaitAction.Allow -> SignalButton(
-                    "Allow$many$pct", Modifier.weight(1.3f).testTag(if (one) "allow:${first.id}" else "approveAll"),
-                    style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.Fingerprint,
+                    "Allow$many", Modifier.weight(1f).testTag(if (one) "allow:${first.id}" else "approveAll"),
+                    style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.Fingerprint, trailing = pct,
                 ) { onAnswer(true) }
                 WaitAction.Deny -> SignalButton(
-                    "Deny$many$pct", Modifier.weight(1.3f).testTag(if (one) "deny:${first.id}" else "denyAll"),
-                    style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.Block,
+                    "Deny$many", Modifier.weight(1f).testTag(if (one) "deny:${first.id}" else "denyAll"),
+                    style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.Block, trailing = pct,
                 ) { onAnswer(false) }
                 WaitAction.Unsure -> SignalButton(
-                    "Unsure", Modifier.weight(1.3f).testTag("unsure:${if (one) first.id else "burst"}"),
+                    "Unsure", Modifier.weight(1f).testTag("unsure:${if (one) first.id else "burst"}"),
                     style = ButtonStyle.OnFieldWash, size = ButtonSize.Small,
                     leading = { Ring(0.5f, c.onField, c.onField.copy(alpha = 0.35f), 16.dp) },
                     onClick = onReview,
                 )
                 WaitAction.AlwaysAsks -> SignalButton(
-                    "Always asks", Modifier.weight(1.3f).testTag("alwaysAsks:${if (one) first.id else "burst"}"),
+                    "Always asks", Modifier.weight(1f).testTag("alwaysAsks:${if (one) first.id else "burst"}"),
                     style = ButtonStyle.OnFieldWash, size = ButtonSize.Small, glyph = Glyph.Lock, onClick = onReview,
                 )
                 WaitAction.Review -> Unit

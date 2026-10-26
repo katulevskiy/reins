@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
@@ -190,12 +191,12 @@ val WALLPAPER_HEIGHT: Dp = 500.dp
  * 150 dp). Panes inside ([Modifier.pane]) frost the art. The art stays when panes turn solid.
  */
 @Composable
-fun WallpaperPage(wallpaper: Wallpaper, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+fun WallpaperPage(wallpaper: Wallpaper?, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val c = LocalColors.current
     val context = LocalContext.current
     val version = Wallpapers.photoVersion
     val backdrop = remember(wallpaper, c.dark, version) {
-        val bmp = wallpaper.bitmap(context, c.dark) ?: return@remember null
+        val bmp = wallpaper?.bitmap(context, c.dark) ?: return@remember null
         Backdrop(bmp.asImageBitmap(), Wallpapers.frosted(context, wallpaper, c.dark)?.asImageBitmap())
     }
     Box(modifier.background(c.paper)) {
@@ -233,60 +234,94 @@ fun WallpaperPage(wallpaper: Wallpaper, modifier: Modifier = Modifier, content: 
  * A grouped pane (`.grp`): on paper, the raised plate (with a hairline ring in light); over a wallpaper, frosted glass
  * (`.grp.pf2`): the art blurred behind it, a 40 % fill, a lit top edge and a faint ring. Solid when the system reduces
  * transparency or asks for more contrast ([SignalPrefs.frosted]).
+ *
+ * A pane can be drawn in pieces (the items of a lazy list): [top] and [bottom] say whether this piece holds the pane's
+ * top or bottom edge; the corners, the ring and the lit edge are drawn only where the pane has them, so the pieces
+ * read as one pane. [radius] is the pane's corner (20).
  */
+@Composable
+fun Modifier.pane(radius: Dp = 20.dp, top: Boolean = true, bottom: Boolean = true, solid: Color? = null): Modifier {
+    val c = LocalColors.current
+    val backdrop = LocalBackdrop.current
+    val frosted = LocalSignalPrefs.current.frosted && backdrop?.frosted != null
+    val plate = solid ?: c.paperRaised
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(
+        topStart = if (top) radius else 0.dp,
+        topEnd = if (top) radius else 0.dp,
+        bottomStart = if (bottom) radius else 0.dp,
+        bottomEnd = if (bottom) radius else 0.dp,
+    )
+    var at by remember { mutableStateOf(Offset.Zero) }
+    val fill = if (c.dark) Color(0xFF1E1E24).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.40f)
+    val edge = when {
+        frosted -> if (c.dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.40f)
+        c.dark -> Color.Transparent
+        else -> c.rule
+    }
+    val lit = if (c.dark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.80f)
+    return this
+        .then(if (frosted) Modifier.onGloballyPositioned { at = it.boundsInRoot().topLeft } else Modifier)
+        .drawBehind {
+            val outline = shape.createOutline(size, layoutDirection, this)
+            if (!frosted) {
+                drawOutline(outline, plate)
+            } else {
+                val image = backdrop!!.frosted!!
+                val path = when (outline) {
+                    is androidx.compose.ui.graphics.Outline.Rectangle -> androidx.compose.ui.graphics.Path().apply { addRect(outline.rect) }
+                    is androidx.compose.ui.graphics.Outline.Rounded -> androidx.compose.ui.graphics.Path().apply { addRoundRect(outline.roundRect) }
+                    is androidx.compose.ui.graphics.Outline.Generic -> outline.path
+                }
+                clipPath(path) {
+                    drawRect(c.paper)
+                    val b = backdrop.bounds
+                    if (b.width > 0f) {
+                        translate(b.left - at.x, b.top - at.y) {
+                            // The frosted copy is the art scaled down: drawn back over the art's own bounds, cropped
+                            // as the art is (its full width, from the top).
+                            val scale = maxOf(b.width / image.width, b.height / image.height)
+                            val srcW = (b.width / scale).toInt().coerceIn(1, image.width)
+                            val srcH = (b.height / scale).toInt().coerceIn(1, image.height)
+                            drawImage(
+                                image,
+                                srcOffset = IntOffset((image.width - srcW) / 2, 0),
+                                srcSize = IntSize(srcW, srcH),
+                                dstOffset = IntOffset.Zero,
+                                dstSize = IntSize(b.width.toInt(), b.height.toInt()),
+                                filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+                            )
+                        }
+                    }
+                    drawRect(fill)
+                    if (top) drawLine(lit, Offset(radius.toPx() * 0.6f, 0.5.dp.toPx()), Offset(size.width - radius.toPx() * 0.6f, 0.5.dp.toPx()), strokeWidth = 1.dp.toPx())
+                }
+            }
+            if (edge.alpha > 0f) {
+                // The ring of the whole pane: a piece draws the ring of a pane that runs past its open ends, clipped
+                // to itself, so no line falls between two pieces.
+                val stroke = 1.dp.toPx()
+                val extend = radius.toPx() + stroke * 2
+                val y0 = if (top) stroke / 2 else -extend
+                val y1 = if (bottom) size.height - stroke / 2 else size.height + extend
+                val ring = androidx.compose.ui.geometry.RoundRect(
+                    stroke / 2, y0, size.width - stroke / 2, y1,
+                    androidx.compose.ui.geometry.CornerRadius(radius.toPx() - stroke / 2),
+                )
+                clipRect {
+                    drawPath(androidx.compose.ui.graphics.Path().apply { addRoundRect(ring) }, edge, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                }
+            }
+        }
+        .clip(shape)
+}
+
+/** [pane] for a whole shape (sheets of glass that are not lists). */
 @Composable
 fun Modifier.pane(shape: Shape, solid: Color? = null): Modifier {
     val c = LocalColors.current
     val backdrop = LocalBackdrop.current
-    val frosted = LocalSignalPrefs.current.frosted
-    val plate = solid ?: c.paperRaised
-    if (backdrop == null || !frosted || backdrop.frosted == null) {
-        return this
-            .clip(shape)
-            .background(plate)
-            .then(if (!c.dark) Modifier.border(1.dp, c.rule, shape) else Modifier)
+    if (backdrop == null || !LocalSignalPrefs.current.frosted) {
+        return this.clip(shape).background(solid ?: c.paperRaised).then(if (!c.dark) Modifier.border(1.dp, c.rule, shape) else Modifier)
     }
-    val image = backdrop.frosted
-    var at by remember { mutableStateOf(Offset.Zero) }
-    val fill = if (c.dark) Color(0xFF1E1E24).copy(alpha = 0.40f) else Color.White.copy(alpha = 0.40f)
-    val edge = if (c.dark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.40f)
-    val lit = if (c.dark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.80f)
-    return this
-        .onGloballyPositioned { at = it.boundsInRoot().topLeft }
-        .drawBehind {
-            val outline = shape.createOutline(size, layoutDirection, this)
-            val path = when (outline) {
-                is androidx.compose.ui.graphics.Outline.Rectangle -> androidx.compose.ui.graphics.Path().apply { addRect(outline.rect) }
-                is androidx.compose.ui.graphics.Outline.Rounded -> androidx.compose.ui.graphics.Path().apply { addRoundRect(outline.roundRect) }
-                is androidx.compose.ui.graphics.Outline.Generic -> outline.path
-            }
-            clipPath(path) {
-                drawRect(c.paper)
-                val b = backdrop.bounds
-                if (b.width > 0f) {
-                    translate(b.left - at.x, b.top - at.y) {
-                        // The frosted copy is the art scaled down: draw it back over the art's own bounds, cropped from
-                        // the top as the art is.
-                        val scale = maxOf(b.width / image.width, b.height / image.height)
-                        val srcW = (b.width / scale).toInt().coerceIn(1, image.width)
-                        val srcH = (b.height / scale).toInt().coerceIn(1, image.height)
-                        drawImage(
-                            image,
-                            srcOffset = IntOffset((image.width - srcW) / 2, 0),
-                            srcSize = IntSize(srcW, srcH),
-                            dstOffset = IntOffset.Zero,
-                            dstSize = IntSize(b.width.toInt(), b.height.toInt()),
-                            filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
-                        )
-                    }
-                    // Below the art the page is paper again.
-                    val artBottom = b.bottom - at.y
-                    if (artBottom < size.height) drawRect(c.paper, Offset(0f, artBottom.coerceAtLeast(0f)), Size(size.width, size.height - artBottom.coerceAtLeast(0f)))
-                }
-                drawRect(fill)
-                drawLine(lit, Offset(0f, 0.5.dp.toPx()), Offset(size.width, 0.5.dp.toPx()), strokeWidth = 1.dp.toPx())
-            }
-            drawOutline(outline, edge, style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
-        }
-        .clip(shape)
+    return pane(20.dp, solid = solid)
 }

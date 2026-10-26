@@ -104,10 +104,10 @@ import dev.reins.android.feedback.play
 
 // ---- Buttons ---------------------------------------------------------------------------------------------------
 
-/** The two button sizes of the boards: 54 dp (16.5 sp) and small, 40 dp (14.5 sp). */
+/** The two button sizes of the boards: 54 dp (16.5 sp) and small, 42 dp (15 sp). */
 enum class ButtonSize(val height: Dp, val padding: Dp, val text: Float, val glyph: Dp) {
     Large(54.dp, 22.dp, 16.5f, 20.dp),
-    Small(40.dp, 16.dp, 14.5f, 18.dp),
+    Small(42.dp, 16.dp, 15f, 18.dp),
 
     /** The boards' 34 dp buttons inside rows and cards (Later · Install, Resume · Delete). */
     Compact(34.dp, 12.dp, 13.5f, 16.dp),
@@ -127,6 +127,8 @@ fun SignalButton(
     leading: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
     showFocus: Boolean = false,
+    /** A quieter word after the title, at 55 % and 500 ("Allow  97%"). */
+    trailing: String? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -151,6 +153,7 @@ fun SignalButton(
             glyph != null -> GlyphIcon(glyph, fg, size = size.glyph)
         }
         RText(title, RType.sans(size.text, FontWeight.SemiBold), fg, maxLines = 1)
+        if (trailing != null) RText(trailing, RType.sans(size.text, FontWeight.Medium), fg.copy(alpha = 0.55f), maxLines = 1)
     }
 }
 
@@ -640,7 +643,7 @@ fun TimerPill(secondsLeft: Long, totalSeconds: Long, modifier: Modifier = Modifi
     } else {
         Row(modifier.testTag("timer"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Ring(if (totalSeconds > 0) left.toFloat() / totalSeconds else 0f, c.onField, c.onField.copy(alpha = 0.25f), 18.dp)
-            RText(text, RType.mono(13f), c.onField, maxLines = 1, ltr = true)
+            RText(text, RType.mono(13.5f, FontWeight.Medium), c.onField, maxLines = 1, ltr = true)
         }
     }
 }

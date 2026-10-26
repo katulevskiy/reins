@@ -161,24 +161,17 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun crossingTheMenusRowsTicksEachOne() {
+    fun theModeSheetSaysWhatEachModeDoes() {
         installModel()
         launch()
         tap("modePill")
         awaitTag("autopilotQuick")
-        heard.clear()
-        val manual = rule.onNodeWithTag("quick:MANUAL").fetchSemanticsNode().boundsInRoot
-        val lockdown = rule.onNodeWithTag("quick:LOCKDOWN").fetchSemanticsNode().boundsInRoot
-        val menu = rule.onNodeWithTag("autopilotQuick").fetchSemanticsNode().boundsInRoot
-        // One gesture: press on Manual, slide down to Lockdown, let go there.
-        rule.onNodeWithTag("autopilotQuick").performTouchInput {
-            down(androidx.compose.ui.geometry.Offset(manual.center.x - menu.left, manual.center.y - menu.top))
-            moveTo(androidx.compose.ui.geometry.Offset(lockdown.center.x - menu.left, lockdown.center.y - menu.top))
-            up()
-        }
+        // One sheet, every mode with its line (Next, Activity 03).
+        for (line in listOf("You decide", "Easy ones decided", "Risky ones wait", "Everything denied", "Everything allowed")) awaitText(line)
+        tap("quick:LOCKDOWN")
         awaitCore { core.modeCalls.isNotEmpty() }
-        assertTrue("each row crossed ticks", heard.played(Event.MenuRow))
         assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
+        awaitGone("autopilotQuick")
     }
 
     @Test
@@ -1031,7 +1024,7 @@ class AutopilotFlowTest : FlowHarness() {
         core.pending = listOf(r1)
         launch()
         awaitTag("allow:r1")
-        rule.onNodeWithTag("allow:r1").assertTextEquals("Allow · 97%")
+        rule.onNodeWithTag("allow:r1").assertTextEquals("Allow", "97%")
         onTop(r3)
         awaitTag("unsure:r3")
         // Asked every time: never a one-tap Allow, whatever Autopilot thinks.
