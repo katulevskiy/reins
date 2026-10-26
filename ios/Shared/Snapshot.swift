@@ -47,6 +47,10 @@ struct Snapshot: Codable, Equatable {
         var outcome: String
         var approved: Bool
         var at: Int64
+        /// The integration ("gmail"), for the row's icon; optional so older snapshots still read.
+        var service: String? = nil
+        /// The core's action ("read", "push"), for the icon's badge.
+        var action: String? = nil
     }
 
     var signedIn: Bool = false

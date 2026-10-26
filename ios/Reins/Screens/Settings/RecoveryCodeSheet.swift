@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Settings > Account > Recovery code, for an account made without a master password: the code that opens its vault
+/// Settings > Security > Recovery code, for an account made without a master password: the code that opens its vault
 /// when no phone that keeps the account's secret is left. Shown after Face ID, Touch ID or the passcode.
 struct RecoveryCodeRow: View {
     @Environment(AppModel.self) private var model
@@ -11,26 +11,25 @@ struct RecoveryCodeRow: View {
     @State private var busy = false
 
     var body: some View {
-        Button(action: open) {
-            SettingsRowLabel(title: "Recovery code", chevron: !busy) {
-                SettingsTile(symbol: "key.fill", tint: Palette.kindPush)
-            } trailing: {
-                if busy { ProgressView() }
+        VStack(spacing: 0) {
+            Button(action: open) {
+                TileRow("Recovery code", glyph: .lifebuoy, chevron: !busy) {
+                    if busy { ProgressView() }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .accessibilityLabel("Recovery code")
+            .accessibilityHint("Opens your vault if you lose this phone")
+            .accessibilityIdentifier("recoveryCodeRow")
+            if let error {
+                FormBanner(text: error).padding(.horizontal, 14).padding(.bottom, 12)
             }
         }
-        .buttonStyle(.plain)
-        .disabled(busy)
-        .accessibilityLabel("Recovery code")
-        .accessibilityHint("Opens your vault if you lose this phone")
-        .accessibilityIdentifier("recoveryCodeRow")
         .sheet(item: Binding(get: { code.map(ShownCode.init) }, set: { if $0 == nil { code = nil } })) { shown in
             RecoveryCodeSheet(code: shown.code) { code = nil }
         }
         .presentationFeedback(code != nil)
-        .cardRow()
-        if let error {
-            FormBanner(text: error).cardRow()
-        }
     }
 
     private struct ShownCode: Identifiable {
@@ -62,6 +61,9 @@ struct RecoveryCodeRow: View {
     }
 }
 
+/// The recovery code (the Arrival board, 04): an accounts field with the title, the groups numbered in reading order so
+/// it is clear how to copy them out, Copy (the clipboard clears itself in 60 s), and, when it must be recorded, "I
+/// wrote it down" before Continue.
 struct RecoveryCodeSheet: View {
     var code: String
     var required = false
@@ -76,7 +78,7 @@ struct RecoveryCodeSheet: View {
         copied = true
     }
 
-    /// The thirteen groups, in rows of three (the last row has four).
+    /// The groups, in rows of three (the last row has four when that leaves none alone).
     static func rows(_ code: String) -> [String] {
         let groups = code.split(separator: "-").map(String.init)
         var rows: [String] = []
@@ -89,7 +91,12 @@ struct RecoveryCodeSheet: View {
         return rows
     }
 
-    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    /// The groups with their number in reading order (1 to 13).
+    static func cells(_ code: String) -> [(number: Int, group: String)] {
+        code.split(separator: "-").enumerated().map { ($0.offset + 1, String($0.element)) }
+    }
+
+    // The code: hidden in the app switcher and while the screen is recorded.
     var body: some View { screen.privacyCover() }
 
     /// The Arrival board, 04: the account's pink field with the code's file and "Recovery code", one line; the groups
@@ -184,7 +191,7 @@ struct RecoveryCodeSheet: View {
         }
         .interactiveDismissDisabled(required)
         .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .presentationDragIndicator(.hidden)
         .pageBackground()
     }
 }

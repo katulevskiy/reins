@@ -130,14 +130,15 @@ final class PlatformTests: XCTestCase {
         let c = NotificationContent.pending(routine, settings: FeedbackSettings())
         XCTAssertEqual(c.categoryIdentifier, "quickRequest")
         XCTAssertEqual(c.threadIdentifier, "requests")
-        XCTAssertEqual(c.body, "Claude: Search Gmail\nClaude gets the 2 emails found for \"from:bank\".\nme@gmail.com")
+        XCTAssertEqual(c.title, "Claude: Search Gmail", "who asks stays in sight beside Approve")
+        XCTAssertEqual(c.body, "Claude gets the 2 emails found for \"from:bank\".\nme@gmail.com")
         XCTAssertEqual(NotificationContent.pending(item(), settings: FeedbackSettings()).categoryIdentifier, "request", "not routine: Deny only")
     }
 
     func testARequestSaysWhoWantsWhat() {
         let c = NotificationContent.pending(item(), settings: FeedbackSettings())
-        XCTAssertEqual(c.title, "Approval needed")
-        XCTAssertEqual(c.body, "Claude: Send email to 2\nme@gmail.com")
+        XCTAssertEqual(c.title, "Claude: Send email to 2")
+        XCTAssertEqual(c.body, "me@gmail.com")
         XCTAssertEqual(c.subtitle, "")
         XCTAssertEqual(c.categoryIdentifier, "request")
         XCTAssertEqual(c.threadIdentifier, "requests")
@@ -145,17 +146,17 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.userInfo[NotificationKey.kind] as? String, "req")
         XCTAssertEqual(c.userInfo[NotificationKey.id] as? String, "r1")
         XCTAssertEqual(c.userInfo[NotificationKey.link] as? String, "reins://item?kind=request&id=r1")
-        XCTAssertEqual(NotificationText.title(item(action: "grant")), "Permission requested")
+        XCTAssertEqual(NotificationText.kindTitle(item(action: "grant")), "Permission requested")
         XCTAssertEqual(NotificationText.title(item(.pairing)), "Connect an AI")
         // The other side's name is quoted under Reins' own words, never the sentence.
         XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect to Reins\n“Claude”\nme@gmail.com")
-        XCTAssertEqual(NotificationText.title(item(.blob)), "File to check")
+        XCTAssertEqual(NotificationText.kindTitle(item(.blob)), "File to check")
         XCTAssertEqual(NotificationContent.pending(item(.blob), settings: FeedbackSettings()).categoryIdentifier, "blob")
     }
 
     func testAPendingItemCarriesAutopilotsSuggestion() {
         let c = NotificationContent.pending(item(suggestion: "Autopilot would approve · 97%"), settings: FeedbackSettings())
-        XCTAssertEqual(c.body, "Claude: Send email to 2\nme@gmail.com\nAutopilot would approve · 97%")
+        XCTAssertEqual(c.body, "me@gmail.com\nAutopilot would approve · 97%")
     }
 
     func testRequestSoundsFollowTheInAppSwitches() {
@@ -201,8 +202,8 @@ final class PlatformTests: XCTestCase {
 
     func testAnAutomaticApprovalIsQuietAndCanBeReported() {
         let c = NotificationContent.decision(decision(.approve), settings: FeedbackSettings())
-        XCTAssertEqual(c.title, "Autopilot approved")
-        XCTAssertEqual(c.body, "Push to a branch · dkat/reins — Claude Code\n97% sure")
+        XCTAssertEqual(c.title, "Claude Code: Push to a branch · dkat/reins")
+        XCTAssertEqual(c.body, "Approved by Autopilot · 97%")
         XCTAssertEqual(c.subtitle, "")
         XCTAssertNil(c.sound)
         XCTAssertEqual(c.interruptionLevel, .passive)
@@ -212,7 +213,7 @@ final class PlatformTests: XCTestCase {
 
     func testAnAutomaticDenialClicksUnderTheAutopilotSwitch() {
         let c = NotificationContent.decision(decision(.deny), settings: FeedbackSettings())
-        XCTAssertEqual(c.title, "Autopilot denied")
+        XCTAssertEqual(c.body, "Denied by Autopilot · 97%")
         XCTAssertNotNil(c.sound)
         XCTAssertEqual(c.interruptionLevel, .active)
         var s = FeedbackSettings()

@@ -156,11 +156,11 @@ enum SettingsText {
 
     /// What "Delete account" deletes, line by line, before it asks for the email.
     static let deletionItems = [
-        "Your account and its vault on the server",
-        "Your AI and computer connections, and their access",
-        "Your approval phone, permissions, activity and files",
-        "Your sign-in: this email would start a new, empty account",
-        "Everything Reins keeps for this account on this phone",
+        "Account and vault",
+        "Connections and access",
+        "Permissions and activity",
+        "Sign-in",
+        "Data on this phone",
     ]
 
     /// Whether the typed text names the account's email (case and surrounding spaces do not count), as the server
@@ -205,6 +205,18 @@ enum SettingsText {
         guard let pick else { return "Auto" }
         if pick == Providers.blob { return "Blobatar" }
         return Platforms.byKey(pick)?.name ?? Providers.byKey(pick)?.name ?? "Auto"
+    }
+
+    /// "now", "5m", "1h", "3d", then the date: how long ago a computer was used, as the Devices page lists it.
+    static func compactAgo(_ at: Int64, now: Int64 = nowSeconds()) -> String {
+        let s = max(0, now - at)
+        switch s {
+        case ..<60: return "now"
+        case ..<3_600: return "\(s / 60)m"
+        case ..<86_400: return "\(s / 3_600)h"
+        case ..<(7 * 86_400): return "\(s / 86_400)d"
+        default: return Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .abbreviated, time: .omitted)
+        }
     }
 
     /// "1.4": the version of this app, for the footer.

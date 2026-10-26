@@ -99,7 +99,7 @@ final class WidgetsTests: XCTestCase {
         s.overnightUntil = now + 60
         XCTAssertEqual(Glance.mode(s, now: now), .overnight)
         XCTAssertEqual(Glance.Mode.overnight.name, "Overnight")
-        XCTAssertEqual(Glance.Mode.overnight.symbol, "moon.stars.fill")
+        XCTAssertEqual(ControlLook.modeSymbol(.overnight), "moon")
         XCTAssertEqual(Glance.timelineDates(s, now: now), [now, now + 60], "it redraws when it ends")
         XCTAssertEqual(Glance.mode(s, now: now + 61), .manual)
         s.overnightUntil = AutopilotText.untilOff
@@ -116,14 +116,15 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(state.approvedCount, 3)
         let views = BypassLiveViews(state: state, stale: false)
         XCTAssertEqual(views.title, "Overnight on · every AI")
-        XCTAssertEqual(views.field, .grant, "an Overnight is a violet field")
+        XCTAssertEqual(views.mode, .overnight, "an Overnight has its own glyph")
+        XCTAssertEqual(views.fill, Palette.modeOvernight, "and its own colour")
         XCTAssertEqual(views.line, "For every AI. Holds what is too risky.")
         // The same end of a bypass, after it, is a new ring.
         let bypass = try XCTUnwrap(Glance.bypassState(global: now + 8 * 3_600, connections: [], previous: state, approvedSince: { _ in 0 }, now: now + 10))
         XCTAssertNil(bypass.overnight)
         XCTAssertNotEqual(bypass.startedAt, state.startedAt)
         XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on · every AI")
-        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).field, .delete, "a bypass is a red field")
+        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).fill, Palette.fieldDelete, "a bypass is a red field")
     }
 
     func testAssistedFromAnOlderSnapshotShowsAsManual() {
@@ -337,7 +338,7 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(Glance.downloadFraction(.init(downloaded: 5, total: 0, finished: false, failed: false)), 0)
         XCTAssertEqual(Glance.downloadFraction(.init(downloaded: 0, total: 0, finished: true, failed: false)), 1)
         XCTAssertEqual(Glance.downloadLine(.init(downloaded: 0, total: 0, finished: false, failed: true)), "The download stopped")
-        XCTAssertTrue(Glance.downloadLine(half).contains(" of "))
+        XCTAssertTrue(Glance.downloadLine(half).hasSuffix(" MB") && Glance.downloadLine(half).contains(" / "))
     }
 
     // MARK: Intents

@@ -1273,6 +1273,9 @@ extension ActivityEntry {
     }
 
     var snapshotEntry: Snapshot.Entry {
-        Snapshot.Entry(id: id, title: headline, outcome: outcome.capitalized, approved: !["denied", "failed", "expired"].contains(outcome), at: at)
+        Snapshot.Entry(
+            id: id, title: headline, outcome: outcome.capitalized, approved: !["denied", "failed", "expired"].contains(outcome), at: at,
+            service: service, action: action
+        )
     }
 }
