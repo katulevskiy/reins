@@ -116,7 +116,7 @@ struct TourProgress: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .padding(.top, 4)
         .frame(minHeight: 44)
     }
 }

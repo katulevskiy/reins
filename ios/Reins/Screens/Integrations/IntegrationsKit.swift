@@ -60,28 +60,6 @@ extension View {
     }
 }
 
-/// The small heading above a group of rows.
-struct GroupHeading: View {
-    var title: String
-
-    init(_ title: String) { self.title = title }
-
-    var body: some View {
-        SectionHeader(title)
-            .textCase(nil)
-            .padding(.horizontal, -4)
-    }
-}
-
-/// The explanation under a group.
-struct GroupFootnote: View {
-    var text: String
-
-    init(_ text: String) { self.text = text }
-
-    var body: some View { GroupFooter(text) }
-}
-
 /// A message in a tinted box: what is going on, a warning, or what went wrong.
 struct IntegrationBanner: View {
     enum Kind { case notice, warning, error, success }

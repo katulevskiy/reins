@@ -37,7 +37,7 @@ struct OnboardingScreen: View {
                     VStack(spacing: 0) {
                         content
                             .frame(maxWidth: 480)
-                            .padding(.top, 26)
+                            .padding(.top, 18)
                             .id(page)
                             .transition(reduceMotion
                                 ? .opacity
@@ -351,10 +351,10 @@ private struct ConnectionsPage: View {
                 ProgressView().frame(maxWidth: .infinity).padding(24)
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                    ForEach(model.services, id: \.service) { s in
+                    // The first six, as the board draws them; every service stays a tap away on Connections.
+                    ForEach(model.services.prefix(6), id: \.service) { s in
                         TourServiceTile(id: s.service, name: s.name, count: s.accounts.count, available: s.available) { onOpen(s.service) }
                     }
-                    TourServiceTile(id: "mcp", name: "MCP server", count: model.mcpServers.count, available: true) { onOpen("mcp") }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 30)
@@ -486,10 +486,11 @@ private struct RulesPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HeroText(title: "Asking", line: nil)
-            HStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
                 ModeBigTile(mode: .manual, chosen: model.autopilot?.mode == .manual) { Task { await ap.setMode(.manual) } }
                 ModeBigTile(mode: .auto, chosen: model.autopilot?.mode == .auto) { Task { await ap.setMode(.auto) } }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 16)
             .padding(.top, 30)
             RaisedGroup { modelRow }
@@ -640,10 +641,12 @@ private struct DonePage: View {
         let modelState = model.autopilot?.model.state
         VStack(alignment: .leading, spacing: 0) {
             HeroText(title: "All set", line: nil)
-            Circle()
-                .fill(Palette.success)
-                .overlay { Grain().clipShape(Circle()) }
-                .overlay { GlyphIcon(.check, size: 80).foregroundStyle(.white) }
+            ZStack {
+                Palette.success
+                Grain()
+                GlyphIcon(.check, size: 80).foregroundStyle(.white)
+            }
+                .clipShape(Circle())
                 .frame(width: 168, height: 168)
                 .shadow(color: Palette.success.opacity(0.5), radius: 25, y: 24)
                 .frame(maxWidth: .infinity)

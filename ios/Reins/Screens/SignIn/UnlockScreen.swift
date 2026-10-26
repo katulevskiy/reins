@@ -20,9 +20,10 @@ struct UnlockScreen: View {
     /// phone"; the account in mono), the passkey first when the account has one, then the other phone or the recovery
     /// code, and apart from them resetting the vault (a hold, after signing in again) and signing out.
     @ViewBuilder private var screen: some View {
+        GeometryReader { geo in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                field
+                field(top: geo.safeAreaInsets.top)
                 switch vm.stage {
                 case .choose: choose
                 case let .waiting(code): waiting(code)
@@ -33,12 +34,14 @@ struct UnlockScreen: View {
                     FormBanner(text: error).padding(.horizontal, 16).padding(.top, 12).transition(.opacity).accessibilityIdentifier("unlockError")
                 }
             }
-            .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.basedOnSize)
+        // The field runs into the status bar: the page starts at the top of the screen, the field's words below it.
+        .scrollEdgeEffectHidden(true, for: .top)
+        .ignoresSafeArea(edges: .top)
+        }
         .pageBackground()
         .animation(.smooth(duration: 0.25), value: vm.stage)
         .animation(.smooth(duration: 0.25), value: vm.error)
@@ -53,7 +56,7 @@ struct UnlockScreen: View {
         if case .otherApprovalDevice = model.session { true } else { false }
     }
 
-    private var field: some View {
+    private func field(top: CGFloat) -> some View {
         SignalField(kind: .accounts) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 12) {
@@ -87,7 +90,7 @@ struct UnlockScreen: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 12)
+            .padding(.top, top + 12)
             .padding(.bottom, 26)
         }
     }
