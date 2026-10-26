@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -508,8 +509,9 @@ fun Screen(
 }
 
 /**
- * A switch: violet-fill when on, a sunken well when off, a white knob (51 × 31). It sounds after the change lands, so a
- * switch that governs sound is heard in its new state.
+ * A Material 3 switch in the Next colours (52 × 32): on, a violet-fill track with a 24 dp white thumb carrying a violet
+ * tick; off, a sunken track ringed in faint ink with a 16 dp faint thumb. It sounds after the change lands, so a switch
+ * that governs sound is heard in its new state.
  */
 @Composable
 fun Toggle(on: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
@@ -522,17 +524,39 @@ fun Toggle(on: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, 
     val focused by source.collectIsFocusedAsState()
     Box(
         modifier
-            .size(width = 51.dp, height = 31.dp)
+            .size(width = 52.dp, height = 32.dp)
             .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
             .focusRing(focused, CircleShape, c.violet)
             .clip(CircleShape)
             .background(track)
+            .drawBehind {
+                if (x < 1f) {
+                    val w = 2.dp.toPx()
+                    drawRoundRect(
+                        c.inkFaint.copy(alpha = 1f - x),
+                        topLeft = androidx.compose.ui.geometry.Offset(w / 2, w / 2),
+                        size = androidx.compose.ui.geometry.Size(size.width - w, size.height - w),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(w),
+                    )
+                }
+            }
             .pressable(enabled = enabled, shape = CircleShape, interactionSource = source) {
                 onChange(!on)
                 feedback.play(Event.toggle(!on))
             },
     ) {
-        Box(Modifier.padding(2.dp).offset { androidx.compose.ui.unit.IntOffset((20.dp.toPx() * x).toInt(), 0) }.size(27.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
+        // The thumb grows from 16 to 24 and slides from 8 to 24 as it turns on.
+        val thumb = 16.dp + 8.dp * x
+        Box(
+            Modifier
+                .offset { androidx.compose.ui.unit.IntOffset((8.dp + 16.dp * x).roundToPx(), ((32.dp - thumb) / 2).roundToPx()) }
+                .size(thumb)
+                .background(androidx.compose.ui.graphics.lerp(c.inkFaint, Color.White, x), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (x > 0.5f) GlyphIcon(Glyph.Check, c.violetFill.copy(alpha = (x - 0.5f) * 2f), size = 16.dp)
+        }
     }
 }
 

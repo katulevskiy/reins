@@ -834,7 +834,7 @@ class AppFlowTest {
         launch()
         openPairing("pair1")
         awaitTag("keyFingerprint")
-        rule.onNodeWithTag("keyFingerprint").assertTextContains("DESKTOP KEY")
+        rule.onNodeWithTag("keyFingerprint").assertTextContains("Desktop key")
         rule.onNodeWithTag("keyFingerprint").assertTextContains("4821 9930")
         rule.onNodeWithTag("keyFingerprint")
             .assertTextContains("This computer's key must match. If it differs, deny.")

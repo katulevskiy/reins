@@ -5,8 +5,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
- * Reins Signal colours (`design/signal/tokens/signal.tokens.json`), light and dark. Paper and ink flip with the theme;
- * the seven fields are the same in both. Colour only; nothing here affects layout.
+ * Reins colours, light and dark: Next keeps Signal's tokens (the `.light` and `.dark` blocks of the Next boards'
+ * markup). Paper and ink flip with the theme; the fields are the same in both. Colour only; nothing here affects
+ * layout.
  *
  * The names before Signal stay as deprecated aliases of the new tokens, so every screen recolours with no layout
  * change; phase 2 renames the callers screen by screen and the aliases go last.
@@ -83,6 +84,9 @@ class RColors(val dark: Boolean) {
     val fieldAccounts = Color(0xFFBE185D)
     val fieldWarn = Color(0xFFA16207)
 
+    /** Overnight's field: night blue. */
+    val fieldNight = Color(0xFF1E2F5C)
+
     /** Text, glyphs and the Review button on any field. */
     val onField = Color.White
 
@@ -100,6 +104,13 @@ class RColors(val dark: Boolean) {
     val kindPair = pick(0x0E7490, 0x22D3EE)
     val kindAccounts = pick(0xBE185D, 0xF472B6)
     val kindWarn = pick(0xA16207, 0xFACC15)
+    val kindNight = pick(0x2B3F78, 0x9DB1EA)
+
+    /** The Android navigation bar: paper-raised, a touch darker in the dark (Next: `.mnav`). */
+    val navBar = pick(0xFFFFFF, 0x1A1A1E)
+
+    /** The selected tab's indicator: violet at 18 %. */
+    val navIndicator = violet.copy(alpha = 0.18f)
 
     // ---- Before Signal: aliases of the tokens above, removed once phase 2 has renamed their callers. ----
 

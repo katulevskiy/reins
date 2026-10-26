@@ -1,17 +1,19 @@
 package dev.reins.android.design
 
 import android.content.Context
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.Typeface
+import android.graphics.fonts.Font as PlatformFont
+import android.graphics.fonts.FontFamily as PlatformFamily
+import android.graphics.fonts.FontStyle as PlatformStyle
 
 /**
- * The bundled faces (`assets/fonts`): Instrument Serif for what you decide on, Instrument Sans (or Geist, the
- * Appearance alternative) for what you read, Geist Mono for what the machine says. No weight 700 anywhere.
+ * The bundled faces (`assets/fonts`, Reins Next): Sora for all text (400, 500, 600), with Geologica 500 under it for
+ * Cyrillic only (Sora has no Cyrillic, so Latin always stays Sora), and JetBrains Mono (400, 500) for what the
+ * machine says: branches, hashes, addresses, codes, diffs. No weight 700 anywhere.
  */
 object Fonts {
     private lateinit var app: Context
@@ -20,44 +22,43 @@ object Fonts {
         app = context.applicationContext
     }
 
-    /** Geist instead of Instrument Sans (Appearance). Snapshot state, so text recomposes in the other face. */
-    var geist by mutableStateOf(false)
+    private val SORA = listOf(
+        FontWeight.Normal to "fonts/Sora-Regular.ttf",
+        FontWeight.Medium to "fonts/Sora-Medium.ttf",
+        FontWeight.SemiBold to "fonts/Sora-SemiBold.ttf",
+    )
+    private const val GEOLOGICA = "fonts/Geologica-Medium-Cyrillic.ttf"
 
-    val instrumentSans: FontFamily by lazy {
-        val a = app.assets
-        FontFamily(
-            Font("fonts/InstrumentSans-Regular.ttf", a, FontWeight.Normal),
-            Font("fonts/InstrumentSans-Medium.ttf", a, FontWeight.Medium),
-            Font("fonts/InstrumentSans-SemiBold.ttf", a, FontWeight.SemiBold),
-        )
+    /**
+     * Sora with Geologica as its fallback: one platform typeface whose first family is Sora's three weights and whose
+     * custom fallback is Geologica, so a Cyrillic letter is drawn in Geologica inside the same line as Sora. Compose
+     * asks the platform for each weight of it. Plain Sora where the platform cannot build the chain.
+     */
+    val sans: FontFamily by lazy {
+        runCatching {
+            val assets = app.assets
+            val sora = SORA.drop(1).fold(PlatformFamily.Builder(platformFont(SORA[0]))) { b, w -> b.addFont(platformFont(w)) }.build()
+            val geologica = PlatformFamily.Builder(PlatformFont.Builder(assets, GEOLOGICA).setWeight(500).build()).build()
+            val typeface = android.graphics.Typeface.CustomFallbackBuilder(sora)
+                .addCustomFallback(geologica)
+                .setStyle(PlatformStyle(PlatformStyle.FONT_WEIGHT_NORMAL, PlatformStyle.FONT_SLANT_UPRIGHT))
+                .build()
+            FontFamily(Typeface(typeface))
+        }.getOrElse { soraOnly }
     }
 
-    val geistSans: FontFamily by lazy {
-        val a = app.assets
-        FontFamily(
-            Font("fonts/Geist.ttf", a, FontWeight.Normal),
-            Font("fonts/Geist-Medium.ttf", a, FontWeight.Medium),
-            Font("fonts/Geist-SemiBold.ttf", a, FontWeight.SemiBold),
-        )
-    }
+    private fun platformFont(w: Pair<FontWeight, String>): PlatformFont = PlatformFont.Builder(app.assets, w.second).setWeight(w.first.weight).build()
 
-    /** The sans in use: Instrument Sans unless Appearance picked Geist. */
-    val sans: FontFamily get() = if (geist) geistSans else instrumentSans
-
-    /** Instrument Serif, upright and italic, one weight (400): asks, titles, numbers, the mood line. Never bold. */
-    val serif: FontFamily by lazy {
-        val a = app.assets
-        FontFamily(
-            Font("fonts/InstrumentSerif-Regular.ttf", a, FontWeight.Normal, FontStyle.Normal),
-            Font("fonts/InstrumentSerif-Italic.ttf", a, FontWeight.Normal, FontStyle.Italic),
-        )
+    /** Sora alone, without the Cyrillic fallback. */
+    val soraOnly: FontFamily by lazy {
+        FontFamily(SORA.map { (weight, path) -> Font(path, app.assets, weight) })
     }
 
     val mono: FontFamily by lazy {
         val a = app.assets
         FontFamily(
-            Font("fonts/GeistMono.ttf", a, FontWeight.Normal),
-            Font("fonts/GeistMono-Medium.ttf", a, FontWeight.Medium),
+            Font("fonts/JetBrainsMono-Regular.ttf", a, FontWeight.Normal),
+            Font("fonts/JetBrainsMono-Medium.ttf", a, FontWeight.Medium),
         )
     }
 
@@ -68,10 +69,7 @@ object Fonts {
     fun warm() {
         val resolver = androidx.compose.ui.text.font.createFontFamilyResolver(app)
         for (weight in listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold)) {
-            runCatching { resolver.resolve(sans, weight) }
-        }
-        for (style in listOf(FontStyle.Normal, FontStyle.Italic)) {
-            runCatching { resolver.resolve(serif, FontWeight.Normal, style) }
+            runCatching { resolver.resolve(sans, weight, FontStyle.Normal) }
         }
         for (weight in listOf(FontWeight.Normal, FontWeight.Medium)) {
             runCatching { resolver.resolve(mono, weight) }

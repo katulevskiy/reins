@@ -80,7 +80,7 @@ class PolishFlowTest : FlowHarness() {
         awaitTag("pending:req7")
         rule.onNodeWithTag("sentence:req7", useUnmergedTree = true).assertTextEquals("Run a command")
         rule.onNodeWithTag("cardDetails:req7", useUnmergedTree = true).assertTextEquals("git push --force origin main")
-        assertTrue("what it touches and what it does", showsText("TERMINAL · RUN"))
+        assertTrue("what it touches and what it does", showsText("Terminal · Run"))
     }
 
     @Test

@@ -66,6 +66,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dev.reins.android.platform.ScreenLock.check = { true }
         Timers.live = false
         Timers.frozenNowMillis = now * 1000
+        // Robolectric reports window blurs off; the screenshots show the frosted panes unless a test asks otherwise.
+        dev.reins.android.design.Transparency.forceSolid = false
         Foreground.focused = false
         Foreground.autoPopup = false
         core.resetPrimarySetup()
@@ -103,6 +105,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dev.reins.android.ui.settings.appPushOverride = null
         Timers.live = true
         Timers.frozenNowMillis = null
+        dev.reins.android.design.Transparency.forceSolid = null
         Foreground.autoPopup = true
     }
 

@@ -1,5 +1,6 @@
 package dev.reins.android.ui.common
 
+import androidx.compose.ui.graphics.asAndroidPath
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
@@ -217,21 +218,10 @@ object IntegrationBitmap {
         canvas.scale(k, k)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
+            style = Paint.Style.FILL
         }
-        for (part in glyph.parts) {
-            val path = androidx.core.graphics.PathParser.createPathFromPathData(part.d)
-            if (part.fill) {
-                paint.style = Paint.Style.FILL
-                canvas.drawPath(path, paint)
-            }
-            if (part.stroke) {
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = part.width * weight / 1.6f
-                canvas.drawPath(path, paint)
-            }
-        }
+        // Material Symbols are filled shapes; the part's path is already on the 24 grid.
+        for (part in glyph.parts) canvas.drawPath(part.path.asAndroidPath(), paint)
         canvas.restore()
     }
 }
