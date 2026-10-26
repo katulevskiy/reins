@@ -92,72 +92,96 @@ struct RecoveryCodeSheet: View {
     // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
     var body: some View { screen.privacyCover() }
 
+    /// The Arrival board, 04: the account's pink field with the code's file and "Recovery code", one line; the groups
+    /// numbered in reading order on raised paper (left to right, then down) so it is clear how to copy them out; Copy
+    /// (cleared from the clipboard in 60 s); "I wrote it down" before Continue.
     @ViewBuilder private var screen: some View {
+        let groups = code.split(separator: "-").map(String.init)
         ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-            // An account field: pink, because it changes how the account opens.
-            SignalField(kind: .accounts) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Account · Recovery").textRole(.section).foregroundStyle(Palette.onField2)
-                    AskText([AskText.Run(text: "Write down your "), AskText.Run(text: "recovery code", target: true)], role: .ask, lineLimit: nil)
-                        .foregroundStyle(Palette.onField)
-                        .padding(.top, 8)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Write down your recovery code")
-                        .accessibilityAddTraits(.isHeader)
-                    Text("It opens your vault if you lose this phone. Nobody else has it, us included.")
-                        .font(RFont.sans(14.5))
-                        .foregroundStyle(Palette.onField2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 10)
+            VStack(alignment: .leading, spacing: 0) {
+                SignalField(kind: .accounts) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            ArtNode(glyph: .fileLock, size: 44, fill: .white.opacity(0.2), ink: .white, shadow: false)
+                            Text("Recovery code")
+                                .font(RFont.display(30))
+                                .tracking(RFont.displayTracking(30))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        Text("The only way back in if you lose this phone.")
+                            .font(RFont.sans(15.5))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 26)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 26)
-                .padding(.bottom, 24)
-            }
-            .padding(.horizontal, -24)
-            .padding(.top, -24)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 10) {
-                ForEach(Array(code.split(separator: "-").enumerated()), id: \.offset) { _, group in
-                    Text(String(group)).font(RFont.mono(18, .medium)).foregroundStyle(Palette.ink)
+                RaisedGroup {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 8), count: 3), spacing: 13) {
+                        ForEach(Array(groups.enumerated()), id: \.offset) { i, group in
+                            HStack(spacing: 6) {
+                                Text("\(i + 1)")
+                                    .font(RFont.mono(11))
+                                    .foregroundStyle(Palette.inkFaint)
+                                    .frame(width: 16, alignment: .trailing)
+                                Text(verbatim: group)
+                                    .font(RFont.mono(19, .medium))
+                                    .foregroundStyle(Palette.ink)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                            .frame(minHeight: 24)
+                        }
+                    }
+                    .padding(.vertical, 20)
+                    .padding(.horizontal, 12)
+                    .environment(\.layoutDirection, .leftToRight)
+                    .textSelection(.enabled)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Recovery code: " + groups.joined(separator: ", "))
+                    .accessibilityAction(named: "Copy recovery code", copy)
+                    .accessibilityIdentifier("recoveryCode")
+                }
+                .padding(.top, 18)
+                Button(action: copy) {
+                    Label { Text(copied ? "Copied · clears in 60 s" : "Copy") } icon: { GlyphIcon(copied ? .check : .copy, size: 18) }
+                }
+                .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .accessibilityHint("Cleared from the clipboard in 60 seconds")
+                .accessibilityIdentifier("copyRecoveryCode")
+                if required {
+                    RaisedGroup {
+                        HStack(spacing: 12) {
+                            GlyphTile(.pencil)
+                            Toggle(isOn: $recorded) {
+                                Text("I wrote it down").textRole(.row).foregroundStyle(Palette.ink)
+                            }
+                            .toggleStyle(SignalSwitchStyle())
+                            .accessibilityIdentifier("recoveryRecorded")
+                            .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 56)
+                    }
+                    .padding(.top, 14)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-            .padding(.horizontal, 12)
-            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
-            .environment(\.layoutDirection, .leftToRight)
-            .textSelection(.enabled)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: copy)
-            .accessibilityAction(named: "Copy recovery code", copy)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("recoveryCode")
-            Button {
-                copy()
-            } label: {
-                Label(copied ? "Copied · clears in 60 s" : "Copy · clears in 60 s", systemImage: "doc.on.doc")
-            }
-            .buttonStyle(SignalButtonStyle(.soft, size: .small))
-            .accessibilityIdentifier("copyRecoveryCode")
-            if required {
-                Toggle(isOn: $recorded) {
-                    Text("I wrote it down").font(RFont.sans(15)).foregroundStyle(Palette.ink)
-                }
-                .toggleStyle(SignalSwitchStyle())
-                .accessibilityIdentifier("recoveryRecorded")
-                .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }
-            }
-            Button(required ? "Continue" : "Done", action: onDone)
-                .buttonStyle(SignalButtonLook(kind: .inverse))
-                .frame(height: 54)
-                .disabled(required && !recorded)
-                .accessibilityIdentifier("recoveryDone")
-        }
-        .padding(24)
+            .padding(.bottom, 24)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ArriveFooter {
+                Button(required ? "Continue" : "Done", action: onDone)
+                    .buttonStyle(SignalButtonStyle(.inverse))
+                    .disabled(required && !recorded)
+                    .accessibilityIdentifier("recoveryDone")
+            }
+        }
         .interactiveDismissDisabled(required)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

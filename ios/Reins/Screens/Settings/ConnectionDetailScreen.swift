@@ -1,15 +1,18 @@
 import SwiftUI
 
-/// One AI app or computer: its icon and name, its Autopilot mode (like every AI, its own, a bypass or a lockdown), the
-/// profile it teaches, its grants, when it connected, its icon, and disconnecting it (held to confirm).
-///
-/// Each group is its own small view, and no group declares a `let` inside the list's builder: one big `List` body
-/// with local `let`s miscompiles with Xcode 27.1 beta (the app crashes destroying the list value).
+/// One AI app or computer (the Connections board, 02): a quiet page. Its avatar and name; its own Autopilot choice
+/// (like every AI, Manual, Auto) and its own modes for a while (Overnight, Lockdown, Bypass); the profile it teaches,
+/// its grants, when it connected and was last seen; disconnecting it, held. The pencil renames it; its avatar picks
+/// its icon. Every mode change goes through `AutopilotModel`, which asks the owner wherever a change loosens what runs
+/// (a bypass, Overnight, leaving a lockdown).
 struct ConnectionDetailScreen: View {
     var connectionId: String
     @Environment(AppModel.self) private var model
-    /// Autopilot's profiles, for "Learns into"; read each time the page shows (they change as Autopilot learns).
+    @Environment(\.feedback) private var feedback
+    /// Autopilot's profiles, for the profile row; read each time the page shows (they change as Autopilot learns).
     @State private var profiles: [ProfileView] = []
+    @State private var naming = false
+    @State private var picking = false
 
     init(connectionId: String) {
         self.connectionId = connectionId
@@ -18,16 +21,31 @@ struct ConnectionDetailScreen: View {
     var body: some View {
         Group {
             if let connection = model.connection(connectionId) {
-                List {
-                    ConnectionHeader(connection: connection)
-                    ConnectionAutopilotIfRead(connection: connection)
+                NextPage {
+                    ConnectionTitle(connection: connection) { picking = true }
+                    if let settings = model.autopilot {
+                        ConnectionAutopilotGroup(connection: connection, settings: settings)
+                    }
                     ConnectionInfoGroup(connection: connection, profiles: profiles, activeGrants: activeGrants(connection.id)) {
                         await loadProfiles()
                     }
-                    ConnectionIconGroup(connection: connection)
-                    DisconnectGroup(connection: connection)
+                    DisconnectRow(connection: connection)
                 }
-                .reinsGrouped()
+                .sheet(isPresented: $naming) {
+                    RenameSheet(connection: connection) { naming = false }
+                        .environment(model)
+                        .environment(\.feedback, feedback)
+                }
+                .presentationFeedback(naming)
+                .sheet(isPresented: $picking) {
+                    IconPickerSheet(connectionId: connection.id) { icon in
+                        picking = false
+                        setIcon(icon)
+                    }
+                    .environment(model)
+                    .environment(\.feedback, feedback)
+                }
+                .presentationFeedback(picking)
             } else {
                 EmptyState(symbol: "link", title: "Not connected", message: "This AI is no longer connected.")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -35,10 +53,21 @@ struct ConnectionDetailScreen: View {
                     .accessibilityIdentifier("connectionGone")
             }
         }
-        .navigationTitle(model.connection(connectionId).map { untrusted($0.label) } ?? "Connection")
-        .navigationBarTitleDisplayMode(.inline)
-        // The name is the page's own heading, large and centred under the icon.
-        .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
+        .quietPageBar(model.connection(connectionId).map { untrustedName($0.label, limit: 40) } ?? "Connection")
+        .toolbar {
+            if model.connection(connectionId) != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        naming = true
+                        feedback.defaultTap()
+                    } label: {
+                        GlyphIcon(.pencil, size: 20).foregroundStyle(Palette.ink)
+                    }
+                    .accessibilityLabel("Name and icon")
+                    .accessibilityIdentifier("connectionRename")
+                }
+            }
+        }
         .task {
             await model.refreshAutopilot()
             await loadProfiles()
@@ -52,63 +81,63 @@ struct ConnectionDetailScreen: View {
     private func loadProfiles() async {
         if let read = try? await model.core.autopilotProfiles() { profiles = read }
     }
+
+    private func setIcon(_ icon: String?) {
+        let id = connectionId
+        Task {
+            do {
+                try await model.core.setConnectionIcon(connectionId: id, icon: icon)
+                await model.refreshConnections()
+            } catch {
+                feedback.play(.error)
+                model.notice = error.userMessage
+            }
+        }
+    }
 }
 
-/// The icon, the name, and where it connects from and when it was last used.
-private struct ConnectionHeader: View {
+/// Its avatar (which opens the icon picker) and its name: one short clean line, the page's heading. A renamed one says
+/// what it calls itself, quoted.
+private struct ConnectionTitle: View {
     var connection: ConnectionView
+    var onIcon: () -> Void
+    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        Section {
-            // Its mark, its name in the serif (one short clean line), where it is and when it was last used.
-            HStack(spacing: 14) {
-                ConnectionAvatar(connection: connection, size: 56)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(untrustedName(connection.label, limit: 40))
-                        .font(RFont.display(29.5))
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .accessibilityAddTraits(.isHeader)
-                        .accessibilityIdentifier("connectionName")
-                    if let itself = SettingsText.calledItself(connection) {
-                        Text(itself)
-                            .textRole(.meta)
-                            .foregroundStyle(Palette.inkMeta)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("connectionCalledItself")
-                    }
-                    Text(SettingsText.connectionHeadline(connection))
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.inkMeta)
-                        .lineLimit(1)
-                        .environment(\.layoutDirection, .leftToRight)
-                        .accessibilityIdentifier("connectionHeadline")
+        VStack(alignment: .leading, spacing: 4) {
+            MarkedTitle(title: untrustedName(connection.label, limit: 40), titleId: "connectionName") {
+                Button {
+                    onIcon()
+                    feedback.defaultTap()
+                } label: {
+                    MarkPlate(size: 36) { ConnectionAvatar(connection: connection, size: 36) }
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(PressDimsStyle())
+                .padding(-4)
+                .accessibilityLabel("Icon")
+                .accessibilityValue(SettingsText.iconName(connection.icon))
+                .accessibilityIdentifier("connectionIcon")
             }
-            .padding(.vertical, 4)
-            .listRowBackground(Color.clear)
+            if let itself = SettingsText.calledItself(connection) {
+                Text(itself)
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .lineLimit(1)
+                    .padding(.leading, 68)
+                    .padding(.trailing, 20)
+                    .accessibilityIdentifier("connectionCalledItself")
+            }
         }
     }
 }
 
 // MARK: Autopilot
 
-/// The Autopilot group, once Autopilot's settings have been read.
-private struct ConnectionAutopilotIfRead: View {
-    var connection: ConnectionView
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        if let settings = model.autopilot {
-            ConnectionAutopilotGroup(connection: connection, settings: settings)
-        }
-    }
-}
-
-/// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a chooser, then an
-/// Overnight and a bypass for just this AI (their sheets, held to confirm) and a lockdown for just this AI (a tap).
+/// Its own Autopilot choice (like every AI, Manual, Auto), then "For a while": Overnight, Lockdown or Bypass for just
+/// this AI, and while one runs, the mode with Stop. The sheets of Overnight and Bypass are held to confirm, and every
+/// change goes through `AutopilotModel` (the owner's check where it loosens what runs).
 private struct ConnectionAutopilotGroup: View {
     var connection: ConnectionView
     var settings: AutopilotSettings
@@ -116,53 +145,68 @@ private struct ConnectionAutopilotGroup: View {
     @Environment(\.feedback) private var feedback
     @State private var askBypass = false
     @State private var askOvernight = false
-    @State private var error: String?
-    /// Overnight starts and stops as on the Autopilot page (the owner's check, the mode it interrupted).
+    @State private var help = false
     @State private var ap = AutopilotModel()
 
     private var own: ConnectionAutopilot? { settings.connections.first { $0.connectionId == connection.id } }
     private var mode: AutopilotMode { own?.mode ?? settings.mode }
     /// What the user chose for this AI; nil = like every AI.
     private var chosen: AutopilotMode? { own?.bypassUntil != nil ? .bypass : own?.baseMode }
-    private var label: String { untrusted(connection.label) }
+    private var label: String { untrustedName(connection.label, limit: 40) }
     /// Every AI is locked down, this one included.
     private var globalLockdown: Bool { mode == .lockdown && settings.mode == .lockdown && own?.baseMode != .lockdown }
-    /// The choices of the segmented control: like every AI (nil), then the modes that are not one of the buttons.
-    private var choices: [AutopilotMode?] {
-        [nil] + SettingsText.modes.filter { ![.overnight, .bypass, .lockdown].contains($0) }.map { Optional($0) }
-    }
 
     static let help = "Its own mode wins over the global one, except a global Lockdown. A bypass is not possible in an AI's first 10 minutes."
 
     var body: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 12) {
-                segments
-                overnightButton
-                HStack(spacing: 8) {
-                    bypassButton
-                    lockButton
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader("Autopilot", glyph: .autopilot, quiet: true) {
+                Button {
+                    let next = !help
+                    withAnimation(.smooth(duration: 0.25)) { help = next }
+                    feedback.play(.expand(next))
+                } label: {
+                    GlyphIcon(.help, size: 16)
+                        .foregroundStyle(help ? Palette.violet : Palette.inkMeta)
+                        .frame(width: 44, height: 30)
+                        .contentShape(Rectangle())
                 }
-                if globalLockdown {
-                    Text("Every AI is locked down")
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.warning)
-                        .accessibilityIdentifier("connectionModeLine")
-                }
-                if let error = error ?? ap.error {
-                    FormBanner(text: error).accessibilityIdentifier("connAutopilotError")
-                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(help ? "Hide help" : "Help")
+                .accessibilityIdentifier("help")
             }
-            .padding(.vertical, 6)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("connectionMode")
-            .cardRow()
-        } header: {
-            HelpHeader(title: "Autopilot", help: Self.help)
+            if help {
+                Text(Self.help)
+                    .textRole(.sub)
+                    .foregroundStyle(Palette.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+            }
+            segments.padding(.horizontal, 20)
+            FlatGroup(inset: 0) {
+                timedRow
+            }
+            .padding(.top, 10)
+            if globalLockdown {
+                Label { Text("Every AI is locked down") } icon: { ModeGlyph(.lockdown, size: 14) }
+                    .font(RFont.sans(13, .medium))
+                    .foregroundStyle(Palette.warning)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("connectionModeLine")
+            }
+            if let error = ap.error {
+                FormBanner(text: error).padding(.horizontal, 20).padding(.top, 10).accessibilityIdentifier("connAutopilotError")
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("connectionMode")
         .sheet(isPresented: $askBypass) {
             BypassSheet(who: label) { length in
-                startBypass(minutes: length.minutes)
+                let id = connection.id
+                Task { await ap.startBypass(connectionId: id, minutes: length.minutes, label: connection.label) }
             }
             .environment(\.feedback, feedback)
         }
@@ -170,8 +214,8 @@ private struct ConnectionAutopilotGroup: View {
         .sheet(isPresented: $askOvernight) {
             OvernightSheet(who: label, ap: ap) { length in
                 feedback.quietClose()
-                error = nil
-                Task { await ap.startOvernight(connectionId: connection.id, minutes: length.minutes) }
+                let id = connection.id
+                Task { await ap.startOvernight(connectionId: id, minutes: length.minutes) }
             }
             .environment(\.feedback, feedback)
         }
@@ -179,173 +223,119 @@ private struct ConnectionAutopilotGroup: View {
         .onAppear { ap.bind(model) }
     }
 
-    /// Like all, Manual, Auto: the Signal chooser, the chosen one raised.
+    /// Like all, Manual, Auto: a sunken well, the chosen one raised; Manual and Auto carry their glyphs.
     private var segments: some View {
-        Chooser(choices.map { m in
-            Chooser.Segment(
-                id: m.map { "connMode:\(SettingsText.modeName($0).uppercased())" } ?? "connMode:follow",
-                title: m.map(SettingsText.modeName) ?? "Like all",
-                selected: m == chosen
-            ) {
-                feedback.play(.selection)
-                setMode(m)
-            }
-        })
+        HStack(spacing: 2) {
+            segment(nil, "Like all", id: "connMode:follow")
+            segment(.manual, "Manual", id: "connMode:MANUAL", glyph: .manual)
+            segment(.auto, "Auto", id: "connMode:AUTO", glyph: .auto)
+        }
+        .padding(4)
+        .background(Palette.paperSunken, in: Capsule())
+        .animation(.easeOut(duration: Motion.fade), value: chosen)
     }
 
-    @ViewBuilder private var bypassButton: some View {
-        if let until = own?.bypassUntil {
-            Button(role: .destructive, action: stopBypass) {
-                // Stopping a bypass is words only, everywhere.
-                HStack(spacing: 6) {
-                    if AutopilotText.isUntilOff(until) {
-                        Text("Stop · until off")
-                            .accessibilityIdentifier("connectionModeLine")
-                    } else {
-                        TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                            Text("Stop · " + AutopilotText.timeLeft(until: until, now: nowSeconds(ctx.date)))
-                                .accessibilityIdentifier("connectionModeLine")
-                        }
-                    }
+    private func segment(_ m: AutopilotMode?, _ title: String, id: String, glyph: ModeKind? = nil) -> some View {
+        let selected = m == chosen
+        return Button {
+            guard !selected else { return }
+            feedback.play(.selection)
+            setMode(m)
+        } label: {
+            HStack(spacing: 5) {
+                if let glyph { ModeGlyph(glyph, size: 14).foregroundStyle(glyph == .auto ? Palette.violet : (selected ? Palette.ink : Palette.ink2)) }
+                Text(title).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .font(RFont.sans(14, .semibold))
+            .foregroundStyle(selected ? Palette.ink : Palette.ink2)
+            .frame(maxWidth: .infinity, minHeight: 38)
+            .background {
+                if selected {
+                    Capsule().fill(Palette.paperRaised)
+                        .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+                        .overlay(Capsule().strokeBorder(Palette.rule, lineWidth: 1))
                 }
-                .modePill(fill: Palette.dangerWash, text: Palette.danger)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("stopConnectionBypass")
-        } else {
-            Button {
-                feedback.play(.tap)
-                askBypass = true
-            } label: {
-                Label { Text("Bypass") } icon: { GlyphIcon(.shieldPaused, size: 16) }
-                    .modePill(fill: Palette.dangerWash, text: Palette.danger)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("connMode:BYPASS")
-        }
-    }
-
-    /// Overnight for just this AI, or, while it runs, Stop with the time it has left. Words only to stop, as a bypass.
-    @ViewBuilder private var overnightButton: some View {
-        if let until = own?.overnightUntil {
-            Button {
-                error = nil
-                Task { await ap.stopOvernight(connection.id) }
-            } label: {
-                Group {
-                    if AutopilotText.isUntilOff(until) {
-                        Text("Stop \(AutopilotText.overnightName) · until off")
-                    } else {
-                        TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                            Text("Stop \(AutopilotText.overnightName) · " + AutopilotText.timeLeft(until: until, now: nowSeconds(ctx.date)))
-                        }
-                    }
-                }
-                .modePill(fill: Palette.violet.opacity(0.16), text: Palette.violet)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("stopConnectionOvernight")
-        } else {
-            Button {
-                feedback.play(.tap)
-                askOvernight = true
-            } label: {
-                Label { Text(AutopilotText.overnightName) } icon: { GlyphIcon(.moon, size: 16) }
-                    .modePill(fill: Palette.violet.opacity(0.12), text: Palette.violet)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("connMode:OVERNIGHT")
-        }
-    }
-
-    @ViewBuilder private var lockButton: some View {
-        if chosen == .lockdown {
-            Button {
-                setMode(nil)
-            } label: {
-                Label { Text("Unlock") } icon: { GlyphIcon(.lockOpen, size: 16) }
-                    .modePill(fill: Palette.warning.opacity(0.14), text: Palette.warning)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("connMode:LOCKDOWN")
-        } else {
-            Button {
-                setMode(.lockdown)
-            } label: {
-                Label { Text("Lock down") } icon: { GlyphIcon(.lock, size: 16) }
-                    .modePill(fill: Palette.paperSunken, text: Palette.ink)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("connMode:LOCKDOWN")
-        }
-    }
-
-    /// Sets this AI's mode (`nil`: back to following the global one); not Bypass, which `startBypass` turns on. The
-    /// change is felt at once; a refusal from the core says why.
-    private func setMode(_ new: AutopilotMode?) {
-        if let event = SettingsText.modeChangeEvent(mode, new ?? settings.mode) { feedback.play(event) }
-        let id = connection.id
-        // Leaving its Overnight by picking another mode: what it interrupted no longer matters.
-        if own?.baseMode == .overnight { OvernightReturn.forget(id) }
-        model.patchAutopilot { $0.applyMode(new, minutes: 0, connectionId: id) }
-        run {
-            try await model.core.setAutopilotMode(connectionId: id, mode: new, minutes: nil)
-        }
-    }
-
-    /// A bypass of this AI for `minutes`, or until turned off (nil), after its sheet was held. Holding proves intent,
-    /// not identity: the phone's owner confirms it too (Face ID or the passcode), and without that nothing changes,
-    /// not even for a moment. A refusal from the core (a just-paired connection cannot be bypassed) says why.
-    private func startBypass(minutes: UInt32?) {
-        let id = connection.id
-        let who = untrusted(connection.label)
-        Task {
-            guard await model.authenticator.confirm("Turn on Bypass for \(who)") else { return }
-            feedback.play(.bypassOn)
-            model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id, overnightReturn: OvernightReturn.mode(id)) }
-            run {
-                try await model.core.startBypass(connectionId: id, minutes: minutes)
-            }
-        }
-    }
-
-    /// Ends this AI's bypass: it goes back to its own setting (never to Overnight: the bypass ended that).
-    private func stopBypass() {
-        feedback.play(.bypassOff)
-        let (id, s) = (connection.id, settings)
-        model.patchAutopilot { $0.applyBypassEnd(connectionId: id) }
-        run { try await model.endBypass(id, in: s) }
-    }
-
-    private func run(_ work: @escaping () async throws -> Void) {
-        error = nil
-        Task {
-            do {
-                try await work()
-            } catch {
-                feedback.play(.error)
-                self.error = error.userMessage
-            }
-            await model.refreshAutopilot()
-        }
-    }
-}
-
-private extension View {
-    /// One of the two buttons under the mode control: a 40-point pill in its colour.
-    func modePill(fill: Color, text: Color) -> some View {
-        font(RFont.sans(14.5, .medium))
-            .foregroundStyle(text)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(fill, in: Capsule())
             .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(id)
+    }
+
+    /// "For a while" and its three modes, a menu of them; a running one shows itself with Stop instead.
+    @ViewBuilder private var timedRow: some View {
+        if let until = own?.bypassUntil {
+            running(.bypass, until: until, stopId: "stopConnectionBypass") {
+                Task { await ap.stopBypass(connection.id) }
+            }
+        } else if let until = own?.overnightUntil {
+            running(.overnight, until: until, stopId: "stopConnectionOvernight") {
+                Task { await ap.stopOvernight(connection.id) }
+            }
+        } else if chosen == .lockdown {
+            HStack(spacing: 12) {
+                ModeTile(mode: .lockdown, side: 24)
+                Text(ModeKind.lockdown.name).textRole(.row).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("connectionModeLine")
+                Button("Unlock") { setMode(nil) }
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+                    .accessibilityIdentifier("connMode:LOCKDOWN")
+            }
+            .frame(minHeight: 52)
+        } else {
+            Menu {
+                Button { feedback.play(.tap); askOvernight = true } label: { Label(AutopilotText.overnightName, image: Glyph.moon.rawValue) }
+                    .accessibilityIdentifier("connMode:OVERNIGHT")
+                Button { setMode(.lockdown) } label: { Label(ModeKind.lockdown.name, image: Glyph.block.rawValue) }
+                    .accessibilityIdentifier("connMode:LOCKDOWN")
+                Button(role: .destructive) { feedback.play(.tap); askBypass = true } label: { Label(ModeKind.bypass.name, image: Glyph.shieldAlert.rawValue) }
+                    .accessibilityIdentifier("connMode:BYPASS")
+            } label: {
+                ForAWhileRow().padding(.horizontal, -14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("For a while")
+            .accessibilityIdentifier("connForAWhile")
+        }
+    }
+
+    private func running(_ kind: ModeKind, until: Int64, stopId: String, stop: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            ModeTile(mode: kind, side: 24)
+            Group {
+                if AutopilotText.isUntilOff(until) {
+                    Text("\(kind.name) · until off")
+                } else {
+                    TimelineView(.periodic(from: .now, by: 15)) { ctx in
+                        Text("\(kind.name) · " + AutopilotText.timeLeft(until: until, now: nowSeconds(ctx.date)))
+                    }
+                }
+            }
+            .textRole(.row)
+            .foregroundStyle(kind == .bypass ? Palette.danger : Palette.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("connectionModeLine")
+            // Stopping is words only, everywhere.
+            Button("Stop", action: stop)
+                .buttonStyle(SignalButtonStyle(kind == .bypass ? .danger : .soft, size: .small, fill: false))
+                .accessibilityIdentifier(stopId)
+        }
+        .frame(minHeight: 52)
+    }
+
+    /// This AI's mode (`nil`: back to following the global one), through `AutopilotModel`: leaving its lockdown asks
+    /// the owner; the change is felt at once and a refusal from the core says why.
+    private func setMode(_ new: AutopilotMode?) {
+        let id = connection.id
+        Task { await ap.setMode(new, connectionId: id, label: connection.label) }
     }
 }
 
-// MARK: Profile, grants, date
+// MARK: Details
 
-/// "Learns into" (the profile its answers teach, picked from a menu), its active grants, and when it connected.
+/// The profile its answers teach (picked from a menu), its active grants, when it connected and was last seen; a
+/// computer's key, as it pinned it.
 private struct ConnectionInfoGroup: View {
     var connection: ConnectionView
     var profiles: [ProfileView]
@@ -360,56 +350,54 @@ private struct ConnectionInfoGroup: View {
         guard let s = settings else { return nil }
         return s.connections.first { $0.connectionId == connection.id }?.profileId ?? s.defaultProfileId
     }
-    private var profileName: String? { profiles.first { $0.id == profileId }.map { untrusted($0.name) } }
+    private var profileName: String? { profiles.first { $0.id == profileId }.map { untrustedName($0.name, limit: 24) } }
 
     var body: some View {
-        Section {
-            if settings != nil && !profiles.isEmpty {
-                Menu {
-                    Picker("Learns into", selection: Binding(get: { profileId ?? "" }, set: assign)) {
-                        ForEach(profiles, id: \.id) { p in
-                            Text(untrusted(p.name) + (p.id == settings?.defaultProfileId ? " (default)" : "")).tag(p.id)
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader("Details", quiet: true)
+            FlatGroup {
+                if settings != nil && !profiles.isEmpty {
+                    Menu {
+                        Picker("Profile", selection: Binding(get: { profileId ?? "" }, set: assign)) {
+                            ForEach(profiles, id: \.id) { p in
+                                Text(untrustedName(p.name, limit: 32) + (p.id == settings?.defaultProfileId ? " (default)" : "")).tag(p.id)
+                            }
                         }
+                    } label: {
+                        TileRow("Profile", glyph: .fileText, value: profileName).padding(.horizontal, -14)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Profile")
+                    .accessibilityValue(profileName ?? "")
+                    .accessibilityIdentifier("learnsInto")
+                }
+                Button {
+                    model.select(.trust)
+                    feedback.defaultTap()
                 } label: {
-                    SettingsRowLabel(title: "Learns into") {
-                        SettingsTile(symbol: "brain.head.profile", tint: Palette.violet)
-                    } trailing: {
-                        if let profileName { RowValue(profileName) }
-                    }
+                    TileRow("Grants", glyph: .key, value: activeGrants == 0 ? "None" : "\(activeGrants)").padding(.horizontal, -14)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Learns into")
-                .accessibilityValue(profileName ?? "")
-                .accessibilityIdentifier("learnsInto")
-                .cardRow()
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("activeGrants")
+                TileRow("Connected", glyph: .calendar, value: Date(timeIntervalSince1970: TimeInterval(connection.createdAt)).formatted(.dateTime.month(.abbreviated).day().year()), chevron: false)
+                    .padding(.horizontal, -14)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("connectedOn")
+                TileRow("Last seen", glyph: .timer, value: SettingsText.lastUsed(connection), chevron: false)
+                    .padding(.horizontal, -14)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("lastUsed")
+                if let key = connection.keyFingerprint {
+                    // Its key's digits as this phone verified them when it paired, on a mono row.
+                    TileRow("Key", glyph: .fingerprint, value: key, mono: true, chevron: false)
+                        .padding(.horizontal, -14)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("connectionKey")
+                }
             }
-            SettingsRowLabel(title: "Active grants", chevron: false) {
-                SettingsTile(symbol: "key.fill", tint: Palette.kindPush)
-            } trailing: {
-                RowValue(activeGrants == 0 ? "None" : "\(activeGrants)")
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("activeGrants")
-            .cardRow()
-            SettingsRowLabel(title: "Connected", chevron: false) {
-                SettingsTile(symbol: "clock.arrow.circlepath", tint: Palette.inkMeta)
-            } trailing: {
-                RowValue(SettingsText.shortDate(connection.createdAt))
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("connectedOn")
-            .cardRow()
-            SettingsRowLabel(title: "Last used", chevron: false) {
-                SettingsTile(symbol: "clock", tint: Palette.inkMeta)
-            } trailing: {
-                RowValue(SettingsText.lastUsed(connection))
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("lastUsed")
-            .cardRow()
             if let error {
-                FormBanner(text: error).cardRow()
+                FormBanner(text: error).padding(.horizontal, 20).padding(.top, 10)
             }
         }
     }
@@ -431,88 +419,6 @@ private struct ConnectionInfoGroup: View {
                 self.error = error.userMessage
             }
             await model.refreshAutopilot()
-        }
-    }
-}
-
-// MARK: Icon, disconnect
-
-/// Its name and the icon it shows everywhere: the name opens a field, the icon the picker.
-private struct ConnectionIconGroup: View {
-    var connection: ConnectionView
-    @Environment(AppModel.self) private var model
-    @Environment(\.feedback) private var feedback
-    @State private var picking = false
-    @State private var naming = false
-    @State private var error: String?
-
-    var body: some View {
-        Section {
-            Button {
-                naming = true
-                feedback.defaultTap()
-            } label: {
-                SettingsRowLabel(title: "Name") {
-                    SettingsTile(symbol: "pencil", tint: Palette.inkMeta)
-                } trailing: {
-                    RowValue(untrustedName(connection.label, limit: 28))
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Name")
-            .accessibilityValue(untrustedName(connection.label))
-            .accessibilityIdentifier("connectionRename")
-            .cardRow()
-            .sheet(isPresented: $naming) {
-                RenameSheet(connection: connection) { naming = false }
-                    .environment(model)
-                    .environment(\.feedback, feedback)
-            }
-            .presentationFeedback(naming)
-            Button {
-                picking = true
-                feedback.defaultTap()
-            } label: {
-                SettingsRowLabel(title: "Icon") {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Palette.paperSunken)
-                        .frame(width: 32, height: 32)
-                        .overlay { ConnectionAvatar(connection: connection, size: 24) }
-                        .accessibilityHidden(true)
-                } trailing: {
-                    RowValue(SettingsText.iconName(connection.icon))
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Icon")
-            .accessibilityValue(SettingsText.iconName(connection.icon))
-            .accessibilityIdentifier("connectionIcon")
-            .cardRow()
-            // On the row: a section's modifiers go to each of its rows, the error banner's too.
-            .sheet(isPresented: $picking) {
-                IconPickerSheet(connectionId: connection.id) { icon in
-                    picking = false
-                    setIcon(icon)
-                }
-                .environment(model)
-                .environment(\.feedback, feedback)
-            }
-            .presentationFeedback(picking)
-            if let error { FormBanner(text: error).cardRow() }
-        }
-    }
-
-    private func setIcon(_ icon: String?) {
-        error = nil
-        let id = connection.id
-        Task {
-            do {
-                try await model.core.setConnectionIcon(connectionId: id, icon: icon)
-                await model.refreshConnections()
-            } catch {
-                feedback.play(.error)
-                self.error = error.userMessage
-            }
         }
     }
 }
@@ -674,8 +580,8 @@ private struct IconPickerSheet: View {
     }
 }
 
-/// Disconnecting it: held, no dialog.
-private struct DisconnectGroup: View {
+/// Disconnecting it: the quiet danger row, held, no dialog. Its grants end with it.
+private struct DisconnectRow: View {
     var connection: ConnectionView
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -683,14 +589,13 @@ private struct DisconnectGroup: View {
     @State private var error: String?
 
     var body: some View {
-        Section {
-            VStack(spacing: 10) {
-                if let error { FormBanner(text: error) }
-                HoldButton(title: "Hold to disconnect", symbol: "trash", busy: busy, height: 52, onConfirm: disconnect)
-                    .accessibilityIdentifier("disconnect")
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+        VStack(alignment: .leading, spacing: 10) {
+            QuietDangerRow(
+                title: "Disconnect \(untrustedName(connection.label, limit: 32))", glyph: .unlink, note: "Hold to disconnect. Its grants end.",
+                busy: busy, onConfirm: disconnect
+            )
+            .accessibilityIdentifier("disconnect")
+            if let error { FormBanner(text: error).padding(.horizontal, 20) }
         }
     }
 

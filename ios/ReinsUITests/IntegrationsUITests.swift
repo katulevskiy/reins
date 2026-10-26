@@ -72,7 +72,8 @@ final class IntegrationsUITests: XCTestCase {
         text("Account connected")
         text("new.account@gmail.com")
         shot("google-account-connected")
-        waitFor("connectionAddAnother").tap()
+        // The finishing page is a list: its last buttons load as it scrolls.
+        reveal(element("connectionAddAnother")).tap()
         XCTAssertFalse(element("integrationConnected").exists)
         _ = waitFor("addAccount")
         _ = waitFor("account:new.account@gmail.com")
@@ -113,7 +114,6 @@ final class IntegrationsUITests: XCTestCase {
 
     func testARejectedTokenIsExplained() {
         launch("codeberg")
-        waitFor("pasteManually").tap()
         let secret = waitFor("secret")
         secret.tap()
         secret.typeText("bad")
@@ -151,8 +151,12 @@ final class IntegrationsUITests: XCTestCase {
         shot("mcp-signed-in")
         waitFor("connectionDone").tap()
         _ = waitFor("tool:search_issues")
-        // The app's switch (SignalSwitchStyle) is one element, and a tap anywhere on its row toggles it.
-        element("heavy:create_issue").tap()
-        _ = waitFor("badge:create_issue:heavy")
+        // The app's switch (SignalSwitchStyle) is one element: "Via server" for that tool.
+        let heavy = app.switches["heavy:create_issue"].firstMatch
+        XCTAssertTrue(heavy.waitForExistence(timeout: 8))
+        let before = heavy.value as? String
+        heavy.tap()
+        expectation(for: NSPredicate(format: "value != %@", before ?? ""), evaluatedWith: heavy)
+        waitForExpectations(timeout: 8)
     }
 }
