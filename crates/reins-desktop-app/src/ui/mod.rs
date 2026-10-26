@@ -27,7 +27,7 @@ mod story;
 mod work;
 
 /// A request in one sentence, for the notification that says to check the phone.
-pub(crate) use story::spoken;
+pub(crate) use story::{banner, spoken};
 
 /// A request's sentence as plain text, for the tray.
 pub(crate) fn ask_line(e: &Entry) -> String {

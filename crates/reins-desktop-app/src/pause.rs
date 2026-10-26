@@ -112,6 +112,18 @@ impl Pause {
             Self::Manual => Some("until you resume".to_owned()),
         }
     }
+
+    /// The time left as a menu bar clock: "3:12" (hours and minutes), "47m"; `None` without an end.
+    #[must_use]
+    pub fn clock(self, now: i64) -> Option<String> {
+        match self {
+            Self::Until(until) => {
+                let mins = ((until - now).max(0) + 59) / 60;
+                Some(if mins >= 60 { format!("{}:{:02}", mins / 60, mins % 60) } else { format!("{mins}m") })
+            }
+            Self::Off | Self::Manual => None,
+        }
+    }
 }
 
 impl Saved {

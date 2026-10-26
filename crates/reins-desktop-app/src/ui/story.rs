@@ -1222,6 +1222,22 @@ pub fn spoken(e: &Entry) -> String {
     }
 }
 
+/// A waiting request as a banner (`DeskNext-MenuBar.png`): who asks as the title, on its own (cleaned, one line,
+/// capped: the requester's word never runs into a sentence of Reins'); under it what it asks, its details and where to
+/// answer.
+#[must_use]
+pub fn banner(e: &Entry, phone: &str) -> (String, String) {
+    let a = Ask::of(e);
+    let who = middle(&clean(&a.who), 40);
+    let order: String = a.order.iter().map(|w| w.text.as_str()).collect();
+    let mut body = order;
+    if let Some(d) = &a.details {
+        body = format!("{body} · {d}");
+    }
+    let body = middle(&clean(&body), 150);
+    (who, format!("{body} · answer on {phone}"))
+}
+
 /// The field a request waits on.
 #[must_use]
 pub fn field_of(e: &Entry) -> Field {
@@ -1839,6 +1855,17 @@ mod tests {
         let end = entry(Kind::Ask, Some("work session"), None, "ended the work session: Fix the login bug", None);
         assert_eq!(said(&Ask::of(&end).sentence), "You ended the work session *Fix the login bug*");
         one_target(&s);
+    }
+
+    #[test]
+    fn banners_keep_who_asks_apart() {
+        let mut e = Entry::new(Kind::Command, "Claude Code wants to run: rm -rf build").source(Some("Claude\u{202e}Code"));
+        e.outcome = Outcome::Waiting;
+        let (title, body) = banner(&e, "Dana's iPhone");
+        assert!(!title.contains('\u{202e}'), "{title:?}");
+        assert!(title.chars().count() <= 40);
+        assert!(!body.contains(&title), "the requester stays out of the sentence: {body}");
+        assert!(body.ends_with("· answer on Dana's iPhone"), "{body}");
     }
 
     #[test]

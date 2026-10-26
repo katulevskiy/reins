@@ -249,6 +249,9 @@ pub struct Model {
 
 struct GlobalModel(Entity<Model>);
 
+/// The tag of a waiting request's banner, before its id.
+const WAITING_TAG: &str = "reins-waiting-";
+
 impl Global for GlobalModel {}
 
 /// Whether the Dock shows Reins: only while its window is open (a menu bar app otherwise).
@@ -410,6 +413,19 @@ impl Model {
             model
         });
         cx.set_global(GlobalModel(model.clone()));
+        // A waiting request's banner: Show (or the banner itself) opens Home, where it waits; Hide only closes it.
+        cx.on_system_notification_response(|response, cx| {
+            if response.action_id.as_deref() == Some("hide") {
+                cx.dismiss_system_notification(&response.tag);
+                return;
+            }
+            if response.tag.starts_with(WAITING_TAG) {
+                Self::show_window(cx);
+                if let Some(model) = cx.try_global::<GlobalModel>().map(|g| g.0.clone()) {
+                    model.update(cx, |m, cx| m.show_section(Section::Home, cx));
+                }
+            }
+        });
         let background = model.read(cx).args.background;
         if !background || screen != Screen::Status {
             Self::show_window(cx);
@@ -627,12 +643,22 @@ impl Model {
             if !config.phone {
                 continue;
             }
-            let (title, body) = reins_desktop::notify::text(&ui::spoken(e));
+            let phone = self.saved.phone.clone().unwrap_or_else(|| "your phone".to_owned());
+            let (title, body) = ui::banner(e, &phone);
             cx.show_system_notification(gpui::SystemNotification {
-                tag: format!("reins-waiting-{}", e.id).into(),
+                tag: format!("{WAITING_TAG}{}", e.id).into(),
                 title: title.into(),
                 body: body.into(),
-                actions: Vec::new(),
+                actions: vec![
+                    gpui::SystemNotificationAction {
+                        id: "show".into(),
+                        label: "Show".into(),
+                    },
+                    gpui::SystemNotificationAction {
+                        id: "hide".into(),
+                        label: "Hide".into(),
+                    },
+                ],
             });
         }
         if config.phone && config.sound {
@@ -736,8 +762,16 @@ impl Model {
             &phone,
             self.pause().short(now),
         );
+        // Beside the shield (macOS shows a status item's title): how many wait, or a pause's time left.
+        let waiting = self.snapshot.as_ref().map_or(0, |s| s.activity.iter().filter(|e| e.outcome == Outcome::Waiting).count());
+        let title = match look {
+            Look::Waiting if waiting > 0 => Some(waiting.to_string()),
+            Look::Paused => self.pause().clock(now),
+            _ => None,
+        };
         let shown = Shown {
             look,
+            title,
             status,
             detail,
             can_pause: self.paired() && !paused,
