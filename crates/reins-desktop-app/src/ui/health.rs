@@ -18,7 +18,7 @@ use crate::format;
 use crate::health::{self, Test};
 use crate::model::Model;
 use crate::shortcuts;
-use crate::theme::{MONO, Palette, SERIF, Tone};
+use crate::theme::{MONO, Palette, DISPLAY, Tone};
 
 /// "Checked just now", "Checked 3 min ago".
 pub fn checked(d: &Data) -> Option<String> {
@@ -80,7 +80,7 @@ impl Root {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
-                    .font_family(SERIF)
+                    .font_family(DISPLAY)
                     .text_size(px(32.0))
                     .line_height(px(34.0))
                     .text_color(pal.ink())

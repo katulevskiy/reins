@@ -14,7 +14,7 @@ use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::{FactStyle, Words};
 use super::{Data, Root};
 use crate::theme::text::tracked;
-use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
+use crate::theme::{MONO, Palette, DISPLAY, NextText as _, Tone, motion};
 use crate::welcome::Stage;
 
 /// "this Mac", "this computer": what the window calls the computer it runs on.
@@ -467,7 +467,7 @@ pub fn stage(from: Mark, to: Mark, badge: Option<(Glyph, Hsla)>, color: Hsla, si
 }
 
 /// A sentence with its important words (the target) in italic and `ink`; the rest in the caller's colour. Set it in
-/// the serif ([`SERIF`]): the italic is Instrument Serif's own.
+/// the serif ([`DISPLAY`]): the italic is Instrument Serif's own.
 pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -512,7 +512,7 @@ pub fn italic(words: &[Words]) -> StyledText {
 pub fn mood(text: impl Into<SharedString>, pal: Palette) -> Div {
     div()
         .mt(px(8.0))
-        .font_family(SERIF)
+        .font_family(DISPLAY)
         .text_size(px(21.0))
         .line_height(px(26.0))
         .italic()
@@ -867,7 +867,7 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
         .mt(px(6.0))
         .child(
             div()
-                .font_family(SERIF)
+                .font_family(DISPLAY)
                 .text_size(px(40.0))
                 .line_height(px(42.0))
                 .font_weight(FontWeight::NORMAL)

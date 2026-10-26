@@ -53,7 +53,7 @@ use crate::model::{Model, Screen, Section};
 use crate::pause::{Pause, PauseFor};
 use crate::shortcuts::{self, Shortcut};
 use crate::state::Saved;
-use crate::theme::{Palette, SANS};
+use crate::theme::Palette;
 use crate::tray::Look;
 use crate::welcome::Stage;
 use crate::work::Work;
@@ -522,7 +522,7 @@ impl Render for Root {
             .flex_col()
             .bg(pal.paper())
             .text_color(pal.ink())
-            .font_family(SANS)
+            .font(crate::theme::root_font())
             .text_size(px(13.0))
             .line_height(px(18.0));
         match body {

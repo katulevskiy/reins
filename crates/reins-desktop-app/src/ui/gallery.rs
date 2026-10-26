@@ -13,7 +13,7 @@ use super::icons::{Brand, Glyph, Illustration, avatar, glyph, illustration};
 use super::kit::{self, HoldLook, Look, Mode, PillLook, Size};
 use super::{Data, Root};
 use crate::theme::text::{SCALE, tracked};
-use crate::theme::{Field, MONO, Palette, SignalText as _, Tone, tokens};
+use crate::theme::{Field, MONO, Palette, NextText as _, Tone, tokens};
 
 /// What the gallery's controls are set to.
 #[derive(Clone, Copy, Debug)]

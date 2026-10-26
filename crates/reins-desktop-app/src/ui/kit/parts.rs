@@ -9,7 +9,7 @@ use gpui::{
 
 use super::button::PRESSED;
 use crate::theme::text::tracked;
-use crate::theme::{Field, MONO, Palette, SANS, SignalText as _, Tone, motion};
+use crate::theme::{Field, MONO, Palette, SANS, NextText as _, Tone, motion};
 use crate::ui::icons::{Glyph, Illustration, Mark, glyph, illustration};
 use crate::ui::parts::ring;
 

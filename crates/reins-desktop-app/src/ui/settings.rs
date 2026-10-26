@@ -22,7 +22,7 @@ use crate::format::host;
 use crate::health;
 use crate::model::{Model, Section};
 use crate::shortcuts;
-use crate::theme::{Appearance, MONO, Palette, SERIF, SignalText as _, Tone};
+use crate::theme::{Appearance, MONO, Palette, DISPLAY, NextText as _, Tone};
 
 /// The keyboard card's lines: the sections in one line ("Home … Settings", "⌘1 – ⌘6"), then the rest but Quit.
 #[must_use]
@@ -479,7 +479,7 @@ impl Root {
                     .size(px(56.0))
                     .rounded_full()
                     .bg(pal.paper_sunken())
-                    .font_family(SERIF)
+                    .font_family(DISPLAY)
                     .text_size(px(30.0))
                     .text_color(pal.ink())
                     .child(initial),

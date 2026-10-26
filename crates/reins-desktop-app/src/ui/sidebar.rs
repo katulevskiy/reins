@@ -21,7 +21,7 @@ use crate::model::{Model, Section};
 use crate::pause::PauseFor;
 use crate::shortcuts;
 use crate::theme::motion::{self, Entrance, curve, enter};
-use crate::theme::{Field, MONO, Palette, SERIF, SignalText as _};
+use crate::theme::{Field, MONO, Palette, DISPLAY, NextText as _};
 use crate::tray::Look;
 
 const WIDTH: f32 = 236.0;
@@ -275,7 +275,7 @@ impl Root {
                     .px(px(6.0))
                     .pt(px(4.0))
                     .child(brand(Brand::Reins, 26.0).rounded(px(7.0)))
-                    .child(div().font_family(SERIF).text_size(px(24.0)).line_height(px(28.0)).child("Reins")),
+                    .child(div().font_family(DISPLAY).text_size(px(24.0)).line_height(px(28.0)).child("Reins")),
             )
             .child(Self::status_card(d, pal, cx))
             .child(nav)

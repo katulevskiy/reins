@@ -762,7 +762,16 @@ impl Model {
             cx.activate(true);
             return;
         }
-        let bounds = Self::window_bounds(model.read(cx).saved.window, cx);
+        // `--demo` with `REINS_DEMO_SIZE=1280x820`: that size, centred (the boards' window, for screenshots).
+        let demo_size = std::env::var("REINS_DEMO_SIZE")
+            .ok()
+            .filter(|_| model.read(cx).demo())
+            .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))))
+            .map(|(w, h): (f32, f32)| (w.max(ui::MIN_WIDTH), h.max(ui::MIN_HEIGHT)));
+        let bounds = match demo_size {
+            Some((w, h)) => Bounds::centered(None, size(px(w), px(h)), cx),
+            None => Self::window_bounds(model.read(cx).saved.window, cx),
+        };
         let min = size(px(ui::MIN_WIDTH), px(ui::MIN_HEIGHT));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),

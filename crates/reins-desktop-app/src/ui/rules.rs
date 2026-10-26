@@ -18,7 +18,7 @@ use super::story::{bold, group_icon, group_tone, plain};
 use super::{Data, Root, kit};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::{Field as Kind, MONO, Palette, SignalText as _, Tone};
+use crate::theme::{Field as Kind, MONO, Palette, NextText as _, Tone};
 
 /// The wait times offered, in seconds.
 const WAITS: [u64; 4] = [60, 120, 300, 600];

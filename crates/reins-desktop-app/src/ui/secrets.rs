@@ -29,7 +29,7 @@ use super::{Data, Root};
 use crate::model::Model;
 use crate::secrets::{self, Finished, Flow, How, Line, MoveState, Moving, Named, Naming, Review, Scanning, Tick};
 use crate::theme::text::tracked;
-use crate::theme::{MONO, Palette, SERIF};
+use crate::theme::{MONO, Palette, DISPLAY};
 
 fn words(parts: &[(&str, bool)]) -> Vec<Words> {
     parts
@@ -591,7 +591,7 @@ impl Root {
                     .min_w(px(0.0))
                     .text_size(px(32.0))
                     .line_height(px(36.0))
-                    .font_family(SERIF)
+                    .font_family(DISPLAY)
                     .font_weight(FontWeight::NORMAL)
                     .child(format!(
                         "{} in {}",
@@ -863,7 +863,7 @@ impl Root {
                         div()
                             .text_size(px(40.0))
                             .line_height(px(40.0))
-                            .font_family(SERIF)
+                            .font_family(DISPLAY)
                             .font_weight(FontWeight::NORMAL)
                             .child(r.count().to_string()),
                     )
@@ -1490,7 +1490,7 @@ impl Root {
                         div()
                             .text_size(px(30.0))
                             .line_height(px(34.0))
-                            .font_family(SERIF)
+                            .font_family(DISPLAY)
                             .font_weight(FontWeight::NORMAL)
                             .child(title),
                     )

@@ -15,7 +15,7 @@ use super::story::{bold, plain};
 use super::{Data, Root, kit};
 use crate::format::host;
 use crate::model::{Model, Pairing};
-use crate::theme::{MONO, Palette, SERIF, Tone};
+use crate::theme::{MONO, Palette, DISPLAY, Tone};
 
 /// The QR code's side, and the white frame around it (164 px in all, the board's).
 const QR: f32 = 140.0;
@@ -83,7 +83,7 @@ fn key_line(fingerprint: &str, pal: Palette) -> Div {
         )
         .child(
             div()
-                .font_family(SERIF)
+                .font_family(DISPLAY)
                 .text_size(px(22.0))
                 .line_height(px(26.0))
                 .text_color(pal.ink())
@@ -185,7 +185,7 @@ impl Root {
                                 .rounded_full()
                                 .bg(pal.inverse())
                                 .text_color(pal.on_inverse())
-                                .font_family(SERIF)
+                                .font_family(DISPLAY)
                                 .text_size(px(26.0))
                                 .line_height(px(26.0))
                                 .child(n.to_string()),

@@ -26,7 +26,7 @@ use super::{Data, ROWS, Root, kit};
 use crate::backend::ACTIVITY_LIMIT;
 use crate::format;
 use crate::model::Model;
-use crate::theme::{MONO, Palette, SANS, SERIF, SignalText as _};
+use crate::theme::{MONO, Palette, SANS, DISPLAY, NextText as _};
 
 /// The outcome filters, in order: the board's, then the rarer ones (shown when there are some).
 const OUTCOMES: [(Option<Outcome>, &str); 8] = [
@@ -339,7 +339,7 @@ impl Root {
                     .gap(px(8.0))
                     .child(
                         div()
-                            .font_family(SERIF)
+                            .font_family(DISPLAY)
                             .text_size(px(38.0))
                             .line_height(px(40.0))
                             .text_color(pal.ink())

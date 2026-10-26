@@ -1,0 +1,12 @@
+The desktop app's faces (Reins Next), all licensed under the SIL Open Font License 1.1 (https://openfontlicense.org;
+the full text, with each family's copyright line, is in OFL-*.txt beside them):
+
+- Sora (Sora-Regular.ttf, Sora-Medium.ttf, Sora-SemiBold.ttf): Copyright 2019 The Sora Project Authors
+  (https://github.com/sora-xor/sora-font).
+- Geologica (Geologica-Medium.ttf, its Cyrillic only: the fallback under Sora): Copyright 2020 The Geologisk Project
+  Authors (https://github.com/monokromskriftforlag/geologisk).
+- JetBrains Mono (JetBrainsMono-Regular.ttf, JetBrainsMono-Medium.ttf): Copyright 2020 The JetBrains Mono Project
+  Authors (https://github.com/JetBrains/JetBrainsMono).
+
+They are static instances of the variable fonts in github.com/google/fonts (ofl/sora, ofl/geologica,
+ofl/jetbrainsmono), made with fontTools' instancer at the weights the app uses; Geologica is subset to its Cyrillic.

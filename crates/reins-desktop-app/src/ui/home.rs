@@ -22,7 +22,7 @@ use crate::format;
 use crate::health::{self, Test};
 use crate::model::{Model, Section};
 use crate::theme::motion::{self, Entrance, curve, enter};
-use crate::theme::{Field, MONO, Palette, SERIF, SignalText as _};
+use crate::theme::{Field, MONO, Palette, DISPLAY, NextText as _};
 use crate::tray::Look;
 
 /// How many recent requests Home shows (calm), and beside a waiting request.
@@ -128,7 +128,7 @@ fn ending(e: &Entry, pal: Palette) -> AnyElement {
 fn plate_value(text: impl Into<SharedString>) -> Div {
     div()
         .mt(px(10.0))
-        .font_family(SERIF)
+        .font_family(DISPLAY)
         .text_size(px(30.0))
         .line_height(px(34.0))
         .min_w(px(0.0))
@@ -427,7 +427,7 @@ impl Root {
                     .min_w(px(280.0))
                     .child(
                         div()
-                            .font_family(SERIF)
+                            .font_family(DISPLAY)
                             .text_size(px(30.0))
                             .line_height(px(33.0))
                             .text_color(pal.ink())
@@ -482,7 +482,7 @@ impl Root {
         // The ask follows the field by 60 ms.
         let ask_id = SharedString::from(format!("ask-{}", e.id));
         let ask =
-            div().font_family(SERIF).text_size(px(60.0)).line_height(px(58.0)).text_color(on).child(italic(&s.order));
+            div().font_family(DISPLAY).text_size(px(60.0)).line_height(px(58.0)).text_color(on).child(italic(&s.order));
         let ask: AnyElement = if motion::reduce_motion() {
             ask.into_any_element()
         } else {
@@ -717,7 +717,7 @@ impl Root {
                     div()
                         .relative()
                         .mt(px(8.0))
-                        .font_family(SERIF)
+                        .font_family(DISPLAY)
                         .text_size(px(28.0))
                         .line_height(px(30.0))
                         .min_w(px(0.0))
@@ -819,7 +819,7 @@ impl Root {
                     .items_baseline()
                     .gap(px(18.0))
                     .mt(px(10.0))
-                    .font_family(SERIF)
+                    .font_family(DISPLAY)
                     .text_size(px(30.0))
                     .line_height(px(34.0))
                     .child(n(t.approved, pal.success))
