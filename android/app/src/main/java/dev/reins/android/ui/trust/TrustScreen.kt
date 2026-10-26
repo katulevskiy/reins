@@ -124,14 +124,15 @@ fun TrustScreen(
             Column(Modifier.fillMaxWidth().padding(top = 14.dp).testTag("modeHero"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (s == null) {
                     Spacer(Modifier.height(40.dp))
-                } else if (dev.reins.android.ui.autopilot.running(s) == null) {
+                } else if (dev.reins.android.ui.autopilot.running(s) == null && s.mode != AutopilotMode.LOCKDOWN) {
+                    // In Lockdown the field above is all there is: its End goes through the owner's check.
                     val model = ui.model ?: s.model
                     val modelReady = AutopilotText.modelUsable(model)
                     val needsModel = !modelReady && AutopilotText.needsModel(AutopilotMode.AUTO)
                     ModeSwitch(
                         s.mode,
                         dimAuto = needsModel,
-                        onPick = @DontMemoize { mode -> if (mode != s.mode) autopilot.setMode(mode) },
+                        onPick = @DontMemoize { mode -> if (mode != s.mode) autopilot.setMode(mode, authenticator = authenticator) },
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                     if (needsModel) {

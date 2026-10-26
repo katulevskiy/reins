@@ -127,7 +127,7 @@ fun ConnectionDetailScreen(
                 )
             }
 
-            autopilot?.let { ConnectionAutopilotSection(connection.id, it, onBypass = { bypassOpen = true }, onOvernight = { overnightOpen = true }) }
+            autopilot?.let { ConnectionAutopilotSection(connection.id, it, onBypass = { bypassOpen = true }, onOvernight = { overnightOpen = true }, authenticator = authenticator) }
 
             SettingsGroup(header = null, gap = 12.dp) {
                 autopilot?.let { LearnsIntoRow(connection.id, it) { picking = Picker.Profile } }

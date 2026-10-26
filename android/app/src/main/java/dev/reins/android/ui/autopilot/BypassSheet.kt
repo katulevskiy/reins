@@ -114,7 +114,7 @@ enum class TimedKind(val mode: AutopilotMode, private val tag: String) {
     val icon: ImageVector get() = modeIcon(mode)
 
     fun hold(untilOff: Boolean): String = when (this) {
-        Bypass -> if (untilOff) "Hold to bypass until off" else "Hold to bypass"
+        Bypass -> if (untilOff) "Hold to bypass until off" else "Hold to start"
         Overnight -> if (untilOff) "Hold to start until off" else "Hold to start"
     }
 
@@ -132,7 +132,7 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
     TimedSheets(
         TimedKind.Bypass,
         open,
-        title = if (who == null) "Bypass every AI?" else "Bypass ${untrusted(who)}?",
+        title = if (who == null) "Bypass" else "Bypass ${dev.reins.android.ui.common.untrustedName(who, 32)}",
         line = "Approved without asking. Sent means sent.",
         helpTopic = "what bypass still asks",
         helpText = AutopilotText.BYPASS_HELP,
@@ -236,33 +236,36 @@ private fun BoxScope.TimedSheets(
     }
 
     BottomSheet(open, null, onClose = onClose, tag = kind.tag("Sheet")) {
-        // The heaviest decision in the app (iOS-Autopilot 01): the mode's solid tile, an italic question, the lengths,
-        // and a hold that surges.
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-            Box(Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(tint), contentAlignment = Alignment.Center) {
-                Icon(kind.icon, null, Modifier.size(26.dp), tint = Color.White)
-            }
-            AskText(
-                title,
-                c.ink,
-                Modifier.padding(top = 16.dp).semantics(mergeDescendants = true) {}.testTag(kind.tag("Title")),
-                target = title.substringAfter(' ', "").takeIf { it.isNotEmpty() },
-                style = RType.serif(32f, 36f),
-                minSize = 26.sp,
-            )
-            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText(line, RType.sans(15f, lineHeight = 20f), c.ink, Modifier.weight(1f, fill = false).testTag(kind.tag("SheetLine")), maxLines = 2)
+        // Next (Autopilot 01): the mode's name and a round close, what still asks, the lengths and a hold.
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            RText(title, RType.sheetTitle, c.ink, Modifier.weight(1f).semantics(mergeDescendants = true) {}.testTag(kind.tag("Title")), maxLines = 2)
+            dev.reins.android.design.RoundIconButton(dev.reins.android.design.Glyph.Close, "Close", Modifier.testTag(kind.action("cancel")), onClick = onClose)
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (kind == TimedKind.Bypass) {
+                    // What still asks, as pills; the sentence is what a screen reader hears.
+                    Row(
+                        Modifier.weight(1f).semantics(mergeDescendants = true) { contentDescription = stillAsks }.testTag(kind.tag("SheetLine")),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RText("Still asks", RType.sans(13.5f, FontWeight.SemiBold), c.ink2, maxLines = 1)
+                        dev.reins.android.design.NextPill("New AI", null, glyph = dev.reins.android.design.Glyph.Link)
+                        dev.reins.android.design.NextPill("New phone", null, glyph = dev.reins.android.design.Glyph.Phone)
+                    }
+                } else {
+                    RText(line, RType.sans(14.5f, lineHeight = 20f), c.ink2, Modifier.weight(1f).testTag(kind.tag("SheetLine")), maxLines = 2)
+                }
                 HelpIcon(help, helpTopic) { help = it }
             }
-            // Overnight's line already says what still reaches you.
-            if (kind == TimedKind.Bypass) RText(stillAsks, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 2)
-            HelpText(helpText, help, Modifier.padding(bottom = 6.dp).testTag(kind.tag("Help")))
+            HelpText(if (kind == TimedKind.Bypass) "$line $helpText" else helpText, help, Modifier.padding(bottom = 6.dp).testTag(kind.tag("Help")))
         }
         LengthSegments(
             kind,
             minutes = minutes,
             custom = custom,
-            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 18.dp),
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp),
             onPreset = { m ->
                 minutes = m
                 custom = false
@@ -276,12 +279,9 @@ private fun BoxScope.TimedSheets(
         HoldButton(
             kind.hold(untilOff = minutes == null),
             tint,
-            Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp).fillMaxWidth().testTag(kind.action("confirm")),
-            icon = Icons.Rounded.Fingerprint,
+            Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp).fillMaxWidth().testTag(kind.action("confirm")),
+            icon = null,
         ) { start(minutes) }
-        Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
-            SignalButton("Cancel", Modifier.testTag(kind.action("cancel")), style = ButtonStyle.Ghost, size = ButtonSize.Small, onClick = onClose)
-        }
     }
 
     BottomSheet(open && moreOpen, kind.forTitle, onClose = {

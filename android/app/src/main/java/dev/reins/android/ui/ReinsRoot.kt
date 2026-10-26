@@ -272,7 +272,8 @@ private fun SignedInContent(
                 open = modeSheet,
                 settings = apSettings,
                 modelReady = AutopilotText.modelUsable(apUi.model ?: apSettings?.model),
-                onSet = { mode -> autopilot.setMode(mode) },
+                // Leaving Lockdown from the sheet asks the owner first, as Trust's End does.
+                onSet = { mode -> autopilot.setMode(mode, authenticator = authenticator) },
                 onTimed = { timedSheet = it },
                 onStop = { mode -> if (mode == AutopilotMode.BYPASS) autopilot.stopBypass() else autopilot.stopOvernight() },
                 onSettings = { app.selectTab(Tab.Trust) },

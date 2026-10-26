@@ -407,7 +407,6 @@ fun BoxScope.BottomSheet(open: Boolean, title: String?, onClose: () -> Unit, tag
                 .fillMaxWidth()
                 .clip(shape)
                 .background(c.paperRaised)
-                .border(0.75.dp, c.glassEdge, shape)
                 // Taps on the sheet stay on it (a gesture, not a click: a click would merge the rows into one node
                 // for screen readers).
                 .pointerInput(Unit) { detectTapGestures { } }
@@ -416,16 +415,11 @@ fun BoxScope.BottomSheet(open: Boolean, title: String?, onClose: () -> Unit, tag
                 .testTag(tag),
         ) {
             Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(c.tertiary.copy(alpha = 0.6f)))
+                Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(c.inkFaint.copy(alpha = 0.6f)))
             }
             if (title != null) {
-                Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 10.dp, top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RText(title, RType.serif(26f, 30f), c.ink, Modifier.weight(1f).semantics { heading() }, maxLines = 2)
-                    Box(
-                        Modifier.size(44.dp).pressable(shape = CircleShape, label = "Close", onClick = dismiss).semantics { contentDescription = "Close" }.testTag("closeSheet"),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.Close, null, Modifier.size(22.dp), tint = c.secondary) }
-                }
+                // Next: the display title and a round close button.
+                dev.reins.android.design.SheetTitle(title, onClose = dismiss)
             } else {
                 Spacer(Modifier.height(14.dp))
             }

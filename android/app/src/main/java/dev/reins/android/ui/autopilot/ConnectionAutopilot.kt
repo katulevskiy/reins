@@ -50,7 +50,14 @@ const val CONNECTION_AUTOPILOT_HELP =
  * Overnight, a bypass and a lockdown for just this AI, each after its own confirmation.
  */
 @Composable
-fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewModel, onBypass: () -> Unit, onOvernight: () -> Unit = {}) {
+fun ConnectionAutopilotSection(
+    connectionId: String,
+    viewModel: AutopilotViewModel,
+    onBypass: () -> Unit,
+    onOvernight: () -> Unit = {},
+    /** Asked before a change that leaves Lockdown (see [AutopilotViewModel.setMode]). */
+    authenticator: dev.reins.android.platform.Authenticator? = null,
+) {
     val c = LocalColors.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -82,7 +89,7 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
                 label = { it?.let(AutopilotText::name) ?: "Like all" },
                 tag = { if (it == null) "connMode:follow" else "connMode:${it.name}" },
                 icon = { m -> m?.let { settingsModeIcon(it) to if (it == AutopilotMode.MANUAL) modeTint(it, c) else c.secondary } },
-            ) { m -> viewModel.setMode(m, connectionId = connectionId) }
+            ) { m -> viewModel.setMode(m, connectionId = connectionId, authenticator = authenticator) }
             if (overnightUntil != null) {
                 Countdown(TimedKind.Overnight, overnightUntil, Modifier.padding(top = 12.dp).fillMaxWidth()) { viewModel.stopOvernight(connectionId) }
             } else {
@@ -113,7 +120,7 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
                         icon = Icons.Rounded.LockOpen,
                         background = c.warning.copy(alpha = 0.14f),
                         foreground = c.warning,
-                    ) { viewModel.setMode(null, connectionId = connectionId) }
+                    ) { viewModel.setMode(null, connectionId = connectionId, authenticator = authenticator) }
                 } else {
                     PillButton(
                         "Lock down",

@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import dev.reins.android.ui.autopilot.AutopilotViewModel
 import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
@@ -354,6 +355,64 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
+    fun setModeNeverLeavesLockdownWithoutTheOwnersCheck() {
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.LOCKDOWN)
+        launch()
+        awaitTag("modePill")
+        val container = (context.applicationContext as ReinsApp).container
+        val vm = AutopilotViewModel(container)
+        rule.waitUntil(10_000) { vm.settings.value?.mode == AutopilotMode.LOCKDOWN }
+        assertTrue(vm.leavesLockdown(AutopilotMode.MANUAL))
+        assertTrue(vm.leavesLockdown(AutopilotMode.AUTO))
+        assertFalse(vm.leavesLockdown(AutopilotMode.LOCKDOWN))
+        // No one to ask: nothing changes.
+        vm.setMode(AutopilotMode.MANUAL)
+        vm.setMode(AutopilotMode.AUTO)
+        settle()
+        assertTrue("Lockdown stays without a check", core.modeCalls.isEmpty())
+        // The owner says no: nothing changes.
+        var asked = 0
+        vm.setMode(AutopilotMode.MANUAL, authenticator = { _, _ -> asked++; AuthResult.Cancelled })
+        rule.waitUntil(10_000) { asked == 1 }
+        settle()
+        assertTrue("Lockdown stays when the owner says no", core.modeCalls.isEmpty())
+        // The owner passes: it ends, to the mode asked for.
+        vm.setMode(AutopilotMode.MANUAL, authenticator = { _, _ -> asked++; AuthResult.Success })
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(2, asked)
+        assertEquals(AutopilotMode.MANUAL, core.modeCalls.single().second)
+    }
+
+    @Test
+    fun theModeSheetAsksTheOwnerBeforeLeavingLockdown() {
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.LOCKDOWN)
+        launch()
+        tap("modePill")
+        authResult = AuthResult.Cancelled
+        tap("quick:MANUAL")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue(core.modeCalls.isEmpty())
+        authResult = AuthResult.Success
+        tap("modePill")
+        tap("quick:AUTO")
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(2, prompts.get())
+        assertEquals(AutopilotMode.AUTO, core.modeCalls.single().second)
+    }
+
+    @Test
+    fun inLockdownTrustOffersOnlyEndingIt() {
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.LOCKDOWN)
+        launch()
+        tap("tabTrust")
+        awaitTag("endLockdown")
+        assertFalse("no plain switch out of Lockdown", has("mode:MANUAL"))
+        assertFalse(has("mode:AUTO"))
+        assertFalse(has("forAWhile"))
+    }
+
+    @Test
     fun withoutTheModelAutoSaysSoAndTheModeIsManual() {
         openAutopilot()
         awaitText("Needs the model")
@@ -704,7 +763,7 @@ class AutopilotFlowTest : FlowHarness() {
         tap("connection:c1")
         tap("connMode:BYPASS")
         awaitTag("bypassSheet")
-        awaitText("Bypass Claude?")
+        awaitText("Bypass Claude")
         hold("confirmBypass")
         awaitCore { prompts.get() == 1 }
         assertEquals("Turn on Bypass for Claude", promptTexts.single().first)
