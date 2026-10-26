@@ -108,6 +108,19 @@ fun TrustScreen(
                 ?: decidedLine(decided)
             // Under a running mode's field the field is the header (Next, Autopilot 02-04).
             if (field == null) RootHeader("Trust") else Spacer(Modifier.height(4.dp))
+            if (s != null && s.mode == AutopilotMode.OVERNIGHT && s.overnightUntil != null) {
+                // What Overnight does with what it rates too risky (Autopilot 03); changing it asks the owner.
+                dev.reins.android.design.SectionHeader("Too risky", glyph = dev.reins.android.design.Glyph.Warning)
+                dev.reins.android.design.Chooser(
+                    listOf(
+                        dev.reins.android.design.Choice(dev.reins.core.OvernightRisky.WAIT, "Wait for me", "runningRisky:WAIT"),
+                        dev.reins.android.design.Choice(dev.reins.core.OvernightRisky.DENY, "Deny", "runningRisky:DENY"),
+                    ),
+                    s.overnightWhenRisky,
+                    @DontMemoize { autopilot.setOvernightWhenRisky(it, authenticator) },
+                    Modifier.padding(horizontal = 16.dp),
+                )
+            }
             if (s != null && decidedWhileRunning != null) {
                 RunningList(
                     s,
@@ -116,7 +129,6 @@ fun TrustScreen(
                     expanded = listOpen,
                     onExpanded = { listOpen = it },
                     onOpen = onOpenEntry,
-                    modifier = Modifier.padding(horizontal = 24.dp),
                 )
             }
             // Manual or Auto, then the modes that run for a while (Next, Trust 01-05). While a bypass or an Overnight

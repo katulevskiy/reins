@@ -48,9 +48,13 @@ fun SectionHeader(
     addLabel: String = "Add",
     addTag: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
+    /** The words' and glyph's colour, when not ink-2 (a verdict's). */
+    ink: Color? = null,
+    /** The count's colour (a running mode's). */
+    countInk: Color? = null,
 ) {
     val c = LocalColors.current
-    val ink = if (quiet) c.inkMeta else c.ink2
+    val ink = ink ?: if (quiet) c.inkMeta else c.ink2
     Row(
         modifier
             .fillMaxWidth()
@@ -62,7 +66,7 @@ fun SectionHeader(
         glyph?.let { GlyphIcon(it, ink, size = 14.dp) }
         RText(text, if (quiet) RType.sans(12.5f, FontWeight.SemiBold, tracking = 0.015f) else RType.section, ink, Modifier.weight(1f), maxLines = 1)
         trailing?.invoke(this)
-        count?.let { RText(it, RType.section, ink, maxLines = 1) }
+        count?.let { RText(it, RType.section, countInk ?: ink, maxLines = 1) }
         if (onAdd != null) {
             Box(
                 Modifier
@@ -130,8 +134,11 @@ fun PaneRow(
     first: Boolean = false,
     flat: Boolean = false,
     titleColor: Color? = null,
+    titleMono: Boolean = false,
     tag: String? = null,
     enabled: Boolean = true,
+    /** Another's words before the title (an asker's name), in ink-2 so they never pass for Reins' own. */
+    titleLead: String? = null,
     onClick: (() -> Unit)? = null,
 ) {
     val c = LocalColors.current
@@ -155,7 +162,22 @@ fun PaneRow(
     ) {
         leading?.invoke()
         Column(Modifier.weight(1f)) {
-            RText(title, RType.row, titleColor ?: c.ink, maxLines = 2)
+            if (titleLead.isNullOrEmpty()) {
+                RText(title, if (titleMono) RType.mono(14f) else RType.row, titleColor ?: c.ink, maxLines = 2, ltr = titleMono)
+            } else {
+                androidx.compose.foundation.text.BasicText(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        pushStyle(androidx.compose.ui.text.SpanStyle(color = c.ink2))
+                        append(titleLead)
+                        pop()
+                        append(" ")
+                        append(title)
+                    },
+                    style = RType.row.copy(color = titleColor ?: c.ink),
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
             if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.sans(13f, lineHeight = 17f), c.inkMeta, Modifier.padding(top = 1.dp), maxLines = 3)
         }
         value?.let { RText(it, if (valueMono) RType.mono(13f) else RType.sans(15f), c.ink2, maxLines = 1, ltr = valueMono) }
@@ -166,7 +188,7 @@ fun PaneRow(
 
 /** A small tag (`.pill`): 24 dp, 12.5 / 600, [tint] on its 13 % wash; [neutral] is ink-2 on sunken paper. */
 @Composable
-fun NextPill(text: String, tint: Color?, modifier: Modifier = Modifier, glyph: Glyph? = null) {
+fun NextPill(text: String, tint: Color?, modifier: Modifier = Modifier, glyph: Glyph? = null, textTag: String? = null) {
     val c = LocalColors.current
     val ink = tint ?: c.ink2
     Row(
@@ -175,6 +197,6 @@ fun NextPill(text: String, tint: Color?, modifier: Modifier = Modifier, glyph: G
         verticalAlignment = Alignment.CenterVertically,
     ) {
         glyph?.let { GlyphIcon(it, ink, size = 12.dp) }
-        RText(text, RType.sans(12.5f, FontWeight.SemiBold), ink, maxLines = 1)
+        RText(text, RType.sans(12.5f, FontWeight.SemiBold), ink, if (textTag != null) Modifier.testTag(textTag) else Modifier, maxLines = 1)
     }
 }

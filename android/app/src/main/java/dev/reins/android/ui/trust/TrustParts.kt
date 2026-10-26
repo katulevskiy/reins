@@ -46,6 +46,7 @@ import dev.reins.android.design.SignalMenu
 import dev.reins.android.design.field
 import dev.reins.android.design.fieldSurface
 import dev.reins.android.design.pressable
+import dev.reins.android.design.pane
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
@@ -117,11 +118,24 @@ fun ModeSwitch(mode: AutopilotMode, dimAuto: Boolean, onPick: (AutopilotMode) ->
  * hold sheets ([onOvernight], [onBypass]); Lockdown starts at once ([onLockdown]).
  */
 @Composable
-fun ForAWhile(onOvernight: () -> Unit, onLockdown: () -> Unit, onBypass: () -> Unit, modifier: Modifier = Modifier, lockdownOn: Boolean = false) {
+fun ForAWhile(
+    onOvernight: () -> Unit,
+    onLockdown: () -> Unit,
+    onBypass: () -> Unit,
+    modifier: Modifier = Modifier,
+    lockdownOn: Boolean = false,
+    /** The menu rows' tags: "mode:BYPASS" on Trust, "connMode:BYPASS" on an AI's page. */
+    tagPrefix: String = "mode",
+    /** In a page's own group (no 16 dp inset of its own). */
+    inset: Boolean = true,
+) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     var open by remember { mutableStateOf(false) }
-    PaneGroup(modifier) {
+    val group: @Composable (@Composable () -> Unit) -> Unit = { body ->
+        if (inset) PaneGroup(modifier) { body() } else androidx.compose.foundation.layout.Column(modifier.fillMaxWidth().pane()) { body() }
+    }
+    group {
         Box {
             PaneRow(
                 "For a while",
@@ -138,7 +152,7 @@ fun ForAWhile(onOvernight: () -> Unit, onLockdown: () -> Unit, onBypass: () -> U
                 },
                 chevron = true,
                 first = true,
-                tag = "forAWhile",
+                tag = if (tagPrefix == "mode") "forAWhile" else "${tagPrefix}ForAWhile",
             ) {
                 open = true
                 feedback.play(Event.Open)
@@ -148,9 +162,9 @@ fun ForAWhile(onOvernight: () -> Unit, onLockdown: () -> Unit, onBypass: () -> U
                 onDismiss = { open = false },
                 width = 240.dp,
                 items = listOf(
-                    MenuItem(AutopilotText.OVERNIGHT, glyph = Glyph.Moon, tint = MenuTint.Plain, tag = "mode:OVERNIGHT") { onOvernight() },
-                    MenuItem(if (lockdownOn) "Locked down" else "Lockdown", glyph = Glyph.Block, tint = MenuTint.Warn, tag = "mode:LOCKDOWN") { if (!lockdownOn) onLockdown() },
-                    MenuItem("Bypass", glyph = Glyph.Bypass, tint = MenuTint.Danger, destructive = true, tag = "mode:BYPASS") { onBypass() },
+                    MenuItem(AutopilotText.OVERNIGHT, glyph = Glyph.Moon, tint = MenuTint.Plain, tag = "$tagPrefix:OVERNIGHT") { onOvernight() },
+                    MenuItem(if (lockdownOn) "Locked down" else "Lockdown", glyph = Glyph.Block, tint = MenuTint.Warn, tag = "$tagPrefix:LOCKDOWN") { if (!lockdownOn) onLockdown() },
+                    MenuItem("Bypass", glyph = Glyph.Bypass, tint = MenuTint.Danger, destructive = true, tag = "$tagPrefix:BYPASS") { onBypass() },
                 ),
             )
         }

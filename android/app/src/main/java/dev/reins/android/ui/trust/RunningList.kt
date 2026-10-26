@@ -24,8 +24,10 @@ import dev.reins.android.design.Motion
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.pressable
-import dev.reins.android.ui.activity.HistoryRow
-import dev.reins.android.ui.autopilot.TrustLabel
+import dev.reins.android.design.PaneGroup
+import dev.reins.android.design.SectionHeader
+import dev.reins.android.ui.activity.RiverRow
+import dev.reins.android.ui.activity.ruleAbove
 import dev.reins.core.ActivityEntry
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
@@ -81,14 +83,17 @@ fun runningMood(s: AutopilotSettings, listed: List<ActivityEntry>?, nowSeconds: 
     return if (n == 0) "$who $did nothing yet today." else "$who $did $n today."
 }
 
-/** "During this bypass", "During this Overnight", "Denied while locked". */
+/** "During bypass", "During Overnight", "Denied" (Autopilot 02-04). */
 fun runningListTitle(s: AutopilotSettings): String = when (s.mode) {
-    AutopilotMode.BYPASS -> "During this bypass"
-    AutopilotMode.OVERNIGHT -> "During this ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}"
-    else -> "Denied while locked"
+    AutopilotMode.BYPASS -> "During bypass"
+    AutopilotMode.OVERNIGHT -> "During ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}"
+    else -> "Denied"
 }
 
-/** The running mode's list (iOS-Autopilot 02, 03): its latest three, the rest opening in place. */
+/**
+ * The running mode's list (Autopilot 02-04): a header with the mode's mark and its count in the mode's colour, then
+ * its latest three as Activity's rows in a pane, the rest opening in place.
+ */
 @Composable
 fun RunningList(
     s: AutopilotSettings,
@@ -103,34 +108,46 @@ fun RunningList(
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
     val folded = RunningListFold.shown(entries.size, expanded = false)
+    val mode = when (s.mode) {
+        AutopilotMode.BYPASS -> dev.reins.android.design.ChipMode.Bypass
+        AutopilotMode.OVERNIGHT -> dev.reins.android.design.ChipMode.Overnight
+        else -> dev.reins.android.design.ChipMode.Lockdown
+    }
+    val tint = when (s.mode) {
+        AutopilotMode.BYPASS -> c.danger
+        AutopilotMode.OVERNIGHT -> c.kindNight
+        else -> c.warning
+    }
     Column(modifier.fillMaxWidth().testTag("runningList")) {
-        TrustLabel(runningListTitle(s), Modifier.padding(top = 26.dp, bottom = 10.dp))
+        SectionHeader(runningListTitle(s), glyph = mode.glyph, count = "${entries.size}", countInk = tint)
         val row = @Composable { i: Int, entry: ActivityEntry ->
-            val last = if (expanded) i == entries.lastIndex else i == folded - 1
-            HistoryRow(entry, nowSeconds, first = i == 0, last = last, Modifier.testTag("runningEntry:${entry.id}"), inset = 0.dp) { onOpen(entry.id) }
+            RiverRow(entry, nowSeconds, landed = false, showShare = false, Modifier.testTag("runningEntry:${entry.id}"), divider = i > 0) { onOpen(entry.id) }
         }
-        entries.take(folded).forEachIndexed { i, entry -> row(i, entry) }
-        AnimatedVisibility(
-            visible = expanded && entries.size > folded,
-            enter = if (reduce) fadeIn(Motion.reduced()) else expandVertically(Motion.fold(false)) + fadeIn(Motion.fold(false)),
-            exit = if (reduce) fadeOut(Motion.reduced()) else shrinkVertically(Motion.fold(false)) + fadeOut(Motion.fold(false)),
-        ) {
-            Column { entries.drop(folded).forEachIndexed { i, entry -> row(folded + i, entry) } }
-        }
-        RunningListFold.showAll(entries.size)?.let { showAll ->
-            val text = if (expanded) "Show less" else showAll
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .pressable(label = text) { onExpanded(!expanded) }
-                    .testTag(if (expanded) "runningShowLess" else "runningShowAll")
-                    .padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        PaneGroup {
+            entries.take(folded).forEachIndexed { i, entry -> row(i, entry) }
+            AnimatedVisibility(
+                visible = expanded && entries.size > folded,
+                enter = if (reduce) fadeIn(Motion.reduced()) else expandVertically(Motion.fold(false)) + fadeIn(Motion.fold(false)),
+                exit = if (reduce) fadeOut(Motion.reduced()) else shrinkVertically(Motion.fold(false)) + fadeOut(Motion.fold(false)),
             ) {
-                RText(text, RType.sans(14.5f, androidx.compose.ui.text.font.FontWeight.Medium), c.ink2, maxLines = 1)
-                GlyphIcon(if (expanded) Glyph.ChevronUp else Glyph.ChevronDown, c.inkFaint, size = 13.dp)
+                Column { entries.drop(folded).forEachIndexed { i, entry -> row(folded + i, entry) } }
+            }
+            RunningListFold.showAll(entries.size)?.let { showAll ->
+                val text = if (expanded) "Show less" else showAll
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .ruleAbove(c, 14.dp)
+                        .heightIn(min = 48.dp)
+                        .pressable(label = text) { onExpanded(!expanded) }
+                        .testTag(if (expanded) "runningShowLess" else "runningShowAll")
+                        .padding(horizontal = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RText(text, RType.sans(14.5f, androidx.compose.ui.text.font.FontWeight.Medium), c.ink2, maxLines = 1)
+                    GlyphIcon(if (expanded) Glyph.ChevronUp else Glyph.ChevronDown, c.inkFaint, size = 13.dp)
+                }
             }
         }
     }

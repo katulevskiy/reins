@@ -37,6 +37,7 @@ MAP = {
     "Card": "credit_card",
     "Check": "check",
     "ChevronDown": "keyboard_arrow_down",
+    "ArrowDown": "arrow_downward",
     "ChevronLeft": "chevron_left",
     "ChevronRight": "chevron_right",
     "ChevronUp": "keyboard_arrow_up",
