@@ -304,6 +304,7 @@ private struct MailRow: View {
             ? untrusted(m.snippet)
             : (subject.isEmpty ? "" : untrusted(ApprovalWords.displayName(m.from)))
         Button {
+            guard enabled else { return }
             onChange(!checked)
             feedback.play(.toggle(!checked))
         } label: {
@@ -335,9 +336,11 @@ private struct MailRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
+        // Not `disabled`: one a grant covers stays readable at full ink; only its box is dimmed.
+        .allowsHitTesting(enabled)
         .accessibilityAddTraits(checked ? .isSelected : [])
         .accessibilityValue(checked ? "Ticked" : "Not ticked")
+        .accessibilityHint(enabled ? "" : "Can't be changed")
         .accessibilityIdentifier("message:\(m.id)")
     }
 
