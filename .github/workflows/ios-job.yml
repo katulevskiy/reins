@@ -11,6 +11,9 @@ name: iOS job
 # and the Xcode `vars.IOS_DEVELOPER_DIR`, so another macOS runner (a self-hosted Mac, a third-party label) is one
 # repository variable away.
 on:
+  # TEMPORARY: lets this branch run the job before the workflow is on main (dispatch needs it there).
+  push:
+    branches: [infra/ios-fast]
   workflow_dispatch:
     inputs:
       ref:
@@ -66,7 +69,7 @@ jobs:
       actions: write # prune this branch's older DerivedData caches
     env:
       DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
-      RUN: ${{ inputs.run || 'snapshots' }}
+      RUN: ${{ inputs.run || 'snapshots,unit:ShellNavigationTests' }}
       DEVICE: ${{ inputs.device || 'iPhone 17 Pro' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
