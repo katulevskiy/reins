@@ -167,7 +167,7 @@ struct RecoveryCodeSheet: View {
         }
         .interactiveDismissDisabled(required)
         .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .presentationDragIndicator(.hidden)
         .pageBackground()
     }
 

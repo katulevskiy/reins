@@ -213,7 +213,9 @@ struct GlanceWhoLine: View {
                 Text(label).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
             } else {
                 Text("·").font(RFont.fixedSans(14, .semibold)).opacity(0.6).accessibilityHidden(true)
+                // On its white plate, as the boards draw it on a field and on the island's black.
                 GlanceAvatar(label: connection, kind: kind, icon: icon, blobatar: blobatar, size: 20)
+                    .environment(\.colorScheme, .light)
                 Text(Glance.who(connection)).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
             }
         }
@@ -489,7 +491,7 @@ struct WaitingListView: View {
                 GlanceEmpty.nothingWaits(snapshot)
             } else {
                 Spacer(minLength: 6)
-                VStack(alignment: .leading, spacing: rows > 3 ? 12 : 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(list.prefix(rows)) { item in
                         Link(destination: Glance.link(item)) { WaitingRow(item: item) }
                     }
@@ -630,7 +632,7 @@ struct GlanceActivityRow: View {
         HStack(spacing: 10) {
             GlanceRequestIcon(
                 service: entry.service ?? "", glyph: Glance.actionGlyph(entry.action, field: nil),
-                field: entry.action.flatMap { FieldKind.of(ActionKind.of($0)) } ?? .read, size: 26
+                field: Glance.entryField(entry.action), size: 26
             )
             .padding(.trailing, 3)
             Text(entry.title).font(RFont.fixedSans(13.5, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
@@ -660,7 +662,7 @@ struct LatestActivityView: View {
                 GlanceEmpty(title: "Nothing happened yet", message: "What your AIs did shows up here.")
             } else {
                 Spacer(minLength: 6)
-                VStack(alignment: .leading, spacing: rows > 3 ? 12 : 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(snapshot.latest.prefix(rows)) { entry in
                         Link(destination: DeepLink.activity(id: entry.id).url) { GlanceActivityRow(entry: entry, now: now) }
                     }

@@ -50,8 +50,9 @@ final class SoundsScreenUITests: XCTestCase {
     /// The volume reads a whole tenth, one step from `percent` at most: `adjust(toNormalizedSliderPosition:)` drags to
     /// about that point, and where it lands depends on the slider's width.
     private func assertTenth(near percent: Int, file: StaticString = #filePath, line: UInt = #line) {
-        let label = app.staticTexts["volumeValue"].label
-        guard let value = Int(label.replacingOccurrences(of: "%", with: "")) else {
+        // The board draws no number: the slider's spoken value carries it ("80 percent").
+        let label = app.sliders["volume"].value as? String ?? ""
+        guard let value = Int(label.replacingOccurrences(of: " percent", with: "").replacingOccurrences(of: "%", with: "")) else {
             return XCTFail("volume reads \(label)", file: file, line: line)
         }
         XCTAssertEqual(value % 10, 0, "volume moves in tenths, reads \(label)", file: file, line: line)

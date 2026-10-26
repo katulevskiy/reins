@@ -233,20 +233,15 @@ private struct AccountCard: View {
     /// Notifications are off (or quiet): say so, and turn them on (the system prompt while it can still show, else
     /// this app's page in the Settings app).
     private var attention: some View {
-        HStack(spacing: 10) {
-            GlyphIcon(.warning, size: 16).foregroundStyle(Palette.warning).accessibilityHidden(true)
-            Text(SettingsText.notificationsAttention(access.state))
-                .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(Palette.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                feedback.play(.tap)
-                Task { await access.turnOn(openURL: openURL) }
-            } label: {
-                Text("Turn on")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                attentionText
+                turnOn
             }
-            .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
-            .accessibilityIdentifier("turnOnNotifications")
+            VStack(alignment: .leading, spacing: 8) {
+                attentionText
+                turnOn
+            }
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
@@ -254,6 +249,28 @@ private struct AccountCard: View {
         .background(Palette.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("notificationsRow")
+    }
+
+    private var attentionText: some View {
+        HStack(spacing: 10) {
+            GlyphIcon(.warning, size: 16).foregroundStyle(Palette.warning).accessibilityHidden(true)
+            Text(SettingsText.notificationsAttention(access.state))
+                .font(RFont.sans(14.5, .medium))
+                .foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var turnOn: some View {
+        Button {
+            feedback.play(.tap)
+            Task { await access.turnOn(openURL: openURL) }
+        } label: {
+            Text("Turn on").fixedSize()
+        }
+        .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+        .accessibilityIdentifier("turnOnNotifications")
     }
 
     private func copyServer() {

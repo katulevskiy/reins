@@ -62,6 +62,18 @@ enum Glance {
         return field?.glyph ?? .help
     }
 
+    /// The field an activity entry's badge is painted in, from its glyph: writes and sends push, reads read.
+    static func entryField(_ action: String?) -> FieldKind {
+        switch actionGlyph(action, field: nil) {
+        case .eye, .search: .read
+        case .trash: .delete
+        case .link: .pair
+        case .phone: .accounts
+        case .vault: .grant
+        default: .push
+        }
+    }
+
     /// An item's badge glyph.
     static func actionGlyph(_ item: Snapshot.Item) -> Glyph {
         switch item.kind {

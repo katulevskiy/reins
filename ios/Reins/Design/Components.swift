@@ -153,6 +153,7 @@ struct TileRow<Leading: View, Trailing: View>: View {
     var chevron = true
     var leading: Leading
     var trailing: Trailing
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     init(
         _ title: String, value: String? = nil, mono: Bool = false, danger: Bool = false, chevron: Bool = true,
@@ -170,15 +171,16 @@ struct TileRow<Leading: View, Trailing: View>: View {
     var body: some View {
         HStack(spacing: 12) {
             leading
-            Text(title)
-                .textRole(.row)
-                .foregroundStyle(danger ? Palette.danger : Palette.ink)
+            // At the accessibility sizes the value goes under the title, so neither is broken mid-word.
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    titleText
+                    valueText
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let value {
-                Text(value)
-                    .font(mono ? RFont.mono(13) : RFont.sans(15))
-                    .foregroundStyle(Palette.ink2)
-                    .lineLimit(1)
+            } else {
+                titleText.frame(maxWidth: .infinity, alignment: .leading)
+                valueText
             }
             trailing
             if chevron { RowChevron() }
@@ -187,6 +189,21 @@ struct TileRow<Leading: View, Trailing: View>: View {
         .padding(.horizontal, 14)
         .frame(minHeight: 56)
         .contentShape(Rectangle())
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .textRole(.row)
+            .foregroundStyle(danger ? Palette.danger : Palette.ink)
+    }
+
+    @ViewBuilder private var valueText: some View {
+        if let value {
+            Text(value)
+                .font(mono ? RFont.mono(13) : RFont.sans(15))
+                .foregroundStyle(Palette.ink2)
+                .lineLimit(1)
+        }
     }
 }
 

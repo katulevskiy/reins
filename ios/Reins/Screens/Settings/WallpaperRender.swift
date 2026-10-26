@@ -114,13 +114,13 @@ enum WallpaperRender {
         var ci = CIImage(cgImage: image)
         if let controls = CIFilter(name: "CIColorControls") {
             controls.setValue(ci, forKey: kCIInputImageKey)
-            controls.setValue(1.7, forKey: kCIInputSaturationKey)
-            controls.setValue(1.12, forKey: kCIInputContrastKey)
+            controls.setValue(1.35, forKey: kCIInputSaturationKey)
+            controls.setValue(1.05, forKey: kCIInputContrastKey)
             ci = controls.outputImage ?? ci
         }
         if let poster = CIFilter(name: "CIColorPosterize") {
             poster.setValue(ci, forKey: kCIInputImageKey)
-            poster.setValue(7, forKey: "inputLevels")
+            poster.setValue(12, forKey: "inputLevels")
             ci = poster.outputImage ?? ci
         }
         let context = CIContext(options: [.cacheIntermediates: false])
