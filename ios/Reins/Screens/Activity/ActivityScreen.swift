@@ -229,7 +229,7 @@ struct ActivityScreen: View {
             .foregroundStyle(Palette.ink)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .dynamicTypeSize(...DynamicTypeSize.xLarge)
+            .dynamicTypeSize(...DynamicTypeSize.large)
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("activityMood")
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -239,11 +239,14 @@ struct ActivityScreen: View {
         HStack(spacing: 12) {
             if let autopilot = model.autopilot {
                 ModeChipButton(settings: autopilot)
-                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
             }
-            RoundHeaderButton(glyph: .search, label: "Search") { openSearch() }
-                .accessibilityIdentifier("activitySearch")
-            ActivityFilterToggle(shown: filtersShownBinding, active: !model.activityFilters.isEmpty)
+            Group {
+                RoundHeaderButton(glyph: .search, label: "Search") { openSearch() }
+                    .accessibilityIdentifier("activitySearch")
+                ActivityFilterToggle(shown: filtersShownBinding, active: !model.activityFilters.isEmpty)
+            }
+            .dynamicTypeSize(...DynamicTypeSize.large)
         }
         .fixedSize()
     }

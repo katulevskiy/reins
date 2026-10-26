@@ -222,7 +222,7 @@ struct FieldWaitCard: View {
                             .font(RFont.sans(14, .semibold))
                             .foregroundStyle(Palette.onField)
                             .lineLimit(1)
-                            .truncationMode(.middle)
+                            .truncationMode(.tail)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("From \(who)")
@@ -233,6 +233,8 @@ struct FieldWaitCard: View {
                 TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min(), onField: true)
                     .fixedSize()
             }
+            // The head row keeps its size at accessibility text sizes, so who asks always fits beside the icon.
+            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         } actions: {
             VStack(alignment: .leading, spacing: 12) {
                 // Machine details under the ask (a command, a branch, an address), never in the display face.
@@ -240,7 +242,8 @@ struct FieldWaitCard: View {
                     Text(verbatim: mono)
                         .font(RFont.mono(13))
                         .foregroundStyle(Palette.onField2)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                         .environment(\.layoutDirection, .leftToRight)
                         .padding(.top, -4)
                         .accessibilityIdentifier("cardDetails:\(item.id)")
