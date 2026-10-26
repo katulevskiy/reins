@@ -115,6 +115,8 @@ pub struct Root {
     /// Settings shows its Wallpaper page, for dark paper's wallpaper (else light's).
     wallpaper_page: bool,
     wallpaper_dark_slot: bool,
+    /// The welcome was left (Set up, or Other server): the pairing step shows.
+    welcomed: bool,
     /// The AI tool Connections shows on a page of its own.
     tool_page: Option<reins_desktop::harness::Harness>,
     /// The waiting request whose field Home hides (Hide on the field).
@@ -321,6 +323,8 @@ impl Root {
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
             hidden_ask: None,
+            // `--demo` shows the welcome only when `REINS_DEMO_SCREEN=welcome` asks for it.
+            welcomed: demo && std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() != "welcome"),
             // `REINS_DEMO_WALLPAPER=dark|light`: Settings' Wallpaper page, for that paper.
             wallpaper_page: demo_var("REINS_DEMO_WALLPAPER").is_some(),
             wallpaper_dark_slot: demo_var("REINS_DEMO_WALLPAPER").is_none_or(|v| v != "light"),
@@ -529,7 +533,11 @@ impl Render for Root {
             window,
             cx,
         );
+        let hero = screen == Screen::Welcome(Stage::Pair)
+            && !self.welcomed
+            && !matches!(self.model.read(cx).pairing, crate::model::Pairing::Approved { .. });
         let body = match screen {
+            Screen::Welcome(Stage::Pair) if hero => None,
             Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(&d, pal, window, cx))),
             Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(&d, pal, cx))),
             Screen::Welcome(Stage::TurnOn) => Some((Stage::TurnOn, self.turn_on_step(&d, pal, cx))),
@@ -567,7 +575,7 @@ impl Render for Root {
                             .flex_col()
                             .items_center()
                             .justify_start()
-                            .gap(px(20.0))
+                            .gap(px(28.0))
                             .px(px(40.0))
                             .pt(px(WELCOME_TOP))
                             .pb(px(36.0))
@@ -575,15 +583,16 @@ impl Render for Root {
                             .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
                     ),
                 ),
+            None if hero => root.child(self.welcome_hero(&d, pal, cx)),
             None => root.child(self.status(&d, pal, window, cx)),
         }
     }
 }
 
 /// The welcome flow's space above the step indicator.
-const WELCOME_TOP: f32 = 24.0;
+const WELCOME_TOP: f32 = 64.0;
 
 /// How wide a step of the welcome flow is (`Desk-Setup.png`: a 580 px window, 40 px either side).
 fn stage_width(_stage: Stage) -> f32 {
-    500.0
+    620.0
 }

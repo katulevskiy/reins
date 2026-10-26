@@ -69,7 +69,7 @@ fn ink_light() -> Hsla {
 pub enum Size {
     /// The phone's decision buttons: 54 px, 16.5.
     Large,
-    /// The desktop's: 38 px, 14 (`Desk-*.dc.html` `.btn`).
+    /// The desktop's: 42 px, 15 (`.btn.sm` on the Next desktop boards).
     Regular,
     /// In rows and plates: 30 px, 13 (`.btn.xs`).
     Small,
@@ -81,7 +81,7 @@ impl Size {
     pub fn metrics(self) -> (f32, f32, f32, f32) {
         match self {
             Self::Large => (54.0, 16.5, 22.0, 18.0),
-            Self::Regular => (38.0, 14.0, 16.0, 16.0),
+            Self::Regular => (42.0, 15.0, 16.0, 18.0),
             Self::Small => (30.0, 13.0, 12.0, 14.0),
         }
     }

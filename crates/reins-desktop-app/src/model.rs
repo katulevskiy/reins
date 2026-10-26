@@ -1752,7 +1752,7 @@ fn waiting_changes<'a>(
 fn demo_screen(name: &str) -> Option<Screen> {
     Some(match name.trim().to_ascii_lowercase().replace('_', "-").as_str() {
         "status" => Screen::Status,
-        "pair" | "onboarding" => Screen::Welcome(Stage::Pair),
+        "welcome" | "pair" | "onboarding" => Screen::Welcome(Stage::Pair),
         "tools" | "tools-connected" | "setup" => Screen::Welcome(Stage::Tools),
         "turn-on" | "turning-on" => Screen::Welcome(Stage::TurnOn),
         "done" => Screen::Welcome(Stage::Done),
