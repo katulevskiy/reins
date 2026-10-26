@@ -1211,17 +1211,6 @@ pub fn answer(e: &Entry, phone: &str) -> (Glyph, Tone, String) {
     }
 }
 
-/// The request in one plain line, for a notification and the tray: the sentence, then the details in brackets
-/// ("Claude Code wants to run a command in reins (rm -rf jarx · and 7 more commands)").
-#[must_use]
-pub fn spoken(e: &Entry) -> String {
-    let a = Ask::of(e);
-    match &a.details {
-        Some(d) => format!("{} ({d})", a.line()),
-        None => a.line(),
-    }
-}
-
 /// A waiting request as a banner (`DeskNext-MenuBar.png`): who asks as the title, on its own (cleaned, one line,
 /// capped: the requester's word never runs into a sentence of Reins'); under it what it asks, its details and where to
 /// answer.
@@ -1242,16 +1231,6 @@ pub fn banner(e: &Entry, phone: &str) -> (String, String) {
 #[must_use]
 pub fn field_of(e: &Entry) -> Field {
     Ask::of(e).field
-}
-
-/// Who asks, and where from: "Claude Code · ~/code/acme-web" (a long folder cut in the middle).
-#[must_use]
-pub fn who_from(e: &Entry) -> String {
-    let a = Ask::of(e);
-    match a.dir {
-        Some(dir) if !dir.is_empty() => format!("{} · {}", a.who, middle(&dir, 56)),
-        _ => a.who,
-    }
 }
 
 /// The request as a terminal would have shown it: what matched and the rule's group, what Reins did, and what the
@@ -1859,21 +1838,14 @@ mod tests {
 
     #[test]
     fn banners_keep_who_asks_apart() {
-        let mut e = Entry::new(Kind::Command, "Claude Code wants to run: rm -rf build").source(Some("Claude\u{202e}Code"));
+        let mut e =
+            Entry::new(Kind::Command, "Claude Code wants to run: rm -rf build").source(Some("Claude\u{202e}Code"));
         e.outcome = Outcome::Waiting;
         let (title, body) = banner(&e, "Dana's iPhone");
         assert!(!title.contains('\u{202e}'), "{title:?}");
         assert!(title.chars().count() <= 40);
         assert!(!body.contains(&title), "the requester stays out of the sentence: {body}");
         assert!(body.ends_with("· answer on Dana's iPhone"), "{body}");
-    }
-
-    #[test]
-    fn notifications_say_it_in_one_line() {
-        assert_eq!(
-            spoken(&waiting(command())),
-            "Claude Code wants to run a command in reins (rm -rf jarx · and 10 more commands)"
-        );
     }
 
     #[test]

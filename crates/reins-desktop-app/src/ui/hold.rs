@@ -115,6 +115,7 @@ impl Root {
     }
 
     /// A pane's quiet last row held to confirm ([`kit::pane::hold_row`]).
+    #[allow(clippy::too_many_arguments, reason = "a row's parts")]
     pub(super) fn hold_row(
         &self,
         id: impl Into<ElementId>,
@@ -126,7 +127,12 @@ impl Root {
         cx: &Context<'_, Self>,
     ) -> AnyElement {
         let look = self.hold_progress(what).map_or(HoldLook::Idle, HoldLook::Filling);
-        kit::pane(Self::hold_area(kit::pane::hold_row(id, g, title, sub, look, pal), what, cx), kit::Glass::Solid, kit::pane::RADIUS, pal)
+        kit::pane(
+            Self::hold_area(kit::pane::hold_row(id, g, title, sub, look, pal), what, cx),
+            kit::Glass::Solid,
+            kit::pane::RADIUS,
+            pal,
+        )
     }
 
     /// The red button held to confirm (38 px): `label` with `idle` before it; while held, the fill and "Keep

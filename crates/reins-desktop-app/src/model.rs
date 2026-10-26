@@ -28,8 +28,8 @@ use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, Ser
 use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
 use crate::state::{Place, Rect, Saved};
-use crate::ui::kit::Wallpaper;
 use crate::tray::{Action, Look, Shown, Tray};
+use crate::ui::kit::Wallpaper;
 use crate::welcome::{self, Stage, ToolRow};
 use crate::work::{self, Work};
 use crate::{Args, autostart, ui, upgrade};
@@ -763,7 +763,8 @@ impl Model {
             self.pause().short(now),
         );
         // Beside the shield (macOS shows a status item's title): how many wait, or a pause's time left.
-        let waiting = self.snapshot.as_ref().map_or(0, |s| s.activity.iter().filter(|e| e.outcome == Outcome::Waiting).count());
+        let waiting =
+            self.snapshot.as_ref().map_or(0, |s| s.activity.iter().filter(|e| e.outcome == Outcome::Waiting).count());
         let title = match look {
             Look::Waiting if waiting > 0 => Some(waiting.to_string()),
             Look::Paused => self.pause().clock(now),

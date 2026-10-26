@@ -5,18 +5,18 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyElement, Context, Div, IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _,
+    Styled as _, div, px,
 };
 use reins_desktop::control::ApiInfo;
 
 use super::icons::{Glyph, glyph};
-use super::parts::{caption, mono, page_title};
+use super::parts::{caption, page_title};
 use super::story::plain;
 use super::{Data, Root, kit};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::{MONO, Palette, Tone};
+use crate::theme::{MONO, Palette};
 
 /// Until when the key of API `name` is held, if it is now.
 #[must_use]
@@ -52,11 +52,6 @@ pub fn short_fingerprint(fp: &str) -> String {
     format!("{head}…{tail}")
 }
 
-/// A mono line under a row's title.
-fn mono_line(text: impl Into<SharedString>) -> AnyElement {
-    mono(text, 12.0).into_any_element()
-}
-
 /// A sample of `config.toml`, in a well, for an empty section.
 fn sample(lines: &[&str], pal: Palette) -> Div {
     let mut well = div()
@@ -83,12 +78,13 @@ impl Root {
     pub(super) fn keys(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         const MOOD: &str = "Secrets live on your phone. Only their names live here.";
         let file = std::path::PathBuf::from(&d.config_file);
-        let open = |id: &'static str| {
+        let open = |_id: &'static str| {
             let file = file.clone();
             move |_: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut gpui::App| cx.open_with_system(&file)
         };
-        let open_config = kit::button("open-config", kit::Look::Soft, kit::Size::Regular, Some(Glyph::File), "Open config.toml", pal)
-            .on_click(open("open-config"));
+        let open_config =
+            kit::button("open-config", kit::Look::Soft, kit::Size::Regular, Some(Glyph::File), "Open config.toml", pal)
+                .on_click(open("open-config"));
         let title = page_title(&[plain("Keys")], Some(MOOD), Some(open_config.into_any_element()), pal);
         let Some(config) = d.config() else {
             let why = d
@@ -114,7 +110,13 @@ impl Root {
         page = page.child(div().mt(px(20.0)).child(Self::secrets_hero(d, pal, cx)));
         let quiet = |text: &str, lines: &[&str]| -> AnyElement {
             let mut rows = vec![
-                div().px(px(14.0)).py(px(14.0)).text_size(px(14.5)).text_color(pal.ink_meta()).child(text.to_owned()).into_any_element(),
+                div()
+                    .px(px(14.0))
+                    .py(px(14.0))
+                    .text_size(px(14.5))
+                    .text_color(pal.ink_meta())
+                    .child(text.to_owned())
+                    .into_any_element(),
             ];
             rows.push(sample(lines, pal).mx(px(14.0)).mb(px(14.0)).mt(px(0.0)).into_any_element());
             kit::pane(div().flex().flex_col().children(rows), glass, kit::pane::RADIUS, pal)
@@ -124,7 +126,12 @@ impl Root {
         let apis = if config.api.is_empty() {
             quiet(
                 "No API keys yet",
-                &["[[api]]", "name = \"openai\"", "base = \"https://api.openai.com/v1\"", "secret = \"vault:OpenAI/api key\""],
+                &[
+                    "[[api]]",
+                    "name = \"openai\"",
+                    "base = \"https://api.openai.com/v1\"",
+                    "secret = \"vault:OpenAI/api key\"",
+                ],
             )
         } else {
             let items = config
@@ -132,14 +139,23 @@ impl Root {
                 .iter()
                 .map(|a| {
                     let state = match lease_until(&overview.apis, &a.name, d.now) {
-                        Some(until) => kit::status_pill(Some(Glyph::Timer), format!("Held until {}", format::clock(until)), Some(pal.success), pal),
+                        Some(until) => kit::status_pill(
+                            Some(Glyph::Timer),
+                            format!("Held until {}", format::clock(until)),
+                            Some(pal.success),
+                            pal,
+                        ),
                         None => kit::status_pill(Some(Glyph::Phone), "Asks next time", Some(pal.ink_2()), pal),
                     };
                     kit::pane_row()
                         .child(kit::pane::tile(Glyph::Card, pal))
                         .child(kit::title_sub(
                             a.name.clone(),
-                            Some(div().child(format!("{} · held {}", a.secret, format::span(a.lease_secs.into()))).into_any_element()),
+                            Some(
+                                div()
+                                    .child(format!("{} · held {}", a.secret, format::span(a.lease_secs.into())))
+                                    .into_any_element(),
+                            ),
                             pal,
                         ))
                         .child(state)
@@ -154,14 +170,21 @@ impl Root {
             .child(kit::section(
                 Some(Glyph::Card),
                 "API keys",
-                Some(kit::section_count(Some(config.api.len()), Some(kit::pane::plus("add-api-key", pal).on_click(open("add-api-key"))), pal)),
+                Some(kit::section_count(
+                    Some(config.api.len()),
+                    Some(kit::pane::plus("add-api-key", pal).on_click(open("add-api-key"))),
+                    pal,
+                )),
                 pal,
             ))
             .child(apis);
 
         // Run profiles.
         let profiles = if config.run.profiles.is_empty() {
-            quiet("No run profiles yet", &["[run.profiles.deploy]", "env = { AWS_SECRET_ACCESS_KEY = \"vault:AWS deploy/password\" }"])
+            quiet(
+                "No run profiles yet",
+                &["[run.profiles.deploy]", "env = { AWS_SECRET_ACCESS_KEY = \"vault:AWS deploy/password\" }"],
+            )
         } else {
             let mut items = Vec::new();
             for (name, p) in &config.run.profiles {
@@ -176,9 +199,21 @@ impl Root {
                             pal,
                         ))
                         .child(kit::pane::row_value(format::count(p.env.len() as u64, "secret", "secrets"), pal))
-                        .child(glyph(if open_row { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_faint()))
+                        .child(glyph(
+                            if open_row {
+                                Glyph::ChevronDown
+                            } else {
+                                Glyph::ChevronRight
+                            },
+                            14.0,
+                            pal.ink_faint(),
+                        ))
                         .on_click(Self::on_view(cx, move |this, _| {
-                            this.profile_open = if this.profile_open.as_deref() == Some(key.as_str()) { None } else { Some(key.clone()) };
+                            this.profile_open = if this.profile_open.as_deref() == Some(key.as_str()) {
+                                None
+                            } else {
+                                Some(key.clone())
+                            };
                         })),
                 );
                 if open_row {
@@ -246,7 +281,10 @@ impl Root {
                     on.then(|| div().child(socket).into_any_element()),
                     pal,
                 ))
-                .child(kit::switch("ssh-toggle", on, pal).on_click(Self::on_model(cx, move |m, cx| m.change(Setting::Ssh(!on), cx))))
+                .child(
+                    kit::switch("ssh-toggle", on, pal)
+                        .on_click(Self::on_model(cx, move |m, cx| m.change(Setting::Ssh(!on), cx))),
+                )
                 .into_any_element(),
         ];
         if on && keys.is_empty() {
@@ -261,7 +299,11 @@ impl Root {
             ssh.push(
                 kit::pane_row()
                     .child(kit::pane::tile(Glyph::Key, pal))
-                    .child(kit::title_sub(k.name.clone(), Some(div().child(short_fingerprint(&k.fingerprint)).into_any_element()), pal))
+                    .child(kit::title_sub(
+                        k.name.clone(),
+                        Some(div().child(short_fingerprint(&k.fingerprint)).into_any_element()),
+                        pal,
+                    ))
                     .into_any_element(),
             );
         }
@@ -291,7 +333,8 @@ impl Root {
             .overflow_hidden();
         for l in lines {
             let comment = l.starts_with('#');
-            code = code.child(div().px(px(14.0)).whitespace_nowrap().when(comment, |c| c.text_color(pal.ink_meta())).child(l));
+            code = code
+                .child(div().px(px(14.0)).whitespace_nowrap().when(comment, |c| c.text_color(pal.ink_meta())).child(l));
         }
         right = right.child(kit::section(None, "Use them", None, pal)).child(code);
 

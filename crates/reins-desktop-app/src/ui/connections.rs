@@ -7,16 +7,16 @@ use std::collections::BTreeMap;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyElement, Context, Div, IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _,
+    Styled as _, div, px,
 };
 use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Entry, Kind};
 use reins_desktop::stats::Connection;
 
-use super::icons::{Brand, Glyph, Mark, glyph};
 use super::hold::Held;
 use super::home::short_ago;
+use super::icons::{Brand, Glyph, Mark};
 use super::parts::{caption, page_title, this_computer};
 use super::story::{agent_mark, plain};
 use super::{Data, Root, kit};
@@ -108,7 +108,13 @@ impl Root {
         let mut right = div().flex().flex_col();
         let quiet = |text: &str| {
             kit::group(
-                [div().px(px(14.0)).py(px(16.0)).text_size(px(14.5)).text_color(pal.ink_meta()).child(text.to_owned()).into_any_element()],
+                [div()
+                    .px(px(14.0))
+                    .py(px(16.0))
+                    .text_size(px(14.5))
+                    .text_color(pal.ink_meta())
+                    .child(text.to_owned())
+                    .into_any_element()],
                 14.0,
                 glass,
                 pal,
@@ -139,20 +145,26 @@ impl Root {
                     .child(kit::title_sub(h.label(), Some(sub), pal));
                 if r.added && !r.complete {
                     item = item.child(
-                        kit::button(SharedString::from(format!("repair-{}", h.id())), kit::Look::Soft, kit::Size::Small, None, "Repair", pal)
-                            .on_click(Self::on_model(cx, move |m, cx| m.set_harness(h, true, cx))),
+                        kit::button(
+                            SharedString::from(format!("repair-{}", h.id())),
+                            kit::Look::Soft,
+                            kit::Size::Small,
+                            None,
+                            "Repair",
+                            pal,
+                        )
+                        .on_click(Self::on_model(cx, move |m, cx| m.set_harness(h, true, cx))),
                     );
                 }
                 let item: AnyElement = if r.found || r.added {
                     let on = r.added;
-                    let item = item.child(
-                        kit::switch(SharedString::from(format!("harness-{}", h.id())), on, pal).on_click(cx.listener(
-                            move |this, _, _, cx| {
+                    let item =
+                        item.child(kit::switch(SharedString::from(format!("harness-{}", h.id())), on, pal).on_click(
+                            cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.model.update(cx, |m, cx| m.set_harness(h, !on, cx));
-                            },
-                        )),
-                    );
+                            }),
+                        ));
                     if on {
                         kit::pane::clickable(item, SharedString::from(format!("tool-{}", h.id())), pal)
                             .on_click(Self::on_view(cx, move |this, _| this.tool_page = Some(h)))
@@ -167,7 +179,12 @@ impl Root {
             }
             let added = rows.iter().filter(|r| r.added).count();
             left = left
-                .child(kit::section(Some(Glyph::Globe), "AI tools", Some(kit::section_count(Some(added), None, pal)), pal))
+                .child(kit::section(
+                    Some(Glyph::Globe),
+                    "AI tools",
+                    Some(kit::section_count(Some(added), None, pal)),
+                    pal,
+                ))
                 .child(kit::group(items, kit::pane::INSET, glass, pal));
         }
 
@@ -182,11 +199,16 @@ impl Root {
             pal,
         ));
         left = left.child(if apis.is_empty() {
-            quiet(if configured == 0 { "No APIs yet" } else { "No calls yet" })
+            quiet(if configured == 0 {
+                "No APIs yet"
+            } else {
+                "No calls yet"
+            })
         } else {
             let mut items = Vec::new();
             for c in &apis {
-                let base = d.config().and_then(|cfg| cfg.api.iter().find(|a| a.name == c.target)).map(|a| a.base.clone());
+                let base =
+                    d.config().and_then(|cfg| cfg.api.iter().find(|a| a.name == c.target)).map(|a| a.base.clone());
                 let name = base.as_deref().map_or_else(|| c.target.clone(), api_host);
                 items.push(
                     kit::pane::clickable(kit::pane_row(), SharedString::from(format!("api-{}", c.target)), pal)
@@ -222,19 +244,24 @@ impl Root {
                 }
                 let (host, on) = (h.host.clone(), h.enabled);
                 let mark = Brand::of_host(&h.host).map_or(Mark::Glyph(Glyph::GitBranch), Mark::Brand);
-                let mut block = div().flex().flex_col().child(
-                    kit::pane_row()
-                        .child(kit::pane::avatar(mark, 32.0, pal))
-                        .child(kit::title_sub(
-                            h.host.clone(),
-                            Some(div().when(not_set, |t| t.text_color(pal.warning)).child(about.join(" · ")).into_any_element()),
-                            pal,
-                        ))
-                        .child(kit::switch(SharedString::from(format!("host-{}", h.host)), on, pal).on_click(Self::on_model(
-                            cx,
-                            move |m, cx| m.change(Setting::Host(host.clone(), !on), cx),
-                        ))),
-                );
+                let mut block =
+                    div().flex().flex_col().child(
+                        kit::pane_row()
+                            .child(kit::pane::avatar(mark, 32.0, pal))
+                            .child(kit::title_sub(
+                                h.host.clone(),
+                                Some(
+                                    div()
+                                        .when(not_set, |t| t.text_color(pal.warning))
+                                        .child(about.join(" · "))
+                                        .into_any_element(),
+                                ),
+                                pal,
+                            ))
+                            .child(kit::switch(SharedString::from(format!("host-{}", h.host)), on, pal).on_click(
+                                Self::on_model(cx, move |m, cx| m.change(Setting::Host(host.clone(), !on), cx)),
+                            )),
+                    );
                 if !repos.is_empty() {
                     let mut repo_rows = div().flex().flex_col().pl(px(60.0)).pr(px(14.0)).pb(px(8.0));
                     for (repo, c) in repos.iter().take(8) {
@@ -249,7 +276,11 @@ impl Root {
                                 .line_height(px(22.0))
                                 .text_color(pal.ink_2())
                                 .child(div().flex_1().min_w(px(0.0)).truncate().child((*repo).to_owned()))
-                                .child(div().flex_none().child(format!("{} · {}", c.count, short_ago(d.now, c.last_at)))),
+                                .child(div().flex_none().child(format!(
+                                    "{} · {}",
+                                    c.count,
+                                    short_ago(d.now, c.last_at)
+                                ))),
                         );
                     }
                     block = block.child(repo_rows);
@@ -261,7 +292,11 @@ impl Root {
             right = right
                 .child(kit::section(
                     Some(Glyph::GitBranch),
-                    if d.pause.on() { "git · paused, straight to the hosts" } else { "git · pushes wait for your phone" },
+                    if d.pause.on() {
+                        "git · paused, straight to the hosts"
+                    } else {
+                        "git · pushes wait for your phone"
+                    },
                     Some(kit::section_count(Some(all.iter().filter(|h| h.enabled).count()), Some(add_host), pal)),
                     pal,
                 ))
@@ -373,7 +408,9 @@ impl Root {
                     .flex_col()
                     .min_w(px(0.0))
                     .child(div().title().text_color(pal.ink()).child(h.label()))
-                    .child(div().mt(px(4.0)).mood().text_color(pal.ink_2()).child(format!("{how} · {}", this_computer()))),
+                    .child(
+                        div().mt(px(4.0)).mood().text_color(pal.ink_2()).child(format!("{how} · {}", this_computer())),
+                    ),
             );
         let glass = kit::Glass::Solid;
         let recent: Vec<AnyElement> = d
@@ -381,11 +418,21 @@ impl Root {
             .iter()
             .filter(|e| e.source.as_deref() == Some(h.label()))
             .take(6)
-            .map(|e| Self::entry_row(e, "tool", d, pal, false, pal.paper_raised()).on_click(Self::open_entry(cx, e.id.clone())).into_any_element())
+            .map(|e| {
+                Self::entry_row(e, "tool", d, pal, false, pal.paper_raised())
+                    .on_click(Self::open_entry(cx, e.id.clone()))
+                    .into_any_element()
+            })
             .collect();
         let recent = if recent.is_empty() {
             kit::group(
-                [div().px(px(14.0)).py(px(16.0)).text_size(px(14.5)).text_color(pal.ink_meta()).child("Nothing asked yet").into_any_element()],
+                [div()
+                    .px(px(14.0))
+                    .py(px(16.0))
+                    .text_size(px(14.5))
+                    .text_color(pal.ink_meta())
+                    .child("Nothing asked yet")
+                    .into_any_element()],
                 14.0,
                 glass,
                 pal,
@@ -398,7 +445,11 @@ impl Root {
             left = left.child(kit::section(None, "Repair", None, pal)).child(kit::group(
                 [kit::pane::clickable(kit::pane_row(), "tool-repair", pal)
                     .child(kit::pane::tile(Glyph::Refresh, pal))
-                    .child(kit::title_sub("Repair", Some(div().child("Add the hook and the MCP server again").into_any_element()), pal))
+                    .child(kit::title_sub(
+                        "Repair",
+                        Some(div().child("Add the hook and the MCP server again").into_any_element()),
+                        pal,
+                    ))
                     .on_click(Self::on_model(cx, move |m, cx| m.set_harness(h, true, cx)))
                     .into_any_element()],
                 kit::pane::INSET,
@@ -417,7 +468,8 @@ impl Root {
                 cx,
             )));
         }
-        let right = div().flex().flex_col().child(kit::section(Some(Glyph::Activity), "Recent", None, pal)).child(recent);
+        let right =
+            div().flex().flex_col().child(kit::section(Some(Glyph::Activity), "Recent", None, pal)).child(recent);
         div().flex().flex_col().child(head).child(div().mt(px(8.0)).child(two_columns(left, right))).into_any_element()
     }
 }

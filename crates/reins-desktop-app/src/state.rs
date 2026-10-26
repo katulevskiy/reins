@@ -12,6 +12,7 @@ use crate::welcome::Stage;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[allow(clippy::struct_excessive_bools, reason = "independent things remembered")]
 pub struct Saved {
     /// The phone that approved the pairing ("Daniel's iPhone"), when the pairing said.
     pub phone: Option<String>,

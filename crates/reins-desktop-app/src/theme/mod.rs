@@ -268,7 +268,7 @@ impl Palette {
         token(t, self.dark)
     }
 
-    // Signal's names.
+    // The tokens' names.
 
     /// The ground of every screen.
     #[must_use]
@@ -528,11 +528,8 @@ mod tests {
             f.weight = w;
             text.resolve_font(&f)
         };
-        let faces = [
-            weight(SANS, FontWeight::NORMAL),
-            weight(SANS, FontWeight::MEDIUM),
-            weight(SANS, FontWeight::SEMIBOLD),
-        ];
+        let faces =
+            [weight(SANS, FontWeight::NORMAL), weight(SANS, FontWeight::MEDIUM), weight(SANS, FontWeight::SEMIBOLD)];
         assert!(faces[0] != faces[1] && faces[1] != faces[2] && faces[0] != faces[2], "{faces:?}");
         assert_eq!(weight(SANS, FontWeight::BOLD), faces[2]);
         assert_ne!(weight(MONO, FontWeight::NORMAL), weight(MONO, FontWeight::MEDIUM));

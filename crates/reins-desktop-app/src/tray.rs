@@ -1,6 +1,7 @@
-//! The tray (Windows, Linux) or menu bar (macOS) icon, which speaks Signal (`Desk-Extras.png`): the shield in ink while
-//! Reins is on, and on the field's colour when something needs you: orange while a request waits on the phone, red
-//! while git is paused, amber when Reins needs the user (not paired, or the background service is not running). On
+//! The tray (Windows, Linux) or menu bar (macOS) icon, as the Next menu bar board draws it (`DeskNext-MenuBar.png`):
+//! the shield in ink while Reins is on (on macOS with how many wait, or a pause's clock, beside it), and on the
+//! field's colour when something needs you: orange while a request waits on the phone, red while git is paused, amber
+//! when Reins needs the user (not paired, or the background service is not running). On
 //! macOS the ink shield is a template image (the menu bar colours it); the coloured ones are drawn as they are.
 //!
 //! Native menus cannot be styled, so the menu follows the board in words and order: two status lines (the first opens

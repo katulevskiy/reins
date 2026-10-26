@@ -13,12 +13,12 @@ use reins_desktop::settings::GuardList;
 
 use super::field::{Field, slot};
 use super::icons::{Glyph, glyph};
-use super::parts::{caption, help, italic, mood};
-use super::story::{bold, group_icon, group_tone, plain};
+use super::parts::{caption, help, mood};
+use super::story::{group_icon, group_tone};
 use super::{Data, Root, kit};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::{Field as Kind, MONO, Palette, NextText as _, Tone};
+use crate::theme::{Field as Kind, MONO, NextText as _, Palette, Tone};
 
 /// The wait times offered, in seconds.
 const WAITS: [u64; 4] = [60, 120, 300, 600];
@@ -399,7 +399,15 @@ impl Root {
             .rounded(px(8.0))
             .cursor_pointer()
             .hover(|s| s.bg(pal.paper_sunken()))
-            .child(glyph(if file { Glyph::File } else { Glyph::Terminal }, 18.0, pal.ink_meta()))
+            .child(glyph(
+                if file {
+                    Glyph::File
+                } else {
+                    Glyph::Terminal
+                },
+                18.0,
+                pal.ink_meta(),
+            ))
             .on_click(Self::on_view(cx, move |this, _| {
                 this.guard_file[side] = !this.guard_file[side];
                 this.guard_error[side] = None;
@@ -462,7 +470,20 @@ impl Root {
             .child(kit::section(
                 Some(g),
                 label,
-                Some(help(if never { "rules-never" } else { "rules-also" }, about, d, pal, cx).into_any_element()),
+                Some(
+                    help(
+                        if never {
+                            "rules-never"
+                        } else {
+                            "rules-also"
+                        },
+                        about,
+                        d,
+                        pal,
+                        cx,
+                    )
+                    .into_any_element(),
+                ),
                 pal,
             ))
             .child(kit::pane(div().flex().flex_col().children(rows), kit::Glass::Solid, kit::pane::RADIUS, pal))

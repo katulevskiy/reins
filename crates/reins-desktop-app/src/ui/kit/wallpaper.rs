@@ -8,8 +8,8 @@
 use std::panic::Location;
 use std::sync::{Arc, OnceLock};
 
-use gpui::prelude::FluentBuilder as _;
 use gpui::Refineable as _;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, Bounds, Corners, Div, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     ParentElement as _, Pixels, RenderImage, Style, StyleRefinement, Styled, Window, div, linear_color_stop,
@@ -78,17 +78,6 @@ impl Wallpaper {
         }
     }
 
-    #[must_use]
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|w| w.id() == id.trim())
-    }
-
-    /// The picture is mostly light (the title over it is dark ink).
-    #[must_use]
-    pub fn light(self) -> bool {
-        matches!(self, Self::Torii | Self::ToriiDither)
-    }
-
     fn bytes(self) -> &'static [u8] {
         match self {
             Self::Halo => include_bytes!("../../../assets/wallpapers/halo.jpg"),
@@ -120,14 +109,13 @@ impl Wallpaper {
 }
 
 fn decode(bytes: &[u8], small: bool) -> Result<Arc<RenderImage>, String> {
-    let mut rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
-        .map_err(|e| e.to_string())?
-        .into_rgba8();
+    let mut rgba =
+        image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).map_err(|e| e.to_string())?.into_rgba8();
     if small {
         let h = rgba.height() * 260 / rgba.width().max(1);
         rgba = image::imageops::resize(&rgba, 260, h, image::imageops::FilterType::Triangle);
     }
-    for p in rgba.chunks_exact_mut(4) {
+    for p in rgba.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     Ok(Arc::new(RenderImage::new(vec![image::Frame::new(rgba)])))
@@ -263,13 +251,11 @@ fn cover(bounds: Bounds<Pixels>, iw: i32, ih: i32, at: (f32, f32)) -> Option<Bou
 pub fn band(which: Wallpaper, height: f32, pal: Palette) -> Div {
     let paper = pal.paper();
     let shade = if pal.dark {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(170.0))
-            .bg(linear_gradient(180.0, linear_color_stop(rgba(0, 0.6), 0.0), linear_color_stop(rgba(0, 0.0), 1.0)))
+        div().absolute().top_0().left_0().right_0().h(px(170.0)).bg(linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0, 0.6), 0.0),
+            linear_color_stop(rgba(0, 0.0), 1.0),
+        ))
     } else {
         div().absolute().top_0().left_0().right_0().h(px(140.0)).bg(linear_gradient(
             180.0,
@@ -285,12 +271,11 @@ pub fn band(which: Wallpaper, height: f32, pal: Palette) -> Div {
         .h(px(height))
         .overflow_hidden()
         .child(art(which, 0.5, 0.3))
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .bg(linear_gradient(180.0, linear_color_stop(paper.opacity(0.0), 0.35), linear_color_stop(paper, 1.0))),
-        )
+        .child(div().absolute().inset_0().bg(linear_gradient(
+            180.0,
+            linear_color_stop(paper.opacity(0.0), 0.35),
+            linear_color_stop(paper, 1.0),
+        )))
         .child(shade)
 }
 
@@ -298,15 +283,11 @@ pub fn band(which: Wallpaper, height: f32, pal: Palette) -> Div {
 pub fn fill(which: Wallpaper, fade: f32, pal: Palette) -> Div {
     let paper = pal.paper();
     div().absolute().inset_0().overflow_hidden().child(art(which, 0.5, 0.35)).when(fade > 0.0, |d| {
-        d.child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .h(px(fade))
-                .bg(linear_gradient(180.0, linear_color_stop(paper.opacity(0.0), 0.0), linear_color_stop(paper, 1.0))),
-        )
+        d.child(div().absolute().left_0().right_0().bottom_0().h(px(fade)).bg(linear_gradient(
+            180.0,
+            linear_color_stop(paper.opacity(0.0), 0.0),
+            linear_color_stop(paper, 1.0),
+        )))
     })
 }
 
@@ -321,10 +302,9 @@ mod tests {
             assert_eq!((img.size(0).width.0, img.size(0).height.0), (780, 1000), "{w:?}");
             let small = w.image(true).unwrap();
             assert_eq!((small.size(0).width.0, small.size(0).height.0), (260, 333), "{w:?}");
-            assert_eq!(Wallpaper::from_id(w.id()), Some(w));
             assert_eq!(serde_json::to_string(&w).unwrap(), format!("\"{}\"", w.id()));
         }
-        assert!(!Wallpaper::DARK.light() && Wallpaper::LIGHT.light());
+        assert_eq!((Wallpaper::DARK, Wallpaper::LIGHT), (Wallpaper::Halo, Wallpaper::ToriiDither));
     }
 
     /// The picture covers its box and keeps its point in view: a wide box crops the top and bottom, from 30% down.

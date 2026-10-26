@@ -10,7 +10,7 @@ use gpui::prelude::FluentBuilder as _;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement, ParentElement,
+    AnyElement, Context, Div, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, list, px, relative,
 };
 use reins_desktop::secrets_import::{Clash, Existing};
@@ -21,9 +21,8 @@ use super::hold::Held;
 use super::icons::{Brand, Glyph, Mark, glyph};
 use super::kit;
 use super::parts::{
-    page_title,
-    Btn, btn, btn_icon, caption, card, check_circle, chip, chip_plain, empty, fine, help, help_with, link, logo,
-    one_line, page_header, ring, row, row_text, sentence, small, stage, tile, well,
+    caption, card, chip, chip_plain, empty, fine, help, help_with, link, one_line, page_title, ring, row, row_text,
+    sentence, stage, tile, well,
 };
 use super::story::{Words, plain};
 use super::{Data, Root};
@@ -42,27 +41,14 @@ fn words(parts: &[(&str, bool)]) -> Vec<Words> {
         .collect()
 }
 
-/// The colour a kind of source is shown in.
-fn source_color(source: Source, pal: Palette) -> Hsla {
-    match source {
-        Source::Dotenv | Source::Cargo => crate::theme::Field::Push.kind(&pal),
-        Source::SshKey | Source::GitCredentials => crate::theme::Field::Pair.kind(&pal),
-        Source::Aws => gpui::rgb(0x00FF_9900).into(),
-        Source::Npm => gpui::rgb(0x00CB_3837).into(),
-        Source::Kube | Source::Docker | Source::Gcp | Source::PyPi => crate::theme::Field::Read.kind(&pal),
-        Source::GhCli | Source::Shell | Source::Netrc => pal.ink_2(),
-    }
-}
-
 /// A source's icon.
 fn source_glyph(source: Source) -> Glyph {
     match source {
         Source::GhCli | Source::GitCredentials => Glyph::GitBranch,
         Source::Dotenv => Glyph::FileText,
-        Source::SshKey => Glyph::Terminal,
+        Source::SshKey | Source::Shell => Glyph::Terminal,
         Source::Npm | Source::PyPi | Source::Cargo => Glyph::Package,
         Source::Docker | Source::Aws | Source::Gcp | Source::Kube => Glyph::Cloud,
-        Source::Shell => Glyph::Terminal,
         Source::Netrc => Glyph::Globe,
     }
 }
@@ -132,17 +118,6 @@ fn step(n: u8, label: &str, pal: Palette) -> Div {
         .min_h(px(30.0))
         .child(glyph(g, 15.0, pal.ink_2()))
         .child(tracked(label.to_owned()).text_color(pal.ink_2()))
-}
-
-/// What a risk looks like: its icon and colour.
-fn risk_look(risk: Risk, pal: Palette) -> (Glyph, Hsla) {
-    match risk {
-        Risk::ReadableByAgents | Risk::WorldReadable => (Glyph::Eye, pal.danger),
-        Risk::InGitHistory => (Glyph::GitCommit, pal.danger),
-        Risk::NoPassphrase => (Glyph::LockOpen, pal.danger),
-        Risk::PlainText => (Glyph::FileText, pal.warning),
-        Risk::InKeychain => (Glyph::Lock, pal.ink_2()),
-    }
 }
 
 /// The (?) beside "N of M selected".
@@ -307,8 +282,8 @@ fn slice(row: impl IntoElement, top: bool, bottom: bool, pal: Palette) -> Div {
         .flex_col()
         .bg(pal.paper_raised())
         .when(!pal.dark, |d| d.border_l_1().border_r_1().border_color(pal.rule()))
-        .when(top, |d| d.rounded_tl(px(r)).rounded_tr(px(r)).when(!pal.dark, |d| d.border_t_1()))
-        .when(bottom, |d| d.rounded_bl(px(r)).rounded_br(px(r)).when(!pal.dark, |d| d.border_b_1()))
+        .when(top, |d| d.rounded_tl(px(r)).rounded_tr(px(r)).when(!pal.dark, gpui::Styled::border_t_1))
+        .when(bottom, |d| d.rounded_bl(px(r)).rounded_br(px(r)).when(!pal.dark, gpui::Styled::border_b_1))
         .overflow_hidden()
         .child(row)
         .when(!bottom, |d| d.child(div().h(px(1.0)).ml(px(kit::pane::INSET)).bg(pal.rule())))
@@ -383,8 +358,15 @@ impl Root {
                     ),
             )
             .child(
-                kit::button("secrets-scan-start", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::ScanSearch), label, pal)
-                    .on_click(Self::on_model(cx, Model::start_scan)),
+                kit::button(
+                    "secrets-scan-start",
+                    kit::Look::Inverse,
+                    kit::Size::Regular,
+                    Some(Glyph::ScanSearch),
+                    label,
+                    pal,
+                )
+                .on_click(Self::on_model(cx, Model::start_scan)),
             );
         kit::pane(row, kit::Glass::Solid, kit::pane::RADIUS, pal)
     }
@@ -453,7 +435,13 @@ impl Root {
                             .rounded(px(3.0))
                             .bg(pal.rule_2())
                             .overflow_hidden()
-                            .child(div().h_full().w(relative(p.fraction.clamp(0.0, 1.0))).rounded(px(3.0)).bg(pal.violet())),
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(p.fraction.clamp(0.0, 1.0)))
+                                    .rounded(px(3.0))
+                                    .bg(pal.violet()),
+                            ),
                     ),
             );
         let mut rows: Vec<AnyElement> = Vec::new();
@@ -595,17 +583,11 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(10.0))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .title()
-                    .child(format!(
-                        "{} in {}",
-                        plural(r.total(), "secret", "secrets"),
-                        plural(report.findings.len(), "place", "places")
-                    )),
-            )
+            .child(div().flex_1().min_w(px(0.0)).title().child(format!(
+                "{} in {}",
+                plural(r.total(), "secret", "secrets"),
+                plural(report.findings.len(), "place", "places")
+            )))
             // Scan again: the icon alone, so the title keeps its line.
             .child(
                 kit::icon_button("secrets-rescan", Glyph::Refresh, 34.0, pal)
@@ -629,11 +611,7 @@ impl Root {
             .min_h(px(40.0))
             .cursor_pointer()
             .child(tick_box(all, pal))
-            .child(div().label().text_color(pal.ink_2()).child(format!(
-                "{} of {} selected",
-                r.count(),
-                r.total()
-            )))
+            .child(div().label().text_color(pal.ink_2()).child(format!("{} of {} selected", r.count(), r.total())))
             .when_some(count_note(r), |row, note| {
                 row.child(super::parts::help_open(COUNT_HELP, note, count_help, pal, cx))
             })
@@ -686,7 +664,12 @@ impl Root {
                     Risk::ReadableByAgents | Risk::WorldReadable => pal.danger,
                     _ => pal.warning,
                 };
-                h.child(kit::status_pill(None, format!("{} of {} · {}", with(risk), findings.len(), risk.label()), Some(color), pal))
+                h.child(kit::status_pill(
+                    None,
+                    format!("{} of {} · {}", with(risk), findings.len(), risk.label()),
+                    Some(color),
+                    pal,
+                ))
             })
             .child(div().flex_none().label().text_color(pal.ink_2()).child(plural(n, "secret", "secrets")))
             .on_click(Self::on_model(cx, move |m, cx| {
@@ -774,22 +757,15 @@ impl Root {
                 .child(mono(title, pal).text_size(px(12.5)).text_color(pal.ink()))
                 .child(marks)
         } else {
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.0))
-                .gap(px(2.0))
-                .child(one_line(title).row())
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .min_w(px(0.0))
-                        .child(mono(f.place.clone(), pal).min_w(px(48.0)))
-                        .child(marks),
-                )
+            div().flex().flex_col().flex_1().min_w(px(0.0)).gap(px(2.0)).child(one_line(title).row()).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .min_w(px(0.0))
+                    .child(mono(f.place.clone(), pal).min_w(px(48.0)))
+                    .child(marks),
+            )
         };
         let right: AnyElement = if f.source == Source::Dotenv {
             count(r.ticked_in(f), r.total_in(f), pal).into_any_element()
@@ -819,14 +795,13 @@ impl Root {
             .cursor_pointer()
             .hover(|s| s.bg(pal.ink().opacity(0.035)))
             .child(
-                div()
-                    .id(SharedString::from(format!("tick-{}", f.id)))
-                    .child(tick(r.ticked_in(f) > 0, pal))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                div().id(SharedString::from(format!("tick-{}", f.id))).child(tick(r.ticked_in(f) > 0, pal)).on_click(
+                    cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         let id = id.clone();
                         this.model.update(cx, |m, cx| m.review(cx, |r| r.toggle_finding(&id)));
-                    })),
+                    }),
+                ),
             )
             .when(!nested, |row| row.child(source_tile(f.source, pal, 34.0)))
             .child(text)
@@ -853,23 +828,20 @@ impl Root {
         let plan = r.plan(&d.computer, &d.machine);
         let naming = Naming::of(&plan);
         let width = (window.viewport_size().width.as_f32() * 0.34).clamp(300.0, 380.0);
-        let summary =
-            div().flex().flex_col().gap(px(6.0)).child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(pal.ink_meta()).child("Move to your vault")).child(
+        let summary = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(
                 div()
-                    .flex()
-                    .items_end()
-                    .gap(px(6.0))
-                    .child(
-                        div().ask_xl().child(r.count().to_string()),
-                    )
-                    .child(
-                        div()
-                            .pb(px(4.0))
-                            .text_size(px(14.0))
-                            .text_color(pal.ink_meta())
-                            .child(format!("of {}", r.total())),
-                    ),
-            );
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(pal.ink_meta())
+                    .child("Move to your vault"),
+            )
+            .child(div().flex().items_end().gap(px(6.0)).child(div().ask_xl().child(r.count().to_string())).child(
+                div().pb(px(4.0)).text_size(px(14.0)).text_color(pal.ink_meta()).child(format!("of {}", r.total())),
+            ));
         let body = div().id("secrets-panel").flex_1().min_h(px(0.0)).overflow_y_scroll().child(
             div()
                 .flex()
@@ -1501,7 +1473,11 @@ impl Root {
         let glass = kit::Glass::Solid;
         let mut changed: Vec<AnyElement> = Vec::new();
         for line in &receipt.done {
-            let (g, color) = if line.ok { (Glyph::Check, pal.success) } else { (Glyph::Warning, pal.warning) };
+            let (g, color) = if line.ok {
+                (Glyph::Check, pal.success)
+            } else {
+                (Glyph::Warning, pal.warning)
+            };
             changed.push(
                 kit::pane_row()
                     .child(
@@ -1515,7 +1491,11 @@ impl Root {
                             .bg(pal.success.opacity(0.14))
                             .child(glyph(source_glyph(line.source), 17.0, pal.success)),
                     )
-                    .child(kit::title_sub(line.what.clone(), Some(div().child(line.how.clone()).into_any_element()), pal))
+                    .child(kit::title_sub(
+                        line.what.clone(),
+                        Some(div().child(line.how.clone()).into_any_element()),
+                        pal,
+                    ))
                     .child(glyph(g, 17.0, color))
                     .into_any_element(),
             );

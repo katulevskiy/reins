@@ -9,7 +9,7 @@ use gpui::{
 
 use super::button::PRESSED;
 use crate::theme::text::tracked;
-use crate::theme::{Field, MONO, Palette, SANS, NextText as _, Tone, motion};
+use crate::theme::{Field, MONO, NextText as _, Palette, SANS, Tone, motion};
 use crate::ui::icons::{Glyph, Illustration, Mark, glyph, illustration};
 use crate::ui::parts::ring;
 
@@ -293,20 +293,6 @@ pub fn timer(left_secs: i64, total_secs: i64, on: Hsla) -> Div {
         .child(clock)
 }
 
-/// A service's or an AI tool's mark on a 32 px white tile with a hairline (the boards' `.mk`), the logo at 58%; a
-/// glyph instead sits on `paper-sunken` in `ink`.
-pub fn logo_tile(m: Mark, pal: Palette) -> Div {
-    let tile = div().flex().flex_none().items_center().justify_center().size(px(32.0)).rounded(px(10.0));
-    match m {
-        Mark::Brand(b) => tile
-            .bg(gpui::white())
-            .border_1()
-            .border_color(pal.rule())
-            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
-        Mark::Glyph(i) => tile.bg(pal.paper_sunken()).child(glyph(i, 17.0, pal.ink())),
-    }
-}
-
 /// A request's icon (`.ri` on the boards): the integration's mark on a white tile (white on dark paper too, so every
 /// logo keeps its colours), and the action on a round badge at its bottom-right corner (`.rib`), white on the kind's
 /// field colour, ringed in `surface` (what the icon sits on) so it stands apart from the mark.
@@ -343,22 +329,6 @@ pub fn request_icon(mark: Mark, badge: Glyph, field: Field, side: f32, surface: 
             .border_color(surface)
             .child(glyph(badge, dot * 0.59, gpui::white())),
     )
-}
-
-/// A key cap in a list of shortcuts ("⌘R", "Esc"): mono 12 on `paper-sunken`, `ink-2`.
-pub fn key_cap(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex_none()
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(7.0))
-        .bg(pal.paper_sunken())
-        .font_family(MONO)
-        .text_size(px(12.0))
-        .line_height(px(16.0))
-        .text_color(pal.ink_2())
-        .whitespace_nowrap()
-        .child(text.into())
 }
 
 /// A state as a small pill (11.5, 600): `color` on itself at 13% ("Held until 22:34", "Installed"), or `ink-2` on

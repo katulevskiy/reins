@@ -1,9 +1,8 @@
-//! The status window's sidebar (`Desk-Home.png`, `Desk-Waiting.png`, `Desk-Extras.png`): the mark and the serif
-//! "Reins", a card that says what Reins is doing (paper while all is well; a field when something needs you: the
-//! waiting request's colour, red while git is paused, amber when broken, violet while a work session runs), the
-//! sections in monochrome glyphs with their keys (the selected one a raised pill that slides between them), and at the
-//! bottom "Pause git", or, while paused, the red card with the time left and Resume. And the "Pause git" sheet: 15 min,
-//! 1 hour, 1 day, or until you resume (held to confirm).
+//! The status window's sidebar (`DeskNext-System.png`): a card that says what Reins is doing (raised paper while all
+//! is well; a grained field while something runs or is broken: red while git is paused, violet for a work session,
+//! amber when Reins needs you), the sections with their glyphs and keys (the selected one a raised pill that slides
+//! between them), and at the foot "Pause git", or, while paused, "Resume git". And the "Pause git" sheet, as the
+//! boards' Bypass sheet: 15 min, 1 hour, 1 day, or until you resume (held to confirm).
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -31,7 +30,7 @@ const PITCH: f32 = 38.0;
 const LENGTHS: [PauseFor; 4] = [PauseFor::Quarter, PauseFor::Hour, PauseFor::Day, PauseFor::Manual];
 
 impl Section {
-    /// The section's glyph (in ink: Signal colours only what needs a decision).
+    /// The section's glyph (in ink: colour is only for what needs a decision).
     #[must_use]
     pub fn glyph(self) -> Glyph {
         match self {
@@ -150,7 +149,9 @@ impl Root {
                 .when_else(
                     selected,
                     |r| r.text_color(pal.ink()),
-                    |r| r.text_color(pal.ink_2()).hover(|s| s.bg(pal.paper_sunken().opacity(0.6)).text_color(pal.ink())),
+                    |r| {
+                        r.text_color(pal.ink_2()).hover(|s| s.bg(pal.paper_sunken().opacity(0.6)).text_color(pal.ink()))
+                    },
                 )
                 .child(glyph(
                     g,
@@ -278,13 +279,11 @@ impl Root {
             None => (pal.ink(), pal.ink_meta()),
         };
         let tile = match c.field {
-            Some(_) => div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(20.0))
-                .child(glyph(c.glyph, 18.0, pal.on_field())),
+            Some(_) => div().flex().flex_none().items_center().justify_center().size(px(20.0)).child(glyph(
+                c.glyph,
+                18.0,
+                pal.on_field(),
+            )),
             None => div()
                 .flex()
                 .flex_none()
@@ -312,12 +311,7 @@ impl Root {
             )
             .when(!c.line.is_empty(), |w| {
                 w.child(
-                    div()
-                        .text_size(px(12.5))
-                        .line_height(px(17.0))
-                        .text_color(line_color)
-                        .line_clamp(2)
-                        .child(c.line),
+                    div().text_size(px(12.5)).line_height(px(17.0)).text_color(line_color).line_clamp(2).child(c.line),
                 )
             })
             .when_some(c.clock, |w, clock| {
@@ -467,7 +461,13 @@ impl Root {
                     .items_center()
                     .gap(px(6.0))
                     .mt(px(10.0))
-                    .child(div().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).text_color(pal.ink_2()).child("Still asks"))
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(pal.ink_2())
+                            .child("Still asks"),
+                    )
                     .child(kit::status_pill(Some(Glyph::Terminal), "Hooks", None, pal))
                     .child(kit::status_pill(Some(Glyph::Link), "MCP tools", None, pal)),
             )
@@ -508,16 +508,11 @@ impl Root {
                     this.hold = None;
                 },
             )))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .justify_center()
-                    .items_start()
-                    .pt(px(180.0))
-                    .child(enter(sheet, "pause-sheet", Entrance::Sheet)),
-            )
+            .child(div().absolute().inset_0().flex().justify_center().items_start().pt(px(180.0)).child(enter(
+                sheet,
+                "pause-sheet",
+                Entrance::Sheet,
+            )))
             .into_any_element()
     }
 }

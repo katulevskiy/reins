@@ -7,22 +7,20 @@ use std::time::Instant;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
+    Anchor, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::health::checked;
 use super::hold::Held;
 use super::icons::{Glyph, glyph};
-use super::kit::hold::HoldLook;
-use super::parts::{caption, columns, list_row, mono, section, this_computer, title_meta};
+use super::parts::{caption, this_computer};
 use super::{Data, Root, kit};
 use crate::backend::{DaemonState, Setting};
 use crate::format::host;
 use crate::health;
 use crate::model::{Model, Section};
 use crate::shortcuts;
-use crate::theme::{Appearance, MONO, Palette, DISPLAY, NextText as _, Tone};
+use crate::theme::{Appearance, MONO, NextText as _, Palette};
 
 /// The keyboard card's lines: the sections in one line ("Home … Settings", "⌘1 – ⌘6"), then the rest but Quit.
 #[must_use]
@@ -108,8 +106,16 @@ impl Root {
             kit::pane::clickable(kit::pane_row(), "name", pal)
                 .child(tile(Glyph::Laptop))
                 .child(kit::title_sub("Name", itself.map(|i| div().child(i).into_any_element()), pal))
-                .child(value(name.clone()))
-                .child(glyph(if self.name_open { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_faint()))
+                .child(value(name))
+                .child(glyph(
+                    if self.name_open {
+                        Glyph::ChevronDown
+                    } else {
+                        Glyph::ChevronRight
+                    },
+                    14.0,
+                    pal.ink_faint(),
+                ))
                 .on_click(Self::on_view(cx, |this, _| this.name_open = !this.name_open)),
         );
         if self.name_open {
@@ -159,7 +165,15 @@ impl Root {
                 .child(tile(Glyph::Bell))
                 .child(kit::title_sub("Notifications", None, pal))
                 .child(value(notify_word.to_owned()))
-                .child(glyph(if self.notify_open { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_faint()))
+                .child(glyph(
+                    if self.notify_open {
+                        Glyph::ChevronDown
+                    } else {
+                        Glyph::ChevronRight
+                    },
+                    14.0,
+                    pal.ink_faint(),
+                ))
                 .on_click(Self::on_view(cx, |this, _| this.notify_open = !this.notify_open)),
         );
         if self.notify_open {
@@ -257,7 +271,10 @@ impl Root {
                 kit::pane_row()
                     .child(tile(Glyph::Appearance))
                     .child(kit::title_sub("Grain on fields", None, pal))
-                    .child(kit::switch("grain", grain_on, pal).on_click(Self::on_model(cx, move |m, cx| m.set_grain(!grain_on, cx))))
+                    .child(
+                        kit::switch("grain", grain_on, pal)
+                            .on_click(Self::on_model(cx, move |m, cx| m.set_grain(!grain_on, cx))),
+                    )
                     .into_any_element(),
             ],
             kit::pane::INSET,
@@ -284,8 +301,25 @@ impl Root {
                     .gap(px(12.0))
                     .min_h(px(50.0))
                     .px(px(16.0))
-                    .child(div().w(px(96.0)).flex_none().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(pal.ink_meta()).child(what))
-                    .child(div().flex_1().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(13.5)).text_color(pal.ink()).child(k))
+                    .child(
+                        div()
+                            .w(px(96.0))
+                            .flex_none()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(pal.ink_meta())
+                            .child(what),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .font_family(MONO)
+                            .text_size(px(13.5))
+                            .text_color(pal.ink())
+                            .child(k),
+                    )
                     .into_any_element()
             })
             .collect::<Vec<_>>();
@@ -358,23 +392,30 @@ impl Root {
         let current = d.saved.wallpaper(dark);
         let back = kit::icon_button("wallpaper-back", Glyph::ChevronLeft, 36.0, pal)
             .on_click(Self::on_view(cx, |this, _| this.wallpaper_page = false));
-        let head = div()
-            .flex()
-            .items_center()
-            .gap(px(14.0))
-            .child(back)
-            .child(
+        let head = div().flex().items_center().gap(px(14.0)).child(back).child(
+            div().flex().flex_col().child(div().title().text_color(pal.ink()).child("Wallpaper")).child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .child(div().title().text_color(pal.ink()).child("Wallpaper"))
-                    .child(div().mt(px(6.0)).mood().text_color(pal.ink_2()).child("One for dark, one for light. Shown behind Home and Activity.")),
-            );
+                    .mt(px(6.0))
+                    .mood()
+                    .text_color(pal.ink_2())
+                    .child("One for dark, one for light. Shown behind Home and Activity."),
+            ),
+        );
         let mut slots = kit::segmented(pal).w_full();
-        for (i, (label, g, is_dark)) in [("Dark", Glyph::Moon, true), ("Light", Glyph::Appearance, false)].into_iter().enumerate() {
+        for (i, (label, g, is_dark)) in
+            [("Dark", Glyph::Moon, true), ("Light", Glyph::Appearance, false)].into_iter().enumerate()
+        {
             slots = slots.child(
                 kit::segment(("wall-slot", i), "", dark == is_dark, pal)
-                    .child(glyph(g, 14.0, if dark == is_dark { pal.ink() } else { pal.ink_2() }))
+                    .child(glyph(
+                        g,
+                        14.0,
+                        if dark == is_dark {
+                            pal.ink()
+                        } else {
+                            pal.ink_2()
+                        },
+                    ))
                     .child(label)
                     .on_click(Self::on_view(cx, move |this, _| this.wallpaper_dark_slot = is_dark)),
             );
@@ -397,7 +438,11 @@ impl Root {
                             .w(px(130.0))
                             .h(px(100.0))
                             .rounded(px(14.0))
-                            .when_else(on, |t| t.border_2().border_color(pal.violet()), |t| t.border_1().border_color(pal.rule()))
+                            .when_else(
+                                on,
+                                |t| t.border_2().border_color(pal.violet()),
+                                |t| t.border_1().border_color(pal.rule()),
+                            )
                             .child(kit::wallpaper::art(w, 0.5, 0.0).corners(13.0).thumbnail())
                             .when(on, |t| {
                                 t.child(
@@ -420,7 +465,11 @@ impl Root {
             );
         }
         let frosted = !d.saved.solid_panes;
-        let preview_pal = if dark { Palette::dark() } else { Palette::light() };
+        let preview_pal = if dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
         let preview = div()
             .relative()
             .h(px(300.0))
@@ -450,7 +499,10 @@ impl Root {
             [kit::pane_row()
                 .child(kit::pane::tile(Glyph::Appearance, pal))
                 .child(kit::title_sub("Frosted panes", None, pal))
-                .child(kit::switch("frosted", frosted, pal).on_click(Self::on_model(cx, move |m, cx| m.set_frosted_panes(!frosted, cx))))
+                .child(
+                    kit::switch("frosted", frosted, pal)
+                        .on_click(Self::on_model(cx, move |m, cx| m.set_frosted_panes(!frosted, cx))),
+                )
                 .into_any_element()],
             kit::pane::INSET,
             kit::Glass::Solid,
@@ -624,16 +676,13 @@ impl Root {
                             .child(account),
                     )
                     // The key compared when pairing stays whole: the line wraps rather than cutting it.
-                    .child(div().mt(px(2.0)).font_family(MONO).text_size(px(13.0)).text_color(pal.ink_meta()).child(line)),
+                    .child(
+                        div().mt(px(2.0)).font_family(MONO).text_size(px(13.0)).text_color(pal.ink_meta()).child(line),
+                    ),
             )
             .child(pills);
         kit::pane(card, kit::Glass::Solid, kit::pane::RADIUS, pal)
     }
-}
-
-/// The key's eight digits as the phone shows them, whole at any width: they wrap rather than being cut.
-fn fingerprint_line(key: String, pal: Palette) -> Div {
-    div().flex_none().font_family(MONO).text_size(px(12.5)).text_color(pal.ink_meta()).child(key)
 }
 
 #[cfg(test)]

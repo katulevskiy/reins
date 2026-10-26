@@ -98,34 +98,56 @@ struct Light {
 
 /// The lights, bottom first (`.tx-aurora .grain`, whose first gradient is on top).
 const AURORA: [Light; 3] = [
-    Light { at: (0.3, 0.2), radii: (0.5, 0.6), color: [1.0, 220.0 / 255.0, 180.0 / 255.0], alpha: 0.35, end: 0.7 },
-    Light { at: (0.0, 1.0), radii: (0.6, 0.8), color: [0.0, 0.0, 0.0], alpha: 0.45, end: 0.7 },
-    Light { at: (0.92, 0.0), radii: (0.7, 0.9), color: [1.0, 1.0, 1.0], alpha: 0.7, end: 0.6 },
+    Light {
+        at: (0.3, 0.2),
+        radii: (0.5, 0.6),
+        color: [1.0, 220.0 / 255.0, 180.0 / 255.0],
+        alpha: 0.35,
+        end: 0.7,
+    },
+    Light {
+        at: (0.0, 1.0),
+        radii: (0.6, 0.8),
+        color: [0.0, 0.0, 0.0],
+        alpha: 0.45,
+        end: 0.7,
+    },
+    Light {
+        at: (0.92, 0.0),
+        radii: (0.7, 0.9),
+        color: [1.0, 1.0, 1.0],
+        alpha: 0.7,
+        end: 0.6,
+    },
 ];
 
 /// The lights blended soft-light over the colour `rgb`, `w` × `h` over the field's box, as BGRA with straight alpha:
 /// each pixel what the blend makes of the field there, as opaque as the lights are.
 #[must_use]
-pub fn bake_lights(rgb: u32, w: u32, h: u32) -> Vec<u8> {
+pub fn bake_lights(rgb: u32, width: u32, height: u32) -> Vec<u8> {
     let field = channels(rgb);
-    let mut out = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        for x in 0..w {
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        for col in 0..width {
             #[allow(clippy::cast_precision_loss, reason = "a small picture")]
-            let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+            let (across, down) = ((col as f32 + 0.5) / width as f32, (row as f32 + 0.5) / height as f32);
             // The lights composited over nothing (source-over, premultiplied).
             let (mut c, mut a) = ([0.0f32; 3], 0.0f32);
             for l in &AURORA {
-                let t = ((u - l.at.0) / l.radii.0).hypot((v - l.at.1) / l.radii.1);
+                let t = ((across - l.at.0) / l.radii.0).hypot((down - l.at.1) / l.radii.1);
                 let la = l.alpha * (1.0 - t / l.end).clamp(0.0, 1.0);
-                for i in 0..3 {
-                    c[i] = l.color[i].mul_add(la, c[i] * (1.0 - la));
+                for (ch, lc) in c.iter_mut().zip(l.color) {
+                    *ch = lc.mul_add(la, *ch * (1.0 - la));
                 }
                 a = la + a * (1.0 - la);
             }
             let mut px = [0u8; 4];
             for i in 0..3 {
-                let cs = if a > 0.0 { c[i] / a } else { 0.5 };
+                let cs = if a > 0.0 {
+                    c[i] / a
+                } else {
+                    0.5
+                };
                 px[2 - i] = byte(soft_light(field[i], cs));
             }
             px[3] = byte(a);

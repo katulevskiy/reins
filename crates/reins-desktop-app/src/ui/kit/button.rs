@@ -35,9 +35,6 @@ pub enum Look {
 }
 
 impl Look {
-    pub const ALL: [Self; 7] =
-        [Self::Inverse, Self::Outline, Self::Soft, Self::DangerWash, Self::Violet, Self::OnField, Self::Wash];
-
     /// Its fill and what goes on it.
     #[must_use]
     pub fn colors(self, pal: Palette) -> (Hsla, Hsla) {
@@ -50,12 +47,6 @@ impl Look {
             Self::OnField => (gpui::white(), ink_light()),
             Self::Wash => (pal.on_field_wash(), pal.on_field()),
         }
-    }
-
-    /// Sits on a field (its focus ring is white).
-    #[must_use]
-    pub fn on_field(self) -> bool {
-        matches!(self, Self::OnField | Self::Wash)
     }
 }
 

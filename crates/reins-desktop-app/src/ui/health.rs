@@ -14,16 +14,10 @@ use super::icons::{Glyph, glyph};
 use super::parts::{help, italic, waiting_dot};
 use super::story::{Words, bold, plain};
 use super::{Data, Root, kit};
-use crate::format;
 use crate::health::{self, Test};
 use crate::model::Model;
 use crate::shortcuts;
-use crate::theme::{MONO, Palette, DISPLAY, Tone};
-
-/// "Checked just now", "Checked 3 min ago".
-pub fn checked(d: &Data) -> Option<String> {
-    d.health.at.map(|at| format!("Checked {}", format::ago(d.now, at)))
-}
+use crate::theme::{DISPLAY, MONO, Palette, Tone};
 
 /// The checks' title in the serif, its last words in italic: "1 thing *to look at*", "All *good*".
 #[must_use]

@@ -12,10 +12,10 @@ use gpui::{
 use reins_desktop::doctor::Level;
 use reins_desktop::journal::{Decider, Entry, Outcome, Tally};
 
-use super::icons::{Glyph, Mark, glyph};
+use super::icons::{Glyph, glyph};
 use super::parts::{FactLook, caption, fact_rows, italic, link, sentence};
 use super::sidebar::clock_left;
-use super::story::{Ask, Words, who_from};
+use super::story::{Ask, Words};
 use super::{Data, Root, kit};
 use crate::format;
 use crate::health::{self, Test};
@@ -151,7 +151,9 @@ fn risk_line(e: &Entry, pal: Palette) -> Option<Div> {
         (Outcome::TimedOut, _) => ("No answer, so it was denied".to_owned(), pal.warning),
         (Outcome::Failed, _) => (e.reason.clone().unwrap_or_else(|| "Couldn't ask your phone".to_owned()), pal.danger),
         (Outcome::Blocked, _) => ("Blocked by your rules".to_owned(), pal.warning),
-        (Outcome::Denied | Outcome::Approved, Decider::Local) => ("Answered on this computer".to_owned(), pal.ink_meta()),
+        (Outcome::Denied | Outcome::Approved, Decider::Local) => {
+            ("Answered on this computer".to_owned(), pal.ink_meta())
+        }
         _ => return None,
     };
     Some(
@@ -204,7 +206,13 @@ impl Root {
         } else {
             kit::disabled(test)
         };
-        let over_art = |c: Hsla| if pal.dark { gpui::white() } else { c };
+        let over_art = |c: Hsla| {
+            if pal.dark {
+                gpui::white()
+            } else {
+                c
+            }
+        };
         let header = div()
             .relative()
             .flex()
@@ -219,11 +227,17 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.0))
                     .child(div().title().text_color(over_art(pal.ink())).child(greeting(d.now)))
-                    .child(div().mt(px(6.0)).mood().text_color(if pal.dark {
-                        crate::theme::rgba(0x00E4_E4EA, 1.0)
-                    } else {
-                        pal.ink_2()
-                    }).child(mood_line(d))),
+                    .child(
+                        div()
+                            .mt(px(6.0))
+                            .mood()
+                            .text_color(if pal.dark {
+                                crate::theme::rgba(0x00E4_E4EA, 1.0)
+                            } else {
+                                pal.ink_2()
+                            })
+                            .child(mood_line(d)),
+                    ),
             )
             .child(test);
 
@@ -254,7 +268,7 @@ impl Root {
             .flex_1()
             .min_w(px(260.0))
             .max_w(px(CARDS))
-            .child(self.health_tile(d, glass, pal, cx))
+            .child(Self::health_tile(d, glass, pal, cx))
             .child(Self::work_tile(d, glass, pal, cx))
             .child(Self::computer_tile(d, glass, pal, cx));
         let content = div()
@@ -290,13 +304,7 @@ impl Root {
         };
         let t = today(d.activity(), d.now);
         let count = |g: Glyph, n: usize, color: Hsla| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(3.0))
-                .text_color(color)
-                .child(glyph(g, 13.0, color))
-                .child(n.to_string())
+            div().flex().items_center().gap(px(3.0)).text_color(color).child(glyph(g, 13.0, color)).child(n.to_string())
         };
         let counts = div()
             .flex()
@@ -324,7 +332,9 @@ impl Root {
         let surface = Self::row_surface(glass, pal);
         for e in &rows {
             items.push(
-                Self::entry_row(e, "home", d, pal, false, surface).on_click(Self::open_entry(cx, e.id.clone())).into_any_element(),
+                Self::entry_row(e, "home", d, pal, false, surface)
+                    .on_click(Self::open_entry(cx, e.id.clone()))
+                    .into_any_element(),
             );
         }
         if items.is_empty() {
@@ -377,7 +387,13 @@ impl Root {
             .cursor_pointer()
             .when_else(
                 selected,
-                |r| r.bg(pal.violet().opacity(if pal.dark { 0.16 } else { 0.10 })),
+                |r| {
+                    r.bg(pal.violet().opacity(if pal.dark {
+                        0.16
+                    } else {
+                        0.10
+                    }))
+                },
                 |r| r.hover(|h| h.bg(pal.ink().opacity(0.035))),
             )
             .child(div().mr(px(5.0)).mb(px(5.0)).child(kit::request_icon(s.mark, s.badge, s.field, 36.0, surface, pal)))
@@ -423,7 +439,7 @@ impl Root {
     }
 
     /// Health: all good, or how many things to look at with the first one's fix. A click opens the checks.
-    fn health_tile(&self, d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn health_tile(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let checks = d.health.checks.as_deref();
         let (level, value, line) = match (checks, &d.health.error) {
             (_, Some(e)) => (Level::Fail, "Can't check".to_owned(), e.clone()),
@@ -532,8 +548,12 @@ impl Root {
         }
         if let Some(asking) = &d.work.asking {
             let left = i64::try_from(asking.left(std::time::Instant::now())).unwrap_or(0);
-            let clock =
-                div().font_family(MONO).text_size(px(13.5)).text_color(pal.violet()).child(clock_left(left)).into_any_element();
+            let clock = div()
+                .font_family(MONO)
+                .text_size(px(13.5))
+                .text_color(pal.violet())
+                .child(clock_left(left))
+                .into_any_element();
             return Self::card(
                 div()
                     .flex()
@@ -619,9 +639,16 @@ impl Root {
                 "Not paired",
                 "Pair this computer with your phone".to_owned(),
                 Some(
-                    kit::button("hero-pair", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Phone), "Pair again", pal)
-                        .on_click(Self::on_model(cx, Model::sign_out))
-                        .into_any_element(),
+                    kit::button(
+                        "hero-pair",
+                        kit::Look::Inverse,
+                        kit::Size::Regular,
+                        Some(Glyph::Phone),
+                        "Pair again",
+                        pal,
+                    )
+                    .on_click(Self::on_model(cx, Model::sign_out))
+                    .into_any_element(),
                 ),
             ),
             Look::Attention => (
@@ -673,22 +700,31 @@ impl Root {
         self.load_push(e, cx);
         let push = self.kept_for(e);
         let glass = Glass::Solid;
-        let field = self.ask_field(e, d, pal, cx);
+        let field = Self::ask_field(e, d, pal, cx);
 
-        let what = div()
-            .flex()
-            .flex_col()
-            .child(kit::section(None, "What will happen", None, pal))
-            .child(fact_rows(&s.facts, FactLook::Home, glass, pal));
+        let what = div().flex().flex_col().child(kit::section(None, "What will happen", None, pal)).child(fact_rows(
+            &s.facts,
+            FactLook::Home,
+            glass,
+            pal,
+        ));
         let (left, right): (Div, AnyElement) = match push {
             Some(push) => {
                 let ci = self.picked_commit(&push);
                 (
-                    what.child(self.commit_list(&push, ci, glass, pal, cx)),
+                    what.child(Self::commit_list(&push, ci, glass, pal, cx)),
                     self.commit_detail(&push, ci, false, pal, cx).into_any_element(),
                 )
             }
-            None => (what, div().flex().flex_col().child(kit::section(None, "Today", None, pal)).child(Self::today_list(d, glass, pal, cx)).into_any_element()),
+            None => (
+                what,
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(kit::section(None, "Today", None, pal))
+                    .child(Self::today_list(d, glass, pal, cx))
+                    .into_any_element(),
+            ),
         };
         let mut below = div().flex().flex_col().gap(px(14.0));
         below = below.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
@@ -719,14 +755,18 @@ impl Root {
             .iter()
             .filter(|e| e.outcome != Outcome::Waiting)
             .take(3)
-            .map(|e| Self::entry_row(e, "waiting", d, pal, false, surface).on_click(Self::open_entry(cx, e.id.clone())).into_any_element())
+            .map(|e| {
+                Self::entry_row(e, "waiting", d, pal, false, surface)
+                    .on_click(Self::open_entry(cx, e.id.clone()))
+                    .into_any_element()
+            })
             .collect();
         kit::group(rows, 62.0, glass, pal)
     }
 
     /// The ask (`.fld` at the top of the page): the timer and Hide, who asks, the sentence with its target, the
     /// machine's details in mono, and the QR code that opens it on the phone (this computer cannot approve).
-    pub(super) fn ask_field(&mut self, e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn ask_field(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let s = Ask::of(e);
         let on = pal.on_field();
         let (total, left) = d.wait_left(e);
@@ -770,7 +810,14 @@ impl Root {
             .min_w(px(0.0))
             .text_size(px(15.0))
             .font_weight(FontWeight::SEMIBOLD)
-            .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(s.mark, s.badge, s.field, 28.0, s.field.field(), pal)))
+            .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(
+                s.mark,
+                s.badge,
+                s.field,
+                28.0,
+                s.field.field(),
+                pal,
+            )))
             .child(div().opacity(0.6).child("·"))
             .child(agent)
             .child(div().flex_shrink(1.0).min_w(px(0.0)).truncate().whitespace_nowrap().child(who))
@@ -858,7 +905,11 @@ impl Root {
                             .child(format!("{} can't approve. Scan to open it there.", this_computer_cap())),
                     ),
             );
-        let top_pad = if cfg!(target_os = "macos") { 30.0 } else { 22.0 };
+        let top_pad = if cfg!(target_os = "macos") {
+            30.0
+        } else {
+            22.0
+        };
         let surface = kit::field_surface(s.field, 0.0, 28.0)
             .flex()
             .flex_col()

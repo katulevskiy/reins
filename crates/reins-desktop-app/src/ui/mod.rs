@@ -1,9 +1,9 @@
-//! The window. Before pairing and setup: the welcome flow, one calm column under its steps (pair, AI tools, turn on,
-//! done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing) and the section it
-//! selects: Home, Activity, Connections, Keys, Rules, Settings. In Reins Signal ([`crate::theme`]): paper, ink and
-//! hairlines, a field of colour only where something needs a decision, the Signal glyphs and real logos; its
-//! components are in [`kit`] (and, with `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work
-//! everywhere in it.
+//! The window. Before pairing and setup: the welcome on the wallpaper, then one calm column under its steps (pair, AI
+//! tools, turn on, done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing git) and
+//! the section it selects: Home, Activity, Connections, Keys, Rules, Settings. In Reins Next ([`crate::theme`]): paper,
+//! ink and hairlines, panes of rows (frosted over the wallpaper on Home and Activity), a grained field of colour only
+//! where something needs a decision, the Reins glyphs and real logos; its components are in [`kit`] (and, with
+//! `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
 mod connections;
@@ -27,7 +27,7 @@ mod story;
 mod work;
 
 /// A request in one sentence, for the notification that says to check the phone.
-pub(crate) use story::{banner, spoken};
+pub(crate) use story::banner;
 
 /// A request's sentence as plain text, for the tray.
 pub(crate) fn ask_line(e: &Entry) -> String {
@@ -331,7 +331,9 @@ impl Root {
             // `REINS_DEMO_TOOL=<id>`: that AI tool's page under Connections.
             tool_page: demo_var("REINS_DEMO_TOOL").and_then(|id| {
                 use reins_desktop::harness::Harness;
-                [Harness::ClaudeCode, Harness::Codex, Harness::Gemini, Harness::Cursor].into_iter().find(|h| h.id() == id)
+                [Harness::ClaudeCode, Harness::Codex, Harness::Gemini, Harness::Cursor]
+                    .into_iter()
+                    .find(|h| h.id() == id)
             }),
             days_toggled: BTreeSet::new(),
             notify_open: false,
@@ -583,7 +585,7 @@ impl Render for Root {
                             .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
                     ),
                 ),
-            None if hero => root.child(self.welcome_hero(&d, pal, cx)),
+            None if hero => root.child(Self::welcome_hero(&d, pal, cx)),
             None => root.child(self.status(&d, pal, window, cx)),
         }
     }

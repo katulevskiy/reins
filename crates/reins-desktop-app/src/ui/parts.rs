@@ -1,20 +1,18 @@
-//! Building blocks the screens use today, restyled in Reins Signal (phase 1: the same layout, Signal's colours,
-//! type, glyphs and press states; phase 2 moves the screens onto [`super::kit`]): plates with hairlines, rows with
-//! kind tiles, switches, pills, segmented controls, the (?) and its bubble, rings that count down, and the "stage"
-//! (who → what) of a request. Icons are the Signal glyphs, logos the brands' own marks ([`super::icons`]).
+//! Building blocks the screens share: tiles, the (?) and its bubble, links, rings that count down, the sentence with
+//! its target at 600, a page's title, a request's facts as a pane of rows, mono text that wraps where it may, the
+//! welcome flow's steps. Icons are the Reins glyphs, logos the brands' own marks ([`super::icons`]).
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement, PathBuilder, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
-    StyledText, anchored, canvas, deferred, div, point, px,
+    AnyElement, Context, Div, ElementId, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement, PathBuilder, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, StyledText,
+    anchored, canvas, deferred, div, point, px,
 };
 
 use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::{FactStyle, Words};
 use super::{Data, Root};
-use crate::theme::text::tracked;
-use crate::theme::{MONO, Palette, DISPLAY, NextText as _, Tone, motion};
+use crate::theme::{MONO, NextText as _, Palette, motion};
 use crate::welcome::Stage;
 
 /// "this Mac", "this computer": what the window calls the computer it runs on.
@@ -25,19 +23,6 @@ pub fn this_computer() -> &'static str {
     } else {
         "this computer"
     }
-}
-
-/// A check in a soft circle of `color`: something went well.
-pub fn check_circle(side: f32, color: Hsla) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(side))
-        .rounded_full()
-        .bg(color.opacity(0.14))
-        .child(glyph(Glyph::Check, side * 0.5, color))
 }
 
 /// A kind tile: an icon in `color` over `color` at 13% (a kind, a rule, a setting).
@@ -51,19 +36,6 @@ pub fn tile(i: Glyph, color: Hsla, side: f32) -> Div {
         .rounded(px(side * 0.31))
         .bg(color.opacity(0.13))
         .child(glyph(i, side * 0.53, color))
-}
-
-/// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
-pub fn tone_tile(i: Glyph, tone: Tone, pal: Palette, side: f32) -> Div {
-    super::kit::kind_tile(i, tone, side, pal)
-}
-
-/// A logo (an AI tool, a git host, an API): a brand's mark in a white circle, an icon in a neutral tile.
-pub fn logo(m: Mark, pal: Palette) -> Div {
-    match m {
-        Mark::Brand(b) => avatar(b, 30.0, pal),
-        Mark::Glyph(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
-    }
 }
 
 /// A plate of rows: `paper-raised`, a `rule` hairline, 20 px corners.
@@ -199,82 +171,6 @@ fn help_bubble(
                 .with_priority(1),
         ),
     )
-}
-
-/// The title of a section of the status window, in the serif (`title`, 44/44), with room after it (a (?), buttons).
-pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(10.0))
-        .min_h(px(44.0))
-        .child(div().flex_1().min_w(px(0.0)).title().child(title))
-        .when_some(help, ParentElement::child)
-}
-
-/// What a button looks like (Signal's looks: [`super::kit::Look`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Btn {
-    /// Soft: `paper-sunken`.
-    Plain,
-    /// `inverse`: continue, resume, confirm.
-    Primary,
-}
-
-impl Btn {
-    /// Signal's look for it.
-    #[must_use]
-    pub fn look(self) -> super::kit::Look {
-        match self {
-            Self::Plain => super::kit::Look::Soft,
-            Self::Primary => super::kit::Look::Inverse,
-        }
-    }
-}
-
-/// A button's frame in `look` (a pill, 32 px; dims to 55% while pressed), and the colour of what goes on it.
-fn btn_frame(id: impl Into<ElementId>, look: Btn, pal: Palette) -> (Stateful<Div>, Hsla) {
-    let (bg, fg) = look.look().colors(pal);
-    let b = div()
-        .id(id.into())
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .gap(px(6.0))
-        .h(px(32.0))
-        .px(px(14.0))
-        .rounded_full()
-        .bg(bg)
-        .text_color(fg)
-        .text_size(px(13.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .active(|s| s.opacity(super::kit::button::PRESSED));
-    (b, fg)
-}
-
-/// A button: 32 px, semibold, in `look`.
-pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, look: Btn, pal: Palette) -> Stateful<Div> {
-    btn_frame(id, look, pal).0.child(label.into())
-}
-
-/// [`btn`] with an icon before its label.
-pub fn btn_icon(
-    id: impl Into<ElementId>,
-    i: Glyph,
-    label: impl Into<SharedString>,
-    look: Btn,
-    pal: Palette,
-) -> Stateful<Div> {
-    let (b, fg) = btn_frame(id, look, pal);
-    b.child(glyph(i, 14.0, fg)).child(label.into())
-}
-
-/// A smaller [`btn`], for tiles and chips' rows.
-pub fn small(b: Stateful<Div>) -> Stateful<Div> {
-    b.h(px(28.0)).px(px(12.0)).text_size(px(12.5))
 }
 
 pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palette) -> Stateful<Div> {
@@ -533,83 +429,6 @@ pub fn page_title(words: &[Words], line: Option<&str>, right: Option<AnyElement>
         .when_some(right, ParentElement::child)
 }
 
-/// A row of a page's list (the desktop boards' `.row`): 54 px at least, a hairline under it but the last. Rows divide
-/// lists; they are never cards.
-pub fn list_row(pal: Palette, last: bool) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(12.0))
-        .min_h(px(54.0))
-        .py(px(6.0))
-        .min_w(px(0.0))
-        .text_size(px(14.0))
-        .when(!last, |r| r.border_b_1().border_color(pal.rule()))
-}
-
-/// A row's title (14.5, 500) and its meta line (12.5, `ink-meta`) under it.
-pub fn title_meta(title: impl IntoElement, meta: Option<AnyElement>, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.0))
-        .child(
-            div()
-                .min_w(px(0.0))
-                .truncate()
-                .text_size(px(14.5))
-                .line_height(px(19.0))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(pal.ink())
-                .child(title),
-        )
-        .when_some(meta, |c, m| {
-            c.child(
-                div()
-                    .min_w(px(0.0))
-                    .truncate()
-                    .text_size(px(12.5))
-                    .line_height(px(17.0))
-                    .text_color(pal.ink_meta())
-                    .child(m),
-            )
-        })
-}
-
-/// A mono line (a path, a vault reference, a SHA) as a row's title or meta.
-pub fn mono(text: impl Into<SharedString>, size: f32) -> Div {
-    div().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(size)).child(text.into())
-}
-
-/// A section of a page: its label (and a (?) about it), then `body` 4 px under.
-pub fn section(label: &str, help: Option<Stateful<Div>>, body: impl IntoElement, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .h(px(22.0))
-                .child(tracked(label.to_owned()).text_color(pal.ink_meta()))
-                .when_some(help, ParentElement::child),
-        )
-        .child(div().mt(px(2.0)).child(body))
-}
-
-/// Two columns 40 px apart while each has 380 px, else one under the other (the boards' `auto-fit` grids).
-pub fn columns(left: Div, right: Div, min: f32) -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .items_start()
-        .gap(px(40.0))
-        .child(left.flex_1().min_w(px(min)))
-        .child(right.flex_1().min_w(px(min)))
-}
-
 /// Where a request's facts are shown, and so how: the rows' height and text, the hairlines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FactLook {
@@ -859,9 +678,7 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
         .justify_center()
         .gap(px(8.0))
         .mt(px(6.0))
-        .child(
-            div().step_title().text_color(pal.ink()).text_center().child(italic(words)),
-        )
+        .child(div().step_title().text_color(pal.ink()).text_center().child(italic(words)))
         .when_some(help, ParentElement::child)
 }
 

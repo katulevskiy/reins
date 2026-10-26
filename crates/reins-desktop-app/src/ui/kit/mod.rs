@@ -1,9 +1,6 @@
-//! Reins Signal's components for the desktop (HANDOFF §8, `screens/png/Components.png`), built here and shown in the
-//! gallery (`--demo`, `REINS_DEMO_SECTION=gallery`); the screens move onto them in phase 2. Values come from the
-//! boards' markup (`screens/source/Components.dc.html`, `Desk-*.dc.html`); the desktop sizes (38 px buttons, 50 px
-//! rows) are a step down from the phone's.
-
-#![allow(dead_code, reason = "Signal's foundation: the whole set is here; the screens adopt it in phase 2")]
+//! Reins Next's components for the desktop (`design/next/desktop`, the System board): buttons, panes of rows and
+//! their section lines, fields, holds, menus, the wallpaper, and the smaller parts; shown together in the gallery
+//! (`--demo`, `REINS_DEMO_SECTION=gallery`). Values come from the boards' markup (`DeskNext-*.dc.html`).
 
 pub mod button;
 pub mod field;
@@ -18,9 +15,8 @@ pub use field::field_surface;
 pub use hold::{HoldLook, hold_button};
 pub use menu::{menu, menu_item, menu_rule, open_menu};
 pub use pane::{Glass, group, pane, pane_row, section, section_count, title_sub};
-pub use wallpaper::Wallpaper;
 pub use parts::{
-    Mode, PillLook, ask_line, empty_state, fact_row, field_label, hairline_row, kbd, key_cap, kind_tile, logo_tile,
-    mode_chip, pill, plate, request_icon, row_lines, section_label, segment, segmented, status_pill, switch, tag,
-    timer,
+    Mode, PillLook, ask_line, empty_state, fact_row, field_label, hairline_row, kbd, kind_tile, mode_chip, pill, plate,
+    request_icon, row_lines, section_label, segment, segmented, status_pill, switch, tag, timer,
 };
+pub use wallpaper::Wallpaper;

@@ -4,14 +4,14 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString, Stateful,
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::harness::after_add_note;
 
 use super::connections::harness_mark;
 use super::icons::{Glyph, glyph};
-use super::parts::{caption, help, list_row, quiet_link, title_meta, waiting_dot, warning, welcome_title};
+use super::parts::{caption, help, quiet_link, waiting_dot, warning, welcome_title};
 use super::story::{bold, plain};
 use super::{Data, Root, kit};
 use crate::model::{Model, Step, TurnOn};
@@ -229,33 +229,35 @@ impl Root {
                 }
             };
             kit::group(
-                [option(
-                    "turn-service",
-                    Glyph::Server,
-                    "Start the background service",
-                    "Runs at login",
-                    "Hooks, git and API keys go through it. It starts again when you log in.",
-                    None,
-                    false,
-                ),
-                option(
-                    "turn-git",
-                    Glyph::GitBranch,
-                    "Send git through Reins",
-                    "Pushes ask your phone",
-                    "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
-                    Some((TurnOn::Git, git)),
-                    false,
-                ),
-                option(
-                    "turn-login",
-                    Glyph::Power,
-                    "Open at login",
-                    shield,
-                    "The shield in the menu bar or tray shows that Reins is on.",
-                    Some((TurnOn::Autostart, login)),
-                    true,
-                )],
+                [
+                    option(
+                        "turn-service",
+                        Glyph::Server,
+                        "Start the background service",
+                        "Runs at login",
+                        "Hooks, git and API keys go through it. It starts again when you log in.",
+                        None,
+                        false,
+                    ),
+                    option(
+                        "turn-git",
+                        Glyph::GitBranch,
+                        "Send git through Reins",
+                        "Pushes ask your phone",
+                        "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
+                        Some((TurnOn::Git, git)),
+                        false,
+                    ),
+                    option(
+                        "turn-login",
+                        Glyph::Power,
+                        "Open at login",
+                        shield,
+                        "The shield in the menu bar or tray shows that Reins is on.",
+                        Some((TurnOn::Autostart, login)),
+                        true,
+                    ),
+                ],
                 kit::pane::INSET,
                 kit::Glass::Solid,
                 pal,
@@ -271,10 +273,18 @@ impl Root {
                 let _ = i;
                 progress.push(
                     kit::pane_row()
-                        .child(div().flex().flex_none().items_center().justify_center().size(px(34.0)).child(state_mark(Some(step), label, pal)))
+                        .child(
+                            div().flex().flex_none().items_center().justify_center().size(px(34.0)).child(state_mark(
+                                Some(step),
+                                label,
+                                pal,
+                            )),
+                        )
                         .child(kit::title_sub(
                             label.clone(),
-                            line.map(|l| div().when(failed_line, |t| t.text_color(pal.danger)).child(l).into_any_element()),
+                            line.map(|l| {
+                                div().when(failed_line, |t| t.text_color(pal.danger)).child(l).into_any_element()
+                            }),
                             pal,
                         ))
                         .into_any_element(),
@@ -366,16 +376,29 @@ impl Root {
             (false, false) => {}
         }
         let summary = kit::group(
-            lines
-                .into_iter()
-                .map(|(g, ok, text, note)| {
-                    kit::pane_row()
-                        .child(kit::pane::tile(g, pal))
-                        .child(kit::title_sub(text, note.map(|n| div().text_color(pal.warning).child(n).into_any_element()), pal))
-                        .child(glyph(if ok { Glyph::Check } else { Glyph::Minus }, 16.0, if ok { pal.success } else { pal.ink_faint() }))
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>(),
+            lines.into_iter().map(|(g, ok, text, note)| {
+                kit::pane_row()
+                    .child(kit::pane::tile(g, pal))
+                    .child(kit::title_sub(
+                        text,
+                        note.map(|n| div().text_color(pal.warning).child(n).into_any_element()),
+                        pal,
+                    ))
+                    .child(glyph(
+                        if ok {
+                            Glyph::Check
+                        } else {
+                            Glyph::Minus
+                        },
+                        16.0,
+                        if ok {
+                            pal.success
+                        } else {
+                            pal.ink_faint()
+                        },
+                    ))
+                    .into_any_element()
+            }),
             kit::pane::INSET,
             kit::Glass::Solid,
             pal,
@@ -388,7 +411,12 @@ impl Root {
             .gap(px(14.0))
             .child(div().ask().text_color(pal.ink()).text_center().child("Reins is on"))
             .child(div().w_full().mt(px(6.0)).child(summary))
-            .child(div().w_full().child(kit::pane(Self::test_panel(d, true, pal, cx), kit::Glass::Solid, kit::pane::RADIUS, pal)))
+            .child(div().w_full().child(kit::pane(
+                Self::test_panel(d, true, pal, cx),
+                kit::Glass::Solid,
+                kit::pane::RADIUS,
+                pal,
+            )))
             .child(actions(
                 None,
                 step_button("open-reins", kit::Look::Inverse, "Open Reins", pal)

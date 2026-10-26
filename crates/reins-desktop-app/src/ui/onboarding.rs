@@ -142,7 +142,11 @@ impl Root {
                     .gap(px(10.0))
                     .child(match &code {
                         Some(c) => div()
-                            .p(px(if pal.dark { QR_FRAME } else { 0.0 }))
+                            .p(px(if pal.dark {
+                                QR_FRAME
+                            } else {
+                                0.0
+                            }))
                             .rounded(px(14.0))
                             .bg(gpui::white())
                             .child(crate::qr::element(&c.qr_url, QR, gpui::black(), gpui::white())),
@@ -332,8 +336,12 @@ impl Root {
 
     /// The welcome (`DeskNext-Setup.png` 01): the wallpaper filling the window, and on the frosted pane the line
     /// the phone says too, with Set up this computer and Other server.
-    pub(super) fn welcome_hero(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let device = if cfg!(target_os = "macos") { "Set up this Mac" } else { "Set up this computer" };
+    pub(super) fn welcome_hero(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let device = if cfg!(target_os = "macos") {
+            "Set up this Mac"
+        } else {
+            "Set up this computer"
+        };
         let accent = crate::theme::Field::Accounts.kind(&pal);
         let card = div()
             .flex()
@@ -363,16 +371,23 @@ impl Root {
                             .on_click(Self::on_view(cx, |this, _| this.welcomed = true)),
                     )
                     .child(
-                        kit::button("welcome-server", kit::Look::Soft, kit::Size::Large, Some(Glyph::Server), "Other server", pal)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.welcomed = true;
-                                this.model.update(cx, |m, cx| {
-                                    if !m.show_server {
-                                        m.toggle_server(cx);
-                                    }
-                                });
-                                cx.notify();
-                            })),
+                        kit::button(
+                            "welcome-server",
+                            kit::Look::Soft,
+                            kit::Size::Large,
+                            Some(Glyph::Server),
+                            "Other server",
+                            pal,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.welcomed = true;
+                            this.model.update(cx, |m, cx| {
+                                if !m.show_server {
+                                    m.toggle_server(cx);
+                                }
+                            });
+                            cx.notify();
+                        })),
                     ),
             );
         let glass = kit::Glass::over(true, !d.saved.solid_panes);

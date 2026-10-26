@@ -26,7 +26,7 @@ use super::{Data, ROWS, Root, kit};
 use crate::backend::ACTIVITY_LIMIT;
 use crate::format;
 use crate::model::Model;
-use crate::theme::{MONO, Palette, SANS, DISPLAY, NextText as _};
+use crate::theme::{MONO, NextText as _, Palette, SANS};
 
 /// The outcome filters, in order: the board's, then the rarer ones (shown when there are some).
 const OUTCOMES: [(Option<Outcome>, &str); 8] = [
@@ -142,14 +142,28 @@ impl Root {
             .flex()
             .items_end()
             .gap(px(12.0))
-            .child(div().flex_1().min_w(px(0.0)).title().text_color(if pal.dark { gpui::white() } else { pal.ink() }).child("Activity"))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .title()
+                    .text_color(if pal.dark {
+                        gpui::white()
+                    } else {
+                        pal.ink()
+                    })
+                    .child("Activity"),
+            )
             .when(!all.is_empty(), |h| h.child(self.filter_button(all, pal, cx)));
 
         let mut list = div().relative().flex().flex_col().gap(px(14.0)).mt(px(super::home::UNDER_TITLE));
         if all.is_empty() {
-            list = list
-                .child(kit::empty_state("Nothing asked yet.", 280.0, pal))
-                .child(kit::pane(Self::test_panel(d, true, pal, cx), glass, kit::pane::RADIUS, pal));
+            list = list.child(kit::empty_state("Nothing asked yet.", 280.0, pal)).child(kit::pane(
+                Self::test_panel(d, true, pal, cx),
+                glass,
+                kit::pane::RADIUS,
+                pal,
+            ));
         } else if total == 0 {
             list = list.child(div().text_size(px(14.0)).text_color(pal.ink_meta()).child("No matches"));
         } else {
@@ -169,7 +183,13 @@ impl Root {
                 let open = (label == "Waiting" || label == "Today") != self.days_toggled.contains(&label);
                 let t = Tally::of(entries.iter().copied());
                 let count = |g: Glyph, n: usize, color: Hsla| {
-                    div().flex().items_center().gap(px(3.0)).text_color(color).child(glyph(g, 13.0, color)).child(n.to_string())
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.0))
+                        .text_color(color)
+                        .child(glyph(g, 13.0, color))
+                        .child(n.to_string())
                 };
                 let toggle = label.clone();
                 let head = div()
@@ -179,15 +199,29 @@ impl Root {
                     .gap(px(10.0))
                     .px(px(14.0))
                     .pt(px(12.0))
-                    .pb(px(if open { 4.0 } else { 12.0 }))
+                    .pb(px(if open {
+                        4.0
+                    } else {
+                        12.0
+                    }))
                     .label()
                     .text_color(pal.ink_2())
                     .cursor_pointer()
                     .child(div().flex_1().child(label.clone()))
-                    .when(t.approved + t.allowed > 0, |c| c.child(count(Glyph::Check, t.approved + t.allowed, pal.success)))
+                    .when(t.approved + t.allowed > 0, |c| {
+                        c.child(count(Glyph::Check, t.approved + t.allowed, pal.success))
+                    })
                     .when(t.denied + t.blocked > 0, |c| c.child(count(Glyph::Close, t.denied + t.blocked, pal.danger)))
                     .when(t.timed_out > 0, |c| c.child(count(Glyph::TimerOff, t.timed_out, pal.warning)))
-                    .child(glyph(if open { Glyph::ChevronDown } else { Glyph::ChevronRight }, 14.0, pal.ink_meta()))
+                    .child(glyph(
+                        if open {
+                            Glyph::ChevronDown
+                        } else {
+                            Glyph::ChevronRight
+                        },
+                        14.0,
+                        pal.ink_meta(),
+                    ))
                     .on_click(Self::on_view(cx, move |this, _| {
                         if !this.days_toggled.remove(&toggle) {
                             this.days_toggled.insert(toggle.clone());
@@ -206,7 +240,12 @@ impl Root {
                     }
                 }
                 list = list.child(kit::pane(
-                    div().flex().flex_col().when(open, |p| p.pb(px(4.0))).child(head).children(kit::pane::with_rules(rows, 62.0, glass, pal)),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .when(open, |p| p.pb(px(4.0)))
+                        .child(head)
+                        .children(kit::pane::with_rules(rows, 62.0, glass, pal)),
                     glass,
                     kit::pane::RADIUS,
                     pal,
@@ -228,21 +267,14 @@ impl Root {
             list = list.child(foot);
         }
 
-        let page = div()
-            .id("activity-list")
-            .relative()
-            .flex_1()
-            .min_w(px(0.0))
-            .h_full()
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .relative()
-                    .w_full()
-                    .min_h_full()
-                    .child(kit::wallpaper::band(d.saved.wallpaper(pal.dark), 360.0, pal))
-                    .child(div().relative().px(px(super::home::SIDE)).pt(px(40.0)).pb(px(40.0)).child(header).child(list)),
-            );
+        let page = div().id("activity-list").relative().flex_1().min_w(px(0.0)).h_full().overflow_y_scroll().child(
+            div()
+                .relative()
+                .w_full()
+                .min_h_full()
+                .child(kit::wallpaper::band(d.saved.wallpaper(pal.dark), 360.0, pal))
+                .child(div().relative().px(px(super::home::SIDE)).pt(px(40.0)).pb(px(40.0)).child(header).child(list)),
+        );
         let mut out = div().relative().flex().size_full().child(page);
         if let Some(e) = selected {
             self.load_push(e, cx);
@@ -376,8 +408,24 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(s.mark, s.badge, s.field, 30.0, pal.paper_raised(), pal)))
-                    .child(div().flex_1())
+                    .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(
+                        s.mark,
+                        s.badge,
+                        s.field,
+                        30.0,
+                        pal.paper_raised(),
+                        pal,
+                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(pal.ink_meta())
+                            .child(format!("{} · {}", s.label(), format::when(d.now, e.at))),
+                    )
                     .when_some(host, |h, link| {
                         let url = link.url.clone();
                         h.child(
@@ -466,16 +514,41 @@ impl Root {
         }
         rows.extend(s.facts);
         if !rows.is_empty() {
-            panel = panel
-                .child(kit::section(None, "Details", None, pal).px(px(0.0)).pt(px(20.0)))
-                .child(fact_rows(&rows, FactLook::Detail, kit::Glass::Solid, pal));
+            panel = panel.child(kit::section(None, "Details", None, pal).px(px(0.0)).pt(px(20.0))).child(fact_rows(
+                &rows,
+                FactLook::Detail,
+                kit::Glass::Solid,
+                pal,
+            ));
         }
         if let Some(push) = &push {
             let ci = self.picked_commit(push);
             panel = panel.child(div().mt(px(6.0)).child(self.commit_detail(push, ci, true, pal, cx)));
-            panel = panel.child(self.commit_list(push, ci, kit::Glass::Solid, pal, cx));
+            panel = panel.child(Self::commit_list(push, ci, kit::Glass::Solid, pal, cx));
         }
-        let width = if push.is_some() { 600.0 } else { 420.0 };
+        // The request as a terminal showed it, last and quiet.
+        let mut log = div()
+            .flex()
+            .flex_col()
+            .px(px(14.0))
+            .py(px(10.0))
+            .rounded(px(14.0))
+            .bg(pal.paper_sunken())
+            .font_family(MONO)
+            .text_size(px(12.5))
+            .line_height(px(19.0))
+            .text_color(pal.ink_2())
+            .min_w(px(0.0))
+            .overflow_hidden();
+        for line in transcript(e, &d.phone()) {
+            log = log.child(div().min_w(px(0.0)).child(SharedString::from(line)));
+        }
+        panel = panel.child(kit::section(None, "Log", None, pal).px(px(0.0)).pt(px(20.0))).child(log);
+        let width = if push.is_some() {
+            600.0
+        } else {
+            420.0
+        };
         div()
             .id("activity-detail")
             .flex_none()
@@ -485,7 +558,11 @@ impl Root {
             .bg(pal.paper_raised())
             .border_l_1()
             .border_color(pal.rule())
-            .shadow(vec![gpui::BoxShadow::new(px(-30.0), px(0.0), crate::theme::rgba(0, 0.18)).blur_radius(px(60.0)).spread_radius(px(-40.0))])
+            .shadow(vec![
+                gpui::BoxShadow::new(px(-30.0), px(0.0), crate::theme::rgba(0, 0.18))
+                    .blur_radius(px(60.0))
+                    .spread_radius(px(-40.0)),
+            ])
             .child(div().px(px(24.0)).pt(px(26.0)).pb(px(30.0)).child(panel))
             .into_any_element()
     }
@@ -513,7 +590,6 @@ impl Root {
     /// closer look ([`attention`]) come first; each still opens by its place in the push. All of it is the
     /// repository's text: shown through [`diff::visible`], never interpreted.
     pub(super) fn commit_list(
-        &self,
         push: &Push,
         picked: usize,
         glass: kit::Glass,
@@ -534,7 +610,13 @@ impl Root {
                 .cursor_pointer()
                 .when_else(
                     ci == picked,
-                    |r| r.bg(pal.violet().opacity(if pal.dark { 0.16 } else { 0.10 })),
+                    |r| {
+                        r.bg(pal.violet().opacity(if pal.dark {
+                            0.16
+                        } else {
+                            0.10
+                        }))
+                    },
                     |r| r.hover(|h| h.bg(pal.ink().opacity(0.035))),
                 )
                 .child(
@@ -648,7 +730,9 @@ impl Root {
                         .child(visible(&f.path)),
                 )
                 .when_some(mark.as_ref(), |r, mark| r.child(flag_pill(reasons(mark), mark.level, pal)))
-                .when_some(tag, |r, t| r.child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(t)))
+                .when_some(tag, |r, t| {
+                    r.child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(t))
+                })
                 .when_some(lines(f.additions.map(u64::from), f.deletions.map(u64::from)), |r, (a, d)| {
                     r.child(added_removed(&a, &d, pal))
                 });
@@ -748,29 +832,13 @@ fn flag_style(level: Level, pal: Palette) -> (Hsla, FontWeight) {
     }
 }
 
-/// The warning glyph and its words, as [`flag_style`] says for `level`.
-fn flag(text: String, level: Level, pal: Palette) -> Div {
-    let (color, weight) = flag_style(level, pal);
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(5.0))
-        .font_family(SANS)
-        .text_size(px(12.5))
-        .font_weight(weight)
-        .whitespace_nowrap()
-        .text_color(color)
-        .child(glyph(Glyph::Warning, 14.0, color))
-        .child(text)
-}
-
 /// Why something deserves a closer look, as a pill (24 px): Close in `warning` on itself at 13%, Look in `ink-2` on
 /// `paper-sunken`.
 fn flag_pill(text: String, level: Level, pal: Palette) -> Div {
-    let (color, bg) = match level {
-        Level::Close => (pal.warning, pal.warning.opacity(0.13)),
-        Level::Look => (pal.ink_2(), pal.paper_sunken()),
+    let color = flag_style(level, pal).0;
+    let bg = match level {
+        Level::Close => color.opacity(0.13),
+        Level::Look => pal.paper_sunken(),
     };
     div()
         .flex()
@@ -864,7 +932,11 @@ fn marked(line: &str, pal: Palette) -> gpui::StyledText {
             start..end,
             gpui::HighlightStyle {
                 color: Some(crate::theme::token(crate::theme::tokens::INK, false)),
-                background_color: Some(crate::theme::Field::Warn.field().opacity(if pal.dark { 0.9 } else { 0.75 })),
+                background_color: Some(crate::theme::Field::Warn.field().opacity(if pal.dark {
+                    0.9
+                } else {
+                    0.75
+                })),
                 ..gpui::HighlightStyle::default()
             },
         ));

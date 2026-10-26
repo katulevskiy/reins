@@ -10,9 +10,9 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, BoxShadow, Bounds, Corners, Div, Element, ElementId, GlobalElementId, Hsla,
-    InspectorElementId, InteractiveElement as _, IntoElement, LayoutId, ParentElement as _, Pixels, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnyElement, App, Bounds, BoxShadow, Corners, Div, Element, ElementId, GlobalElementId, Hsla, InspectorElementId,
+    InteractiveElement as _, IntoElement, LayoutId, ParentElement as _, Pixels, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 use super::button::PRESSED;
@@ -218,7 +218,13 @@ pub fn clickable(row: Div, id: impl Into<ElementId>, pal: Palette) -> Stateful<D
 
 /// A quiet last row that does something serious (`Disconnect`, `Delete key`, `Forget this`): a tile of `color` at
 /// 13%, the words in `color`, a line under them.
-pub fn quiet_row(g: Glyph, title: impl Into<SharedString>, sub: impl Into<SharedString>, color: Hsla, pal: Palette) -> Div {
+pub fn quiet_row(
+    g: Glyph,
+    title: impl Into<SharedString>,
+    sub: impl Into<SharedString>,
+    color: Hsla,
+    pal: Palette,
+) -> Div {
     pane_row()
         .child(
             div()
@@ -329,6 +335,5 @@ pub fn hold_row(
         super::HoldLook::Done => (Some(1.0), sub.into()),
     };
     let row = quiet_row(g, title, sub, pal.danger, pal).min_h(px(56.0)).overflow_hidden();
-    row.id(id.into())
-        .when_some(fill, |r, p| r.child(super::hold::fill(p, pal.danger.opacity(0.14))))
+    row.id(id.into()).when_some(fill, |r, p| r.child(super::hold::fill(p, pal.danger.opacity(0.14))))
 }
