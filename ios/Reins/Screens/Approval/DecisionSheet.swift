@@ -203,57 +203,6 @@ struct RatioRow: Layout {
     }
 }
 
-/// Who asks and what, at the top of a sheet: the connection, when, the operation's tile and its name.
-struct DecisionHeader<Extra: View>: View {
-    var connectionId: String
-    var label: String
-    /// Under the name: when it was asked, or the client's host.
-    var subtitle: String
-    var monoSubtitle = false
-    var kind: ActionKind
-    var count: Int = 1
-    var title: String
-    /// A new client (a pairing, an upload) has no connection yet, so no icon was picked for it.
-    var known = true
-    @ViewBuilder var extra: Extra
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                if known {
-                    ConnectionIcon(connectionId: connectionId, label: label, size: 40)
-                } else {
-                    ConnectionAvatar(label: untrusted(label), pick: nil, size: 40)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(untrusted(label)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                    Text(subtitle)
-                        .font(monoSubtitle ? RFont.mono(13) : RFont.sans(12.5))
-                        .foregroundStyle(monoSubtitle ? Palette.ink2 : Palette.inkMeta)
-                        .lineLimit(1)
-                }
-            }
-            HStack(spacing: 14) {
-                ActionTile(kind: kind, count: count, size: 48)
-                Text(title)
-                    .font(RFont.sans(26, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .accessibilityIdentifier("what")
-                    .accessibilityAddTraits(.isHeader)
-            }
-            .padding(.top, 16)
-            extra
-        }
-        .padding(.leading, 20)
-        .padding(.trailing, 60)
-        .padding(.top, 22)
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 /// The phone's owner confirms an approval first (Face ID, Touch ID or the passcode). Fails closed: anything but a
 /// confirmation approves nothing.
 enum OwnerPrompt {
@@ -295,22 +244,5 @@ struct DecisionLoading: View {
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.paper.ignoresSafeArea())
-    }
-}
-
-/// A quoted line from the AI ("Claude says it is for").
-struct QuoteBox: View {
-    var caption: String
-    var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Caption(caption)
-            Text("“\(text)”").font(RFont.sans(15)).foregroundStyle(Palette.ink).lineSpacing(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }

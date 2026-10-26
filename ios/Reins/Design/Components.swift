@@ -386,15 +386,6 @@ struct CapsuleButtonStyle: PrimitiveButtonStyle {
     }
 }
 
-/// A compact pill button on a row ("Review").
-struct PillButtonStyle: PrimitiveButtonStyle {
-    var kind: SignalButtonKind = .violet
-
-    func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: SignalButtonLook(kind: kind, size: .small, fill: false)).makeBody(configuration: configuration)
-    }
-}
-
 /// The height of everything beside a page title: the glass pills and the round buttons, so none stands taller.
 enum HeaderControl {
     static let height: CGFloat = 40
@@ -424,38 +415,6 @@ struct GlassIconButton: View {
         }
         .buttonStyle(PressDimsStyle())
         .accessibilityLabel(label)
-    }
-}
-
-/// A header chip with an icon and text ("Manual", "Integrations"): `paper-raised` with a hairline ring, or filled in its
-/// tint.
-struct GlassPill: View {
-    var symbol: String?
-    var text: String
-    var tint: Color? = nil
-    var action: () -> Void
-
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Button {
-            action()
-            feedback.defaultTap()
-        } label: {
-            HStack(spacing: 7) {
-                if let symbol { Image(systemName: symbol).font(.system(size: 14, weight: .semibold)) }
-                Text(text).font(RFont.sans(15, .medium)).lineLimit(1)
-            }
-            .foregroundStyle(tint == nil ? Palette.ink : .white)
-            .padding(.horizontal, 14)
-            .frame(height: HeaderControl.height)
-            .background(tint ?? Palette.paperRaised, in: Capsule())
-            .overlay {
-                if tint == nil { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PressDimsStyle())
     }
 }
 

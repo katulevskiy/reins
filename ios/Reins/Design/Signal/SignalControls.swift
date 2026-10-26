@@ -61,26 +61,6 @@ struct ModeChip: View {
     var title: String { mode.kind.name }
 }
 
-/// The bypass dot: white, breathing while any bypass runs (tab bar, mode chip).
-struct BreathingDot: View {
-    var color: Color = .white
-    var size: CGFloat = 8
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Motion.breathe) / Motion.breathe
-            // Ease in and out between 35 % and 100 %.
-            let wave = (1 - cos(phase * 2 * .pi)) / 2
-            Circle()
-                .fill(color)
-                .frame(width: size, height: size)
-                .opacity(reduceMotion ? 1 : 1 - 0.65 * wave)
-        }
-        .accessibilityHidden(true)
-    }
-}
-
 /// A word on a tint: Auto, New, Ready, Denied, Code. Colour never speaks alone, so a pill always has its word. `.tag`
 /// is the outcome tag of an Activity row (20 pt, 11.5 semibold); `.pill` the larger one of facts and flags (24 pt,
 /// 12.5 semibold: Changes CI, Approves, New AI).

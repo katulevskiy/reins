@@ -291,24 +291,6 @@ struct Caption: View {
     }
 }
 
-/// Text shown exactly as it is (arguments, a command): monospaced, on a tinted plate, selectable.
-struct MonoBox: View {
-    var text: String
-    var lineLimit: Int?
-
-    var body: some View {
-        Text(text)
-            .font(RFont.mono(13))
-            .foregroundStyle(Palette.ink)
-            .lineLimit(lineLimit)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .environment(\.layoutDirection, .leftToRight)
-            .textSelection(.enabled)
-    }
-}
-
 /// Lays its children out in rows, wrapping onto the next row when one is full (chips, tags).
 struct FlowRow: Layout {
     var spacing: CGFloat = 8

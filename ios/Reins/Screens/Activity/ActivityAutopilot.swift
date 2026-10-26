@@ -232,29 +232,6 @@ struct RiskChips: View {
     }
 }
 
-/// The history row's risk: the level in a few words in its colour, the moon when Overnight held it.
-struct RiskLine: View {
-    var risk: RiskView
-
-    var body: some View {
-        let tint = RiskLook.tint(risk.level)
-        HStack(spacing: 4) {
-            Image(systemName: RiskLook.symbol(risk.level)).font(.system(size: 11, weight: .semibold))
-            Text("Risk: \(AutopilotText.riskWord(risk.level))").font(RFont.sans(12.5, .medium))
-            if risk.held {
-                Image(systemName: AutopilotText.overnightSymbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.violet)
-                    .accessibilityLabel(AutopilotText.heldLine)
-            }
-        }
-        .foregroundStyle(tint)
-        .lineLimit(1)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("entryRisk")
-    }
-}
-
 /// "Why Autopilot denied ›" (Next-Activity, 06): a fact row in Autopilot's violet that opens its reasons in a sheet.
 /// Only for entries Autopilot looked at.
 struct AutopilotWhyRow: View {

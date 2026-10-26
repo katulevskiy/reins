@@ -2,21 +2,6 @@ import SwiftUI
 
 // Rows and tags for operations (the Android app's ui/common Rows.kt, Connections.kt and design/Tags.kt).
 
-/// The integration and the account an operation used: "Gmail" "me@gmail.com".
-struct ConnectorTags: View {
-    var service: String
-    var account: String?
-    /// Overrides the integration's name (an MCP server's own).
-    var name: String?
-
-    var body: some View {
-        FlowRow(spacing: 6, lineSpacing: 6) {
-            if !service.trimmingCharacters(in: .whitespaces).isEmpty { ServiceTag(text: name ?? serviceName(service)) }
-            if let account, !account.trimmingCharacters(in: .whitespaces).isEmpty { AccountTag(text: account) }
-        }
-    }
-}
-
 /// The connection an entry belongs to: by id, or, for entries logged before ids were recorded (an empty id), by the
 /// label it had then, when exactly one connection carries it.
 func findConnection(_ connections: [ConnectionView], id: String, label: String) -> ConnectionView? {

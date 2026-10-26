@@ -5,18 +5,6 @@ import SwiftUI
 // avatar on its corner, rings, the timer pill, the page dock with its buttons, the Once | 1 hour | 1 day | Custom
 // control, value rows and the (?) help.
 
-/// The colour of a kind of operation on cards and tiles; a request that always asks is red.
-enum KindTint {
-    static func of(_ kind: ActionKind, danger: Bool = false) -> Color {
-        FieldKind.of(kind, danger: danger)?.ink ?? Palette.ink2
-    }
-
-    /// The approval hero's wash: the kind's colour from 16 % at the top to 4 % at the bottom, with a 24 % border.
-    static func wash(_ tint: Color) -> LinearGradient {
-        LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.04)], startPoint: .top, endPoint: .bottom)
-    }
-}
-
 /// An integration's logo on a rounded tile ("gmail", "github", "mcp:<id>"); `symbol` stands in when there is no
 /// service (a new connection, another phone).
 struct ServiceTile: View {
@@ -48,36 +36,6 @@ struct ServiceTile: View {
         .background(Self.fill, in: shape)
         .overlay(shape.strokeBorder(Self.edge, lineWidth: 1))
         .accessibilityHidden(true)
-    }
-}
-
-/// The service tile with the AI's avatar over its bottom-left corner: who asks and where, in one mark.
-struct ServiceMini: View {
-    var service: String
-    var symbol: String? = nil
-    var connectionId: String
-    var label: String
-    /// A new client (a pairing) has no connection yet, so no icon was picked for it.
-    var known = true
-    var size: CGFloat = 44
-
-    var body: some View {
-        let avatar = size / 2
-        ServiceTile(service: service, symbol: symbol, size: size)
-            .overlay(alignment: .bottomLeading) {
-                Group {
-                    if known {
-                        ConnectionIcon(connectionId: connectionId, label: label, size: avatar)
-                    } else {
-                        ConnectionAvatar(label: untrusted(label), pick: nil, size: avatar)
-                    }
-                }
-                .overlay(Circle().strokeBorder(Palette.paper, lineWidth: 2.5).padding(-2.5))
-                .offset(x: -size * 0.14, y: size * 0.14)
-            }
-            .padding(.leading, size * 0.14)
-            .padding(.bottom, size * 0.14)
-            .accessibilityHidden(true)
     }
 }
 
@@ -253,30 +211,6 @@ private struct DockButtonLook: ButtonStyle {
     }
 }
 
-/// The round + beside a page title (New grant, Integrations): a Signal header button.
-struct RoundPlusButton: View {
-    var label: String
-    var action: () -> Void
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Button {
-            action()
-            feedback.defaultTap()
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Palette.ink)
-                .frame(width: HeaderControl.height, height: HeaderControl.height)
-                .background(Palette.paperRaised, in: Circle())
-                .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
-                .contentShape(Circle())
-        }
-        .buttonStyle(PressDimsStyle())
-        .accessibilityLabel(label)
-    }
-}
-
 // MARK: Page dock
 
 extension View {
@@ -367,48 +301,6 @@ struct DurationControl<Value: Hashable>: View {
 }
 
 // MARK: Rows
-
-/// "When        Today, 14:14": a fact, the key in ink-2 and the value in ink (Signal's fact row, in a grouped card until
-/// its screen moves to hairline lists).
-struct ValueRow: View {
-    var label: String
-    var value: String
-    var mono = false
-    /// The value is a way further (a chevron, and the label in full colour).
-    var action: (() -> Void)?
-
-    var body: some View {
-        if let action {
-            Button(action: action) { content }
-                .buttonStyle(RowButtonStyle())
-        } else {
-            content
-        }
-    }
-
-    private var content: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(action == nil ? RFont.sans(15) : TextRole.row.font())
-                .foregroundStyle(action == nil ? Palette.ink2 : Palette.ink)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(mono ? TextRole.value.font() : RFont.sans(15, action == nil ? .medium : .regular))
-                .foregroundStyle(action == nil ? Palette.ink : Palette.ink2)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if action != nil {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.inkFaint)
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 52)
-        .contentShape(Rectangle())
-    }
-}
 
 /// A round (?) that shows a short explanation in a popover.
 struct HelpButton: View {

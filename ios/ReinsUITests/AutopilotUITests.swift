@@ -75,7 +75,9 @@ final class AutopilotUITests: XCTestCase {
 
     /// Hidden tab stacks stay mounted. Gesture only on the list accepting touches.
     private func visibleList() -> XCUIElement {
+        // A List is a collection view; the Next tab roots that draw their own groups are scroll views.
         let list = app.collectionViews.allElementsBoundByIndex.first { $0.isHittable }
+            ?? app.scrollViews.allElementsBoundByIndex.first { $0.isHittable }
         XCTAssertNotNil(list, "the current tab has no hittable list")
         return list ?? app.collectionViews.firstMatch
     }

@@ -31,6 +31,8 @@ struct PasskeyOfferScreen: View {
                         .foregroundStyle(.white)
                         .padding(.top, 64)
                         .accessibilityAddTraits(.isHeader)
+                        // On the title, not the screen: a container's identifier would replace its buttons' own.
+                        .accessibilityIdentifier("passkeyOffer")
                     Text("Your face unlocks the vault.")
                         .font(RFont.sans(17))
                         .foregroundStyle(.white.opacity(0.88))
@@ -75,6 +77,5 @@ struct PasskeyOfferScreen: View {
             .padding(.bottom, 8)
         }
         .animation(.smooth(duration: 0.25), value: vm.error)
-        .accessibilityIdentifier("passkeyOffer")
     }
 }
