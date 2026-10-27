@@ -91,6 +91,7 @@ pub enum PendingKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[allow(clippy::struct_excessive_bools, reason = "a waiting item is described by this many independent facts")]
 pub struct PendingItem {
     pub kind: PendingKind,
     pub id: String,
