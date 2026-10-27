@@ -82,6 +82,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch(Dispatchers.Main) {
             container.state.pending.collect { maybePresent(it) }
         }
+        // An ask a mode or Autopilot decided while it was open has nothing left for the owner: it closes by itself.
+        viewModelScope.launch(Dispatchers.Main) {
+            container.state.autoDecided.collect { id -> if (AskGate.closes(_sheet.value, id)) closeSheet() }
+        }
         viewModelScope.launch(Dispatchers.Main) {
             combine(container.state.session, container.state.keysLocked, ::Pair).collect { (session, locked) ->
                 if (session is SessionState.SignedOut) {
@@ -153,7 +157,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (!Foreground.focused || !Foreground.autoPopup || _sheet.value != null) return
         // Drop ids that are gone so the set stays small.
         presented.retainAll(items.map { it.id }.toSet() + _sheet.value?.id.orEmpty())
-        val next = items.firstOrNull { it.id !in presented } ?: return
+        val next = AskGate.next(items, presented) ?: return
         openSheet(next.toTarget())
     }
 

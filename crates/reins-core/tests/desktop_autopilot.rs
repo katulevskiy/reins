@@ -181,6 +181,27 @@ async fn no_mode_decides_a_change_of_autopilot_and_a_lockdown_denies_what_waited
     assert_eq!(global(&desk).await, AutopilotMode::Lockdown);
 }
 
+/// A change of Autopilot is its owner's even where the model cannot run (the iOS notification extension): told and
+/// listed at once, never left unseen for a later pass to judge.
+#[tokio::test]
+async fn a_change_of_autopilot_reaches_the_owner_even_where_the_model_cannot_run() {
+    let desk = desk().await;
+    let phone = phone_key(&desk).await;
+    desk.core.set_autopilot_mode(Some(DESK.to_owned()), Some(AutopilotMode::Auto), None).await.unwrap();
+    let asked = mode(&desk, Some(&phone), "a1", &json!({"mode": "auto"}));
+    Mock::given(method("GET"))
+        .and(path("/reins/api/requests/a1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&asked))
+        .mount(&desk.server)
+        .await;
+    desk.core.handle_push_deferring_autopilot("req".to_owned(), "a1".to_owned()).await.unwrap();
+    assert_eq!(desk.waiting().await, ["a1"], "the owner's, at once");
+    assert!(desk.core.deciding().await.unwrap().is_empty(), "nothing for a mode to decide");
+    assert!(desk.notes.pending.lock().unwrap().iter().any(|i| i.id == "a1"), "the owner was told");
+    let s = desk.core.autopilot_suggestion("a1".to_owned()).await.unwrap().expect("evaluated");
+    assert!(s.floor && s.reason.starts_with("Always asks"), "{s:?}");
+}
+
 #[tokio::test]
 async fn a_computer_in_its_own_lockdown_changes_nothing() {
     let desk = desk().await;

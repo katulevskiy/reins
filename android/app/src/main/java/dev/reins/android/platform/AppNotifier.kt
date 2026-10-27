@@ -48,6 +48,8 @@ class AppNotifier(
     private val feedback: () -> Feedback = { NoFeedback },
     /** Autopilot's state changed (a mode, a bypass ending, a pause): the app re-reads it. */
     private val onAutopilot: (AutopilotEvent) -> Unit = {},
+    /** A mode or Autopilot decided this request: it no longer waits, and an ask open on it closes. */
+    private val onDecided: (String) -> Unit = {},
     private val onChanged: () -> Unit,
 ) : Notifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -203,6 +205,10 @@ class AppNotifier(
         ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
 
     override fun autoDecided(decision: AutoDecisionView) {
+        // Decided without the owner: whatever asked them about it is withdrawn (an ask posted while it waited, before a
+        // bypass or Lockdown started), and an ask open on screen closes. Only the decision itself is posted below.
+        manager.cancel(notificationId(decision.requestId))
+        onDecided(decision.requestId)
         onChanged()
         val approved = decision.verdict == Verdict.APPROVE
         // In front the list changes before the user's eyes; a quiet sound says why.

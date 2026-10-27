@@ -952,6 +952,11 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun pending() = pending
 
+    /** What a mode has still to look at (never shown to the owner). */
+    @Volatile var deciding: List<PendingItem> = emptyList()
+
+    override suspend fun deciding() = deciding
+
     /**
      * Another phone approves for the account: `registerDevice` is refused ([CoreException.OtherApprovalDevice]) until
      * this phone brings a proof, from `unlockAccount` or a join the other phone approved.

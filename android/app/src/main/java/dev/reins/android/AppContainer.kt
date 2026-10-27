@@ -85,6 +85,7 @@ class AppContainer(private val context: Context) {
             if (event is dev.reins.core.AutopilotEvent.OvernightEnded) overnightReturns.stopped(event.connectionId)
             appScope.launch { refreshAutopilot() }
         },
+        onDecided = state::markAutoDecided,
     ) { appScope.launch { refreshPending() } }
 
     /** Runs Autopilot's model on this phone; handed to the core as it is built, so background pushes can use it. */
