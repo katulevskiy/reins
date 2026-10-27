@@ -97,7 +97,9 @@ fun WallpaperThumb(choice: WallpaperChoice, dark: Boolean, modifier: Modifier = 
 /**
  * Settings › Wallpaper (Next, Settings 04b and 04c): one for dark and one for light. Three separate choices for each:
  * the image (the shipped art or the owner's own photo), its effect, and how far it fades into the page. They apply as
- * they are picked; the owner's photo is kept as picked, so its effect and fade can change any time.
+ * they are picked; picking an image gives it its own effect ([Wallpaper.defaultEffect]), which can then change. An
+ * image that ships treated has no Effect row. The owner's photo is kept as picked, so its effect and fade can change
+ * any time.
  */
 @Composable
 fun WallpaperScreen(onBack: () -> Unit) {
@@ -177,8 +179,8 @@ fun WallpaperScreen(onBack: () -> Unit) {
                         Box(Modifier.fillMaxWidth().aspectRatio(0.77f)) {
                             Picked(on, w.label, "wallpaper:${w.name}", radius = 16.dp, onClick = {
                                 feedback.play(Event.Selection)
-                                choose(current.copy(image = w))
-                            }) { r -> WallpaperThumb(WallpaperChoice(w), forDark, Modifier.fillMaxSize(), radius = r) }
+                                if (w != current.image) choose(current.withImage(w))
+                            }) { r -> WallpaperThumb(WallpaperChoice.of(w), forDark, Modifier.fillMaxSize(), radius = r) }
                             if (w == Wallpaper.Photo) {
                                 // The owner's photo: another one in its place.
                                 Box(
@@ -201,30 +203,9 @@ fun WallpaperScreen(onBack: () -> Unit) {
             }
         }
 
-        Label("Effect")
-        val effects by produceState<Map<PhotoEffect, ImageBitmap>>(emptyMap(), current.image, forDark, version) {
-            value = withContext(Dispatchers.Default) {
-                val small = Wallpapers.base(context, current.image, forDark)?.let { PhotoEffects.small(it, 120) } ?: return@withContext emptyMap()
-                PhotoEffect.entries.associateWith { e -> (if (e == PhotoEffect.Original) small else PhotoEffects.apply(small, e, 0f, forDark)).asImageBitmap() }
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PhotoEffect.entries.forEach { e ->
-                val on = e == current.effect
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.fillMaxWidth().aspectRatio(0.77f)) {
-                        Picked(on, e.label, "effect:${e.name}", radius = 14.dp, onClick = {
-                            feedback.play(Event.Selection)
-                            choose(current.copy(effect = e))
-                        }) { r ->
-                            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(r)).background(c.paperSunken)) {
-                                effects[e]?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter) }
-                            }
-                        }
-                    }
-                    RText(e.label, RType.sans(12f, if (on) FontWeight.SemiBold else FontWeight.Normal), if (on) c.ink else c.ink2, Modifier.padding(top = 4.dp), maxLines = 1)
-                }
-            }
+        if (current.image.takesEffects) EffectRow(current, forDark, version) { e ->
+            feedback.play(Event.Selection)
+            choose(current.copy(effect = e))
         }
 
         Label("Fade")
@@ -235,6 +216,35 @@ fun WallpaperScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).semantics { contentDescription = "Fade" }.testTag("wallpaperFade"),
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = c.violetFill, inactiveTrackColor = c.paperSunken),
         )
+    }
+}
+
+/** The Effect row: the image with each effect, small; the chosen one ringed. */
+@Composable
+private fun EffectRow(current: WallpaperChoice, forDark: Boolean, version: Int, onPick: (PhotoEffect) -> Unit) {
+    val c = LocalColors.current
+    val context = LocalContext.current
+    Label("Effect")
+    val effects by produceState<Map<PhotoEffect, ImageBitmap>>(emptyMap(), current.image, forDark, version) {
+        value = withContext(Dispatchers.Default) {
+            val small = Wallpapers.base(context, current.image, forDark)?.let { PhotoEffects.small(it, 120) } ?: return@withContext emptyMap()
+            PhotoEffect.entries.associateWith { e -> (if (e == PhotoEffect.Original) small else PhotoEffects.apply(small, e, 0f, forDark, current.image.foot)).asImageBitmap() }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PhotoEffect.entries.forEach { e ->
+            val on = e == current.effect
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.fillMaxWidth().aspectRatio(0.77f)) {
+                    Picked(on, e.label, "effect:${e.name}", radius = 14.dp, onClick = { onPick(e) }) { r ->
+                        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(r)).background(c.paperSunken)) {
+                            effects[e]?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter) }
+                        }
+                    }
+                }
+                RText(e.label, RType.sans(12f, if (on) FontWeight.SemiBold else FontWeight.Normal), if (on) c.ink else c.ink2, Modifier.padding(top = 4.dp), maxLines = 1)
+            }
+        }
     }
 }
 
@@ -284,7 +294,7 @@ private fun Preview(choice: WallpaperChoice, dark: Boolean, version: Int) {
     var picture by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(base, choice.effect, choice.fadeStep, dark) {
         picture = base?.let { b ->
-            if (choice.plain) b.asImageBitmap() else withContext(Dispatchers.Default) { PhotoEffects.apply(b, choice.effect, choice.fadeStep / 100f, dark).asImageBitmap() }
+            if (choice.plain) b.asImageBitmap() else withContext(Dispatchers.Default) { PhotoEffects.apply(b, choice.drawnEffect, choice.fadeStep / 100f, dark, choice.image.foot).asImageBitmap() }
         }
     }
     Box(Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {

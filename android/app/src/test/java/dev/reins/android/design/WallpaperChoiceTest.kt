@@ -18,7 +18,10 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** A theme's wallpaper is an image, an effect and a fade; old one-key prefs and baked photos carry over unchanged. */
+/**
+ * A theme's wallpaper is an image, an effect and a fade. Picking an image gives it its own effect; old one-key prefs,
+ * choices kept before the images came as originals, and baked photos carry over looking as they did.
+ */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35])
@@ -51,15 +54,16 @@ class WallpaperChoiceTest {
     }
 
     @Test
-    fun nothingKeptGivesTheDefaultsAsTheyAre() {
+    fun nothingKeptGivesTheDefaults() {
         val choice = Appearance.load(context)
         assertEquals(WallpaperChoice(Wallpaper.Halo), choice.wallpaperDark)
-        assertEquals(WallpaperChoice(Wallpaper.ToriiDither), choice.wallpaperLight)
-        assertTrue(choice.wallpaperDark.plain && choice.wallpaperLight.plain)
+        assertTrue(choice.wallpaperDark.plain)
+        // Light: Torii with the boards' two-tone dither, the old Torii dither.
+        assertEquals(WallpaperChoice(Wallpaper.Torii, PhotoEffect.Mono), choice.wallpaperLight)
     }
 
     @Test
-    fun theOldOneKeyWallpaperMovesOnceToTheImageWithNoEffect() {
+    fun theOldOneKeyWallpaperMovesOnceLookingAsItDid() {
         prefs.edit().putString("wallpaperDark", "Ruins").putString("wallpaperLight", "Photo").commit()
         val choice = Appearance.load(context)
         assertEquals(WallpaperChoice(Wallpaper.Ruins, PhotoEffect.Original, 0f), choice.wallpaperDark)
@@ -69,6 +73,87 @@ class WallpaperChoiceTest {
         assertFalse(prefs.contains("wallpaperLight"))
         assertEquals("Ruins", prefs.getString("wallpaperDarkImage", null))
         assertEquals(choice, Appearance.load(context))
+        // Eyes shipped with its scanlines in it; Torii dither is Torii with Mono.
+        prefs.edit().clear().putString("wallpaperDark", "Eyes").putString("wallpaperLight", "ToriiDither").commit()
+        assertEquals(WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Scanlines), Appearance.load(context).wallpaperDark)
+        assertEquals(WallpaperChoice(Wallpaper.Torii, PhotoEffect.Mono), Appearance.load(context).wallpaperLight)
+    }
+
+    @Test
+    fun choicesKeptBeforeTheOriginalsLookAsTheyDid() {
+        fun keep(dark: Boolean, image: String, effect: String, fade: Float = 0f) {
+            val t = if (dark) "Dark" else "Light"
+            prefs.edit().clear()
+                .putString("wallpaper${t}Image", image).putString("wallpaper${t}Effect", effect).putFloat("wallpaper${t}Fade", fade)
+                .commit()
+        }
+        val cases = listOf(
+            // Original meant the picture as shipped: Eyes had its scanlines, Torii was the photo.
+            Triple("Eyes", "Original", WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Scanlines, 0.3f)),
+            Triple("Torii", "Original", WallpaperChoice(Wallpaper.Torii, PhotoEffect.Original, 0.3f)),
+            Triple("Halo", "Original", WallpaperChoice(Wallpaper.Halo, PhotoEffect.Original, 0.3f)),
+            // Torii dither is Torii with Mono; an effect on it now goes on the photo.
+            Triple("ToriiDither", "Original", WallpaperChoice(Wallpaper.Torii, PhotoEffect.Mono, 0.3f)),
+            Triple("ToriiDither", "Halftone", WallpaperChoice(Wallpaper.Torii, PhotoEffect.Halftone, 0.3f)),
+            // Colour (a saturation lift) is gone: the picture as shipped.
+            Triple("Eyes", "Colour", WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Scanlines, 0.3f)),
+            Triple("Photo", "Colour", WallpaperChoice(Wallpaper.Photo, PhotoEffect.Original, 0.3f)),
+            // An image that ships treated is not treated again.
+            Triple("Halo", "Dither", WallpaperChoice(Wallpaper.Halo, PhotoEffect.Original, 0.3f)),
+            // Effects on an image that came as it was stay.
+            Triple("Hands", "Dither", WallpaperChoice(Wallpaper.Hands, PhotoEffect.Dither, 0.3f)),
+            Triple("Photo", "Scanlines", WallpaperChoice(Wallpaper.Photo, PhotoEffect.Scanlines, 0.3f)),
+        )
+        for (dark in listOf(true, false)) {
+            for ((image, effect, expected) in cases) {
+                keep(dark, image, effect, 0.3f)
+                assertEquals("$image $effect", expected, Appearance.load(context).wallpaper(dark))
+            }
+        }
+        // Moved once: written back as read, and read the same after.
+        Wallpapers.oldMadeDir(context).mkdirs()
+        keep(true, "Eyes", "Original")
+        val moved = Appearance.load(context)
+        assertEquals(WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Scanlines), moved.wallpaperDark)
+        assertEquals("Scanlines", prefs.getString("wallpaperDarkEffect", null))
+        assertEquals(moved, Appearance.load(context))
+        assertFalse("pictures made with the old effects go", Wallpapers.oldMadeDir(context).exists())
+        // Eyes as it is, picked since, stays as it is.
+        Appearance.set(context, moved.withWallpaper(true, WallpaperChoice(Wallpaper.Eyes)))
+        assertEquals(WallpaperChoice(Wallpaper.Eyes), Appearance.load(context).wallpaperDark)
+    }
+
+    @Test
+    fun pickingAnImageGivesItsOwnEffectAndKeepsTheFade() {
+        val current = WallpaperChoice(Wallpaper.Halo, PhotoEffect.Original, 0.4f)
+        assertEquals(WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Scanlines, 0.4f), current.withImage(Wallpaper.Eyes))
+        assertEquals(WallpaperChoice(Wallpaper.Torii, PhotoEffect.Mono, 0.4f), current.withImage(Wallpaper.Torii))
+        assertEquals(WallpaperChoice(Wallpaper.Ruins, PhotoEffect.Original, 0.4f), WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Dither, 0.4f).withImage(Wallpaper.Ruins))
+        assertEquals(WallpaperChoice(Wallpaper.Photo, PhotoEffect.Original, 0.4f), current.withImage(Wallpaper.Photo))
+        // The shipped images that come as they were have an effect of their own; the treated ones take none.
+        assertEquals(listOf(Wallpaper.Hands, Wallpaper.Eyes, Wallpaper.Torii), Wallpaper.shipped.filter { it.takesEffects })
+        assertEquals(PhotoEffect.Original, Wallpaper.Hands.defaultEffect)
+    }
+
+    @Test
+    fun anImageThatShipsTreatedIsDrawnAsItIs() {
+        val dithered = WallpaperChoice(Wallpaper.Halo, PhotoEffect.Dither)
+        assertEquals(PhotoEffect.Original, dithered.drawnEffect)
+        assertTrue(dithered.plain)
+        assertEquals(Wallpapers.key(WallpaperChoice(Wallpaper.Halo), true), Wallpapers.key(dithered, true))
+        assertSame(Wallpapers.bitmap(context, WallpaperChoice(Wallpaper.Halo), true), Wallpapers.bitmap(context, dithered, true))
+    }
+
+    @Test
+    fun eyesAndToriiShipAsTheyWere() {
+        // The assets are the boards' sources (faded at the foot), so an effect is never drawn on an effect.
+        val eyes = Wallpapers.base(context, Wallpaper.Eyes, true)!!
+        val px = pixels(eyes)
+        // No scanlines: neighbouring rows near the top are alike.
+        var diff = 0L
+        for (x in 0 until eyes.width) diff += kotlin.math.abs(((px[200 * eyes.width + x] shr 8) and 0xFF) - ((px[201 * eyes.width + x] shr 8) and 0xFF))
+        assertTrue("Eyes has no scanlines: ${diff / eyes.width}", diff / eyes.width < 6)
+        assertEquals(null, runCatching { context.assets.open("wallpapers/torii-dither.jpg") }.getOrNull())
     }
 
     @Test
@@ -100,11 +185,11 @@ class WallpaperChoiceTest {
 
     @Test
     fun theKeySeparatesImageEffectFadeAndTheme() {
-        val base = WallpaperChoice(Wallpaper.Halo, PhotoEffect.Dither, 0.5f)
+        val base = WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Dither, 0.5f)
         val keys = listOf(
             Wallpapers.key(base, true),
             Wallpapers.key(base, false),
-            Wallpapers.key(base.copy(image = Wallpaper.Ruins), true),
+            Wallpapers.key(base.copy(image = Wallpaper.Torii), true),
             Wallpapers.key(base.copy(effect = PhotoEffect.Halftone), true),
             Wallpapers.key(base.copy(fade = 0.6f), true),
             Wallpapers.key(base.copy(image = Wallpaper.Photo), true),
@@ -112,7 +197,7 @@ class WallpaperChoiceTest {
         assertEquals(keys.size, keys.toSet().size)
         // The fade is kept in hundredths: the same step is the same picture.
         assertEquals(Wallpapers.key(base.copy(fade = 0.501f), true), Wallpapers.key(base.copy(fade = 0.499f), true))
-        assertEquals("Halo-Dither-50-dark", Wallpapers.key(base, true))
+        assertEquals("Eyes-Dither-50-dark", Wallpapers.key(base, true))
     }
 
     @Test
@@ -130,22 +215,22 @@ class WallpaperChoiceTest {
 
     @Test
     fun anEffectOnAShippedImageIsMadeOnceAndKeptUnderItsKey() {
-        val choice = WallpaperChoice(Wallpaper.Halo, PhotoEffect.Dither, 0.4f)
+        val choice = WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Dither, 0.4f)
         assertEquals(null, Wallpapers.ready(context, choice, true))
         val made = Wallpapers.bitmap(context, choice, true)!!
         assertTrue(Wallpapers.madeFile(context, choice, true).isFile)
         assertSame(made, Wallpapers.ready(context, choice, true))
         assertSame(made, Wallpapers.bitmap(context, choice, true))
-        assertFalse(pixels(made).contentEquals(pixels(Wallpapers.bitmap(context, WallpaperChoice(Wallpaper.Halo), true)!!)))
-        // Read back from its file once memory lets it go.
+        assertFalse(pixels(made).contentEquals(pixels(Wallpapers.bitmap(context, WallpaperChoice(Wallpaper.Eyes), true)!!)))
+        // Read back from its file once memory lets it go, at once (the page opens with it).
         Wallpapers.forget()
-        assertTrue(pixels(made).contentEquals(pixels(Wallpapers.bitmap(context, choice, true)!!)))
+        assertTrue(pixels(made).contentEquals(pixels(Wallpapers.ready(context, choice, true)!!)))
         // The other theme is its own picture.
         Wallpapers.bitmap(context, choice, false)
         assertTrue(Wallpapers.madeFile(context, choice, false).isFile)
         // The frost follows the made picture, not the asset.
         val frosted = Wallpapers.frosted(choice, true, made)
-        assertNotEquals(pixels(frosted).toList(), pixels(Wallpapers.frosted(WallpaperChoice(Wallpaper.Halo), true, Wallpapers.bitmap(context, WallpaperChoice(Wallpaper.Halo), true)!!)).toList())
+        assertNotEquals(pixels(frosted).toList(), pixels(Wallpapers.frosted(WallpaperChoice(Wallpaper.Eyes), true, Wallpapers.bitmap(context, WallpaperChoice(Wallpaper.Eyes), true)!!)).toList())
     }
 
     @Test

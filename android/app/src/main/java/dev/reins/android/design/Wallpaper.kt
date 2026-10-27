@@ -54,23 +54,41 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * The images behind Activity (Reins Next, "Activity with a wallpaper"): dithered art that fades into the paper at its
- * foot. Halo is the dark default, Torii dither the light one; any of them (or the owner's own photo) can be picked for
- * either theme, and any of them takes any effect and fade ([WallpaperChoice]).
+ * The images behind Activity (Reins Next, "Activity with a wallpaper"): art that fades into the paper at its foot.
+ * Halo is the dark default, Torii (with Mono) the light one; any of them (or the owner's own photo) can be picked for
+ * either theme with an effect and a fade ([WallpaperChoice]).
+ *
+ * An image ships as it was before any effect, with the effect the boards gave it as its [defaultEffect] (Eyes with
+ * Scanlines, Torii with Mono). Halo, Crescent, Figure and Ruins ship already treated (the boards' sources are not in
+ * the app): they take no effect ([takesEffects]), so nothing is dithered twice.
  */
-enum class Wallpaper(val label: String, private val asset: String?) {
-    Halo("Halo", "halo.jpg"),
-    Crescent("Crescent", "crescent.jpg"),
-    Figure("Figure", "figure.jpg"),
-    Hands("Hands", "hands.jpg"),
-    Ruins("Ruins", "ruins.jpg"),
-    Eyes("Eyes", "eyes.jpg"),
-    Torii("Torii", "torii.jpg"),
-    ToriiDither("Torii dither", "torii-dither.jpg"),
+enum class Wallpaper(
+    val label: String,
+    private val asset: String?,
+    /** The effect picking the image gives it: the boards' look for it. */
+    val defaultEffect: PhotoEffect = PhotoEffect.Original,
+    /** False for an image that ships with its effect already in it: it is drawn as it is. */
+    val takesEffects: Boolean = true,
+    /** Where the image already fades into the page (the boards baked it in): an effect fades out over it. */
+    val foot: PhotoEffects.Foot? = null,
+) {
+    Halo("Halo", "halo.jpg", takesEffects = false),
+    Crescent("Crescent", "crescent.jpg", takesEffects = false),
+    Figure("Figure", "figure.jpg", takesEffects = false),
+    Hands("Hands", "hands.jpg", foot = PhotoEffects.Foot(0.62, 0.98)),
+    Ruins("Ruins", "ruins.jpg", takesEffects = false),
+    Eyes("Eyes", "eyes.jpg", PhotoEffect.Scanlines, foot = PhotoEffects.Foot(0.5, 0.97)),
+    Torii("Torii", "torii.jpg", PhotoEffect.Mono, foot = PhotoEffects.Foot(0.55, 0.97)),
 
     /** The owner's own photo, one per theme: fitted and kept as it is, so its effect and fade can change later. */
     Photo("Your photo", null),
     ;
+
+    /**
+     * The effect that draws the image as it shipped before images came as originals: Eyes shipped with its scanlines
+     * in it; Torii shipped as the photo (its dither was the separate Torii dither).
+     */
+    val shippedLook: PhotoEffect get() = if (this == Torii) PhotoEffect.Original else defaultEffect
 
     /** The image as it is (no effect), decoded once per process (the owner's photo is read again after it changes). */
     fun bitmap(context: Context, dark: Boolean): Bitmap? = Wallpapers.base(context, this, dark)
@@ -111,12 +129,15 @@ object Wallpapers {
 
     fun hasPhoto(context: Context, dark: Boolean): Boolean = sourceFile(context, dark).isFile || bakedFile(context, dark).isFile
 
-    /** Where made pictures are kept. */
-    fun madeDir(context: Context): File = File(context.cacheDir, "wallpapers")
+    /** Where made pictures are kept (a new place since the effects keep colour: what was made before is stale). */
+    fun madeDir(context: Context): File = File(context.cacheDir, "wallpaper-art")
 
-    /** The name a made picture is kept under: one per image, effect, fade step and theme. */
+    /** Where made pictures were kept before; dropped once ([Appearance.load]). */
+    internal fun oldMadeDir(context: Context): File = File(context.cacheDir, "wallpapers")
+
+    /** The name a made picture is kept under: one per image, effect drawn, fade step and theme. */
     fun key(choice: WallpaperChoice, dark: Boolean): String =
-        "${choice.image.name}-${choice.effect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}"
+        "${choice.image.name}-${choice.drawnEffect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}"
 
     fun madeFile(context: Context, choice: WallpaperChoice, dark: Boolean): File = File(madeDir(context), key(choice, dark) + ".png")
 
@@ -158,9 +179,18 @@ object Wallpapers {
         }.getOrNull()?.also { bases[k] = it }
     }
 
-    /** The picture if it can be had at once: the image as it is, or one already made. Null: [bitmap] makes it. */
-    fun ready(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? =
-        if (choice.plain) base(context, choice.image, dark) else synchronized(this) { made[key(choice, dark)] }
+    /**
+     * The picture if it can be had at once: the image as it is, or one already made (in memory, or read back from its
+     * file, so a page opens with its art as on the iPhone). Null: [bitmap] makes it.
+     */
+    fun ready(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? {
+        if (choice.plain) return base(context, choice.image, dark)
+        val k = key(choice, dark)
+        synchronized(this) { made[k]?.let { return it } }
+        val file = madeFile(context, choice, dark).takeIf { it.isFile } ?: return null
+        val read = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() ?: return null
+        return synchronized(this) { made.getOrPut(k) { read } }
+    }
 
     /** The picture for [choice]: made (or read back from its file) when it is not the image as it is. Off the main thread. */
     fun bitmap(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? {
@@ -173,7 +203,7 @@ object Wallpapers {
             runCatching { BitmapFactory.decodeFile(f.absolutePath) }.getOrNull()?.also { f.setLastModified(System.currentTimeMillis()) }
         } ?: run {
             val src = base(context, choice.image, dark) ?: return null
-            PhotoEffects.apply(src, choice.effect, choice.fadeStep / 100f, dark).also {
+            PhotoEffects.apply(src, choice.drawnEffect, choice.fadeStep / 100f, dark, choice.image.foot).also {
                 // A photo replaced while this was made: shown this once, not kept as the new photo's.
                 if (choice.image != Wallpaper.Photo || version == photoVersion) keep(context, file, it, dark)
             }
