@@ -34,9 +34,27 @@ const ENV: &[&str] = &[
 ];
 
 /// The worktree `cwd` is in (the folder holding `.git`), found from its files.
+///
+/// Only a repository strictly inside one of `roots` counts, and the search for `.git` stops at that root: a `.git` an
+/// agent plants in a folder above (`~/.git`) or in the root itself must not make it a worktree whose deletes git brings
+/// back. The engine reads paths as written, so a `cwd` that is not its own resolved form (a symlink in it, `..`) has no
+/// worktree: its paths could not be compared with the roots.
 #[must_use]
-pub fn worktree_of(cwd: &Path) -> Option<String> {
-    cwd.ancestors().find(|d| d.join(".git").exists()).map(|d| d.to_string_lossy().into_owned())
+pub fn worktree_of(cwd: &Path, roots: &[String], home: &str) -> Option<String> {
+    if cwd.components().any(|c| c == std::path::Component::ParentDir) {
+        return None;
+    }
+    let real = std::fs::canonicalize(cwd).ok()?;
+    if real != cwd {
+        return None;
+    }
+    let roots: Vec<std::path::PathBuf> =
+        roots.iter().filter_map(|r| std::fs::canonicalize(effects::normalize(r, "/", home)).ok()).collect();
+    let root = roots.iter().filter(|r| real.starts_with(r) && real != **r).max_by_key(|r| r.components().count())?;
+    real.ancestors()
+        .take_while(|d| *d != root.as_path())
+        .find(|d| d.join(".git").exists())
+        .map(|d| d.to_string_lossy().into_owned())
 }
 
 /// The workspace for a request run in `cwd`: the configured roots and scratch folders, and the worktree `cwd` is in
@@ -45,7 +63,7 @@ pub fn worktree_of(cwd: &Path) -> Option<String> {
 pub fn workspace(config: &Config, cwd: Option<&Path>) -> Workspace {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let mut worktrees = Vec::new();
-    if let Some(top) = cwd.and_then(worktree_of) {
+    if let Some(top) = cwd.and_then(|c| worktree_of(c, &config.workspace.roots, &home)) {
         worktrees.push(format!("{top}/.claude/worktrees/*"));
         worktrees.push(top);
     }
@@ -158,9 +176,13 @@ mod tests {
 
     #[test]
     fn a_command_in_a_worktree_is_read_with_its_facts() {
-        let dir = std::env::temp_dir().join(format!("reins-consequences-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join(".git")).unwrap();
-        let config = Config::default();
+        let root = std::env::temp_dir().join(format!("reins-consequences-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("app/.git")).unwrap();
+        // Resolved, as a hook's cwd is (macOS's temp folder is behind a symlink).
+        let root = std::fs::canonicalize(&root).unwrap();
+        let dir = root.join("app");
+        let mut config = Config::default();
+        config.workspace.roots = vec![root.to_string_lossy().into_owned()];
         let cwd = dir.to_string_lossy().into_owned();
         let env = |k: &str| (k == "TMPDIR").then(|| "/tmp".to_owned());
         let ctx = context(&config, Some(&cwd), &env, None);
@@ -172,6 +194,40 @@ mod tests {
         assert!(s.level <= effects::Level::L1, "inside the worktree: recoverable from git: {s:?}");
         assert!(of_action(&config, &Action::Other, Some(&cwd), None).is_none());
         assert!(guarded_action(&config, &Action::Command("rm -rf target".to_owned()), Some(&cwd), None).is_some());
-        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_planted_git_folder_outside_the_roots_is_no_worktree() {
+        let root = std::env::temp_dir().join(format!("reins-planted-{}", std::process::id()));
+        let inside = root.join("Documents");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(&inside).unwrap();
+        let mut config = Config::default();
+        config.workspace.roots = vec![root.join("dev").to_string_lossy().into_owned()];
+        assert_eq!(worktree_of(&inside, &config.workspace.roots, ""), None);
+        // A `.git` planted in a root itself, or a path climbing out with `..`: no worktree either.
+        let dev = root.join("dev");
+        std::fs::create_dir_all(dev.join(".git")).unwrap();
+        std::fs::create_dir_all(dev.join("app")).unwrap();
+        assert_eq!(worktree_of(&dev.join("app"), &config.workspace.roots, ""), None);
+        std::fs::create_dir_all(dev.join("app/.git")).unwrap();
+        assert_eq!(
+            worktree_of(&dev.join("app/src/.."), &config.workspace.roots, ""),
+            None,
+            "a cwd with .. is not read"
+        );
+        let real_root = std::fs::canonicalize(&root).unwrap();
+        config.workspace.roots = vec![real_root.join("dev").to_string_lossy().into_owned()];
+        let app = real_root.join("dev/app");
+        assert_eq!(worktree_of(&app, &config.workspace.roots, ""), Some(app.to_string_lossy().into_owned()));
+        // Through a symlink the engine's paths would not be the worktree's: none.
+        std::fs::create_dir_all(app.join("src/deep")).unwrap();
+        let link = real_root.join("short");
+        std::os::unix::fs::symlink(app.join("src/deep"), &link).unwrap();
+        assert_eq!(worktree_of(&link, &config.workspace.roots, ""), None);
+        let ctx = context(&config, Some(&inside.to_string_lossy()), &|_| None, None);
+        assert!(ctx.workspace.worktrees.is_empty(), "{:?}", ctx.workspace.worktrees);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

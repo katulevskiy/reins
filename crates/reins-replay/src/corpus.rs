@@ -80,6 +80,9 @@ pub struct Case {
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub push: Option<PushSummary>,
+    /// The branch checked out where a command ran, when the import could tell (its worktree's reflog).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

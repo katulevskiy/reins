@@ -34,4 +34,6 @@ pub use shell::{Context, analyze_command, file_kind};
 pub use workspace::{Workspace, normalize};
 
 #[cfg(test)]
+mod hardening;
+#[cfg(test)]
 mod tests;

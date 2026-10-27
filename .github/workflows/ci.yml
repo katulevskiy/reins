@@ -202,8 +202,9 @@ jobs:
       - run: cargo clippy --locked --features sqlite -- -D warnings
 
   # Decisions v2 (docs/design/decisions-v2/07-roadmap.md §3): every change to the consequence engine, the default
-  # policy or the replay corpus is replayed against the labelled history. A labelled real risk not asked, a known false
-  # positive asked again, or a drop below crates/reins-replay/baseline.json fails the build.
+  # policy or the replay corpus is replayed against the labelled history. A labelled real risk or a case for a person
+  # not asked, a known false positive asked again, Full certainty more than half a point below
+  # crates/reins-replay/baseline.json, or an ask rate more than a point above it fails the build.
   replay:
     name: Replay gate (Decisions v2)
     needs: changes

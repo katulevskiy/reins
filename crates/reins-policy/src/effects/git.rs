@@ -4,13 +4,29 @@ use reins_proto::desktop::{PushSummary, RefChange};
 
 use super::level::Analysis;
 use super::model::{Certainty, Channel, CodeSource, Effect, InfraChange, NetMethod};
-use super::shell::{Exp, Input, Walk};
+use super::shell::{Exp, Input, Walk, unknown};
 
 /// Branch names taken as the default when the repository's own is not known (`docs/autopilot-risk.md`).
 const LONG_LIVED: &[&str] =
     &["main", "master", "trunk", "develop", "development", "production", "prod", "staging", "stable"];
 
 /// Whether `branch` is (or may be) the default branch, given the default the caller knows.
+#[must_use]
+/// Whether `branch` is the default branch, `None` when that is not known (its name is not a long-lived one and the
+/// default is not known): taken as the default where it decides the level.
+pub fn default_of(branch: &str, known_default: Option<&str>) -> Option<bool> {
+    let b = branch.trim_start_matches("refs/heads/");
+    if b.contains(['*', '?', '[']) {
+        // A pattern may name the default.
+        return Some(true);
+    }
+    if is_default(b, known_default) {
+        Some(true)
+    } else {
+        known_default.map(|_| false)
+    }
+}
+
 #[must_use]
 pub fn is_default(branch: &str, known_default: Option<&str>) -> bool {
     let b = branch.trim_start_matches("refs/heads/");
@@ -29,7 +45,7 @@ pub fn analyze_push(repo: &str, summary: &PushSummary) -> Analysis {
     let default = summary.default_branch.as_deref();
     for u in &summary.updates {
         let default_branch = if u.name.starts_with("refs/heads/") {
-            Some(is_default(&u.name, default))
+            default_of(&u.name, default)
         } else {
             Some(false)
         };
@@ -138,6 +154,9 @@ fn operands(args: &[Exp]) -> Vec<&Exp> {
 pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     let mut k = 0;
     let saved_cwd = w.cwd.clone();
+    // `--work-tree`/`--git-dir` (or GIT_WORK_TREE/GIT_DIR): the worktree is elsewhere, and its history is.
+    let mut named_tree: Option<Exp> = None;
+    let mut git_dir: Option<Exp> = None;
     while let Some(a) = args.get(k) {
         match a.text.as_str() {
             "-C" => {
@@ -159,7 +178,15 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 }
                 k += 2;
             }
-            "--git-dir" | "--work-tree" | "--namespace" => k += 2,
+            "--git-dir" | "--work-tree" | "--namespace" => {
+                let value = args.get(k + 1).cloned().unwrap_or_else(|| Exp::lit(""));
+                match a.text.as_str() {
+                    "--git-dir" => git_dir = Some(value),
+                    "--work-tree" => named_tree = Some(value),
+                    _ => {}
+                }
+                k += 2;
+            }
             // `--config-env name=VAR`: a setting whose value comes from the environment, unseen here.
             t if t == "--config-env" || t.starts_with("--config-env=") => {
                 let setting = t
@@ -197,6 +224,16 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             | "--no-lazy-fetch"
             | "--no-advice" => k += 1,
             t if t.starts_with("--git-dir=") || t.starts_with("--work-tree=") || t.starts_with("--namespace=") => {
+                let (name, value) = t.split_once('=').unwrap_or_default();
+                let value = Exp {
+                    text: value.to_owned(),
+                    ..a.clone()
+                };
+                match name {
+                    "--git-dir" => git_dir = Some(value),
+                    "--work-tree" => named_tree = Some(value),
+                    _ => {}
+                }
                 k += 1;
             }
             // Any other global option (`--exec-path=…` picks the programs git runs): not read.
@@ -212,7 +249,28 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
         return Input::None;
     };
     let rest = &args[k + 1..];
-    let worktree = w.repo_root().unwrap_or_else(|| w.cwd.clone());
+    for (var, slot) in [("GIT_WORK_TREE", &mut named_tree), ("GIT_DIR", &mut git_dir)] {
+        match w.var_state(var) {
+            Some(Some(v)) if slot.is_none() => *slot = Some(Exp::lit(&v)),
+            Some(None) if slot.is_none() => *slot = Some(unknown(format!("the value of ${var}"))),
+            _ => {}
+        }
+    }
+    let mut worktree = w.repo_root().unwrap_or_else(|| w.cwd.clone());
+    if let Some(t) = named_tree.as_ref().or(git_dir.as_ref()) {
+        if t.known() {
+            if let Some(t) = &named_tree {
+                worktree = super::workspace::normalize(&t.text, &w.cwd, &w.ctx.workspace.home);
+            } else {
+                // A repository named elsewhere, with this folder as its worktree.
+                worktree = w.cwd.clone();
+                w.lower(Certainty::Partial, "a repository named by --git-dir");
+            }
+        } else {
+            w.note(t);
+            w.lower(Certainty::None, "a repository or worktree named at run time");
+        }
+    }
     let wt = Exp::lit(&worktree);
     // Configuration given through the environment on this line: not read.
     for prefix in [
@@ -273,6 +331,20 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             k += 1;
         }
     };
+    // Commands that may check out another branch (or rename this one): what is checked out after them is not known.
+    let ops_now = operands(rest);
+    let restores_files = sub == "checkout"
+        && (rest.first().is_some_and(|a| a.text == "--") || ops_now.first().is_some_and(|o| o.text == "."));
+    let moves_head = match sub.as_str() {
+        "checkout" => !restores_files,
+        "switch" | "rebase" | "bisect" | "worktree" | "symbolic-ref" | "update-ref" | "filter-branch" | "am" => true,
+        "reset" => !ops_now.is_empty() && !rest.iter().any(|a| a.text == "--"),
+        "branch" => flag(rest, &["-m", "-M", "--move", "-c", "-C"]),
+        _ => false,
+    };
+    if moves_head {
+        w.head_moved = true;
+    }
     match sub.as_str() {
         // `git bisect run cmd args…`: the command's own words, as they are.
         "bisect" => {
@@ -385,8 +457,9 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             local_change(w, &sub, rest, &worktree);
         }
         "push" | "send-pack" => push(w, rest),
-        // Anything else (an alias, `difftool`, `send-email`, a third-party `git-foo`): not read.
+        // Anything else (an alias, `difftool`, `send-email`, a third-party `git-foo`): not read, and may move HEAD.
         _ => {
+            w.head_moved = true;
             w.effect(Effect::Exec {
                 program: format!("git {sub}"),
                 source: CodeSource::Unknown,
@@ -422,7 +495,7 @@ fn git_command(w: &mut Walk<'_>, words: &[Exp], what: &str) {
         // Git appends `"$@"`: the other words are the script's arguments, and its last command's too.
         w.run_script(&format!("{} \"$@\"", first.text), rest.to_vec());
     } else {
-        let _out: Input = super::programs::run(w, words, Input::None, false);
+        let _out: Input = super::programs::run(w, words, Input::None);
     }
 }
 
@@ -612,8 +685,22 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 } else {
                     ops.into_iter().cloned().collect()
                 };
-                discard(w, paths);
+                // What it deletes is untracked: git cannot bring it back.
+                let refs: Vec<_> = paths
+                    .iter()
+                    .map(|p| super::model::PathRef {
+                        recoverable: false,
+                        ..w.path(p)
+                    })
+                    .collect();
+                w.effect(Effect::FileDelete {
+                    paths: refs,
+                    recursive: true,
+                });
             }
+        }
+        "switch" if rest.iter().any(|a| matches!(a.text.as_str(), "-f" | "--force" | "--discard-changes")) => {
+            discard(w, vec![wt]);
         }
         "checkout" | "restore" => {
             let after_dashdash = rest.iter().position(|a| a.text == "--").map(|p| rest[p + 1..].to_vec());
@@ -649,11 +736,11 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 for b in ops {
                     let name = b.text.clone();
                     w.note(b);
-                    let default = is_default(&name, w.ctx.default_branch.as_deref());
+                    let default = default_of(&name, w.ctx.default_branch.as_deref());
                     w.effect(Effect::GitRefDelete {
                         repo: String::new(),
                         refname: format!("refs/heads/{name}"),
-                        default_branch: Some(default),
+                        default_branch: default,
                     });
                 }
             } else if flag(rest, &["-m", "-M", "--move"]) {
@@ -661,18 +748,18 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                     w.effect(Effect::GitRefDelete {
                         repo: String::new(),
                         refname: format!("refs/heads/{}", old.text),
-                        default_branch: Some(is_default(&old.text, w.ctx.default_branch.as_deref())),
+                        default_branch: default_of(&old.text, w.ctx.default_branch.as_deref()),
                     });
                 }
             } else if flag(rest, &["-f", "--force"])
                 && let Some(b) = ops.first()
             {
                 // Moves an existing branch: its old tip is in the reflog.
-                let default = is_default(&b.text, w.ctx.default_branch.as_deref());
+                let default = default_of(&b.text, w.ctx.default_branch.as_deref());
                 w.effect(Effect::GitRefDelete {
                     repo: String::new(),
                     refname: format!("refs/heads/{}", b.text),
-                    default_branch: Some(default),
+                    default_branch: default,
                 });
             }
         }
@@ -738,7 +825,7 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 w.effect(Effect::GitRefDelete {
                     repo: String::new(),
                     refname: r.text.clone(),
-                    default_branch: Some(is_default(&r.text, w.ctx.default_branch.as_deref())),
+                    default_branch: default_of(&r.text, w.ctx.default_branch.as_deref()),
                 });
             }
         }
@@ -780,7 +867,7 @@ fn push(w: &mut Walk<'_>, rest: &[Exp]) {
     }
     let remote = ops.first().map_or_else(|| "origin".to_owned(), |r| r.text.clone());
     let repo = super::programs::url_host(&remote).map_or(remote.clone(), |_| remote.clone());
-    let current = w.ctx.branch.clone();
+    let current = w.current_branch();
     let default = w.ctx.default_branch.clone();
     let mut refspecs: Vec<Exp> = ops.iter().skip(1).map(|e| (*e).clone()).collect();
     if mirror {
@@ -840,7 +927,7 @@ fn push(w: &mut Walk<'_>, rest: &[Exp]) {
         let default_branch = if is_tag {
             Some(false)
         } else {
-            short.as_deref().map(|d| is_default(d, default.as_deref()))
+            short.as_deref().and_then(|d| default_of(d, default.as_deref()))
         };
         if delete || src.is_empty() {
             w.effect(Effect::GitRefDelete {
@@ -855,7 +942,7 @@ fn push(w: &mut Walk<'_>, rest: &[Exp]) {
                         }
                     },
                 ),
-                default_branch: default_branch.or(Some(false)),
+                default_branch,
             });
             continue;
         }
@@ -906,6 +993,9 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             attachments: 0,
         });
     };
+    if matches!(words.as_slice(), ["pr", "checkout" | "co", ..] | ["repo", "sync", ..]) {
+        w.head_moved = true;
+    }
     match words.as_slice() {
         [
             "pr" | "issue",
@@ -921,7 +1011,7 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 refname: base
                     .clone()
                     .map_or_else(|| "the pull request's base".to_owned(), |b| format!("refs/heads/{b}")),
-                default_branch: Some(base.as_deref().is_none_or(|b| is_default(b, None))),
+                default_branch: base.as_deref().map_or(Some(true), |b| default_of(b, None)),
                 rewrites: Some(false),
                 commits: 0,
             });

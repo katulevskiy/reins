@@ -456,6 +456,8 @@ pub struct Config {
     /// Reins Secrets (`[secrets]`).
     pub secrets: crate::secrets_scan::SecretsConfig,
     /// Where agents' work is expected (`[workspace]`), for the consequence engine (Decisions v2).
+    /// Left out when it is the default, so a config this writes still loads in a build that predates it.
+    #[serde(skip_serializing_if = "WorkspaceConfig::is_default")]
     pub workspace: WorkspaceConfig,
 }
 
@@ -475,9 +477,16 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             roots: ["~/Documents/dev", "~/src", "~/code", "~/projects"].map(str::to_owned).to_vec(),
-            // The agents' own memory and uploads.
-            scratch: vec!["~/.claude/projects/*/memory".to_owned()],
+            // (An agent's memory folder is kept across sessions: it is no scratch.)
+            scratch: Vec::new(),
         }
+    }
+}
+
+impl WorkspaceConfig {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 

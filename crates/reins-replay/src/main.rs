@@ -29,8 +29,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some(other) => return Err(format!("unknown engine {other}")),
     };
     let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
-    let policy_path = value(args, "--policy").map_or_else(reins_replay::default_policy, PathBuf::from);
-    let policy: Policy = if policy_path.exists() {
+    let check = args.iter().any(|a| a == "--check");
+    let given = value(args, "--policy");
+    let policy_path = given.clone().map_or_else(reins_replay::default_policy, PathBuf::from);
+    // A policy named (or the gate's own) must be there and valid: a typo must not fall back to another policy.
+    let policy: Policy = if policy_path.exists() || given.is_some() || check {
         read_json(&policy_path)?
     } else {
         Policy::default()
@@ -44,6 +47,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             known_fp_asked: r.known_fp_asked,
             full_certainty: r.full_certainty.unwrap_or(0.0),
             asks: r.asks,
+            ask_rate: r.ask_rate,
         };
         let text = serde_json::to_string_pretty(&b).map_err(|e| e.to_string())?;
         std::fs::write(&baseline_path, format!("{text}\n")).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
@@ -53,13 +57,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     } else {
         print!("{}", report::text(&r, args.iter().any(|a| a == "--verbose")));
     }
-    if args.iter().any(|a| a == "--check") {
-        let baseline: Option<Baseline> = if baseline_path.exists() {
-            Some(read_json(&baseline_path)?)
-        } else {
-            None
-        };
-        let fails = report::gate(&r, baseline.as_ref());
+    if check {
+        // The gate compares with its baseline: one that is missing is a failure, not a pass.
+        let baseline: Baseline = read_json(&baseline_path)?;
+        let fails = report::gate(&r, Some(&baseline));
         if !fails.is_empty() {
             for f in &fails {
                 eprintln!("replay gate: {f}");
@@ -71,13 +72,43 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The branch checked out in `cwd` at `at`, from its worktree's reflog (`checkout: moving from A to B`): the last move
+/// before `at`, else the first move's origin after it, else today's branch when it never moved. `None` for a folder
+/// that is gone, a detached head, or anything git does not answer.
+fn branch_at(cwd: &str, at: i64) -> Option<String> {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").arg("-C").arg(cwd).args(args).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let log = git(&["reflog", "show", "--date=unix", "--format=%gd %gs", "HEAD"])?;
+    // Newest first: `HEAD@{1730000000} checkout: moving from a to b`.
+    let moves: Vec<(i64, String, String)> = log
+        .lines()
+        .filter_map(|l| {
+            let (stamp, rest) = l.split_once(' ')?;
+            let t = stamp.strip_prefix("HEAD@{")?.strip_suffix('}')?.parse().ok()?;
+            let (from, to) = rest.strip_prefix("checkout: moving from ")?.split_once(" to ")?;
+            Some((t, from.to_owned(), to.to_owned()))
+        })
+        .collect();
+    let branch = if let Some((_, _, to)) = moves.iter().find(|(t, ..)| *t <= at) {
+        to.clone()
+    } else if let Some((_, from, _)) = moves.last() {
+        from.clone()
+    } else {
+        git(&["branch", "--show-current"])?.trim().to_owned()
+    };
+    let detached = branch.is_empty() || (branch.len() >= 7 && branch.chars().all(|c| c.is_ascii_hexdigit()));
+    (!detached).then_some(branch)
+}
+
 fn import(args: &[String]) -> Result<ExitCode, String> {
     let log = PathBuf::from(value(args, "--log").ok_or(USAGE)?);
     let labels = PathBuf::from(value(args, "--labels").ok_or(USAGE)?);
     let out = PathBuf::from(value(args, "--out").ok_or(USAGE)?);
     let labels: reins_replay::anonymize::Labels = read_json(&labels)?;
     let text = std::fs::read_to_string(&log).map_err(|e| format!("{}: {e}", log.display()))?;
-    let cases = reins_replay::anonymize::import(&text, &labels)?;
+    let cases = reins_replay::anonymize::import_with(&text, &labels, &branch_at)?;
     let mut lines = String::new();
     for c in &cases {
         lines.push_str(&serde_json::to_string(c).map_err(|e| e.to_string())?);

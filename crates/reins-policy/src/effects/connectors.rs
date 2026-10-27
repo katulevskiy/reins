@@ -154,7 +154,11 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
             }]);
         }
         // Vault.
-        "vault_get" | "vault_item_view" | "vault_attachment_get" | "vault_generate_check_password" => {
+        "vault_get"
+        | "vault_item_view"
+        | "vault_attachment_get"
+        | "vault_generate_check_password"
+        | "vault_send_get" => {
             return full(vec![Effect::SecretOut {
                 secret: "a vault item".to_owned(),
                 destination: AGENT.to_owned(),
@@ -198,7 +202,7 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
                 Effect::GitPush {
                     repo: repo.clone(),
                     refname: base.map_or_else(|| "the pull request's base".to_owned(), |b| format!("refs/heads/{b}")),
-                    default_branch: Some(base.is_none_or(|b| super::git::is_default(b, None))),
+                    default_branch: base.map_or(Some(true), |b| super::git::default_of(b, None)),
                     rewrites: Some(false),
                     commits: 0,
                 },
@@ -214,7 +218,7 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
             return full(vec![Effect::GitRefDelete {
                 repo,
                 refname: format!("refs/heads/{branch}"),
-                default_branch: Some(super::git::is_default(branch, None)),
+                default_branch: super::git::default_of(branch, None),
             }]);
         }
         "github_branch_create"
@@ -232,7 +236,7 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
             return full(vec![Effect::GitPush {
                 repo,
                 refname: branch.map_or_else(|| "the default branch".to_owned(), |b| format!("refs/heads/{b}")),
-                default_branch: Some(branch.is_none_or(|b| super::git::is_default(b, None))),
+                default_branch: branch.map_or(Some(true), |b| super::git::default_of(b, None)),
                 rewrites: Some(false),
                 commits: 1,
             }]);
@@ -261,6 +265,17 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
                 }]);
             }
             return write("Creates a secret gist", false);
+        }
+        // A new repository is public unless it is asked private (GitHub's own default).
+        "github_repo_create" => {
+            // The connector reads `private` only: anything but `true` makes it public.
+            let private = args.get("private").and_then(Value::as_bool) == Some(true);
+            if !private {
+                return full(vec![Effect::Publish {
+                    target: format!("a public repository ({})", str_arg(args, "name").unwrap_or("new")),
+                }]);
+            }
+            return write("Creates a private repository", false);
         }
         "github_repo_delete"
         | "github_release_delete"
@@ -460,8 +475,31 @@ enum Known {
 #[must_use]
 pub fn analyze_mcp(server: &str, tool: &str, annotations: Option<&ToolAnnotations>) -> Analysis {
     let s = server.to_ascii_lowercase();
-    let t = tool.to_ascii_lowercase();
-    if let Some((_, _, known)) = KNOWN_SERVERS.iter().find(|(srv, frag, _)| s.contains(srv) && t.contains(frag)) {
+    // The tool's words (`delete_posted_message`, `getUser`): matched whole, never inside another word.
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for ch in tool.chars() {
+        if (!ch.is_ascii_alphanumeric() || (ch.is_ascii_uppercase() && prev_lower)) && !cur.is_empty() {
+            words.push(std::mem::take(&mut cur));
+        }
+        if ch.is_ascii_alphanumeric() {
+            cur.push(ch.to_ascii_lowercase());
+        }
+        prev_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    let has = |frag: &str| words.iter().any(|w| w == frag);
+    // A destructive verb wins over any other word in the name.
+    let destructive = ["delete", "remove", "drop", "destroy", "purge", "erase", "wipe", "trash", "clear", "revoke"];
+    let known = if KNOWN_SERVERS.iter().any(|(srv, ..)| s.contains(srv)) && destructive.iter().any(|d| has(d)) {
+        Some(Known::Lost)
+    } else {
+        KNOWN_SERVERS.iter().find(|(srv, frag, _)| s.contains(srv) && has(frag)).map(|(_, _, k)| *k)
+    };
+    if let Some(known) = known {
         let e = match known {
             Known::Read => Effect::DataRead {
                 service: server.to_owned(),
@@ -470,7 +508,7 @@ pub fn analyze_mcp(server: &str, tool: &str, annotations: Option<&ToolAnnotation
             Known::Write | Known::Lost => Effect::DataWrite {
                 service: server.to_owned(),
                 what: tool.to_owned(),
-                lost: *known == Known::Lost,
+                lost: known == Known::Lost,
             },
             Known::Message => Effect::Message {
                 channel: Channel::Other(server.to_owned()),
@@ -524,7 +562,8 @@ pub fn analyze_mcp(server: &str, tool: &str, annotations: Option<&ToolAnnotation
     } else {
         return unknown();
     };
-    full(vec![e])
+    // The server's own word for it, not read here.
+    Analysis::new(vec![e], Certainty::Partial, vec![format!("what the tool {tool} does (as its server describes it)")])
 }
 
 /// A file hook (an agent's read or edit tool): the files it reads or changes.
@@ -584,7 +623,8 @@ mod tests {
         assert_eq!(level("calendar_create_event", json!({"attendees": ["b@example.com"]})), Level::L2);
         assert_eq!(level("github_pr_create", json!({"repo": "dkat/reins", "head": "f", "base": "main"})), Level::L2);
         assert_eq!(level("github_pr_merge", json!({"repo": "dkat/reins", "number": 1})), Level::L2);
-        assert_eq!(level("github_branch_delete", json!({"repo": "dkat/reins", "branch": "feat/x"})), Level::L1);
+        // The default branch is not known here: any branch may be it.
+        assert_eq!(level("github_branch_delete", json!({"repo": "dkat/reins", "branch": "feat/x"})), Level::L3);
         assert_eq!(level("github_pr_list", json!({"repo": "dkat/reins"})), Level::L0);
         assert!(analyze_tool("github_repo_delete", &json!({"repo": "dkat/reins"})).needs_human());
         assert!(
@@ -608,7 +648,8 @@ mod tests {
             destructive: d,
             open_world: o,
         };
-        assert_eq!(analyze_mcp("x", "t", Some(&a(Some(true), None, None))).level, Level::L0);
+        // The server's word only: partly read, so at least L1 (01 §2.4).
+        assert_eq!(analyze_mcp("x", "t", Some(&a(Some(true), None, None))).level, Level::L1);
         assert_eq!(analyze_mcp("x", "t", Some(&a(Some(false), Some(true), None))).level, Level::L3);
         assert_eq!(analyze_mcp("x", "t", Some(&a(Some(false), Some(false), Some(true)))).level, Level::L2);
         assert_eq!(analyze_mcp("x", "t", Some(&a(Some(false), Some(false), Some(false)))).level, Level::L1);

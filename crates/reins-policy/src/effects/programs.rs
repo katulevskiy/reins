@@ -79,6 +79,67 @@ const READERS: &[&str] = &[
     "llvm-nm",
 ];
 
+/// A reader's options that take a value as the next word.
+fn reader_values(p: &str) -> &'static [&'static str] {
+    match p {
+        "head" | "tail" => {
+            &["-n", "-c", "--lines", "--bytes", "-s", "--sleep-interval", "--pid", "--max-unchanged-stats"]
+        }
+        "sort" => &[
+            "-k",
+            "-t",
+            "-o",
+            "-S",
+            "-T",
+            "--key",
+            "--field-separator",
+            "--output",
+            "--buffer-size",
+            "--temporary-directory",
+            "--parallel",
+            "--batch-size",
+            "--compress-program",
+            "--random-source",
+        ],
+        "uniq" => &["-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"],
+        "cut" => &["-b", "-c", "-d", "-f", "--bytes", "--characters", "--delimiter", "--fields", "--output-delimiter"],
+        "paste" => &["-d", "--delimiters"],
+        "nl" => &["-b", "-d", "-f", "-h", "-i", "-l", "-n", "-s", "-v", "-w"],
+        "fold" | "fmt" => &["-w", "--width", "-p", "--prefix", "-g", "--goal"],
+        "column" => &["-s", "-c", "-o", "-N", "-R", "-W", "-H", "-E", "-d", "-l", "-r"],
+        "join" => &["-t", "-1", "-2", "-j", "-o", "-a", "-v", "-e"],
+        "diff" => &["-I", "-F", "-L", "-U", "-C", "-D", "-x", "-X", "-S", "--label", "--exclude", "--exclude-from"],
+        "cmp" => &["-i", "-n", "--bytes", "--ignore-initial"],
+        "file" => &["-m", "-f", "-F", "-e", "-P", "--magic-file", "--files-from", "--separator", "--exclude"],
+        "stat" => &["-c", "--format", "--printf"],
+        "du" => &["-d", "--max-depth", "-B", "--block-size", "-t", "--threshold", "--exclude", "-X", "--time-style"],
+        "tree" => &["-L", "-P", "-I", "-o", "--filelimit", "--charset", "-H", "-T"],
+        "bat" => &[
+            "-l",
+            "--language",
+            "-H",
+            "--highlight-line",
+            "-r",
+            "--line-range",
+            "--style",
+            "--theme",
+            "--tabs",
+            "-m",
+            "--map-syntax",
+            "--wrap",
+        ],
+        "less" => &["-b", "-h", "-j", "-k", "-o", "-O", "-p", "-P", "-t", "-T", "-x", "-y", "-z"],
+        "more" => &["-n"],
+        "xxd" => &["-c", "-g", "-l", "-o", "-s", "-C"],
+        "hexdump" | "od" => &["-n", "-s", "-e", "-f", "-j", "-N", "-A", "-t", "-w"],
+        "strings" => &["-n", "-t", "-e", "--bytes", "--radix", "--encoding"],
+        "iconv" => &["-f", "-t", "-o", "--from-code", "--to-code", "--output"],
+        "expand" | "unexpand" => &["-t", "--tabs"],
+        "look" => &["-t"],
+        _ => &[],
+    }
+}
+
 /// Programs whose first argument is a pattern or a program text, the rest files they read.
 const PATTERN_READERS: &[&str] =
     &["grep", "egrep", "fgrep", "rg", "ag", "ack", "zgrep", "jq", "yq", "gojq", "awk", "gawk", "mawk"];
@@ -102,7 +163,6 @@ const HARMLESS: &[&str] = &[
     "return",
     "break",
     "continue",
-    "unset",
     "unalias",
     "hash",
     "type",
@@ -172,7 +232,6 @@ const HARMLESS: &[&str] = &[
     "pstree",
     "getent",
     "dirs",
-    "popd",
     "let",
     "caller",
     "complete",
@@ -397,12 +456,12 @@ pub fn url_host(text: &str) -> Option<String> {
 #[allow(clippy::too_many_lines, reason = "one arm per program family")]
 #[allow(clippy::similar_names, reason = "the program's `args` and inline code's `argv`")]
 #[allow(clippy::many_single_char_names, reason = "w(alk), p(rogram), k, f, t as in every arm")]
-pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) -> Input {
+pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
     let program = program_name(&words[0].text);
     let lower = program.to_ascii_lowercase();
     let args = &words[1..];
     let runs_from_path = words[0].text.contains('/');
-    if let Some(out) = special(w, &lower, args, &input) {
+    if let Some(out) = special(w, &lower, args) {
         return out;
     }
     // Programs whose options are closed: any option this model doesn't know makes the request unreadable. Wrappers'
@@ -422,7 +481,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             let at =
                 after_options(args, "ugChpUrtDR", &["user", "group", "host", "prompt", "chdir", "role", "type"], 0);
             if at < args.len() {
-                return run(w, &args[at..], input, piped);
+                return run(w, &args[at..], input);
             }
             Input::None
         }
@@ -441,8 +500,24 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 }
             }
             if at < args.len() {
-                return run(w, &args[at..], input, piped);
+                return run(w, &args[at..], input);
             }
+            // Printed: the environment holds tokens.
+            secret_to_agent(w, "the environment");
+            Input::Opaque("the environment".to_owned())
+        }
+        "printenv" => {
+            let names: Vec<&Exp> = args.iter().filter(|a| !a.text.starts_with('-')).collect();
+            if names.is_empty() || names.iter().any(|n| !n.known() || secret_name(&n.text)) {
+                secret_to_agent(w, "the environment");
+            }
+            Input::Opaque("the environment".to_owned())
+        }
+        "set" | "export" | "declare" | "typeset"
+            if args.is_empty()
+                || (lower != "set" && args.iter().all(|a| matches!(a.text.as_str(), "-p" | "-x" | "-px"))) =>
+        {
+            secret_to_agent(w, "the shell's variables");
             Input::Opaque("the environment".to_owned())
         }
         "nice" | "nohup" | "time" | "command" | "builtin" | "exec" | "setsid" | "stdbuf" | "ionice" | "chrt"
@@ -463,7 +538,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 0,
             );
             if at < args.len() {
-                return run(w, &args[at..], input, piped);
+                return run(w, &args[at..], input);
             }
             Input::None
         }
@@ -475,7 +550,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             };
             let at = after_options(args, "skc", &["signal", "kill-after"], ops);
             if at < args.len() {
-                return run(w, &args[at..], input, piped);
+                return run(w, &args[at..], input);
             }
             Input::None
         }
@@ -493,7 +568,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             }
             let at = after_options(args, "wE", &["wait", "timeout", "conflict-exit-code"], 1);
             if at < args.len() {
-                return run(w, &args[at..], input, piped);
+                return run(w, &args[at..], input);
             }
             Input::None
         }
@@ -510,10 +585,16 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 vec![Exp::lit("echo")]
             };
             match &input {
-                Input::Text(t) => cmd.extend(t.split_whitespace().take(64).map(Exp::lit)),
+                Input::Text(t) => {
+                    let words: Vec<&str> = t.split_whitespace().collect();
+                    if words.len() > 64 {
+                        w.lower(Certainty::None, "more words on xargs's input than Reins reads");
+                    }
+                    cmd.extend(words.into_iter().take(64).map(Exp::lit));
+                }
                 _ => cmd.push(super::shell::unknown("the words xargs reads from its input".to_owned())),
             }
-            run(w, &cmd, Input::None, piped)
+            run(w, &cmd, Input::None)
         }
         "infisical" | "op" | "doppler" | "dotenv" | "dotenvx" | "chamber" | "aws-vault" | "teller" | "sops"
         | "berglas" => {
@@ -530,7 +611,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                     local_only: true,
                 });
                 if let Some(k) = args.iter().position(|a| a.text == "--") {
-                    return run(w, &args[k + 1..], input, piped);
+                    return run(w, &args[k + 1..], input);
                 }
                 return Input::None;
             }
@@ -557,7 +638,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 },
             });
             if start < args.len() {
-                return run(w, &args[start..], input, piped);
+                return run(w, &args[start..], input);
             }
             w.lower(Certainty::None, format!("what {lower} runs"));
             Input::None
@@ -710,17 +791,63 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::None
         }
         "cd" | "pushd" => {
+            let before = w.cwd.clone();
             let target = args.iter().find(|a| !a.text.starts_with('-') || a.text == "-");
             match target {
-                Some(t) if t.text == "-" => w.cwd.clear(),
+                // `cd -`: back to the folder before; `pushd` with no folder swaps the top two.
+                Some(t) if t.text == "-" => w.cwd = std::mem::take(&mut w.oldpwd),
+                Some(t) if t.text.starts_with('+') && lower == "pushd" => w.cwd.clear(),
                 Some(t) if t.known() => {
-                    w.cwd = super::workspace::normalize(&t.text, &w.cwd.clone(), &w.ctx.workspace.home);
+                    w.cwd = super::workspace::normalize(&t.text, &before, &w.ctx.workspace.home);
                 }
                 Some(t) => {
                     w.note(t);
                     w.cwd.clear();
                 }
+                None if lower == "pushd" => match w.dirs.pop() {
+                    Some(top) => {
+                        w.dirs.push(before.clone());
+                        w.cwd = top;
+                    }
+                    None => w.cwd.clear(),
+                },
                 None => w.cwd.clone_from(&w.ctx.workspace.home),
+            }
+            if lower == "pushd" && target.is_some() {
+                w.dirs.push(before.clone());
+            }
+            w.oldpwd = before;
+            Input::None
+        }
+        "popd" => {
+            let before = w.cwd.clone();
+            if args.iter().any(|a| a.text != "-n") {
+                // `popd +N`, `popd -N`: a folder further down the stack.
+                w.cwd.clear();
+                w.dirs.clear();
+            } else if args.iter().any(|a| a.text == "-n") {
+                w.dirs.pop();
+            } else {
+                // An empty stack: popd fails and the folder stays; a stack not known: neither is the folder.
+                w.cwd = w.dirs.pop().unwrap_or_else(|| {
+                    if w.dirs_known {
+                        before.clone()
+                    } else {
+                        String::new()
+                    }
+                });
+            }
+            w.oldpwd = before;
+            Input::None
+        }
+        "unset" => {
+            let functions = args.iter().any(|a| a.text == "-f");
+            for a in args.iter().filter(|a| !a.text.starts_with('-')) {
+                if !a.known() {
+                    w.lower(Certainty::Partial, "a variable unset by a name not known");
+                } else if !functions {
+                    w.unset(&a.text);
+                }
             }
             Input::None
         }
@@ -759,7 +886,17 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 .into_iter()
                 .filter(|a| !(lower == "gio" && matches!(a.text.as_str(), "trash" | "remove")))
                 .collect();
-            let paths: Vec<_> = targets.iter().map(|t| w.path(t)).collect();
+            let paths: Vec<_> = targets
+                .iter()
+                .map(|t| {
+                    let mut p = w.path(t);
+                    // A worktree's root (`rm -rf .` there): its history goes with it.
+                    if recursive && w.ctx.workspace.holds_worktree(&p.path) {
+                        p.recoverable = false;
+                    }
+                    p
+                })
+                .collect();
             if !paths.is_empty() {
                 w.effect(Effect::FileDelete {
                     paths,
@@ -785,12 +922,22 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 &["--reference"]
             };
             let mut targets = positional(args, value_opts);
-            if lower != "truncate" && !targets.is_empty() {
+            // `chmod -x f`: the mode is the dash word, and every positional word is a file.
+            let dash_mode = lower == "chmod"
+                && args.iter().any(|a| {
+                    a.text.len() > 1 && a.text.starts_with('-') && a.text[1..].chars().all(|c| "rwxXst".contains(c))
+                });
+            if lower != "truncate" && !dash_mode && !targets.is_empty() {
                 targets.remove(0);
             }
             for t in targets {
                 let p = w.path(t);
-                w.write(p);
+                if lower == "truncate" {
+                    w.write(p);
+                } else {
+                    // A mode or owner change leaves what the file says as it was.
+                    w.write_keeping_content(p);
+                }
             }
             Input::None
         }
@@ -1009,7 +1156,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             }
             Input::Opaque("sed".to_owned())
         }
-        "find" | "gfind" => find(w, args, piped),
+        "find" | "gfind" => find(w, args),
         "tar" | "bsdtar" | "gtar" => {
             let operation =
                 args.iter().take(1).any(|a| !a.text.starts_with('-') && a.text.chars().any(|c| "cxtruAd".contains(c)))
@@ -1215,7 +1362,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         "gh" => super::git::shell_gh(w, args),
 
         // ---- network
-        "curl" | "wget" | "http" | "https" | "xh" | "httpie" | "aria2c" => network(w, &lower, args, piped),
+        "curl" | "wget" | "http" | "https" | "xh" | "httpie" | "aria2c" => network(w, &lower, args),
         "ssh" | "mosh" | "autossh" => ssh(w, args, input),
         "nc" | "ncat" | "netcat" | "telnet" | "websocat" | "openssl"
             if lower != "openssl" || args.first().is_some_and(|a| a.text == "s_client") =>
@@ -1409,7 +1556,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                     target: format!("a {lower} package or release"),
                 });
             } else {
-                toolchain(w, &lower, args, runs_from_path);
+                toolchain(w, &lower, args);
             }
             Input::Opaque(lower)
         }
@@ -1622,13 +1769,21 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::Opaque(p.to_owned())
         }
         p if READERS.contains(&p) => {
-            for f in positional(
-                args,
-                &["-n", "-c", "-k", "-t", "-d", "-f", "-s", "-w", "-L", "-I", "-o", "--max-depth", "-l"],
-            ) {
+            let values = reader_values(p);
+            let read = positional(args, values);
+            for f in &read {
                 w.read_file(f);
             }
-            if p == "sort"
+            // Whatever else names a secret is read as one (the floor holds whatever the options are).
+            for a in args {
+                if !read.iter().any(|r| std::ptr::eq(*r, a)) && !a.text.starts_with('-') && a.known() {
+                    let kind = file_kind(&w.path(a).path);
+                    if matches!(kind, FileKind::Secret(_)) {
+                        w.read_file(a);
+                    }
+                }
+            }
+            if (p == "sort" || p == "iconv")
                 && let Some(o) = opt_value(args, &["-o", "--output"])
             {
                 let path = w.path(o);
@@ -1653,7 +1808,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             output(p, args)
         }
         p if TOOLCHAIN.contains(&p) => {
-            toolchain(w, p, args, runs_from_path);
+            toolchain(w, p, args);
             Input::Opaque(p.to_owned())
         }
         _ => {
@@ -1776,8 +1931,7 @@ fn known_options(w: &mut Walk<'_>, program: &str, args: &[Exp], flags: &str, val
 /// The few programs outside the file, git, network and build families that the recorded history needs, each closed:
 /// the forms it recognizes, and certainty `None` for anything else. `None`: not one of these.
 #[allow(clippy::too_many_lines, reason = "one arm per program")]
-fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Option<Input> {
-    let _ = input;
+fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
     let words: Vec<&str> = args.iter().filter(|a| !a.text.starts_with('-')).map(|a| a.text.as_str()).collect();
     let first = words.first().copied().unwrap_or_default();
     match program {
@@ -2833,6 +2987,14 @@ fn unknown_program(w: &mut Walk<'_>, program: &str) {
 }
 
 /// A secret printed into the agent's context (08 R4: a secret read).
+/// A variable name that holds a credential by convention.
+fn secret_name(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["TOKEN", "SECRET", "KEY", "PASSWORD", "PASSWD", "PASS", "CREDENTIAL", "AUTH", "COOKIE", "SESSION", "PRIVATE"]
+        .iter()
+        .any(|w| n.contains(w))
+}
+
 fn secret_to_agent(w: &mut Walk<'_>, what: &str) {
     w.effect(Effect::FileRead {
         path: super::model::PathRef {
@@ -2845,8 +3007,10 @@ fn secret_to_agent(w: &mut Walk<'_>, what: &str) {
 }
 
 /// A developer tool: its own run (L0), the files it writes with `-o`, and the secret files it uses locally.
-fn toolchain(w: &mut Walk<'_>, program: &str, args: &[Exp], from_path: bool) {
-    let _ = from_path;
+fn toolchain(w: &mut Walk<'_>, program: &str, args: &[Exp]) {
+    if toolchain_runs(w, program, args) {
+        return;
+    }
     // A build system's publishing targets (`make deploy`, `just publish`, `flutter pub publish`, `dotnet nuget push`).
     let words: Vec<&str> = args.iter().filter(|a| !a.text.starts_with('-')).map(|a| a.text.as_str()).collect();
     if let Some(target) = words.iter().find(|x| {
@@ -2886,12 +3050,145 @@ fn toolchain(w: &mut Walk<'_>, program: &str, args: &[Exp], from_path: bool) {
     }
 }
 
+/// A developer tool's entries that run other code: the code is read as what it is. True when handled here.
+fn toolchain_runs(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> bool {
+    // A file of the tool's own commands: the project's is the project's code; any other is not read.
+    let outside = |w: &mut Walk<'_>, file: Option<Exp>, what: &str| {
+        if let Some(f) = file {
+            let p = w.path(&f);
+            if !f.known() || !p.area.in_workspace() {
+                w.lower(Certainty::None, format!("{what} {}", p.path));
+            }
+        }
+    };
+    let attached = |names: &[&str], short: &str| -> Option<Exp> {
+        args.iter().enumerate().find_map(|(k, a)| {
+            if names.contains(&a.text.as_str()) || a.text == short {
+                args.get(k + 1).cloned()
+            } else {
+                names
+                    .iter()
+                    .find_map(|n| a.text.strip_prefix(n).and_then(|r| r.strip_prefix('=')))
+                    .or_else(|| a.text.strip_prefix(short).filter(|r| !r.is_empty() && !short.is_empty()))
+                    .map(|r| Exp {
+                        text: r.to_owned(),
+                        ..a.clone()
+                    })
+            }
+        })
+    };
+    match program {
+        // `xcrun [-sdk S] tool …`: the tool runs.
+        "xcrun" => {
+            if args.iter().any(|a| {
+                matches!(a.text.as_str(), "-f" | "--find" | "-l" | "--log" | "-k" | "--kill-cache")
+                    || a.text.starts_with("--show-sdk")
+            }) {
+                return false;
+            }
+            let mut at = 0;
+            while let Some(a) = args.get(at) {
+                match a.text.as_str() {
+                    "-sdk" | "--sdk" | "-toolchain" | "--toolchain" => at += 2,
+                    t if t.starts_with('-') => at += 1,
+                    _ => break,
+                }
+            }
+            if at < args.len() {
+                let _out: Input = run(w, &args[at..], Input::None);
+                return true;
+            }
+            false
+        }
+        // `rustup run TOOLCHAIN cmd …`
+        "rustup" => {
+            let words: Vec<&Exp> = args.iter().filter(|a| !a.text.starts_with('-')).collect();
+            if words.first().is_some_and(|a| a.text == "run")
+                && let Some(at) = args.iter().position(|a| std::ptr::eq(a, words[0]))
+                && at + 2 < args.len()
+            {
+                let _out: Input = run(w, &args[at + 2..], Input::None);
+                return true;
+            }
+            false
+        }
+        // `cmake -E cmd …` is a small shell; `cmake -P file` runs a script.
+        "cmake" => {
+            if let Some(k) = args.iter().position(|a| a.text == "-E") {
+                let rest = &args[k + 1..];
+                let mapped: Option<Vec<Exp>> = rest.first().and_then(|c| {
+                    let tail = rest[1..].iter().cloned();
+                    let head: &[&str] = match c.text.as_str() {
+                        "rm" => &["rm"],
+                        "remove" => &["rm", "-f"],
+                        "remove_directory" => &["rm", "-rf"],
+                        "copy" | "copy_if_different" => &["cp"],
+                        "copy_directory" | "copy_directory_if_different" => &["cp", "-r"],
+                        "rename" => &["mv"],
+                        "make_directory" => &["mkdir", "-p"],
+                        "touch" | "touch_nocreate" => &["touch"],
+                        "echo" | "echo_append" => &["echo"],
+                        "cat" => &["cat"],
+                        "sha256sum" | "sha1sum" | "md5sum" | "sha512sum" => &["sha256sum"],
+                        "compare_files" => &["cmp"],
+                        "capabilities" | "environment" | "true" | "false" | "sleep" => &["true"],
+                        _ => return None,
+                    };
+                    Some(head.iter().map(|h| Exp::lit(h)).chain(tail).collect())
+                });
+                match mapped {
+                    Some(words) => {
+                        let _out: Input = run(w, &words, Input::None);
+                    }
+                    None => w.lower(Certainty::None, "a cmake -E command"),
+                }
+                return true;
+            }
+            if args.iter().any(|a| a.text == "-P" || (a.text.starts_with("-P") && a.text.len() > 2)) {
+                w.effect(Effect::Exec {
+                    program: "a cmake script".to_owned(),
+                    source: CodeSource::Unknown,
+                });
+                w.lower(Certainty::None, "a cmake script");
+                return true;
+            }
+            false
+        }
+        "just" => {
+            outside(w, attached(&["--justfile"], "-f"), "a justfile");
+            outside(w, attached(&["--working-directory"], "-d"), "a just folder");
+            false
+        }
+        "make" | "gmake" => {
+            outside(w, attached(&["--file", "--makefile"], "-f"), "a makefile");
+            outside(w, attached(&["--directory"], "-C"), "a make folder");
+            false
+        }
+        // `mvn exec:exec`/`exec:java` run what their properties name.
+        "mvn" => {
+            if args.iter().any(|a| a.text.starts_with("exec:") || a.text.contains(":exec-maven-plugin:")) {
+                w.effect(Effect::Exec {
+                    program: "a program maven runs".to_owned(),
+                    source: CodeSource::Unknown,
+                });
+                w.lower(Certainty::None, "what mvn exec runs");
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Runs a script file: one the line wrote (read exactly), the project's own (its entry points: L0), or unknown.
 fn run_file(w: &mut Walk<'_>, file: &Exp, args: &[Exp], lang: Lang) {
     let path = w.path(file);
     let written = w.files.get(&path.path).cloned();
     match written {
         Some(Some(text)) => {
+            if w.maybe_unwritten.contains(&path.path) {
+                w.lower(Certainty::Partial, format!("what {} held if this line did not write it", path.path));
+            }
             let lang = match lang {
                 Lang::Shell => inline::lang_of_script(&path.path, &text),
                 l => l,
@@ -2912,8 +3209,10 @@ fn run_file(w: &mut Walk<'_>, file: &Exp, args: &[Exp], lang: Lang) {
         None if path.area.in_workspace() => {
             let name = path.path.rsplit('/').next().unwrap_or(&path.path).to_owned();
             if TOOLCHAIN.contains(&name.as_str()) {
-                toolchain(w, &name, args, true);
+                toolchain(w, &name, args);
             } else {
+                // The project's own script: what it does is not read here (01 §2.4).
+                w.lower(Certainty::Partial, format!("what the project's {name} does"));
                 w.effect(Effect::Exec {
                     program: name,
                     source: CodeSource::Workspace,
@@ -2928,7 +3227,7 @@ fn run_file(w: &mut Walk<'_>, file: &Exp, args: &[Exp], lang: Lang) {
             {
                 let mut words = vec![Exp::lit(&name)];
                 words.extend(args.iter().cloned());
-                let _out: Input = run(w, &words, Input::None, false);
+                let _out: Input = run(w, &words, Input::None);
             } else {
                 unknown_program(w, &path.path);
             }
@@ -3045,7 +3344,19 @@ fn copy_like(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Input {
         _ => &["-t", "--target-directory", "-S", "--suffix"],
     };
     let mut pos = positional(args, value_opts);
-    let explicit = opt_value(args, &["-t", "--target-directory"]).cloned();
+    let explicit = opt_value(args, &["-t", "--target-directory"]).cloned().or_else(|| {
+        args.iter().find_map(|a| {
+            a.text
+                .strip_prefix("--target-directory=")
+                .or_else(|| {
+                    a.text.strip_prefix("-t").filter(|r| !r.is_empty() && program != "rsync" && program != "scp")
+                })
+                .map(|r| Exp {
+                    text: r.to_owned(),
+                    ..a.clone()
+                })
+        })
+    });
     if program == "install" && short(args, 'd') {
         for p in pos {
             let path = w.path(p);
@@ -3227,8 +3538,7 @@ const FIND_WORDS: &[(&str, usize)] = &[
     ("-fls", 1),
 ];
 
-fn find(w: &mut Walk<'_>, args: &[Exp], piped: bool) -> Input {
-    let _ = piped;
+fn find(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     let mut k = 0;
     while k < args.len() {
         let t = args[k].text.as_str();
@@ -3288,7 +3598,7 @@ fn find(w: &mut Walk<'_>, args: &[Exp], piped: bool) -> Input {
                         })
                         .collect();
                     if !cmd.is_empty() {
-                        let _out: Input = run(w, &cmd, Input::None, false);
+                        let _out: Input = run(w, &cmd, Input::None);
                     }
                 }
                 k = end;
@@ -3415,8 +3725,7 @@ const CURL_LONG: &[&str] = &[
     "trust-server-names",
 ];
 
-fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input {
-    let _ = piped;
+fn network(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Input {
     let (flags, values) = if program == "wget" {
         ("qvcrNkpmSnbi46xEKF", "OoaPtTUdlA")
     } else {
@@ -3522,7 +3831,13 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
                 let file = v
                     .strip_prefix('@')
                     .or_else(|| v.split_once("=@").map(|(_, f)| f))
-                    .or_else(|| v.split_once("=<").map(|(_, f)| f));
+                    .or_else(|| v.split_once("=<").map(|(_, f)| f))
+                    // `--data-urlencode name@file`
+                    .or_else(|| {
+                        v.split_once('@')
+                            .filter(|(name, _)| t.starts_with("--data-urlencode") && !name.contains('='))
+                            .map(|(_, f)| f)
+                    });
                 if let Some(f) = file.filter(|f| !f.is_empty() && *f != "-") {
                     uploads.push(Exp::lit(f.split(';').next().unwrap_or(f)));
                 }
@@ -3542,11 +3857,34 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
         {
             write = true;
         }
-        if matches!(t, "-o" | "--output" | "-O" | "--output-document")
-            && let Some(v) = value.filter(|v| v.text != "-" && !v.text.starts_with('-'))
-        {
-            let p = w.path(v);
+        // The file it writes: `-o F`, `-oF`, `--output=F` (wget: `-O`, `--output-document`).
+        let output_flags: &[&str] = if program == "wget" {
+            &["-O", "--output-document", "-o", "--output-file", "-a", "--append-output"]
+        } else {
+            &["-o", "--output"]
+        };
+        let output = if output_flags.contains(&t) {
+            value.cloned()
+        } else {
+            output_flags.iter().find_map(|f| {
+                let rest = if f.starts_with("--") {
+                    t.strip_prefix(f).and_then(|r| r.strip_prefix('='))
+                } else {
+                    t.strip_prefix(f).filter(|r| !r.is_empty())
+                };
+                rest.map(|r| Exp {
+                    text: r.to_owned(),
+                    ..args[k].clone()
+                })
+            })
+        };
+        if let Some(v) = output.filter(|v| v.text != "-" && !v.text.starts_with('-')) {
+            let p = w.path(&v);
             w.write(p);
+        }
+        // A configuration file: its options are not read.
+        if matches!(t, "-K" | "--config") || t.starts_with("--config=") || (t.starts_with("-K") && program != "wget") {
+            w.lower(Certainty::None, format!("the options in {program}'s configuration file"));
         }
         if matches!(t, "-H" | "--header" | "-u" | "--user" | "-b" | "--cookie" | "--oauth2-bearer")
             && let Some(v) = value
@@ -3576,10 +3914,26 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
     }
     if program == "wget"
         && !has(args, "-O")
-        && !has(args, "-qO-")
-        && !args.iter().any(|a| a.text == "-O-" || a.text == "--output-document=-")
+        && !args.iter().any(|a| {
+            (a.text.starts_with("-O") && a.text.len() > 2)
+                || a.text.starts_with("--output-document=")
+                || (a.text.starts_with('-') && !a.text.starts_with("--") && a.text.ends_with("O-"))
+        })
     {
-        let dir = opt_value(args, &["-P", "--directory-prefix"]).cloned().unwrap_or_else(|| Exp::lit("."));
+        let dir = opt_value(args, &["-P", "--directory-prefix"])
+            .cloned()
+            .or_else(|| {
+                args.iter().find_map(|a| {
+                    a.text
+                        .strip_prefix("--directory-prefix=")
+                        .or_else(|| a.text.strip_prefix("-P").filter(|r| !r.is_empty()))
+                        .map(|r| Exp {
+                            text: r.to_owned(),
+                            ..a.clone()
+                        })
+                })
+            })
+            .unwrap_or_else(|| Exp::lit("."));
         let p = w.path(&dir);
         w.write(p);
     }
@@ -3724,7 +4078,7 @@ fn reins(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 destination: "a local program".to_owned(),
             });
             if let Some(k) = args.iter().position(|a| a.text == "--") {
-                let _out: Input = run(w, &args[k + 1..], Input::None, false);
+                let _out: Input = run(w, &args[k + 1..], Input::None);
             }
         }
         // A question for the owner, and Reins's own status.

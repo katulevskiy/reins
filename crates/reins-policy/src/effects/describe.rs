@@ -1,6 +1,7 @@
 //! Effects in plain words, one line each: what a person reads in Activity, never the raw command.
 
-use super::model::{Area, Channel, CodeSource, Effect, FileKind, InfraChange, NetMethod, PathRef};
+use super::level::{level_of, path_level};
+use super::model::{Area, Channel, CodeSource, Effect, FileKind, InfraChange, Level, NetMethod, PathRef};
 
 fn area_words(area: &Area) -> String {
     match area {
@@ -59,12 +60,15 @@ fn examples(paths: &[&PathRef]) -> String {
 /// Lines for `effects`, at most `max` (the last says how many more).
 #[must_use]
 pub fn lines(effects: &[Effect], max: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut push = |line: String| {
-        if !out.contains(&line) {
-            out.push(line);
+    // Each line with its level: the worst come first.
+    let mut out: Vec<(Level, String)> = Vec::new();
+    let mut push = |level: Level, line: String| {
+        if !out.iter().any(|(_, l)| *l == line) {
+            out.push((level, line));
         }
     };
+    let worst =
+        |paths: &[&PathRef], delete: bool| paths.iter().map(|p| path_level(p, delete)).max().unwrap_or(Level::L0);
     // Files: one line per (verb, area).
     let reads: Vec<&PathRef> = effects
         .iter()
@@ -97,7 +101,10 @@ pub fn lines(effects: &[Effect], max: usize) -> Vec<String> {
         .flatten()
         .collect();
     for (area, paths) in by_area(deletes) {
-        push(format!("Deletes {} in {} ({})", plural(paths.len(), "path"), area_words(&area), examples(&paths)));
+        push(
+            worst(&paths, true),
+            format!("Deletes {} in {} ({})", plural(paths.len(), "path"), area_words(&area), examples(&paths)),
+        );
     }
     for e in effects {
         if let Effect::FileRead {
@@ -110,11 +117,14 @@ pub fn lines(effects: &[Effect], max: usize) -> Vec<String> {
             } else {
                 "a secret"
             };
-            push(format!("Reads {what}: {}", short(&path.path)));
+            push(level_of(e), format!("Reads {what}: {}", short(&path.path)));
         }
     }
     for (area, paths) in by_area(writes) {
-        push(format!("Writes {} in {} ({})", plural(paths.len(), "file"), area_words(&area), examples(&paths)));
+        push(
+            worst(&paths, false),
+            format!("Writes {} in {} ({})", plural(paths.len(), "file"), area_words(&area), examples(&paths)),
+        );
     }
     for e in effects {
         let line = match e {
@@ -162,10 +172,10 @@ pub fn lines(effects: &[Effect], max: usize) -> Vec<String> {
                 refname,
                 default_branch,
             } => {
-                let whose = if default_branch.unwrap_or(false) {
-                    " (the default branch)"
-                } else {
-                    ""
+                let whose = match default_branch {
+                    Some(true) => " (the default branch)",
+                    None => " (maybe the default branch)",
+                    Some(false) => "",
                 };
                 let repo = if repo.is_empty() {
                     String::new()
@@ -271,20 +281,25 @@ pub fn lines(effects: &[Effect], max: usize) -> Vec<String> {
                 reason,
             } => format!("Couldn't tell: {reason}"),
         };
-        push(line);
+        push(level_of(e), line);
     }
     if !reads.is_empty() {
         let groups = by_area(reads);
         let n: usize = groups.iter().map(|(_, v)| v.len()).sum();
         let outside: Vec<&(Area, Vec<&PathRef>)> = groups.iter().filter(|(a, _)| !a.in_workspace()).collect();
         if outside.is_empty() {
-            push(format!("Reads {} in your projects", plural(n, "file")));
+            push(Level::L0, format!("Reads {} in your projects", plural(n, "file")));
         } else {
             for (area, paths) in outside {
-                push(format!("Reads {} in {} ({})", plural(paths.len(), "file"), area_words(area), examples(paths)));
+                push(
+                    Level::L0,
+                    format!("Reads {} in {} ({})", plural(paths.len(), "file"), area_words(area), examples(paths)),
+                );
             }
         }
     }
+    out.sort_by_key(|(level, _)| std::cmp::Reverse(*level));
+    let mut out: Vec<String> = out.into_iter().map(|(_, l)| l).collect();
     if out.len() > max {
         let more = out.len() - (max - 1);
         out.truncate(max - 1);

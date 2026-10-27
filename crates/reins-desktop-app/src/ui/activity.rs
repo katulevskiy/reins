@@ -1003,7 +1003,8 @@ mod tests {
         );
         let s = reins_policy::effects::analyze_command("rm -rf target/a target/b && rm -rf \"$X\"", &ctx).summary();
         let text = effects_text(&s);
-        assert!(text.starts_with("What it does · Recoverable · partly read"), "{text}");
+        // A delete of a place not known may take anything: it can't be undone.
+        assert!(text.starts_with("What it does · Can't be undone · partly read"), "{text}");
         assert!(text.contains("Deletes 2 paths in build output"), "{text}");
         assert!(text.contains("Couldn't read the value of $X"), "{text}");
     }

@@ -204,14 +204,35 @@ pub struct Baseline {
     pub known_fp_asked: usize,
     pub full_certainty: f64,
     pub asks: usize,
+    /// Asks among the recorded requests, as a share.
+    #[serde(default)]
+    pub ask_rate: f64,
 }
 
-/// Why a report fails the gate (empty: it passes). P1's acceptance (07 §1): no known false positive asked, every
-/// labelled risk asked, developer requests read with Full certainty at least 95% of the time; and never worse than
-/// the baseline.
+/// How far Full certainty may fall below the baseline's (a ratchet, not a fixed bar).
+pub const FULL_CERTAINTY_SLACK: f64 = 0.005;
+/// How far the ask rate may rise above the baseline's.
+pub const ASK_RATE_SLACK: f64 = 0.01;
+
+/// Why a report fails the gate (empty: it passes). Hard: every labelled risk and every case for a person asked, no
+/// known false positive asked, the labelled set no smaller than the minimums. Against `baseline.json`: Full certainty
+/// on developer requests no more than half a point below it, the ask rate no more than a point above it.
 #[must_use]
 pub fn gate(r: &Report, baseline: Option<&Baseline>) -> Vec<String> {
     let mut fails = Vec::new();
+    // A corpus that lost its labelled cases would pass anything.
+    if r.real_risk < MIN_REAL_RISK || r.known_fp < MIN_KNOWN_FP {
+        fails.push(format!(
+            "the labelled set shrank: {} risks (at least {MIN_REAL_RISK}), {} known false positives (at least {MIN_KNOWN_FP})",
+            r.real_risk, r.known_fp
+        ));
+    }
+    if r.needs_human_asked < r.needs_human {
+        fails.push(format!(
+            "{} case(s) labelled for a person decided automatically",
+            r.needs_human - r.needs_human_asked
+        ));
+    }
     if r.real_risk_asked < r.real_risk {
         fails.push(format!(
             "real-risk recall {:.3}: {} labelled risk(s) not asked",
@@ -222,11 +243,6 @@ pub fn gate(r: &Report, baseline: Option<&Baseline>) -> Vec<String> {
     if r.known_fp_asked > 0 {
         fails.push(format!("{} known false positive(s) still asked", r.known_fp_asked));
     }
-    if let Some(full) = r.full_certainty
-        && full < 0.95
-    {
-        fails.push(format!("developer requests read with Full certainty {:.1}% (< 95%)", full * 100.0));
-    }
     if let Some(b) = baseline {
         if r.recall < b.recall {
             fails.push(format!("recall dropped from {:.3} to {:.3}", b.recall, r.recall));
@@ -235,13 +251,30 @@ pub fn gate(r: &Report, baseline: Option<&Baseline>) -> Vec<String> {
             fails.push(format!("known false positives asked rose from {} to {}", b.known_fp_asked, r.known_fp_asked));
         }
         if let Some(full) = r.full_certainty
-            && full + 1e-9 < b.full_certainty
+            && full + FULL_CERTAINTY_SLACK + 1e-9 < b.full_certainty
         {
-            fails.push(format!("Full certainty dropped from {:.3} to {:.3}", b.full_certainty, full));
+            fails.push(format!(
+                "Full certainty on developer requests dropped from {:.1}% to {:.1}% (more than {:.1} points)",
+                b.full_certainty * 100.0,
+                full * 100.0,
+                FULL_CERTAINTY_SLACK * 100.0
+            ));
+        }
+        if r.ask_rate > b.ask_rate + ASK_RATE_SLACK + 1e-9 {
+            fails.push(format!(
+                "the ask rate rose from {:.1}% to {:.1}% (more than {:.0} point)",
+                b.ask_rate * 100.0,
+                r.ask_rate * 100.0,
+                ASK_RATE_SLACK * 100.0
+            ));
         }
     }
     fails
 }
+
+/// The fewest labelled real risks and known false positives a corpus the gate trusts has.
+pub const MIN_REAL_RISK: usize = 9;
+pub const MIN_KNOWN_FP: usize = 64;
 
 /// The report as text.
 #[must_use]

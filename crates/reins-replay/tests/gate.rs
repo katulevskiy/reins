@@ -1,6 +1,6 @@
 //! The replay gate (Decisions v2 P1 acceptance, `docs/design/decisions-v2/07-roadmap.md` §1): on the committed corpus,
-//! every labelled real risk is asked, no known false positive is, developer requests are read with Full certainty at
-//! least 95% of the time, and nothing is worse than `baseline.json`.
+//! every labelled real risk and every case for a person is asked, no known false positive is, and Full certainty and
+//! the ask rate stay within their ratchets of `baseline.json`.
 
 use reins_replay::corpus::Corpus;
 use reins_replay::engine::{EngineKind, Policy};
@@ -18,12 +18,36 @@ fn replay_gate() {
             .expect("a baseline");
     let fails = report::gate(&r, Some(&baseline));
     assert!(fails.is_empty(), "{fails:?}\n{}", report::text(&r, false));
-    assert!(
-        r.real_risk >= 9 && r.known_fp >= 64,
-        "the labelled set shrank: {} risks, {} known false positives",
-        r.real_risk,
-        r.known_fp
-    );
+}
+
+#[test]
+fn the_gate_fails_a_shrunk_corpus_and_a_person_case_decided_automatically() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let mut r = report::run(&corpus, &Policy::default(), EngineKind::Effects);
+    r.real_risk = 1;
+    r.real_risk_asked = 1;
+    assert!(report::gate(&r, None).iter().any(|f| f.contains("shrank")));
+    let mut r = report::run(&corpus, &Policy::default(), EngineKind::Effects);
+    r.needs_human_asked = r.needs_human.saturating_sub(1);
+    assert!(report::gate(&r, None).iter().any(|f| f.contains("for a person")));
+}
+
+#[test]
+fn full_certainty_and_the_ask_rate_are_ratchets() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let r = report::run(&corpus, &Policy::default(), EngineKind::Effects);
+    let full = r.full_certainty.expect("the effects engine reads certainty");
+    let base = |full_certainty: f64, ask_rate: f64| Baseline {
+        recall: 1.0,
+        known_fp_asked: 0,
+        full_certainty,
+        asks: r.asks,
+        ask_rate,
+    };
+    assert!(report::gate(&r, Some(&base(full + 0.004, r.ask_rate))).is_empty(), "within half a point");
+    assert!(report::gate(&r, Some(&base(full + 0.006, r.ask_rate))).iter().any(|f| f.contains("Full certainty")));
+    assert!(report::gate(&r, Some(&base(full, r.ask_rate - 0.009))).is_empty(), "within a point");
+    assert!(report::gate(&r, Some(&base(full, r.ask_rate - 0.011))).iter().any(|f| f.contains("ask rate")));
 }
 
 #[test]

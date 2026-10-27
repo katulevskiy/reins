@@ -343,6 +343,19 @@ fn push_summary(what: &str, detail: &str) -> PushSummary {
 /// # Errors
 /// A line that is not JSON.
 pub fn import(log: &str, labels: &Labels) -> Result<Vec<Case>, String> {
+    import_with(log, labels, &|_, _| None)
+}
+
+/// [`import`], with `branch_at(cwd, at)`: the branch checked out in `cwd` at `at` (unix seconds), when known. It is
+/// asked for commands that push.
+///
+/// # Errors
+/// A line that is not JSON.
+pub fn import_with(
+    log: &str,
+    labels: &Labels,
+    branch_at: &dyn Fn(&str, i64) -> Option<String>,
+) -> Result<Vec<Case>, String> {
     let scrub = Scrubber::new(labels);
     let mut merged: BTreeMap<String, (usize, Value)> = BTreeMap::new();
     for (n, line) in log.lines().enumerate() {
@@ -388,6 +401,7 @@ pub fn import(log: &str, labels: &Labels) -> Result<Vec<Case>, String> {
             write: None,
             repo: None,
             push: None,
+            branch: None,
             tool: None,
             args: None,
             original: Original {
@@ -413,6 +427,11 @@ pub fn import(log: &str, labels: &Labels) -> Result<Vec<Case>, String> {
                 if let Some(fixed) = repair(&command) {
                     command = fixed;
                     tags.push("repaired".to_owned());
+                }
+                if command.split_whitespace().any(|w| w == "push")
+                    && let Some(c) = &cwd
+                {
+                    case.branch = branch_at(c, r.at).map(|b| scrub.scrub(&b));
                 }
                 case.command = Some(scrub.scrub(&command));
                 case.cwd = cwd.map(|c| scrub.scrub(&c));

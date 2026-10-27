@@ -91,6 +91,26 @@ fn lex(lang: Lang, code: &str) -> Vec<Tok> {
             i += 1;
             continue;
         }
+        // Regular expression literals (`/…/flags` where a value starts; Perl's `m/…/`, `qr/…/`, `s/…/…/`, `tr/…/…/`):
+        // a value, never code, and their `/`, `#` and quotes are not comments or strings.
+        if let Some(end) = regex_literal(lang, &c, i, out.last()) {
+            out.push(Tok::Str(UNKNOWN.to_string()));
+            i = end;
+            continue;
+        }
+        // Perl's `$#array` (the last index) is no comment.
+        if ch == '$' && lang == Lang::Perl && c.get(i + 1) == Some(&'#') {
+            let mut k = i + 2;
+            if c.get(k) == Some(&'{') || c.get(k) == Some(&'$') {
+                k += 1;
+            }
+            while k < c.len() && (c[k].is_ascii_alphanumeric() || c[k] == '_' || c[k] == '}') {
+                k += 1;
+            }
+            out.push(Tok::Num("0".to_owned()));
+            i = k;
+            continue;
+        }
         // Comments.
         if (ch == '#' && matches!(lang, Lang::Python | Lang::Ruby | Lang::Perl))
             || (lang == Lang::Node && ch == '/' && c.get(i + 1) == Some(&'/'))
@@ -290,6 +310,87 @@ fn lex(lang: Lang, code: &str) -> Vec<Tok> {
         i += 1;
     }
     out
+}
+
+/// A regular expression literal starting at `i`: where it ends.
+fn regex_literal(lang: Lang, c: &[char], i: usize, last: Option<&Tok>) -> Option<usize> {
+    if !matches!(lang, Lang::Node | Lang::Ruby | Lang::Perl) {
+        return None;
+    }
+    // Perl's quote-like operators with a slash: `m/`, `qr/`, `s/` and `tr/`, `y/` (two parts).
+    let mut start = i;
+    let mut parts = 1;
+    if lang == Lang::Perl
+        && c[i].is_ascii_alphabetic()
+        && (i == 0 || !(c[i - 1].is_ascii_alphanumeric() || c[i - 1] == '_' || c[i - 1] == '$'))
+    {
+        let word: String = c[i..].iter().take_while(|ch| ch.is_ascii_alphabetic()).collect();
+        if !matches!(word.as_str(), "m" | "qr" | "s" | "tr" | "y") || c.get(i + word.len()) != Some(&'/') {
+            return None;
+        }
+        parts = if matches!(word.as_str(), "s" | "tr" | "y") {
+            2
+        } else {
+            1
+        };
+        start = i + word.len();
+    } else {
+        if c[i] != '/' || matches!(c.get(i + 1), Some('/' | '*')) && lang == Lang::Node {
+            return None;
+        }
+        // A slash starts a regex only where a value is expected.
+        let value_expected = match last {
+            None => true,
+            Some(Tok::Punct(p)) => !matches!(p, ')' | ']' | '}'),
+            Some(Tok::Ident(w)) => matches!(
+                w.as_str(),
+                "return"
+                    | "typeof"
+                    | "case"
+                    | "in"
+                    | "of"
+                    | "when"
+                    | "if"
+                    | "unless"
+                    | "and"
+                    | "or"
+                    | "not"
+                    | "split"
+                    | "grep"
+                    | "map"
+            ),
+            _ => false,
+        };
+        if !value_expected {
+            return None;
+        }
+    }
+    let mut k = start + 1;
+    let mut class = false;
+    while k < c.len() {
+        match c[k] {
+            '\\' => k += 1,
+            '[' => class = true,
+            ']' => class = false,
+            '/' if !class => {
+                parts -= 1;
+                if parts == 0 {
+                    break;
+                }
+            }
+            '\n' => return None,
+            _ => {}
+        }
+        k += 1;
+    }
+    if k >= c.len() {
+        return None;
+    }
+    k += 1;
+    while k < c.len() && c[k].is_ascii_alphabetic() {
+        k += 1;
+    }
+    Some(k)
 }
 
 fn code_at(c: &[char], i: usize, s: &str) -> bool {
@@ -551,14 +652,14 @@ impl Reader<'_, '_> {
                     | "String" | "fspath" | "absolute" => {
                         if args.is_empty() {
                             // `p.resolve()`: the receiver's value.
-                            self.receiver(s, open)
+                            self.receiver(open)
                         } else {
                             arg(0)
                         }
                     }
                     "expanduser" | "expandvars" => {
                         let v = if args.is_empty() {
-                            self.receiver(s, open)
+                            self.receiver(open)
                         } else {
                             arg(0)
                         };
@@ -582,7 +683,7 @@ impl Reader<'_, '_> {
                     "cwd" | "getcwd" => Val::Strs(vec![self.cwd.clone()]),
                     "join" | "joinpath" | "resolve_path" if callee != "join" => {
                         let mut acc = if last == "joinpath" {
-                            vec![self.receiver(s, open)]
+                            vec![self.receiver(open)]
                         } else {
                             Vec::new()
                         };
@@ -611,7 +712,7 @@ impl Reader<'_, '_> {
                         Val::Strs(vec![out])
                     }
                     "dirname" | "parent" => match if args.is_empty() {
-                        self.receiver(s, open)
+                        self.receiver(open)
                     } else {
                         arg(0)
                     } {
@@ -684,7 +785,7 @@ impl Reader<'_, '_> {
     }
 
     /// The value of the receiver of the method call whose `(` is at `open` (`Path('x').write_text(…)`, `p.unlink()`).
-    fn receiver(&self, from: usize, open: usize) -> Val {
+    fn receiver(&self, open: usize) -> Val {
         // tokens: <receiver> . method (
         let method_at = open.checked_sub(1);
         let Some(dot) = method_at.and_then(|m| m.checked_sub(1)) else {
@@ -705,7 +806,6 @@ impl Reader<'_, '_> {
                 while start >= 2 && punct(self.toks.get(start - 1), '.') && ident(self.toks.get(start - 2)).is_some() {
                     start -= 2;
                 }
-                let _ = from;
                 if start == last {
                     self.eval(start, end)
                 } else {
@@ -1158,7 +1258,7 @@ impl Reader<'_, '_> {
                 }
                 _ => match last {
                     "write_text" | "write_bytes" | "touch" | "symlink_to" | "hardlink_to" | "chmod" | "mkdir" => {
-                        let v = self.receiver(0, open);
+                        let v = self.receiver(open);
                         if last == "mkdir" {
                             if let Val::Strs(_) = v {
                                 // Making a folder loses nothing.
@@ -1168,13 +1268,13 @@ impl Reader<'_, '_> {
                         }
                     }
                     "unlink" | "rmdir" => {
-                        let v = self.receiver(0, open);
+                        let v = self.receiver(open);
                         if callee.split('.').count() > 1 {
                             self.delete(&v, false);
                         }
                     }
                     "rename" | "replace" if callee.contains('.') && !callee.starts_with("str") => {
-                        let v = self.receiver(0, open);
+                        let v = self.receiver(open);
                         // `s.replace(a, b)` on a string is text: only a receiver that is a path counts.
                         if matches!(&v, Val::Strs(list) if list.iter().all(|p| p.contains('/') || p.contains('.')))
                             && args.len() == 1
@@ -1184,11 +1284,11 @@ impl Reader<'_, '_> {
                         }
                     }
                     "read_text" | "read_bytes" => {
-                        let v = self.receiver(0, open);
+                        let v = self.receiver(open);
                         self.read_path(&v);
                     }
                     "open" if callee.contains('.') => {
-                        let v = self.receiver(0, open);
+                        let v = self.receiver(open);
                         if !matches!(v, Val::Unknown) {
                             let writes = matches!(&first, Some(Val::Strs(m)) if m.iter().any(|m| m.contains(['w', 'a', 'x', '+'])));
                             if writes {
