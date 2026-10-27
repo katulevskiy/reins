@@ -9,17 +9,30 @@
 //!   `REINS_ATTEST_ANDROID_ROOTS`); the leaf certifies the enrolled key; its KeyDescription says the key lives in a TEE
 //!   or StrongBox and carries this enrollment's challenge. The app can't attest the binding itself (the key doesn't
 //!   exist until the attestation is made), so it attests the enrollment message, and the binding is checked as
-//!   SHA-256(attestationChallenge ‖ leaf key), which is the same thing. Revocation (Google's status list) is not
-//!   checked yet.
+//!   SHA-256(attestationChallenge ‖ leaf key), which is the same thing. Revocation: every certificate's serial number
+//!   is looked up in Google's attestation status list ([`StatusList`], fetched at launch and every
+//!   [`STATUS_REFRESH_SECS`]); a revoked or suspended one fails. When the list can't be fetched, an attestation is
+//!   verified without it (`"revocation": "unchecked"` in its detail), and the next list fetched re-checks every
+//!   verified device ([`recheck_with`]): one whose chain was revoked since fails from then.
 //! - **App Attest** ([`verify_app_attest`]), per Apple's "Validating apps that connect to your server": the app's
 //!   client data hash is the binding itself. Needs `REINS_APP_ATTEST_APP_ID`; without it App Attest is recorded but
-//!   not verified (counted as none).
-//! - **Play Integrity** is recorded, not verified (the Google API verifier comes later).
+//!   not verified (counted as none). Apple publishes no revocation for App Attest certificates, so none is checked
+//!   (`"revocation": "not_published"`).
+//! - **Play Integrity is recorded only, never verified**: this server doesn't call Google's verdict API (it needs the
+//!   org's own Google Cloud service account), so a Play Integrity token never makes a device attested, whatever it
+//!   says. Its record says so (`"recorded_only": true`), and a policy that requires attestation needs Android key
+//!   attestation or App Attest.
 //!
-//! Certificate validity periods are not checked: attestation leaves carry the key's own dates (often long past or
-//! far ahead), and the roots are pinned by key.
+//! Every certificate must be valid (its notBefore and notAfter) when the attestation is checked: at enrollment, or for
+//! a device enrolled before verification, when it enrolled. The one exception is a pinned root itself at the end of a
+//! chain: it is trusted by its key, not by a certificate's dates (Google reissued its root's certificate with the same
+//! key, and devices carry older copies).
 
-use std::sync::LazyLock;
+use std::{
+    collections::BTreeMap,
+    sync::{LazyLock, RwLock},
+    time::Duration,
+};
 
 use data_encoding::{BASE64, HEXLOWER};
 use reins_proto::org::{Attestation, AttestationKind, enrollment_message};
@@ -58,6 +71,12 @@ const OID_RSA_SHA256: &str = "1.2.840.113549.1.1.11";
 
 /// The longest certificate chain read.
 const MAX_CHAIN: usize = 8;
+/// Google's attestation certificate status list.
+pub const ANDROID_STATUS_URL: &str = "https://android.googleapis.com/attestation/status";
+/// How often the status list is fetched again.
+pub const STATUS_REFRESH_SECS: u64 = 6 * 3600;
+/// How far ahead of the server's clock a certificate's start may be (a device's clock that runs a little fast).
+const CLOCK_SKEW_SECS: i64 = 300;
 /// RootOfTrust's tag in an AuthorizationList.
 const TAG_ROOT_OF_TRUST: u32 = 704;
 
@@ -149,6 +168,62 @@ pub struct Attested {
     pub verified_boot: Option<bool>,
     /// Android's bootloader is locked (RootOfTrust); `None` when not attested.
     pub locked: Option<bool>,
+    /// Whether the chain's revocation was checked: `checked` (Google's status list), `unchecked` (no list at hand),
+    /// `not_published` (App Attest: Apple publishes none).
+    pub revocation: &'static str,
+}
+
+/// Google's attestation certificate status list (`{"entries": {"<serial, lowercase hex>": {"status": "REVOKED" |
+/// "SUSPENDED", "reason": …}}}`), per https://developer.android.com/privacy-and-security/security-key-attestation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatusList {
+    /// Serial number (lowercase hex, no leading zeros) → "STATUS (REASON)".
+    entries: BTreeMap<String, String>,
+}
+
+impl StatusList {
+    /// Reads the list; an answer without `entries` is not a list.
+    pub fn parse(body: &[u8]) -> Result<Self, String> {
+        #[derive(Deserialize)]
+        struct Entry {
+            #[serde(default)]
+            status: String,
+            #[serde(default)]
+            reason: String,
+        }
+        #[derive(Deserialize)]
+        struct List {
+            entries: BTreeMap<String, Entry>,
+        }
+        let list: List = serde_json::from_slice(body).map_err(|e| format!("the status list doesn't read: {e}"))?;
+        Ok(Self {
+            entries: list
+                .entries
+                .into_iter()
+                .map(|(serial, e)| {
+                    let words = if e.reason.is_empty() {
+                        e.status
+                    } else {
+                        format!("{} ({})", e.status, e.reason)
+                    };
+                    (serial.trim_start_matches('0').to_ascii_lowercase(), words)
+                })
+                .collect(),
+        })
+    }
+
+    /// Why the certificate with serial `serial` (hex) may not be trusted, if the list names it.
+    #[must_use]
+    pub fn revoked(&self, serial: &str) -> Option<String> {
+        self.entries.get(serial.trim_start_matches('0').to_ascii_lowercase().as_str()).cloned()
+    }
+}
+
+/// The status list last fetched, if any.
+static STATUS: RwLock<Option<StatusList>> = RwLock::new(None);
+
+fn status_now() -> Option<StatusList> {
+    STATUS.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 /// The roots and app id attestations are checked against.
@@ -247,9 +322,10 @@ fn signed_by(cert: &X509Certificate<'_>, issuer_spki: &[u8]) -> Result<(), Strin
         .map_err(|_| "a certificate's signature does not verify".to_owned())
 }
 
-/// Parses `certs` (leaf first) and checks that each is signed by the next, and the last is, or is signed by, one of
-/// `roots` (SPKI DER).
-fn verify_chain<'a>(certs: &'a [Vec<u8>], roots: &[Vec<u8>]) -> Result<Vec<X509Certificate<'a>>, String> {
+/// Parses `certs` (leaf first) and checks that each is signed by the next, the last is, or is signed by, one of
+/// `roots` (SPKI DER), and every certificate is valid at `at` (a pinned root itself is trusted by its key, whatever
+/// its certificate's dates).
+fn verify_chain<'a>(certs: &'a [Vec<u8>], roots: &[Vec<u8>], at: i64) -> Result<Vec<X509Certificate<'a>>, String> {
     if certs.is_empty() || certs.len() > MAX_CHAIN {
         return Err(format!("the chain has {} certificates", certs.len()));
     }
@@ -258,12 +334,28 @@ fn verify_chain<'a>(certs: &'a [Vec<u8>], roots: &[Vec<u8>]) -> Result<Vec<X509C
         signed_by(&pair[0], pair[1].public_key().raw)?;
     }
     let last = &chain[chain.len() - 1];
-    let pinned =
-        roots.iter().any(|r| r.as_slice() == last.public_key().raw) || roots.iter().any(|r| signed_by(last, r).is_ok());
-    if !pinned {
+    let last_is_root = roots.iter().any(|r| r.as_slice() == last.public_key().raw);
+    if !last_is_root && !roots.iter().any(|r| signed_by(last, r).is_ok()) {
         return Err("the chain does not end in a pinned root".to_owned());
     }
+    let anchors = usize::from(last_is_root);
+    for (i, cert) in chain[..chain.len() - anchors].iter().enumerate() {
+        let validity = cert.validity();
+        if at + CLOCK_SKEW_SECS < validity.not_before.timestamp() || at > validity.not_after.timestamp() {
+            return Err(format!("certificate {} of the chain is not valid at this time", i + 1));
+        }
+    }
     Ok(chain)
+}
+
+/// The first certificate of `chain` that `status` lists as revoked or suspended, as an error.
+fn check_revocation(chain: &[X509Certificate<'_>], status: &StatusList) -> Result<(), String> {
+    for (i, cert) in chain.iter().enumerate() {
+        if let Some(why) = status.revoked(&format!("{:x}", cert.serial)) {
+            return Err(format!("certificate {} of the chain is revoked: {why}", i + 1));
+        }
+    }
+    Ok(())
 }
 
 /// The extension `oid` of `cert`, if it has one (exactly one).
@@ -396,20 +488,31 @@ fn challenge_vouches(challenge: &[u8], binding: &[u8; 32], device_spki: &[u8]) -
     sha256(&m) == *binding
 }
 
+/// The certificates (DER) of an Android chain as kept: base64, joined with `,`, leaf first.
+fn android_certs(chain_b64: &str) -> Result<Vec<Vec<u8>>, String> {
+    chain_b64
+        .split(',')
+        .map(|c| BASE64.decode(c.trim().as_bytes()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "a certificate is not base64".to_owned())
+}
+
 /// Verifies an Android key attestation chain (DER certificates, base64, joined with `,`, leaf first) for the enrolled
-/// key `device_spki` and `binding`, against `roots` (SPKI DER).
+/// key `device_spki` and `binding`, against `roots` (SPKI DER), as of `at`; and, given Google's status list, that no
+/// certificate of it is revoked.
 pub fn verify_android(
     chain_b64: &str,
     binding: &[u8; 32],
     device_spki: &[u8],
     roots: &[Vec<u8>],
+    status: Option<&StatusList>,
+    at: i64,
 ) -> Result<Attested, String> {
-    let certs = chain_b64
-        .split(',')
-        .map(|c| BASE64.decode(c.trim().as_bytes()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "a certificate is not base64".to_owned())?;
-    let chain = verify_chain(&certs, roots)?;
+    let certs = android_certs(chain_b64)?;
+    let chain = verify_chain(&certs, roots, at)?;
+    if let Some(list) = status {
+        check_revocation(&chain, list)?;
+    }
     let leaf = &chain[0];
     if leaf.public_key().raw != device_spki {
         return Err("the attested key is not the enrolled key".to_owned());
@@ -435,6 +538,11 @@ pub fn verify_android(
         security,
         verified_boot: description.root_of_trust.map(|(_, state)| state == 0),
         locked: description.root_of_trust.map(|(locked, _)| locked),
+        revocation: if status.is_some() {
+            "checked"
+        } else {
+            "unchecked"
+        },
     })
 }
 
@@ -453,12 +561,13 @@ fn app_attest_nonce(der: &[u8]) -> Result<&[u8], String> {
 }
 
 /// Verifies an App Attest attestation object (CBOR, base64) whose client data hash is `binding`, for the app
-/// `app_id` (`TEAMID.bundle`), against `roots` (SPKI DER).
+/// `app_id` (`TEAMID.bundle`), against `roots` (SPKI DER), as of `at`.
 pub fn verify_app_attest(
     object_b64: &str,
     binding: &[u8; 32],
     app_id: &str,
     roots: &[Vec<u8>],
+    at: i64,
 ) -> Result<Attested, String> {
     let raw = BASE64.decode(object_b64.trim().as_bytes()).map_err(|_| "the attestation is not base64".to_owned())?;
     let object = Cbor::parse(&raw)?;
@@ -476,7 +585,7 @@ pub fn verify_app_attest(
     let auth = object.get("authData").and_then(Cbor::bytes).ok_or("the attestation has no authenticator data")?;
 
     // 1. The certificates chain to Apple's App Attestation root.
-    let chain = verify_chain(&x5c, roots)?;
+    let chain = verify_chain(&x5c, roots, at)?;
     let leaf = &chain[0];
     // 2–4. The nonce is SHA-256(authData ‖ clientDataHash).
     let mut signed = auth.to_vec();
@@ -519,6 +628,7 @@ pub fn verify_app_attest(
         security: SecurityLevel::SecureEnclave,
         verified_boot: None,
         locked: None,
+        revocation: "not_published",
     })
 }
 
@@ -656,23 +766,41 @@ impl<'a> Cbor<'a> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// What the attestations of an enrollment show: [`attestation::VERIFIED`] when one verifies, [`attestation::FAILED`]
-/// when one is present but fails, [`attestation::NONE`] otherwise; and per attestation what was found.
-pub fn verify_enrollment(atts: &[Attestation], binding: &[u8; 32], device_spki: &[u8]) -> (&'static str, Value) {
-    verify_with(atts, binding, device_spki, &TRUST)
+/// when one is present but fails, [`attestation::NONE`] otherwise; and per attestation what was found. Checked as of
+/// `now`, with the status list last fetched.
+pub fn verify_enrollment(
+    atts: &[Attestation],
+    binding: &[u8; 32],
+    device_spki: &[u8],
+    now: i64,
+) -> (&'static str, Value) {
+    verify_with(atts, binding, device_spki, &TRUST, status_now().as_ref(), now)
 }
 
-fn verify_with(atts: &[Attestation], binding: &[u8; 32], device_spki: &[u8], trust: &Trust) -> (&'static str, Value) {
+/// What a Play Integrity token's record says: it was kept, not verified.
+const PLAY_INTEGRITY_NOTE: &str = "recorded only: this server has not verified Play Integrity verdicts, so the token \
+                                   never makes a device attested";
+
+fn verify_with(
+    atts: &[Attestation],
+    binding: &[u8; 32],
+    device_spki: &[u8],
+    trust: &Trust,
+    status: Option<&StatusList>,
+    at: i64,
+) -> (&'static str, Value) {
     let mut attested = None;
     let mut failed = false;
     let mut items = Vec::new();
     for a in atts {
         let result = match a.kind {
             AttestationKind::AndroidKeyAttestation => {
-                Some(verify_android(&a.data, binding, device_spki, &trust.android_roots))
+                Some(verify_android(&a.data, binding, device_spki, &trust.android_roots, status, at))
             }
-            AttestationKind::AppAttest => {
-                trust.app_id.as_deref().map(|app_id| verify_app_attest(&a.data, binding, app_id, &trust.apple_roots))
-            }
+            AttestationKind::AppAttest => trust
+                .app_id
+                .as_deref()
+                .map(|app_id| verify_app_attest(&a.data, binding, app_id, &trust.apple_roots, at)),
             AttestationKind::PlayIntegrity | AttestationKind::None => None,
         };
         items.push(match result {
@@ -686,6 +814,9 @@ fn verify_with(atts: &[Attestation], binding: &[u8; 32], device_spki: &[u8], tru
                 json!({"kind": a.kind, "error": error})
             }
             None if a.kind == AttestationKind::None => json!({"kind": a.kind}),
+            None if a.kind == AttestationKind::PlayIntegrity => {
+                json!({"kind": a.kind, "unverified": a.kind, "recorded_only": true, "note": PLAY_INTEGRITY_NOTE})
+            }
             None => json!({"kind": a.kind, "unverified": a.kind}),
         });
     }
@@ -712,8 +843,12 @@ fn stored(attestations: &str) -> Option<([u8; 32], Vec<Attestation>)> {
     Some((binding, stored.items))
 }
 
-/// Verifies the devices enrolled before attestations were verified; how many it settled.
-fn backfill_with(c: &mut DbConnInner, trust: &Trust) -> Result<usize, diesel::result::Error> {
+/// Verifies the devices enrolled before attestations were verified (as of when each enrolled); how many it settled.
+fn backfill_with(
+    c: &mut DbConnInner,
+    trust: &Trust,
+    status: Option<&StatusList>,
+) -> Result<usize, diesel::result::Error> {
     let mut settled = 0;
     for device in reins_org::q_unverified_devices(c)? {
         let Some((binding, items)) = stored(&device.attestations) else {
@@ -722,7 +857,7 @@ fn backfill_with(c: &mut DbConnInner, trust: &Trust) -> Result<usize, diesel::re
         let Ok(spki) = BASE64.decode(device.public_key.trim().as_bytes()) else {
             continue;
         };
-        let (state, detail) = verify_with(&items, &binding, &spki, trust);
+        let (state, detail) = verify_with(&items, &binding, &spki, trust, status, device.enrolled_at);
         if reins_org::q_set_attestation(c, &device, state, &detail.to_string())? {
             settled += 1;
         }
@@ -730,22 +865,97 @@ fn backfill_with(c: &mut DbConnInner, trust: &Trust) -> Result<usize, diesel::re
     Ok(settled)
 }
 
-/// Once at launch: verifies the attestations of devices still `unverified` that kept their binding.
+/// With a newly fetched status list: every verified device whose Android chain has a certificate the list names fails
+/// from now on (it no longer counts as attested, so a policy that requires attestation stops it deciding). How many.
+fn recheck_with(c: &mut DbConnInner, status: &StatusList) -> Result<usize, diesel::result::Error> {
+    let mut failed = 0;
+    for device in reins_org::q_verified_devices(c)? {
+        let Some((_, items)) = stored(&device.attestations) else {
+            continue;
+        };
+        let revoked = items.iter().filter(|a| a.kind == AttestationKind::AndroidKeyAttestation).find_map(|a| {
+            let certs = android_certs(&a.data).ok()?;
+            let chain = certs.iter().map(|c| parse_cert(c)).collect::<Result<Vec<_>, _>>().ok()?;
+            check_revocation(&chain, status).err()
+        });
+        if let Some(why) = revoked {
+            let mut detail: Value =
+                device.attestation_detail.as_deref().and_then(|d| serde_json::from_str(d).ok()).unwrap_or(json!({}));
+            detail["revoked"] = json!(why);
+            detail["attested"] = Value::Null;
+            if reins_org::q_fail_attestation(c, &device, &detail.to_string())? {
+                failed += 1;
+            }
+        }
+    }
+    Ok(failed)
+}
+
+/// Fetches Google's attestation status list.
+async fn fetch_status() -> Result<StatusList, String> {
+    let resp = crate::http_client::make_http_request(reqwest::Method::GET, ANDROID_STATUS_URL)
+        .map_err(|e| format!("{e:?}"))?
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Google answered {}", resp.status()));
+    }
+    StatusList::parse(&resp.bytes().await.map_err(|e| e.to_string())?)
+}
+
+/// At launch, then every [`STATUS_REFRESH_SECS`]: fetches the status list, re-checks the verified devices against it,
+/// and once (the first pass) verifies the devices still `unverified` that kept their binding.
 pub async fn backfill(pool: DbPool) {
     if !enabled() {
         return;
     }
-    let conn = match pool.get().await {
-        Ok(conn) => conn,
-        Err(e) => {
-            warn!("Org attestation backfill: no database connection: {e:?}");
-            return;
+    let mut first = true;
+    loop {
+        let status = match fetch_status().await {
+            Ok(list) => {
+                *STATUS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(list.clone());
+                Some(list)
+            }
+            Err(e) => {
+                warn!("Android attestation status list: {e}; attestations are verified without it until it loads");
+                None
+            }
+        };
+        match pool.get().await {
+            Ok(conn) => {
+                let once = first;
+                let result = conn
+                    .run(move |c| -> Result<(usize, usize), diesel::result::Error> {
+                        let settled = if once {
+                            backfill_with(c, &TRUST, status.as_ref())?
+                        } else {
+                            0
+                        };
+                        let failed = match &status {
+                            Some(list) => recheck_with(c, list)?,
+                            None => 0,
+                        };
+                        Ok((settled, failed))
+                    })
+                    .await;
+                match result {
+                    Ok((settled, failed)) => {
+                        if settled > 0 {
+                            info!("Org attestation backfill: verified {settled} enrolled devices");
+                        }
+                        if failed > 0 {
+                            warn!("Org attestation: {failed} enrolled devices have a revoked attestation now");
+                        }
+                    }
+                    Err(e) => warn!("Org attestation backfill: {e:?}"),
+                }
+                first = false;
+            }
+            Err(e) => warn!("Org attestation backfill: no database connection: {e:?}"),
         }
-    };
-    match conn.run(|c| backfill_with(c, &TRUST)).await {
-        Ok(0) => {}
-        Ok(n) => info!("Org attestation backfill: verified {n} enrolled devices"),
-        Err(e) => warn!("Org attestation backfill: {e:?}"),
+        tokio::time::sleep(Duration::from_secs(STATUS_REFRESH_SECS)).await;
     }
 }
 
@@ -766,6 +976,8 @@ mod tests {
     use super::*;
 
     const CHALLENGE: &str = "challenge-1";
+    /// When the fixtures are made and checked (late October 2026).
+    const NOW: i64 = 1_793_000_000;
     const APP_ID: &str = "TEAM123456.dev.reins.app";
 
     fn ec_key() -> PKey<Private> {
@@ -781,25 +993,39 @@ mod tests {
         key.public_key_to_der().unwrap()
     }
 
-    /// A certificate for `key` named `cn`, signed by `issuer` (self-signed without one), with `extensions` (OID, DER).
+    /// A certificate for `key` named `cn`, signed by `issuer` (self-signed without one), with `extensions` (OID, DER),
+    /// valid from today for 30 days.
     fn cert(
         key: &PKey<Private>,
         cn: &str,
         issuer: Option<(&X509, &PKey<Private>)>,
         extensions: &[(&str, &[u8])],
     ) -> X509 {
+        cert_dated(key, cn, issuer, extensions, (0, 30), 7)
+    }
+
+    /// [`cert`] valid from `days.0` to `days.1` days from now, with serial number `serial`.
+    fn cert_dated(
+        key: &PKey<Private>,
+        cn: &str,
+        issuer: Option<(&X509, &PKey<Private>)>,
+        extensions: &[(&str, &[u8])],
+        days: (i64, i64),
+        serial: u32,
+    ) -> X509 {
         let mut name = X509NameBuilder::new().unwrap();
         name.append_entry_by_nid(Nid::COMMONNAME, cn).unwrap();
         let name = name.build();
         let mut b = X509Builder::new().unwrap();
         b.set_version(2).unwrap();
-        let serial = Asn1Integer::from_bn(&BigNum::from_u32(7).unwrap()).unwrap();
+        let serial = Asn1Integer::from_bn(&BigNum::from_u32(serial).unwrap()).unwrap();
         b.set_serial_number(&serial).unwrap();
         b.set_subject_name(&name).unwrap();
         b.set_issuer_name(issuer.map_or(&*name, |(c, _)| c.subject_name())).unwrap();
         b.set_pubkey(key).unwrap();
-        b.set_not_before(&Asn1Time::days_from_now(0).unwrap()).unwrap();
-        b.set_not_after(&Asn1Time::days_from_now(30).unwrap()).unwrap();
+        let day = |d: i64| Asn1Time::from_unix(NOW + d * 86_400).unwrap();
+        b.set_not_before(&day(days.0)).unwrap();
+        b.set_not_after(&day(days.1)).unwrap();
         for (oid, der) in extensions {
             let ext = X509Extension::new_from_der(
                 &Asn1Object::from_str(oid).unwrap(),
@@ -860,18 +1086,132 @@ mod tests {
     }
 
     fn android(challenge: &[u8], security: u8) -> Android {
+        android_dated(challenge, security, (-30, 30), (-1, 30), (0, 30))
+    }
+
+    /// Serial numbers of [`android_dated`]'s certificates.
+    const LEAF_SERIAL: u32 = 0x11;
+    const INTER_SERIAL: u32 = 0x2c8c;
+    const ROOT_SERIAL: u32 = 0x33;
+
+    /// [`android`] with each certificate's validity (days from now): the root's, the intermediate's, the leaf's.
+    fn android_dated(
+        challenge: &[u8],
+        security: u8,
+        root_days: (i64, i64),
+        inter_days: (i64, i64),
+        leaf_days: (i64, i64),
+    ) -> Android {
         let root = rsa_key();
-        let root_cert = cert(&root, "Test Root", None, &[]);
+        let root_cert = cert_dated(&root, "Test Root", None, &[], root_days, ROOT_SERIAL);
         let inter = ec_key();
-        let inter_cert = cert(&inter, "Test Intermediate", Some((&root_cert, &root)), &[]);
+        let inter_cert =
+            cert_dated(&inter, "Test Intermediate", Some((&root_cert, &root)), &[], inter_days, INTER_SERIAL);
         let leaf_key = ec_key();
         let ext = key_description_der(challenge, security);
-        let leaf = cert(&leaf_key, "Android Keystore Key", Some((&inter_cert, &inter)), &[(OID_KEY_DESCRIPTION, &ext)]);
+        let leaf = cert_dated(
+            &leaf_key,
+            "Android Keystore Key",
+            Some((&inter_cert, &inter)),
+            &[(OID_KEY_DESCRIPTION, &ext)],
+            leaf_days,
+            LEAF_SERIAL,
+        );
         Android {
             chain: b64(&[&leaf, &inter_cert, &root_cert]),
             root,
             leaf_key,
         }
+    }
+
+    fn status_list(entries: &[(&str, &str)]) -> StatusList {
+        let entries: serde_json::Map<String, Value> = entries
+            .iter()
+            .map(|(serial, status)| ((*serial).to_owned(), json!({"status": status, "reason": "KEY_COMPROMISE"})))
+            .collect();
+        StatusList::parse(json!({"entries": entries}).to_string().as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn android_a_certificate_outside_its_dates_fails() {
+        let check = |a: &Android| {
+            let key = spki(&a.leaf_key);
+            verify_android(&a.chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)], None, NOW)
+        };
+        // An intermediate that expired yesterday, or isn't valid until tomorrow.
+        for inter in [(-30, -1), (1, 30)] {
+            let err = check(&android_dated(&app_challenge(CHALLENGE), 1, (-30, 30), inter, (0, 30))).unwrap_err();
+            assert!(err.contains("not valid"), "{inter:?}: {err}");
+        }
+        // A leaf outside its dates.
+        let err = check(&android_dated(&app_challenge(CHALLENGE), 1, (-30, 30), (-1, 30), (-30, -2))).unwrap_err();
+        assert!(err.contains("not valid"), "{err}");
+        // The pinned root is trusted by its key: an old copy of it past its dates (Google reissued its root) still
+        // anchors the chain.
+        assert!(check(&android_dated(&app_challenge(CHALLENGE), 1, (-3000, -10), (-1, 30), (0, 30))).is_ok());
+        // Leaf dates as Android sets them by default (1970 to 2048) are fine.
+        assert!(check(&android_dated(&app_challenge(CHALLENGE), 1, (-30, 30), (-1, 30), (-20_000, 7_000))).is_ok());
+    }
+
+    #[test]
+    fn android_a_revoked_certificate_fails() {
+        let a = android(&app_challenge(CHALLENGE), 1);
+        let key = spki(&a.leaf_key);
+        let binding = attestation_binding(CHALLENGE, &key);
+        let roots = [spki(&a.root)];
+        let trust = Trust {
+            android_roots: roots.to_vec(),
+            apple_roots: Vec::new(),
+            app_id: None,
+        };
+        let att = [Attestation {
+            kind: AttestationKind::AndroidKeyAttestation,
+            data: a.chain.clone(),
+        }];
+        // Google lists serial numbers in lowercase hex without leading zeros.
+        for (serial, status) in [(format!("{INTER_SERIAL:x}"), "REVOKED"), (format!("{LEAF_SERIAL:x}"), "SUSPENDED")] {
+            let list = status_list(&[(&serial, status)]);
+            let (state, detail) = verify_with(&att, &binding, &key, &trust, Some(&list), NOW);
+            assert_eq!(state, attestation::FAILED, "{serial}");
+            assert!(detail["items"][0]["error"].as_str().unwrap().contains("revoked"), "{detail}");
+        }
+        // Another key's serial: verified, and it says the revocation list was checked.
+        let (state, detail) =
+            verify_with(&att, &binding, &key, &trust, Some(&status_list(&[("ffff", "REVOKED")])), NOW);
+        assert_eq!(state, attestation::VERIFIED);
+        assert_eq!(detail["attested"]["revocation"], "checked");
+        // Without a list (Google unreachable): verified, and it says the list wasn't checked.
+        let (state, detail) = verify_with(&att, &binding, &key, &trust, None, NOW);
+        assert_eq!(state, attestation::VERIFIED);
+        assert_eq!(detail["attested"]["revocation"], "unchecked");
+    }
+
+    #[test]
+    fn the_status_list_reads_googles_format() {
+        let body = br#"{"entries": {"2c8cdddfd5e03bfc": {"status": "REVOKED", "expires": "2020-11-13",
+            "reason": "KEY_COMPROMISE", "comment": "Key stored on unsecure system"},
+            "c8966fcb2fbb0d7a": {"status": "SUSPENDED", "reason": "SOFTWARE_FLAW"}}}"#;
+        let list = StatusList::parse(body).unwrap();
+        assert_eq!(list.revoked("2c8cdddfd5e03bfc"), Some("REVOKED (KEY_COMPROMISE)".to_owned()));
+        assert_eq!(list.revoked("C8966FCB2FBB0D7A"), Some("SUSPENDED (SOFTWARE_FLAW)".to_owned()));
+        assert_eq!(list.revoked("1"), None);
+        assert!(StatusList::parse(b"{}").is_err(), "a list without entries is not a list");
+        assert!(StatusList::parse(b"not json").is_err());
+    }
+
+    #[test]
+    fn play_integrity_is_recorded_only() {
+        let trust = test_trust(spki(&ec_key()), Vec::new(), None);
+        let token = Attestation {
+            kind: AttestationKind::PlayIntegrity,
+            data: "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0.token".to_owned(),
+        };
+        let (state, detail) = verify_with(&[token], &[1; 32], &[2; 65], &trust, None, NOW);
+        // Never attested by it, whatever it says, and the record says so.
+        assert_eq!(state, attestation::NONE);
+        assert_eq!(detail["attested"], Value::Null);
+        assert_eq!(detail["items"][0]["recorded_only"], true);
+        assert!(detail["items"][0]["note"].as_str().unwrap().contains("not verified"), "{detail}");
     }
 
     /// What the app attests: the enrollment message of the challenge.
@@ -890,7 +1230,7 @@ mod tests {
         let a = android(&app_challenge(CHALLENGE), 1);
         let key = spki(&a.leaf_key);
         let binding = attestation_binding(CHALLENGE, &key);
-        let attested = verify_android(&a.chain, &binding, &key, &[spki(&a.root)]).unwrap();
+        let attested = verify_android(&a.chain, &binding, &key, &[spki(&a.root)], None, NOW).unwrap();
         assert_eq!(
             attested,
             Attested {
@@ -898,6 +1238,7 @@ mod tests {
                 security: SecurityLevel::Tee,
                 verified_boot: Some(true),
                 locked: Some(true),
+                revocation: "unchecked",
             }
         );
         // The binding itself as the challenge vouches too.
@@ -906,7 +1247,7 @@ mod tests {
         let root_cert = cert(&root, "Root", None, &[]);
         let ext = key_description_der(&binding, 2);
         let leaf = cert(&leaf_key, "Key", Some((&root_cert, &root)), &[(OID_KEY_DESCRIPTION, &ext)]);
-        let attested = verify_android(&b64(&[&leaf]), &binding, &key, &[spki(&root)]).unwrap();
+        let attested = verify_android(&b64(&[&leaf]), &binding, &key, &[spki(&root)], None, NOW).unwrap();
         assert_eq!(attested.security, SecurityLevel::Strongbox);
     }
 
@@ -914,7 +1255,8 @@ mod tests {
     fn android_another_challenge_fails() {
         let a = android(&app_challenge("challenge-2"), 1);
         let key = spki(&a.leaf_key);
-        let err = verify_android(&a.chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)]).unwrap_err();
+        let err = verify_android(&a.chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)], None, NOW)
+            .unwrap_err();
         assert!(err.contains("not for this enrollment"), "{err}");
     }
 
@@ -923,7 +1265,8 @@ mod tests {
         let a = android(&app_challenge(CHALLENGE), 1);
         let other = spki(&ec_key());
         let err =
-            verify_android(&a.chain, &attestation_binding(CHALLENGE, &other), &other, &[spki(&a.root)]).unwrap_err();
+            verify_android(&a.chain, &attestation_binding(CHALLENGE, &other), &other, &[spki(&a.root)], None, NOW)
+                .unwrap_err();
         assert!(err.contains("not the enrolled key"), "{err}");
     }
 
@@ -932,17 +1275,18 @@ mod tests {
         let a = android(&app_challenge(CHALLENGE), 1);
         let key = spki(&a.leaf_key);
         let binding = attestation_binding(CHALLENGE, &key);
-        let err = verify_android(&a.chain, &binding, &key, &[spki(&rsa_key())]).unwrap_err();
+        let err = verify_android(&a.chain, &binding, &key, &[spki(&rsa_key())], None, NOW).unwrap_err();
         assert!(err.contains("pinned root"), "{err}");
-        assert!(verify_android(&a.chain, &binding, &key, &[]).is_err());
-        assert!(verify_android(&a.chain, &binding, &key, &android_roots()).is_err());
+        assert!(verify_android(&a.chain, &binding, &key, &[], None, NOW).is_err());
+        assert!(verify_android(&a.chain, &binding, &key, &android_roots(), None, NOW).is_err());
     }
 
     #[test]
     fn android_software_attestation_is_not_hardware() {
         let a = android(&app_challenge(CHALLENGE), 0);
         let key = spki(&a.leaf_key);
-        let err = verify_android(&a.chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)]).unwrap_err();
+        let err = verify_android(&a.chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)], None, NOW)
+            .unwrap_err();
         assert!(err.contains("software"), "{err}");
     }
 
@@ -957,7 +1301,8 @@ mod tests {
         let ext = key_description_der(&app_challenge(CHALLENGE), 2);
         let forged = cert(&forged_key, "Forged", Some((&genuine, &a.leaf_key)), &[(OID_KEY_DESCRIPTION, &ext)]);
         let chain = format!("{},{}", b64(&[&forged]), a.chain);
-        let err = verify_android(&chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)]).unwrap_err();
+        let err = verify_android(&chain, &attestation_binding(CHALLENGE, &key), &key, &[spki(&a.root)], None, NOW)
+            .unwrap_err();
         assert!(err.contains("issuer carries"), "{err}");
     }
 
@@ -1070,19 +1415,25 @@ mod tests {
     fn app_attest_an_object_for_this_enrollment_verifies() {
         let binding = attestation_binding(CHALLENGE, &spki(&ec_key()));
         let (object, root) = app_attest(&binding, APP_ID);
-        let attested = verify_app_attest(&object, &binding, APP_ID, std::slice::from_ref(&root)).unwrap();
+        let attested = verify_app_attest(&object, &binding, APP_ID, std::slice::from_ref(&root), NOW).unwrap();
         assert_eq!(attested.security, SecurityLevel::SecureEnclave);
-        let err = verify_app_attest(&object, &binding, "TEAM123456.other", &[root]).unwrap_err();
+        let err =
+            verify_app_attest(&object, &binding, "TEAM123456.other", std::slice::from_ref(&root), NOW).unwrap_err();
         assert!(err.contains("another app"), "{err}");
-        let err = verify_app_attest(&object, &binding, APP_ID, &[spki(&ec_key())]).unwrap_err();
+        let err = verify_app_attest(&object, &binding, APP_ID, &[spki(&ec_key())], NOW).unwrap_err();
         assert!(err.contains("pinned root"), "{err}");
+        // Checked at a time its certificates aren't valid: before they were issued, or after they expired.
+        for at in [NOW - 2 * 86_400, NOW + 40 * 86_400] {
+            let err = verify_app_attest(&object, &binding, APP_ID, std::slice::from_ref(&root), at).unwrap_err();
+            assert!(err.contains("not valid"), "{err}");
+        }
     }
 
     #[test]
     fn app_attest_wrong_nonce_fails() {
         let key = spki(&ec_key());
         let (object, root) = app_attest(&attestation_binding("challenge-2", &key), APP_ID);
-        let err = verify_app_attest(&object, &attestation_binding(CHALLENGE, &key), APP_ID, &[root]).unwrap_err();
+        let err = verify_app_attest(&object, &attestation_binding(CHALLENGE, &key), APP_ID, &[root], NOW).unwrap_err();
         assert!(err.contains("not for this enrollment"), "{err}");
     }
 
@@ -1093,9 +1444,9 @@ mod tests {
         for object in
             [&b"not cbor at all"[..], &[0xa1, 0x63, b'f', b'm'], &cb_map(&[(cb_text("fmt"), cb_text("packed"))]), &[]]
         {
-            assert!(verify_app_attest(&BASE64.encode(object), &binding, APP_ID, &roots).is_err());
+            assert!(verify_app_attest(&BASE64.encode(object), &binding, APP_ID, &roots, NOW).is_err());
         }
-        assert!(verify_app_attest("%%%", &binding, APP_ID, &roots).is_err());
+        assert!(verify_app_attest("%%%", &binding, APP_ID, &roots, NOW).is_err());
     }
 
     fn test_trust(android_root: Vec<u8>, apple_root: Vec<u8>, app_id: Option<&str>) -> Trust {
@@ -1118,34 +1469,35 @@ mod tests {
         };
 
         let (state, detail) =
-            verify_with(&[att(AttestationKind::AndroidKeyAttestation, &a.chain)], &binding, &key, &trust);
+            verify_with(&[att(AttestationKind::AndroidKeyAttestation, &a.chain)], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::VERIFIED);
         assert_eq!(detail["attested"]["security"], "tee");
         assert_eq!(detail["attested"]["locked"], true);
 
         let other = spki(&ec_key());
         let (state, detail) =
-            verify_with(&[att(AttestationKind::AndroidKeyAttestation, &a.chain)], &binding, &other, &trust);
+            verify_with(&[att(AttestationKind::AndroidKeyAttestation, &a.chain)], &binding, &other, &trust, None, NOW);
         assert_eq!(state, attestation::FAILED);
         assert!(detail["items"][0]["error"].is_string());
 
-        let (state, detail) = verify_with(&[att(AttestationKind::PlayIntegrity, "token")], &binding, &key, &trust);
+        let (state, detail) =
+            verify_with(&[att(AttestationKind::PlayIntegrity, "token")], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::NONE);
         assert_eq!(detail["items"][0]["unverified"], "play_integrity");
 
         // App Attest without an app id is recorded, not verified.
-        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, "garbage")], &binding, &key, &trust);
+        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, "garbage")], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::NONE);
-        let (state, _) = verify_with(&[att(AttestationKind::None, "")], &binding, &key, &trust);
+        let (state, _) = verify_with(&[att(AttestationKind::None, "")], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::NONE);
-        let (state, _) = verify_with(&[], &binding, &key, &trust);
+        let (state, _) = verify_with(&[], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::NONE);
 
         let (object, apple_root) = app_attest(&binding, APP_ID);
         let trust = test_trust(spki(&a.root), apple_root, Some(APP_ID));
-        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, &object)], &binding, &key, &trust);
+        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, &object)], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::VERIFIED);
-        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, "garbage")], &binding, &key, &trust);
+        let (state, _) = verify_with(&[att(AttestationKind::AppAttest, "garbage")], &binding, &key, &trust, None, NOW);
         assert_eq!(state, attestation::FAILED);
     }
 
@@ -1173,7 +1525,7 @@ mod tests {
             attestations,
             posture: "{}".to_owned(),
             posture_at: 1,
-            enrolled_at: 1,
+            enrolled_at: NOW,
             revoked_at: None,
             attestation_state: attestation::UNVERIFIED.to_owned(),
             attestation_detail: None,
@@ -1183,13 +1535,22 @@ mod tests {
             assert!(reins_org::q_enroll_device(&mut c, &row).unwrap());
         }
         let trust = test_trust(spki(&a.root), Vec::new(), None);
-        assert_eq!(backfill_with(&mut c, &trust).unwrap(), 1);
+        assert_eq!(backfill_with(&mut c, &trust, None).unwrap(), 1);
         let d1 = reins_org::q_device(&mut c, "o1", "u1", "d1").unwrap().unwrap();
         assert_eq!(d1.attestation_state, attestation::VERIFIED);
         assert!(d1.attestation_detail.unwrap().contains("\"tee\""));
         // Without a kept binding there is nothing to check against: it stays unverified.
         let d2 = reins_org::q_device(&mut c, "o1", "u1", "d2").unwrap().unwrap();
         assert_eq!(d2.attestation_state, attestation::UNVERIFIED);
-        assert_eq!(backfill_with(&mut c, &trust).unwrap(), 0);
+        assert_eq!(backfill_with(&mut c, &trust, None).unwrap(), 0);
+
+        // Google later revokes the intermediate that certified d1's key: d1 no longer counts as attested.
+        assert_eq!(recheck_with(&mut c, &status_list(&[("ffff", "REVOKED")])).unwrap(), 0);
+        let list = status_list(&[(&format!("{INTER_SERIAL:x}"), "REVOKED")]);
+        assert_eq!(recheck_with(&mut c, &list).unwrap(), 1);
+        let d1 = reins_org::q_device(&mut c, "o1", "u1", "d1").unwrap().unwrap();
+        assert_eq!(d1.attestation_state, attestation::FAILED);
+        assert!(d1.attestation_detail.unwrap().contains("revoked"));
+        assert_eq!(recheck_with(&mut c, &list).unwrap(), 0, "once");
     }
 }
