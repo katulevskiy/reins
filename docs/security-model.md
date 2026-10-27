@@ -504,7 +504,11 @@ an organization's member, which the phone and the desktop keep as a separate pro
   that isn't the org's member is never captured, by sign-in or by the directory.
 - **Directory events** are read from the WorkOS API with the server's key; a webhook only wakes the sync. An event
   applies only to the tenant bound to both its directory and its WorkOS organization, and creates or links members
-  only on the tenant's verified domains.
+  only on the tenant's verified domains. A periodic listing fills in what events missed, but never reads a broken
+  listing as an empty company: a page without its data is an error, an empty listing removes nobody, and more than a
+  few members absent at once wait for an admin to confirm exactly those (a two-person change). Moving a tenant to
+  another directory unlinks the old one's members instead of removing them. Only an account that was provisioned
+  as a placeholder (an invitation, no keys) can be taken over by a first sign-in.
 - **Work accounts sign in only through the org**: password and API-key sign-in are refused (after a correct
   credential, so a guess can't tell work accounts apart), and the passkey rule is waived only for a sign-in the gate
   verified through the org's identity.
@@ -518,6 +522,10 @@ an organization's member, which the phone and the desktop keep as a separate pro
   removes its AI and desktop connections and refresh tokens, revokes its enrolled devices (a revoked device can't
   enroll itself again), in one transaction, typically in milliseconds after the webhook. Each member's state is the
   org's own (`reins_org_members`); one org per account; the directory restores only what it suspended.
+- **On the phone, each profile is its own**: a notification, its actions and a push name the profile they belong to
+  (pushes carry `p`, a tag of the account); the app never acts on another profile's with the running profile's core,
+  and only opens the app on that profile. A work profile's core gets no access to the phone's own data (contacts,
+  calendar, texts), and on iOS keeps its own Google sign-ins.
 - **Device enrollment** records a P-256 key the phone proves it holds, the platform's attestations and posture.
   Verifying attestations and gating decisions on posture come with O2.
 - **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there.
