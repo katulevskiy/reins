@@ -968,7 +968,11 @@ pub async fn owner_key_changed(user: &str, conn: &DbConn, pool: &DbPool) {
             continue;
         }
         let (peer, how) = if link.owner_uuid == user {
-            let how = if link.kind == CircleKind::Guardian.as_str() { Wake::Alert } else { Wake::News };
+            let how = if link.kind == CircleKind::Guardian.as_str() {
+                Wake::Alert
+            } else {
+                Wake::News
+            };
             (link.helper_uuid.clone(), how)
         } else {
             (link.owner_uuid.clone(), Wake::News)

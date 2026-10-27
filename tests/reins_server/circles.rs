@@ -123,7 +123,10 @@ async fn link_as(dana: &Person, alex: &Person, kind: &str) -> String {
     let (status, body) = alex.phone.post(&format!("/circles/invites/{id}/challenge"), &challenge).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     // The same challenge again (its answer was lost): taken; another one from the same helper: refused.
-    assert_eq!(alex.phone.post(&format!("/circles/invites/{id}/challenge"), &challenge).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(
+        alex.phone.post(&format!("/circles/invites/{id}/challenge"), &challenge).await.0,
+        StatusCode::NO_CONTENT
+    );
     let mut other = challenge.clone();
     other["nonce"] = json!(encode_nonce(&[3; 32]));
     assert_eq!(alex.phone.post(&format!("/circles/invites/{id}/challenge"), &other).await.0, StatusCode::CONFLICT);
@@ -324,6 +327,12 @@ async fn a_guardianship_is_ended_never_paused() {
     let guardian = Person::new(&server, "mom@example.com", 20).await;
     let l = link_as(&ward, &guardian, "guardian").await;
     let path = format!("/circles/links/{l}/change");
-    assert_eq!(ward.phone.post(&path, &ward.change(&l, 1, LinkState::Paused, Side::Owner)).await.0, StatusCode::CONFLICT);
-    assert_eq!(ward.phone.post(&path, &ward.change(&l, 1, LinkState::Ended, Side::Owner)).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(
+        ward.phone.post(&path, &ward.change(&l, 1, LinkState::Paused, Side::Owner)).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        ward.phone.post(&path, &ward.change(&l, 1, LinkState::Ended, Side::Owner)).await.0,
+        StatusCode::NO_CONTENT
+    );
 }
