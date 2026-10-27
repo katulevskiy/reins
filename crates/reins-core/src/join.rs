@@ -66,11 +66,17 @@ impl PhoneApi<'_> {
 }
 
 pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
+    // An enrollment asks to view the account (a second phone), never for its keys.
+    let (title, subtitle) = if j.commitment.is_some() {
+        (format!("Add {} as a second phone?", j.device_name), "Another phone asks to view this account")
+    } else {
+        (format!("Add {} to your account?", j.device_name), "Another phone asks for this account's keys")
+    };
     PendingItem {
         kind: PendingKind::Join,
         id: j.id.clone(),
-        title: format!("Add {} to your account?", j.device_name),
-        subtitle: "Another phone asks for this account's keys".to_owned(),
+        title,
+        subtitle: subtitle.to_owned(),
         created_at: j.created_at,
         connection_id: String::new(),
         connection_label: j.device_name.clone(),
@@ -214,6 +220,12 @@ impl Engine {
             return Err(CoreError::NotFound);
         }
         serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))
+    }
+
+    /// Whether the parked `Join` item `id` is a phone asking to view the account (an enrollment: compare its code with
+    /// `enroll_view`, answer with `enroll_confirm`) rather than a phone asking for the account's keys (`join_view`).
+    pub fn join_is_enrollment(&self, id: &str) -> Result<bool, CoreError> {
+        Ok(self.parked_join(id)?.commitment.is_some())
     }
 
     pub fn join_view(&self, id: &str) -> Result<JoinView, CoreError> {

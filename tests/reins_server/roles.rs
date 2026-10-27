@@ -1170,6 +1170,69 @@ async fn small_order_keys_and_spent_enrollments_are_refused() {
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "{body}");
 }
 
+/// The connection ids a `GET /connections` listed.
+fn listed(body: &Value) -> Option<Vec<String>> {
+    body["connections"]
+        .as_array()
+        .map(|list| list.iter().map(|c| c["id"].as_str().unwrap_or_default().to_owned()).collect())
+}
+
+/// `GET /connections` (read-only, the design's "opens read-only to members"): the approval device, and with a roster
+/// the primary and the viewers it enrolled, each with its own device key. A device of the account that signed in but
+/// was never enrolled, the viewer's id with another key, a removed viewer and another account read nothing of it.
+#[tokio::test]
+async fn connections_are_read_by_the_approval_device_and_enrolled_viewers_only() {
+    let server = Server::start().await;
+    let email = "cora@example.com";
+    let primary = server.phone(email).await;
+    primary.register_device().await;
+    let claude = server.connect_ai(&primary, email, Some("Claude")).await.connection_id;
+    let mine = Some(vec![claude.clone()]);
+
+    // Without a roster: the approval device only.
+    let second = server.second_device(email).await;
+    assert_eq!(listed(&primary.get("/connections").await.1), mine);
+    let (status, body) = second.get("/connections").await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"));
+
+    // With a roster: the primary reads; a signed-in phone of the account that never enrolled does not.
+    let mut acct = Account::with_roster(server, primary).await;
+    assert_eq!(listed(&acct.primary.get("/connections").await.1), mine);
+    let (status, body) = second.get("/connections").await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_a_member"), "{body}");
+
+    // An enrolled viewer reads the same list (and changes none of it).
+    let viewer = acct.server.second_device(email).await;
+    acct.enroll(&viewer, &keys(2), "iPhone").await;
+    assert_eq!(listed(&viewer.get("/connections").await.1), mine);
+    assert_eq!(viewer.delete(&format!("/connections/{claude}")).await.0, StatusCode::FORBIDDEN);
+    // The viewer's device id with another device key is not the viewer.
+    let spoof = acct.server.device_with_id(email, &viewer.device_id, Some(crate::harness::new_device_key())).await;
+    let (status, body) = spoof.get("/connections").await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_a_member"));
+    // Nor is the never-enrolled phone, still.
+    assert_eq!(error(&second.get("/connections").await.1), "not_a_member");
+
+    // Another account's approval device sees its own (none), never this account's.
+    let other = acct.server.phone("otto@example.com").await;
+    other.register_device().await;
+    assert_eq!(listed(&other.get("/connections").await.1), Some(vec![]));
+
+    // A removed viewer reads nothing more.
+    let removal = signed(
+        rewrapped(
+            acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+            NEW_WRAP,
+        ),
+        &acct.owner,
+    );
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": NEW_WRAP})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = viewer.get("/connections").await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_a_member"));
+    assert_eq!(listed(&acct.primary.get("/connections").await.1), mine);
+}
+
 #[tokio::test]
 async fn a_removed_viewer_stops_syncing_at_once() {
     let mut acct = Account::new("max@example.com").await;

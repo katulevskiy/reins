@@ -1062,7 +1062,7 @@ impl Engine {
 
     pub async fn connections(&self) -> Result<Vec<ConnectionView>, CoreError> {
         let session = self.session()?;
-        let list = api_call!(&session, |api| api.connections()).map_err(ApiFailure::into_core)?;
+        let list = api_call!(&session, |api| api.connections()).map_err(ApiFailure::into_connections_core)?;
         let blobatars = self.blobatars_for(&list.connections);
         let names = self.names_for(&list.connections);
         let views: Vec<ConnectionView> = list

@@ -313,6 +313,8 @@ class MainSafeCore(
 
     override suspend fun joinView(id: String): JoinView = io { joinView(id) }
 
+    override suspend fun joinIsEnrollment(id: String): Boolean = io { joinIsEnrollment(id) }
+
     override suspend fun answerJoin(id: String, approve: Boolean) = io { answerJoin(id, approve) }
 
     override suspend fun pairingView(pairingId: String): PairingView = io { pairingView(pairingId) }

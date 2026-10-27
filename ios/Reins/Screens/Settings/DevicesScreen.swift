@@ -136,6 +136,9 @@ struct DevicesScreen: View {
                 }
             }
 
+            // Phone roles, on the approving phone: the second phones it added, each removable with a hold.
+            SecondPhonesSection()
+
             QuietHelpHeader(title: "Computers", help: "A computer's page removes it; on the computer, reins logout does the same.", count: computers.isEmpty ? nil : "\(computers.count)")
             FlatGroup {
                 if computers.isEmpty {

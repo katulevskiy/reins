@@ -316,14 +316,28 @@ private fun SignedInContent(
                         authenticator = authenticator,
                         onDone = app::closeSheet,
                     )
-                    is SheetTarget.Join -> JoinSheet(
-                        viewModel = viewModel(key = "join:${target.id}") { JoinViewModel(container, target.id) },
-                        authenticator = authenticator,
-                        onDone = { notice ->
+                    is SheetTarget.Join -> {
+                        val onJoinDone: (String?) -> Unit = { notice ->
                             app.closeSheet()
                             notice?.let(app::showNotice)
-                        },
-                    )
+                        }
+                        // A second phone asking to view the account, or (without phone roles) one asking for its keys.
+                        val kind = viewModel(key = "joinKind:${target.id}") { dev.reins.android.ui.enroll.JoinKindViewModel(container, target.id) }
+                        val enrollment by kind.enrollment.collectAsStateWithLifecycle()
+                        when (enrollment) {
+                            null -> dev.reins.android.ui.approval.AskLoading(true, null, onClose = { onJoinDone(null) })
+                            true -> dev.reins.android.ui.enroll.EnrollRequestSheet(
+                                viewModel = viewModel(key = "enroll:${target.id}") { dev.reins.android.ui.enroll.EnrollRequestViewModel(container, target.id) },
+                                authenticator = authenticator,
+                                onDone = onJoinDone,
+                            )
+                            false -> JoinSheet(
+                                viewModel = viewModel(key = "join:${target.id}") { JoinViewModel(container, target.id) },
+                                authenticator = authenticator,
+                                onDone = onJoinDone,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -408,6 +422,7 @@ private fun TabContent(
             },
             onShown = mcp::refreshList,
             onCovered = onCovered,
+            viewerJoin = viewModel(key = "viewerJoin") { dev.reins.android.ui.enroll.ViewerJoinViewModel(container, deviceName = android.os.Build.MODEL) },
         )
         Tab.Settings -> SettingsScreen(
             state = state,

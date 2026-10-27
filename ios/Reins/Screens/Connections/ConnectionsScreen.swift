@@ -13,6 +13,9 @@ struct ConnectionsScreen: View {
     @State private var chosen: ConnectChoice?
     @State private var chosenService: String?
     @State private var showAllApps = false
+    /// "Join as a second phone", when the server keeps the list from this phone.
+    @State private var joining = false
+    @State private var viewerJoin = ViewerJoinModel()
 
     /// AI apps: connections that did not pin a computer's key.
     private var apps: [ConnectionView] { model.connections.filter { $0.keyFingerprint == nil } }
@@ -21,12 +24,15 @@ struct ConnectionsScreen: View {
 
     var body: some View {
         NextPage(bottom: 120) {
-            PlusSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
+            PlusSectionHeader(title: "AI apps", glyph: .globe, count: model.connectionsHidden ? nil : apps.count, addLabel: "Connect an AI app", addId: "connect") {
                 connecting = true
             }
             .padding(.top, -4)
             RaisedGroup {
-                if apps.isEmpty {
+                // Not this phone's to read (it neither approves nor views): where they are, never "None yet".
+                if model.connectionsHidden {
+                    HiddenRow(id: "aisHidden") { joining = true }
+                } else if apps.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noConnections")
                 }
                 ForEach(showAllApps ? apps : Array(apps.prefix(4)), id: \.id) { ConnectionRow(connection: $0) }
@@ -47,11 +53,13 @@ struct ConnectionsScreen: View {
                     .accessibilityIdentifier("showAllApps")
                 }
             }
-            PlusSectionHeader(title: "Computers", glyph: .laptop, count: computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
+            PlusSectionHeader(title: "Computers", glyph: .laptop, count: model.connectionsHidden ? nil : computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
                 connecting = true
             }
             RaisedGroup {
-                if computers.isEmpty {
+                if model.connectionsHidden {
+                    HiddenRow(id: "computersHidden") { joining = true }
+                } else if computers.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noComputers")
                 }
                 ForEach(computers, id: \.id) { ConnectionRow(connection: $0) }
@@ -118,6 +126,22 @@ struct ConnectionsScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(addingService)
+        #if DEBUG
+        // `-openViewerJoin [start]` (screenshots): the join sheet open, optionally already asking.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            guard let i = args.firstIndex(of: "-openViewerJoin") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            joining = true
+            if i + 1 < args.count, args[i + 1] == "start" { viewerJoin.start(model) }
+        }
+        #endif
+        .sheet(isPresented: $joining, onDismiss: { viewerJoin.cancel(model) }) {
+            ViewerJoinSheet(vm: viewerJoin) { joining = false }
+                .environment(model)
+                .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(joining)
     }
 
     private func openChosen() {
@@ -184,6 +208,31 @@ struct RowPressStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? Palette.paperSunken.opacity(0.6) : .clear)
             .contentShape(Rectangle())
+    }
+}
+
+/// In place of a group's connections when the server keeps them from this phone: they are on the approving phone, and
+/// Join asks it to add this one as a second phone (a viewer), which then sees them.
+private struct HiddenRow: View {
+    var id: String
+    var onJoin: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Visible on the approving phone")
+                .font(RFont.sans(15))
+                .foregroundStyle(Palette.ink2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier(id)
+            Button("Join", action: onJoin)
+                .buttonStyle(SignalButtonLook(kind: .soft, size: .small))
+                .fixedSize()
+                .accessibilityLabel("Join as a second phone")
+                .accessibilityIdentifier("join:\(id)")
+        }
+        .frame(minHeight: 56)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
     }
 }
 

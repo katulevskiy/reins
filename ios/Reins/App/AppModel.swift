@@ -134,6 +134,9 @@ final class AppModel {
     private(set) var accounts: [AccountView] = []
     private(set) var services: [ServiceView] = []
     private(set) var connections: [ConnectionView] = []
+    /// The server keeps the AI apps and computers to the approving phone and the phones it enrolled as viewers, and
+    /// this phone is neither: Connections says where they are instead of "None yet".
+    private(set) var connectionsHidden = false
     private(set) var mcpServers: [McpServerView] = []
     /// Autopilot's modes, bypasses and model; nil until first read.
     private(set) var autopilot: AutopilotSettings?
@@ -366,6 +369,7 @@ final class AppModel {
         accounts = []
         services = []
         connections = []
+        connectionsHidden = false
         vault.reset()
         setMcpServers([])
         mcpNotice = nil
@@ -728,9 +732,20 @@ final class AppModel {
     /// The AI connections (a network call; failures keep the last list).
     func refreshConnections() async {
         let epoch = accountEpoch
-        if let list = try? await core.connections(), epoch == accountEpoch {
+        do {
+            let list = try await core.connections()
+            guard epoch == accountEpoch else { return }
             connections = list
+            connectionsHidden = false
             publish()
+        } catch CoreError.NotAViewer {
+            // Not this phone's to read: say where they are, never "None yet".
+            guard epoch == accountEpoch else { return }
+            connections = []
+            connectionsHidden = true
+            publish()
+        } catch {
+            // Offline or signed out: the last list stays.
         }
     }
 

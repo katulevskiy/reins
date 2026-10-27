@@ -57,6 +57,10 @@ import dev.reins.android.ui.common.userMessage
 import dev.reins.core.CoreException
 import dev.reins.core.DeviceKind
 import dev.reins.core.DeviceView
+import dev.reins.core.PhoneRole
+import dev.reins.core.RosterMemberView
+import dev.reins.core.RosterSummary
+import dev.reins.android.ui.common.untrustedName
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,7 +82,45 @@ class DevicesViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(DevicesUi())
     val ui: StateFlow<DevicesUi> = _ui.asStateFlow()
 
+    /** The account's phones (phone roles) as this phone verified them; null without a roster. */
+    private val _roster = MutableStateFlow<RosterSummary?>(null)
+    val roster: StateFlow<RosterSummary?> = _roster.asStateFlow()
+
+    private fun loadRoster() {
+        viewModelScope.launch {
+            _roster.value = try {
+                container.core.rosterSummary(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Takes a second phone off the account (held to confirm): it reads nothing written from now on. */
+    fun removeViewer(member: RosterMemberView, onDone: (Boolean) -> Unit = {}) {
+        if (_ui.value.busy || member.primary || member.thisPhone) return
+        _ui.value = DevicesUi(busy = true)
+        viewModelScope.launch {
+            try {
+                container.core.rosterRemoveMember(member.deviceId)
+                container.feedback.play(Event.Revoked)
+                _roster.value = container.core.rosterSummary(false)
+                _ui.value = DevicesUi(message = "${untrustedName(member.name)} no longer sees this account.")
+                onDone(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.value = DevicesUi(error = e.userMessage())
+                onDone(false)
+            }
+        }
+    }
+
     fun load() {
+        loadRoster()
         viewModelScope.launch {
             try {
                 _devices.value = container.core.devices()
@@ -152,6 +194,8 @@ fun DevicesScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     var signingOut by remember { mutableStateOf<DeviceView?>(null) }
+    val roster by viewModel.roster.collectAsStateWithLifecycle()
+    var removing by remember { mutableStateOf<RosterMemberView?>(null) }
     LaunchedEffect(viewModel) { viewModel.load() }
     // This phone's key digits, and the recovery code typed to sign a phone out.
     dev.reins.android.ui.common.SecureWindow()
@@ -196,6 +240,19 @@ fun DevicesScreen(
                 }
             }
         }
+        // Phone roles, on the approving phone: the second phones (viewers) it added, each removable (held).
+        roster?.takeIf { it.role == PhoneRole.PRIMARY }?.let { summary ->
+            val viewers = summary.members.filter { !it.primary }
+            Group(header = "Second phones", footer = "They see your connections and activity. They decide nothing.") {
+                if (viewers.isEmpty()) {
+                    RText("No second phone.", RType.sans(15f), c.secondary, Modifier.padding(16.dp).testTag("noViewers"))
+                }
+                viewers.forEachIndexed { i, member ->
+                    if (i > 0) Hairline(inset = 51.dp)
+                    ViewerRow(member, busy = ui.busy) { removing = member }
+                }
+            }
+        }
         val computers = connections.filter { it.keyFingerprint != null }
         Group(
             header = "Computers",
@@ -220,6 +277,16 @@ fun DevicesScreen(
             }
         }
         Spacer(Modifier.padding(bottom = 32.dp))
+    }
+
+    removing?.let { member ->
+        RemoveViewerDialog(
+            member = member,
+            busy = ui.busy,
+            error = ui.error,
+            onConfirm = { viewModel.removeViewer(member) { ok -> if (ok) removing = null } },
+            onDismiss = { removing = null },
+        )
     }
 
     signingOut?.let { device ->
@@ -341,5 +408,75 @@ private fun DeviceRow(device: DeviceView, busy: Boolean, onSignOut: () -> Unit) 
                 .testTag("signOutDevice:${device.id}"),
             maxLines = 1,
         )
+    }
+}
+
+@Composable
+private fun ViewerRow(member: RosterMemberView, busy: Boolean, onRemove: () -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier.fillMaxWidth().testTag("viewer:${member.deviceId}").padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.layout.Box(Modifier.size(32.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+            GlyphIcon(Glyph.Phone, c.ink2, size = 18.dp)
+        }
+        RText(untrustedName(member.name), RType.row, c.ink, Modifier.weight(1f), maxLines = 1)
+        RText(
+            "Remove",
+            RType.sans(15f, FontWeight.SemiBold),
+            c.danger,
+            Modifier
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .pressable(enabled = !busy, shape = androidx.compose.foundation.shape.CircleShape, label = "Remove", onClick = onRemove)
+                .padding(horizontal = 6.dp, vertical = 8.dp)
+                .testTag("removeViewer:${member.deviceId}"),
+            maxLines = 1,
+        )
+    }
+}
+
+/** "Remove a second phone": which one, what removing does, and Remove held to confirm. */
+@Composable
+private fun RemoveViewerDialog(member: RosterMemberView, busy: Boolean, error: String?, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val c = LocalColors.current
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        dev.reins.android.feedback.DialogFeedback()
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(c.paperRaised)
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                    .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 16.dp)
+                    .testTag("removeViewerDialog"),
+            ) {
+                dev.reins.android.design.AskText("Remove a second phone", c.ink, target = "Remove", style = RType.serif(32f, 36f), minSize = 26.sp)
+                Row(Modifier.padding(top = 12.dp).fillMaxWidth().hairlineBelow(c.rule).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GlyphIcon(Glyph.Phone, c.ink2, size = 20.dp)
+                    Spacer(Modifier.width(12.dp))
+                    RText(untrustedName(member.name), RType.row, c.ink, Modifier.weight(1f), maxLines = 1)
+                }
+                RText("It no longer sees this account.", RType.sans(15f, lineHeight = 21f), c.ink2, Modifier.padding(top = 12.dp))
+                error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "removeViewerError") }
+                Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    dev.reins.android.design.SignalButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Outline, onClick = onDismiss)
+                    dev.reins.android.design.HoldButton(
+                        "Remove",
+                        c.danger,
+                        Modifier.weight(1f).testTag("confirmRemoveViewer"),
+                        icon = null,
+                        busy = busy,
+                        onConfirm = onConfirm,
+                    )
+                }
+            }
+        }
     }
 }

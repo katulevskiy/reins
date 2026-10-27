@@ -64,6 +64,12 @@ pub enum CoreError {
         reason: String,
         token: String,
     },
+    /// `connections`: the server shows the account's AI apps and computers only to the phone that approves and to
+    /// the phones it enrolled as viewers, and this phone is neither (a second phone that signed in but was never
+    /// enrolled, a removed viewer, or a replaced approval device). The list is not empty: it is not this phone's to
+    /// read, so the app says where it is instead of "None yet".
+    #[error("This phone is not a viewer of the account; the approving phone shows this.")]
+    NotAViewer,
 }
 
 impl CoreError {

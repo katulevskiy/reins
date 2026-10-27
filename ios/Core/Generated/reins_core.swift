@@ -3006,6 +3006,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func joinCancel() async throws 
     
     /**
+     * On the approval device: whether the phone asking (`PendingKind::Join`) asks to view the account as a second
+     * phone (`enroll_view`, then `enroll_confirm`) or for its keys (`join_view`, then `answer_join`).
+     */
+    func joinIsEnrollment(id: String) async throws  -> Bool
+    
+    /**
      * Where the request stands; `Joined` once the keys are open on this phone. `NotFound` when none is open.
      */
     func joinPoll() async throws  -> JoinProgress
@@ -4758,6 +4764,26 @@ open func joinCancel()async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the approval device: whether the phone asking (`PendingKind::Join`) asks to view the account as a second
+     * phone (`enroll_view`, then `enroll_confirm`) or for its keys (`join_view`, then `answer_join`).
+     */
+open func joinIsEnrollment(id: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_join_is_enrollment(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -20433,6 +20459,13 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      */
     case RecoveryNeedsConfirmation(reason: String, token: String
     )
+    /**
+     * `connections`: the server shows the account's AI apps and computers only to the phone that approves and to
+     * the phones it enrolled as viewers, and this phone is neither (a second phone that signed in but was never
+     * enrolled, a removed viewer, or a replaced approval device). The list is not empty: it is not this phone's to
+     * read, so the app says where it is instead of "None yet".
+     */
+    case NotAViewer
 
     
 
@@ -20496,6 +20529,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf), 
             token: try FfiConverterString.read(from: &buf)
             )
+        case 17: return .NotAViewer
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -20581,6 +20615,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             FfiConverterString.write(reason, into: &buf)
             FfiConverterString.write(token, into: &buf)
             
+        
+        case .NotAViewer:
+            writeInt(&buf, Int32(17))
+        
         }
     }
 }
@@ -26118,6 +26156,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_join_cancel() != 52669) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_join_is_enrollment() != 11708) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_join_poll() != 64197) {

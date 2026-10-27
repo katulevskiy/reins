@@ -34,6 +34,7 @@ fun Throwable.userMessage(): String = when (this) {
     is CoreException.OtherApprovalDevice -> OTHER_APPROVAL_DEVICE
     is CoreException.ViewerOnly -> "Decisions are made on the primary phone."
     is CoreException.RecoveryNeedsConfirmation -> untrusted(reason)
+    is CoreException.NotAViewer -> "Visible on the approving phone."
     is PasskeyException -> message
     is ForeignException.Failed -> untrusted(reason)
     is ForeignException.NeedsUserInteraction -> "Gmail needs your permission. Open Settings and connect Gmail."
