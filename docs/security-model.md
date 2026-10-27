@@ -649,6 +649,23 @@ an organization's member, which the phone and the desktop keep as a separate pro
   pending admin change takes the approver's enrolled phone (a device signature), so a console session alone approves
   nothing.
 
+### Zones from facts kept by id (Decisions v2 P2)
+
+The context graph decides a request's zone from facts only, looked up exactly. Two kinds of party are kept by the
+service's stable id, never by what an agent writes or by a name someone else can take:
+
+- **Telegram:** a chat is its numeric id. Before the matrix reads a send, the phone resolves the chat it names (a
+  handle, a title, an id) through Telegram exactly as the send would, and evaluates the chat that would receive it.
+  The owner's own chat (Saved Messages) is Mine by the account's own id. A chat Telegram can't find is Outside and
+  isn't a question; a handle or a name is only a label. Facts kept by a handle before this move onto the id the
+  first time Telegram resolves it.
+- **GitHub:** an owner the phone knows is kept by the account's numeric id (`#<id>`); the login is only its label.
+  A request names logins, so the phone asks GitHub which account each login is now (cached for an hour) and matches
+  by id: a login the owner gave up and someone else took is Outside. Without an answer (offline) it is Outside too.
+  The connected account is read as its token's own user. Facts kept by login before this move onto the id the
+  first time GitHub answers for them. The computer's own `[auto]` facts and an org's policy facts are still written
+  by login.
+
 ### Decisions in Managed mode (O2)
 
 A work account's agents never reach a phone: their calls go to the org's **decision service**, which decides with the
@@ -680,7 +697,22 @@ org's policy, and an **executor** runs what was decided with the org's own crede
 - **Leases.** A work daemon's repository credential is asked for like any request (judged by the repository's zone
   and the org's rules), minted by the executor for exactly that repository id, sealed to a key only the daemon holds,
   and lives 15 minutes. Removing a member revokes their leases at once, and the executor revokes the credential at
-  GitHub within its next pass.
+  GitHub within its next pass. Only the executor that minted a lease holds its token, so only it is told to revoke
+  it, and only it can say it did.
+- **Lease lifetime against GitHub's.** GitHub's installation tokens live one hour, whatever is asked, so a token can
+  outlive its 15-minute lease. What holds it to the lease:
+  - the executor mints only while the countersigned lease lasts, and revokes each token at its lease's end itself,
+    first thing every pass and without the server;
+  - the server's sweep ends every lease at its end (its sealed copy is deleted), and a token minted after that is
+    never handed out and goes to the revocation queue;
+  - deprovisioning revokes at once, as above.
+
+  **The residual window:** an executor that is offline (or was removed) from a lease's end until the token's own
+  expiry leaves that token valid at GitHub for up to an hour after it was minted, up to 45 minutes past its lease.
+  Nobody else holds the token, so nobody else can revoke it. Once that hour is over the server records
+  `lease.token_lapsed` and drops it from the queue.
+- **Flooding.** A connection may have 50 open org requests (under review, approved or running); beyond that the
+  agent is told to wait (03 §8), and nothing is recorded.
 - **Audit.** Every decision, review, execution, lease, policy and executor change and admin action is an event in the
   org's hash chain (O1's event table, kept as is), checkpointed and signed every 10 minutes. An export ends with a
   signed head; `reins-audit verify` checks every hash, link and signature and that the head covers the last event,
@@ -694,7 +726,22 @@ What this doesn't do yet:
   executor) holds fully with an HSM or customer KMS that enforces the two-signature rule itself (O5).
 - Checkpoints aren't published to an external witness yet (O5), so detecting a rewrite needs a checkpoint someone
   kept.
-- Play Integrity verdicts aren't verified (recorded only).
+- **Attestation:** a chain's certificates must be within their dates when the attestation is checked (a pinned root
+  is trusted by its key, whatever its certificate's dates). Android chains are checked against Google's attestation
+  status list, fetched at launch and every 6 hours; when it can't be fetched an attestation is verified without it
+  (its record says `unchecked`), and the next list re-checks every verified device, so one revoked since stops
+  counting as attested. Apple publishes no revocation for App Attest, so none is checked.
+- **Play Integrity is recorded only, never verified:** this server doesn't call Google's verdict API (that needs the
+  org's own Google Cloud service account). A Play Integrity token never makes a device attested, whatever it says,
+  and its record says `recorded_only`. A policy that requires attestation needs Android key attestation or App
+  Attest.
+- **A work account's desktop git calls** (`/reins/desktop/calls`: pushes and fetches through the desktop proxy) still
+  go to the work profile's phone, not to the org's decision service. They are decided on that phone with its own
+  credentials, as a Personal account's would be, and never reach the org's audit log. The org path for git is the
+  lease API above; the desktop daemon's side of it (fetching an org lease for an org remote) isn't built yet. Until
+  then, an org that needs every git credential to come from the org keeps work repositories off phone-held GitHub
+  accounts (05 §5, 08 R6).
+
 
 ## Known gaps
 
