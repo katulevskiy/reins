@@ -835,6 +835,51 @@ table! {
     }
 }
 
+table! {
+    reins_families (org_uuid) {
+        org_uuid -> Text,
+        notice_days -> Integer,
+        created_at -> BigInt,
+    }
+}
+
+table! {
+    reins_family_invites (id) {
+        id -> Text,
+        token_hash -> Text,
+        org_uuid -> Text,
+        email -> Text,
+        minor -> Bool,
+        guardian -> Bool,
+        approved -> Bool,
+        created_by -> Text,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        used_at -> Nullable<BigInt>,
+        used_by -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_family_members (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        minor -> Bool,
+        minor_proposed_at -> Nullable<BigInt>,
+        minor_proposed_by -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_family_leaves (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        requested_at -> BigInt,
+        effective_at -> Nullable<BigInt>,
+        consented_by -> Nullable<Text>,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

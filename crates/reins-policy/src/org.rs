@@ -199,6 +199,10 @@ pub struct OrgPolicy {
     pub posture: PostureRule,
     #[serde(default)]
     pub explain: String,
+    /// Who else reviews every hard obligation (the floor, L3, an unreadable request), besides the requester: a
+    /// family's guardians (P7). `None` (every other org): nothing changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hard_also: Option<ReviewSpec>,
 }
 
 fn id_ok(id: &str) -> bool {
@@ -221,6 +225,7 @@ impl OrgPolicy {
             cell_review: ReviewSpec::owner(),
             posture: PostureRule::default(),
             explain: String::new(),
+            hard_also: None,
         }
     }
 
@@ -256,6 +261,9 @@ impl OrgPolicy {
                 (_, Some(_)) => return Err(format!("rule {id} names reviewers but doesn't review")),
                 (_, None) => {}
             }
+        }
+        if let Some(also) = &self.hard_also {
+            also.validate().map_err(|e| format!("hard_also: {e}"))?;
         }
         self.cell_review.validate().map_err(|e| format!("cell review: {e}"))
     }
@@ -560,6 +568,13 @@ fn obligations_of(why: &[Why], org: &OrgPolicy) -> Vec<Obligation> {
             });
         }
     };
+    // A hard obligation the org also asks someone else for (a family's guardians): its own id, so neither stands in
+    // for the other.
+    let also = |id: &str, add: &mut dyn FnMut(String, ReviewSpec)| {
+        if let Some(spec) = &org.hard_also {
+            add(format!("{id}+also"), spec.clone());
+        }
+    };
     for w in why {
         match w {
             Why::Rule(id) => {
@@ -571,9 +586,18 @@ fn obligations_of(why: &[Why], org: &OrgPolicy) -> Vec<Obligation> {
                     .unwrap_or_else(ReviewSpec::owner);
                 add(id.clone(), spec);
             }
-            Why::Floor(_) => add("floor".to_owned(), ReviewSpec::owner()),
-            Why::Level3 => add("level3".to_owned(), ReviewSpec::owner()),
-            Why::Unreadable => add("unreadable".to_owned(), ReviewSpec::owner()),
+            Why::Floor(_) => {
+                add("floor".to_owned(), ReviewSpec::owner());
+                also("floor", &mut add);
+            }
+            Why::Level3 => {
+                add("level3".to_owned(), ReviewSpec::owner());
+                also("level3", &mut add);
+            }
+            Why::Unreadable => {
+                add("unreadable".to_owned(), ReviewSpec::owner());
+                also("unreadable", &mut add);
+            }
             // Overnight's stricter rule for people asks the cell's reviewers too (Managed never parks).
             Why::Cell | Why::FirstTime | Why::Overnight => add("cell".to_owned(), org.cell_review.clone()),
             // A task's envelope is a permit.
@@ -839,6 +863,63 @@ mod tests {
         assert_eq!(v.outcome, ManagedOutcome::Review, "{v:?}");
         assert_eq!(v.obligation_ids(), ["floor"]);
         assert_eq!(v.obligations[0].spec, ReviewSpec::owner());
+    }
+
+    #[test]
+    fn hard_also_adds_the_guardian_to_floor_and_l3() {
+        let guardian = ReviewSpec {
+            reviewers: Reviewers::Role(Role::Approver),
+            quorum: 1,
+            distinct_persons: true,
+            exclude_requester: true,
+            class: ReviewClass::Deferred,
+            window_secs: 86_400,
+        };
+        let mut p = acme();
+        p.matrix = Matrix {
+            mine: [Cell::Auto; 4],
+            friends: [Cell::Auto; 4],
+            work: [Cell::Auto; 4],
+            outside: [Cell::Auto; 4],
+        };
+        // Without it, nothing changes: the floor is the requester's own review.
+        let v = eval("reins_list_accounts", &json!({}), &p, None);
+        assert_eq!(v.obligation_ids(), ["floor"]);
+        let before = p.hash();
+        p.hard_also = Some(guardian.clone());
+        assert_ne!(p.hash(), before, "the hash covers it");
+        // The floor: the requester and a guardian.
+        let v = eval("reins_list_accounts", &json!({}), &p, None);
+        assert_eq!(v.outcome, ManagedOutcome::Review);
+        assert_eq!(v.obligation_ids(), ["floor", "floor+also"]);
+        assert_eq!(v.obligations[1].spec, guardian);
+        // L3 (a branch deleted): both again.
+        let v = eval("github_branch_delete", &json!({"repo": "acme/api", "branch": "feat/x"}), &p, None);
+        assert!(v.obligations.iter().any(|o| o.spec == guardian), "{:?}", v.obligation_ids());
+        assert!(v.obligations.iter().any(|o| o.spec == ReviewSpec::owner()), "{:?}", v.obligation_ids());
+        // Routine work stays Auto: hard_also only joins hard obligations.
+        assert_eq!(eval("github_create_issue", &issue("acme/api"), &p, None).outcome, ManagedOutcome::Auto);
+        // A guardian approving alone doesn't meet the requester's own floor review.
+        let roles = [Role::Approver];
+        let mom = Approval {
+            member: "mom",
+            groups: &[],
+            roles: &roles,
+            approve: true,
+        };
+        let v = eval("reins_list_accounts", &json!({}), &p, None);
+        assert_eq!(obligations_met(&v.obligations, "lee", &[mom]), Met::Waiting(vec!["floor".to_owned()]));
+        let lee = Approval {
+            member: "lee",
+            groups: &[],
+            roles: &[],
+            approve: true,
+        };
+        assert_eq!(obligations_met(&v.obligations, "lee", &[mom, lee]), Met::Yes);
+        // Old policies (no field) still parse, and serialize as they did.
+        let old: OrgPolicy = serde_json::from_str(&serde_json::to_string(&acme()).unwrap()).unwrap();
+        assert_eq!(old.hard_also, None);
+        assert!(!serde_json::to_string(&acme()).unwrap().contains("hard_also"));
     }
 
     proptest! {

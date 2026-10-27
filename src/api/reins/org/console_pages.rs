@@ -170,6 +170,8 @@ pub struct HomeView<'a> {
     pub orgs: Vec<(String, String, Tier)>,
     /// The domain a new org would claim, when this account may create one.
     pub can_create: Option<&'a str>,
+    /// This account may start a family (it belongs to no org).
+    pub can_create_family: bool,
 }
 
 pub fn home(frame: &Frame<'_>, view: &HomeView<'_>) -> String {
@@ -206,7 +208,24 @@ This account becomes its Org owner and a work account.</p><form method=\"post\" 
             csrf = hidden_csrf(frame.csrf),
         )
     });
-    page("Organizations", Some(frame), &format!("<h1>Organizations</h1><section>{orgs}</section>{create}"), frame.base)
+    let family = if view.can_create_family {
+        format!(
+            "<section><h2>New family</h2><p class=\"meta\">This account becomes its guardian.</p>\
+<form method=\"post\" action=\"{base}new\">{csrf}<input name=\"name\" placeholder=\"Name\" maxlength=\"64\" \
+required><input type=\"hidden\" name=\"tier\" value=\"family\"><button type=\"submit\">Create</button></form>\
+</section>",
+            base = e(frame.base),
+            csrf = hidden_csrf(frame.csrf),
+        )
+    } else {
+        String::new()
+    };
+    page(
+        "Organizations",
+        Some(frame),
+        &format!("<h1>Organizations</h1><section>{orgs}</section>{create}{family}"),
+        frame.base,
+    )
 }
 
 pub struct DomainView {
@@ -407,6 +426,10 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => (format!("Remove executor {}", e(executor_id)), field("Executor", "registered", "removed")),
+        AdminAction::AddGuardian {
+            email,
+            ..
+        } => (format!("Add {} as a guardian", e(email)), field("Guardian", "—", &e(email))),
     };
     format!("<div>{title}</div>{fields}")
 }
@@ -464,6 +487,10 @@ pub fn action_title(action: &AdminAction) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => format!("Remove executor {executor_id}"),
+        AdminAction::AddGuardian {
+            email,
+            ..
+        } => format!("Add guardian {email}"),
     }
 }
 
@@ -474,6 +501,48 @@ pub fn retention_text(days: u32) -> String {
         0 => "none".to_owned(),
         365 => "1 year".to_owned(),
         d => format!("{d} days"),
+    }
+}
+
+/// The changes waiting for approval, with the viewer's Approve and Reject (the overview's, and a family's page).
+pub fn changes_table(frame: &Frame<'_>, v: &OverviewView) -> String {
+    let csrf = hidden_csrf(frame.csrf);
+    let changes: String = v
+        .changes
+        .iter()
+        .map(|ch| {
+            let mut buttons = String::new();
+            if ch.can_approve {
+                buttons.push_str(&format!(
+                    "<form method=\"post\" action=\"{id}/changes/approve\">{csrf}<input type=\"hidden\" name=\"change\" \
+value=\"{c}\"><button type=\"submit\">{}Approve</button></form>",
+                    svg(icon::CHECK),
+                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
+                    c = e(&ch.id)
+                ));
+            }
+            if ch.can_reject {
+                buttons.push_str(&format!(
+                    "<form method=\"post\" action=\"{id}/changes/reject\">{csrf}<input type=\"hidden\" name=\"change\" \
+value=\"{c}\"><button class=\"quiet\" type=\"submit\">Reject</button></form>",
+                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
+                    c = e(&ch.id)
+                ));
+            }
+            if !ch.can_approve && ch.can_reject {
+                buttons.push_str("<span class=\"meta\">Waiting for a second admin</span>");
+            }
+            format!(
+                "<tr><td>{}</td><td class=\"meta\">{}</td><td>{buttons}</td></tr>",
+                describe(&ch.action, v),
+                e(&ch.proposed_by)
+            )
+        })
+        .collect();
+    if changes.is_empty() {
+        "<p class=\"meta\">Nothing waiting.</p>".to_owned()
+    } else {
+        format!("<table><tr><th>Change</th><th>Proposed by</th><th></th></tr>{changes}</table>")
     }
 }
 
@@ -608,43 +677,7 @@ required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
     } else {
         String::new()
     };
-    let changes: String = v
-        .changes
-        .iter()
-        .map(|ch| {
-            let mut buttons = String::new();
-            if ch.can_approve {
-                buttons.push_str(&format!(
-                    "<form method=\"post\" action=\"{id}/changes/approve\">{csrf}<input type=\"hidden\" name=\"change\" \
-value=\"{c}\"><button type=\"submit\">{}Approve</button></form>",
-                    svg(icon::CHECK),
-                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
-                    c = e(&ch.id)
-                ));
-            }
-            if ch.can_reject {
-                buttons.push_str(&format!(
-                    "<form method=\"post\" action=\"{id}/changes/reject\">{csrf}<input type=\"hidden\" name=\"change\" \
-value=\"{c}\"><button class=\"quiet\" type=\"submit\">Reject</button></form>",
-                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
-                    c = e(&ch.id)
-                ));
-            }
-            if !ch.can_approve && ch.can_reject {
-                buttons.push_str("<span class=\"meta\">Waiting for a second admin</span>");
-            }
-            format!(
-                "<tr><td>{}</td><td class=\"meta\">{}</td><td>{buttons}</td></tr>",
-                describe(&ch.action, v),
-                e(&ch.proposed_by)
-            )
-        })
-        .collect();
-    let changes = if changes.is_empty() {
-        "<p class=\"meta\">Nothing waiting.</p>".to_owned()
-    } else {
-        format!("<table><tr><th>Change</th><th>Proposed by</th><th></th></tr>{changes}</table>")
-    };
+    let changes = changes_table(frame, v);
     let bound = match v.identity {
         IdentityKind::None => String::new(),
         _ => format!(

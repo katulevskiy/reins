@@ -33,6 +33,8 @@ pub fn spawn(pool: DbPool) {
                     if let Err(e) = conn.run(move |c| sweep_once(c, now)).await {
                         warn!("Org sweeper: {e:?}");
                     }
+                    // Families: members whose leave took effect go (P7).
+                    super::family::sweep_now(&conn, &pool).await;
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }

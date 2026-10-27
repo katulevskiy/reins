@@ -219,6 +219,10 @@ pub fn can_apply_alone(
         return Ok(false);
     }
     let cap = needed(c, org, action)?;
+    if tenant.tier() == Tier::Family && matches!(action, AdminAction::ActivatePolicy { .. }) {
+        // A family's activation (P7; O4 keeps this branch): its only guardian alone, else another guardian approves.
+        return Ok(other_holders(c, org, cap, &change.proposed_by)? == 0);
+    }
     Ok(!tenant.two_person || other_holders(c, org, cap, &change.proposed_by)? == 0)
 }
 
@@ -468,6 +472,10 @@ fn validate(
             Some(e) if e.revoked_at.is_none() => Ok(()),
             _ => Err(OrgError::NotFound),
         },
+        AdminAction::AddGuardian {
+            invite,
+            ..
+        } => super::family::check_add_guardian(c, org, invite, crate::api::reins::now_unix()),
     }
 }
 
@@ -657,6 +665,10 @@ fn apply(
                 now,
             )?;
         }
+        AdminAction::AddGuardian {
+            invite,
+            ..
+        } => super::family::apply_add_guardian(c, org, invite)?,
     }
     Ok(Vec::new())
 }

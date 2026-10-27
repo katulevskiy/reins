@@ -50,7 +50,7 @@ pub fn claimable(raw: &str) -> Result<String, OrgError> {
     Ok(domain)
 }
 
-fn org_name(raw: &str) -> Result<String, OrgError> {
+pub(super) fn org_name(raw: &str) -> Result<String, OrgError> {
     let name = raw.trim();
     if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
         return Err(OrgError::Invalid("The name must be 1 to 64 characters."));

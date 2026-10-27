@@ -212,6 +212,82 @@ pub fn family_role_label(role: Role) -> &'static str {
     }
 }
 
+/// `POST /reins/api/org/family/join`: a new account takes a family's invitation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyJoin {
+    pub token: String,
+}
+
+/// `POST /reins/api/org/family/invites` (a guardian).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyInviteNew {
+    pub email: String,
+    #[serde(default)]
+    pub minor: bool,
+    #[serde(default)]
+    pub guardian: bool,
+}
+
+/// An invitation made: its secret, shown once (`reins-family://<server host>/<token>`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyInviteCreated {
+    pub id: String,
+    pub token: String,
+    pub expires_at: i64,
+    /// A guardian invitation waiting for another guardian's approval.
+    #[serde(default)]
+    pub waiting: bool,
+}
+
+/// A member's request to leave.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyLeaveView {
+    pub requested_at: i64,
+    /// When they go; `None` while a minor's request waits for a guardian.
+    #[serde(default)]
+    pub effective_at: Option<i64>,
+    pub needs_consent: bool,
+}
+
+/// A request to leave as a guardian sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyLeaveRequest {
+    /// The member's account id (what consent names).
+    pub member: String,
+    pub email: String,
+    pub minor: bool,
+    pub requested_at: i64,
+    #[serde(default)]
+    pub effective_at: Option<i64>,
+}
+
+/// `GET /reins/api/org/family`: the family as one member's phone shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyMe {
+    pub org_id: String,
+    pub name: String,
+    pub minor: bool,
+    pub guardian: bool,
+    /// The guardians' addresses.
+    pub guardians: Vec<String>,
+    /// An adult's notice before leaving: 0, 3 or 7 days.
+    pub notice_days: u8,
+    #[serde(default)]
+    pub leave: Option<FamilyLeaveView>,
+    /// A guardian proposed marking this account a minor's: it counts only if this member accepts.
+    #[serde(default)]
+    pub minor_proposed: bool,
+    /// For a guardian: the members' requests to leave.
+    #[serde(default)]
+    pub leaves: Vec<FamilyLeaveRequest>,
+}
+
+/// `POST /reins/api/org/family/minor`: the member's answer to a guardian's proposal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FamilyMinorAnswer {
+    pub accept: bool,
+}
+
 /// What a role may do. O1 uses the first seven; the rest name what O2–O4 build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -329,6 +405,12 @@ pub enum AdminAction {
     RemoveExecutor {
         executor_id: String,
     },
+    /// A family's guardian invitation (P7): the invited person becomes a guardian when they join. Another guardian, if
+    /// any, approves it (two-person). `invite`: the invitation's id; `email`: whom it is bound to (shown to approvers).
+    AddGuardian {
+        invite: String,
+        email: String,
+    },
 }
 
 /// Where an org executor runs (05 §5).
@@ -368,6 +450,9 @@ impl AdminAction {
     pub fn capability(&self, target_roles: &[Role]) -> Capability {
         let touches_privileged = target_roles.iter().any(|r| r.is_privileged());
         match self {
+            Self::AddGuardian {
+                ..
+            } => Capability::AssignAdmins,
             Self::GrantRole {
                 role,
                 ..
@@ -818,7 +903,8 @@ mod tests {
         }
         assert_eq!(family_role_label(Role::Member), "Family member");
         // Guardians can do what a family needs: invite, set the policy, connect accounts, approve.
-        for cap in [Capability::ManageMembers, Capability::ActivatePolicy, Capability::ManageConnections, Capability::Approve]
+        for cap in
+            [Capability::ManageMembers, Capability::ActivatePolicy, Capability::ManageConnections, Capability::Approve]
         {
             assert!(GUARDIAN_ROLES.iter().any(|r| role_grants(*r, cap)), "{cap:?}");
         }

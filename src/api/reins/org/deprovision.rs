@@ -41,6 +41,8 @@ pub enum Reason {
     /// (later; never from one sign-in's answer).
     #[allow(dead_code, reason = "the periodic provider sync that confirms twice comes later")]
     ProviderMembershipLost,
+    /// A family member left (P7): after an adult's notice, or with a guardian's consent for a minor.
+    FamilyLeave,
 }
 
 impl Reason {
@@ -52,6 +54,7 @@ impl Reason {
             Self::DirectoryDelete => state::DEPROVISIONED_BY_DIRECTORY,
             Self::AdminRemoval => state::REMOVED_BY_ADMIN,
             Self::ProviderMembershipLost => state::SUSPENDED_BY_PROVIDER,
+            Self::FamilyLeave => state::LEFT_FAMILY,
         }
     }
 
@@ -62,6 +65,7 @@ impl Reason {
             Self::DirectoryDelete => "directory_delete",
             Self::AdminRemoval => "admin_removal",
             Self::ProviderMembershipLost => "provider_membership_lost",
+            Self::FamilyLeave => "family_leave",
         }
     }
 }

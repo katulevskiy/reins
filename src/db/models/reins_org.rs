@@ -33,6 +33,8 @@ pub mod state {
     pub const REMOVED_BY_ADMIN: &str = "removed_by_admin";
     /// Their sign-in provider no longer counts them (a Team org's GitHub membership).
     pub const SUSPENDED_BY_PROVIDER: &str = "suspended_by_provider";
+    /// They left their family (P7): after an adult's notice, or with a guardian's consent.
+    pub const LEFT_FAMILY: &str = "left_family";
     /// The states the directory caused (owner recovery may follow them).
     pub const BY_DIRECTORY: [&str; 2] = [SUSPENDED_BY_DIRECTORY, DEPROVISIONED_BY_DIRECTORY];
 }

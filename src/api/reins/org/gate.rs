@@ -469,7 +469,16 @@ mod tests {
         );
         assert_eq!(decide(Some(&o), Existing::NoAccount, &via("GoogleOAuth", None)).unwrap_err(), NOT_THIS_WAY);
         assert_eq!(decide(Some(&o), Existing::NotMember, &via("GoogleOAuth", None)), Ok(Decision::Personal));
-        assert!(decide(Some(&o), Existing::Member { active: false }, &via("GoogleOAuth", None)).is_err());
+        assert!(
+            decide(
+                Some(&o),
+                Existing::Member {
+                    active: false
+                },
+                &via("GoogleOAuth", None)
+            )
+            .is_err()
+        );
     }
 
     #[test]
