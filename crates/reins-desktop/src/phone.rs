@@ -141,6 +141,25 @@ impl Phone {
                         nonce: asked.nonce,
                     });
                 }
+                CallStatus::Deferred {
+                    ticket,
+                    ..
+                } => {
+                    // Released when collected: asking again under the same key polls the ticket.
+                    self.keep_in_flight(reuse, asked);
+                    return Err(Refusal::Waiting(format!(
+                        "Parked for review on your phone (ticket {ticket}). Try again once it is approved."
+                    )));
+                }
+                CallStatus::Closed {
+                    state,
+                    ..
+                } => {
+                    return Err(Refusal::Unavailable(format!(
+                        "The request was not approved ({}). Try again.",
+                        state.as_str().replace('_', " ")
+                    )));
+                }
                 CallStatus::Pending | CallStatus::Offline => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
@@ -298,6 +317,7 @@ pub fn outcome_of<T>(r: &Result<T, Refusal>) -> (Outcome, Option<String>) {
         Ok(_) => (Outcome::Approved, None),
         Err(Refusal::Denied(m)) => (Outcome::Denied, Some(m.clone())),
         Err(Refusal::Waiting(m)) => (Outcome::TimedOut, Some(m.clone())),
+        Err(Refusal::Parked(p)) => (Outcome::TimedOut, Some(p.message.clone())),
         Err(Refusal::Unavailable(m)) => (Outcome::Failed, Some(m.clone())),
     }
 }

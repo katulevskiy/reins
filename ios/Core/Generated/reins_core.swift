@@ -3080,6 +3080,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approveQuick(requestId: String) async throws 
     
     /**
+     * "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
+     */
+    func askWhy(requestId: String, question: String) async throws 
+    
+    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
     func assignProfile(connectionId: String, profileId: String?) async throws 
@@ -3136,6 +3141,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func createProfile(name: String, icon: String?) async throws  -> ProfileView
     
     /**
+     * Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
+     * "Waiting for you" until its deadline.
+     */
+    func decideLater(requestId: String) async throws 
+    
+    /**
      * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
      * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
      * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
@@ -3164,6 +3175,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deleteProfile(profileId: String) async throws 
     
     func deny(requestId: String) async throws 
+    
+    /**
+     * The user refused, with an optional note the agent receives ("Use the staging bucket").
+     */
+    func denyWithNote(requestId: String, note: String?) async throws 
     
     /**
      * The devices signed in to the account (Settings > Devices).
@@ -3643,6 +3659,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * typed now: it can no longer sync or answer for the account.
      */
     func signOutDevice(deviceId: String, codeOrPassword: String) async throws 
+    
+    /**
+     * The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
+     * check the events and webhooks this phone signs. Shown under a connection's More.
+     */
+    func signingKeyFingerprint() async throws  -> String
     
     /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
@@ -4354,6 +4376,25 @@ open func approveQuick(requestId: String)async throws   {
 }
     
     /**
+     * "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
+     */
+open func askWhy(requestId: String, question: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_ask_why(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterString.lower(question)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
 open func assignProfile(connectionId: String, profileId: String?)async throws   {
@@ -4578,6 +4619,26 @@ open func createProfile(name: String, icon: String?)async throws  -> ProfileView
 }
     
     /**
+     * Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
+     * "Waiting for you" until its deadline.
+     */
+open func decideLater(requestId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_decide_later(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
      * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
      * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
@@ -4681,6 +4742,25 @@ open func deny(requestId: String)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_deny(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The user refused, with an optional note the agent receives ("Use the staging bucket").
+     */
+open func denyWithNote(requestId: String, note: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_deny_with_note(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterOptionString.lower(note)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -6459,6 +6539,26 @@ open func signOutDevice(deviceId: String, codeOrPassword: String)async throws   
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
+     * check the events and webhooks this phone signs. Shown under a connection's More.
+     */
+open func signingKeyFingerprint()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_signing_key_fingerprint(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -15698,6 +15798,14 @@ public struct PendingItem: Equatable, Hashable {
      * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
      */
     public var label: RequestLabel?
+    /**
+     * The request became a ticket (the agent does not wait for it): its window, and a "Why?" and the agent's answer.
+     */
+    public var ticket: TicketView?
+    /**
+     * An Instant request the reviewer can move to later (`decide_later`).
+     */
+    public var canDefer: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15736,7 +15844,13 @@ public struct PendingItem: Equatable, Hashable {
          */quick: Bool = false, 
         /**
          * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
-         */label: RequestLabel? = nil) {
+         */label: RequestLabel? = nil, 
+        /**
+         * The request became a ticket (the agent does not wait for it): its window, and a "Why?" and the agent's answer.
+         */ticket: TicketView? = nil, 
+        /**
+         * An Instant request the reviewer can move to later (`decide_later`).
+         */canDefer: Bool = false) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -15755,6 +15869,8 @@ public struct PendingItem: Equatable, Hashable {
         self.headline = headline
         self.quick = quick
         self.label = label
+        self.ticket = ticket
+        self.canDefer = canDefer
     }
 
     
@@ -15790,7 +15906,9 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 suggestion: FfiConverterOptionString.read(from: &buf), 
                 headline: FfiConverterString.read(from: &buf), 
                 quick: FfiConverterBool.read(from: &buf), 
-                label: FfiConverterOptionTypeRequestLabel.read(from: &buf)
+                label: FfiConverterOptionTypeRequestLabel.read(from: &buf), 
+                ticket: FfiConverterOptionTypeTicketView.read(from: &buf), 
+                canDefer: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -15813,6 +15931,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterString.write(value.headline, into: &buf)
         FfiConverterBool.write(value.quick, into: &buf)
         FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
+        FfiConverterOptionTypeTicketView.write(value.ticket, into: &buf)
+        FfiConverterBool.write(value.canDefer, into: &buf)
     }
 }
 
@@ -19600,6 +19720,119 @@ public func FfiConverterTypeThresholdReplay_lift(_ buf: RustBuffer) throws -> Th
 #endif
 public func FfiConverterTypeThresholdReplay_lower(_ value: ThresholdReplay) -> RustBuffer {
     return FfiConverterTypeThresholdReplay.lower(value)
+}
+
+
+/**
+ * A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.
+ */
+public struct TicketView: Equatable, Hashable {
+    /**
+     * `rt_…`, as the agent knows it.
+     */
+    public var ticket: String
+    /**
+     * "deferred", "needs_info", "escalated", "stale", "approved", ...
+     */
+    public var state: String
+    /**
+     * The window: from when it became a ticket to its deadline (Unix seconds). Reminders fall at 50% and 90% of it.
+     */
+    public var deferredAt: Int64
+    public var deadline: Int64
+    /**
+     * The reviewer's "Why?", while it waits for the agent.
+     */
+    public var question: String?
+    /**
+     * The agent's answer to it: the agent's words, shown as the agent's, never a fact.
+     */
+    public var agentReply: String?
+    /**
+     * What changed since it was approved ("main moved from 1a2b3c4 to 5d6e7f8").
+     */
+    public var stale: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `rt_…`, as the agent knows it.
+         */ticket: String, 
+        /**
+         * "deferred", "needs_info", "escalated", "stale", "approved", ...
+         */state: String, 
+        /**
+         * The window: from when it became a ticket to its deadline (Unix seconds). Reminders fall at 50% and 90% of it.
+         */deferredAt: Int64, deadline: Int64, 
+        /**
+         * The reviewer's "Why?", while it waits for the agent.
+         */question: String?, 
+        /**
+         * The agent's answer to it: the agent's words, shown as the agent's, never a fact.
+         */agentReply: String?, 
+        /**
+         * What changed since it was approved ("main moved from 1a2b3c4 to 5d6e7f8").
+         */stale: String?) {
+        self.ticket = ticket
+        self.state = state
+        self.deferredAt = deferredAt
+        self.deadline = deadline
+        self.question = question
+        self.agentReply = agentReply
+        self.stale = stale
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TicketView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTicketView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TicketView {
+        return
+            try TicketView(
+                ticket: FfiConverterString.read(from: &buf), 
+                state: FfiConverterString.read(from: &buf), 
+                deferredAt: FfiConverterInt64.read(from: &buf), 
+                deadline: FfiConverterInt64.read(from: &buf), 
+                question: FfiConverterOptionString.read(from: &buf), 
+                agentReply: FfiConverterOptionString.read(from: &buf), 
+                stale: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TicketView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.ticket, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterInt64.write(value.deferredAt, into: &buf)
+        FfiConverterInt64.write(value.deadline, into: &buf)
+        FfiConverterOptionString.write(value.question, into: &buf)
+        FfiConverterOptionString.write(value.agentReply, into: &buf)
+        FfiConverterOptionString.write(value.stale, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTicketView_lift(_ buf: RustBuffer) throws -> TicketView {
+    return try FfiConverterTypeTicketView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTicketView_lower(_ value: TicketView) -> RustBuffer {
+    return FfiConverterTypeTicketView.lower(value)
 }
 
 
@@ -25103,6 +25336,30 @@ fileprivate struct FfiConverterOptionTypeSuggestionView: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeTicketView: FfiConverterRustBuffer {
+    typealias SwiftType = TicketView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTicketView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTicketView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeTokenStoreView: FfiConverterRustBuffer {
     typealias SwiftType = TokenStoreView?
 
@@ -27175,6 +27432,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_ask_why() != 23348) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_assign_profile() != 6030) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27211,6 +27471,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_create_profile() != 4955) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_decide_later() != 50374) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_deciding() != 19882) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27227,6 +27490,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_deny_with_note() != 61995) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
@@ -27506,6 +27772,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_signing_key_fingerprint() != 25325) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {

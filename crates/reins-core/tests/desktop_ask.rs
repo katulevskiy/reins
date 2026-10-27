@@ -79,7 +79,9 @@ async fn a_question_is_shown_and_yes_is_sealed_to_the_app_with_its_nonce() {
         AskAnswer {
             v: 1,
             nonce: "nonce-r1".to_owned(),
-            approved: true
+            approved: true,
+            digest: None,
+            expires_at: None,
         }
     );
     let entry = desk.core.activity(10).await.unwrap().into_iter().find(|a| a.op == "ask").unwrap();

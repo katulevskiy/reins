@@ -103,6 +103,9 @@ pub struct RelayResponse {
     /// an older phone's answer, and from an answer the user gave.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decided: Option<crate::autopilot::Decided>,
+    /// For a ticket: the phone's signed transitions that go with this answer (approved, then done or failed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<crate::ticket::SignedTicketEvent>,
 }
 
 #[cfg(test)]
@@ -140,6 +143,7 @@ mod tests {
                 reason: None,
             },
             decided: None,
+            events: vec![],
         };
         assert_eq!(serde_json::to_value(&denied).unwrap(), json!({"v": 1, "outcome": "denied", "reason": null}));
         let sent = RelayResponse {
@@ -151,6 +155,7 @@ mod tests {
                 }),
             },
             decided: None,
+            events: vec![],
         };
         let v = serde_json::to_value(&sent).unwrap();
         assert_eq!(v, json!({"v": 1, "outcome": "result", "result": {"kind": "sent", "id": "m9", "thread_id": "t9"}}));
@@ -175,6 +180,7 @@ mod tests {
                 }],
                 correctable: true,
             }),
+            events: vec![],
         };
         let v = serde_json::to_value(&auto).unwrap();
         assert_eq!(v["decided"]["by"], json!("autopilot"));

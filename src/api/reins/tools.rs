@@ -16,7 +16,14 @@ use reins_proto::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{mcp_tools, presence::PhoneSeen, relay::WaitResult};
+use reins_proto::ticket::{MAX_NOTE_CHARS, MAX_REPLY_CHARS, MAX_WAIT_SECS, clean_text, request_of, ticket_of};
+
+use super::{
+    mcp_tools,
+    presence::PhoneSeen,
+    relay::WaitResult,
+    tickets::{self, AgentView},
+};
 
 /// Applied by the server when the AI omits `max_results` (contracts C).
 pub const DEFAULT_MAX_RESULTS: u32 = 10;
@@ -207,16 +214,71 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "reins_get_result",
             "title": "Get the result of an approved request",
-            "description": "Get the result of an earlier request that was waiting for the user's approval on their \
-        phone (use the request_id from that answer). Waits a while if it is still pending. Until this returns the \
+            "description": "Get the result of an earlier request that was waiting for the user's approval (pass the \
+        request_id or the ticket from that answer). Waits a while if it is still pending. Until this returns the \
         result, the action has not happened.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"request_id": {"type": "string", "description": "The request_id to look up."}},
-                "required": ["request_id"],
+                "properties": {
+                    "request_id": {"type": "string", "description": "The request_id to look up."},
+                    "ticket": {"type": "string", "description": "The ticket (rt_...) to look up."}
+                },
+                "required": [],
                 "additionalProperties": false
             },
             "annotations": read_hints()
+        }),
+        json!({
+            "name": "reins_wait",
+            "title": "Wait for a ticket",
+            "description": "Block until a ticket (rt_...) is decided or max_seconds pass (at most 600), then return \
+        where it stands, with the result when it was approved.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ticket": {"type": "string"},
+                    "max_seconds": {"type": "integer", "minimum": 1, "maximum": MAX_WAIT_SECS,
+                        "description": "Default 55."}
+                },
+                "required": ["ticket"],
+                "additionalProperties": false
+            },
+            "annotations": read_hints()
+        }),
+        json!({
+            "name": "reins_tickets",
+            "title": "List your tickets",
+            "description": "List this connection's tickets: those waiting for review, and those decided in the last day.",
+            "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+            "annotations": read_hints()
+        }),
+        json!({
+            "name": "reins_cancel",
+            "title": "Withdraw a request",
+            "description": "Withdraw a request or ticket that is still waiting for review (it is no longer needed).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"ticket": {"type": "string", "description": "The ticket (rt_...) or request_id."}},
+                "required": ["ticket"],
+                "additionalProperties": false
+            },
+            "annotations": write_hints(false, false)
+        }),
+        json!({
+            "name": "reins_reply",
+            "title": "Answer the reviewer's question",
+            "description": "Answer a reviewer who asked why (the ticket's state is needs_info). The answer is shown \
+        to them as yours; it never changes what the request does.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ticket": {"type": "string"},
+                    "text": {"type": "string", "minLength": 1, "maxLength": MAX_REPLY_CHARS}
+                },
+                "required": ["ticket", "text"],
+                "additionalProperties": false
+            },
+            "annotations": write_hints(false, false)
         }),
         json!({
             "name": UPLOAD_TOOL,
@@ -269,6 +331,20 @@ pub enum ToolInvocation {
     /// A normalized call to relay to the phone.
     Relay(ToolCall, Option<String>),
     GetResult(RequestId),
+    /// `reins_wait`: a ticket and the most seconds to wait.
+    Wait(RequestId, u64),
+    Cancel(RequestId),
+    Tickets,
+    /// `reins_reply`: a ticket and the agent's answer.
+    Reply(RequestId, String),
+}
+
+/// Default `reins_wait`: below the 60 s tool timeout some clients have.
+pub const DEFAULT_WAIT_SECS: u64 = 55;
+
+fn ticket_arg(args: &Map<String, Value>, key: &str) -> Result<RequestId, ToolArgError> {
+    let raw = required_string(args, key)?;
+    request_of(&raw).map_or_else(|| invalid(format!("`{key}` is not valid.")), Ok)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -488,12 +564,48 @@ pub fn parse_invocation_with(
         }
         "reins_get_result" => {
             let args = object(arguments)?;
-            reject_unknown(args, &["request_id"])?;
-            let id = required_string(args, "request_id")?;
+            reject_unknown(args, &["request_id", "ticket"])?;
+            let key = match (args.contains_key("request_id"), args.contains_key("ticket")) {
+                (true, false) => "request_id",
+                (false, true) => "ticket",
+                _ => return invalid("Give either `request_id` or `ticket`."),
+            };
+            let id = required_string(args, key)?;
             if id.is_empty() || id.len() > 64 {
-                return invalid("`request_id` is not valid.");
+                return invalid(format!("`{key}` is not valid."));
             }
-            Ok(ToolInvocation::GetResult(RequestId(id)))
+            Ok(ToolInvocation::GetResult(ticket_arg(args, key)?))
+        }
+        "reins_wait" => {
+            let args = object(arguments)?;
+            reject_unknown(args, &["ticket", "max_seconds"])?;
+            let secs = match args.get("max_seconds") {
+                None => DEFAULT_WAIT_SECS,
+                Some(v) => match v.as_u64() {
+                    Some(n) if (1..=MAX_WAIT_SECS).contains(&n) => n,
+                    _ => return invalid(format!("`max_seconds` must be 1 to {MAX_WAIT_SECS}.")),
+                },
+            };
+            Ok(ToolInvocation::Wait(ticket_arg(args, "ticket")?, secs))
+        }
+        "reins_tickets" => {
+            reject_unknown(object(arguments)?, &[])?;
+            Ok(ToolInvocation::Tickets)
+        }
+        "reins_cancel" => {
+            let args = object(arguments)?;
+            reject_unknown(args, &["ticket"])?;
+            Ok(ToolInvocation::Cancel(ticket_arg(args, "ticket")?))
+        }
+        "reins_reply" => {
+            let args = object(arguments)?;
+            reject_unknown(args, &["ticket", "text"])?;
+            let raw = required_string(args, "text")?;
+            if raw.chars().count() > MAX_REPLY_CHARS {
+                return invalid(format!("`text` is longer than {MAX_REPLY_CHARS} characters."));
+            }
+            let text = clean_text(&raw, MAX_REPLY_CHARS).map_or_else(|| invalid("`text` is empty."), Ok)?;
+            Ok(ToolInvocation::Reply(ticket_arg(args, "ticket")?, text))
         }
         other => match connector::spec_for_tool(other).filter(|s| !s.desktop_only) {
             Some(spec) => {
@@ -619,8 +731,8 @@ pub fn render_outcome(outcome: &RelayOutcome) -> Value {
             result,
         } => success(&structured(result)),
         RelayOutcome::Denied {
-            ..
-        } => failure(DENIED_TEXT),
+            reason,
+        } => failure(&denied_text(reason.as_deref())),
         RelayOutcome::Error {
             message,
         } => failure(&format!("The Reins device could not complete the request: {message}")),
@@ -634,6 +746,58 @@ pub fn render_wait(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> Value 
         WaitResult::Offline => failure(&offline_text(id, seen)),
         WaitResult::Pending => failure(&pending_text(id)),
         WaitResult::NotFound => failure("Unknown or expired request_id. Start the request again."),
+        WaitResult::Deferred(ticket) => success(&json!({"status": "pending_review", "ticket": ticket,
+            "next": "Continue with other work. Call reins_get_result with this ticket later, or reins_wait to block up \
+to 10 minutes."})),
+    }
+}
+
+/// A denial, with the reviewer's note when they wrote one (labelled as theirs).
+pub fn denied_text(note: Option<&str>) -> String {
+    match note.and_then(|n| clean_text(n, MAX_NOTE_CHARS)) {
+        Some(note) => format!("{DENIED_TEXT} Note: \"{note}\""),
+        None => DENIED_TEXT.to_owned(),
+    }
+}
+
+/// The tool result for a ticket after a wait (`reins_get_result`, `reins_wait`).
+pub fn render_ticket(view: &AgentView) -> Value {
+    match view {
+        AgentView::Open(row) => match row.state.as_str() {
+            "needs_info" => success(&json!({
+                "status": "needs_info",
+                "ticket": ticket_of(&RequestId(row.id.clone())),
+                "question": row.question,
+                "next": "The reviewer asked this. Answer with reins_reply(ticket, text); then wait as before."
+            })),
+            _ => success(&tickets::pending_review(row, None)),
+        },
+        AgentView::Approved(row) => success(&json!({
+            "status": "approved",
+            "ticket": ticket_of(&RequestId(row.id.clone())),
+            "next": "Approved. It runs when the user's phone is online; call reins_get_result again in a minute. \
+        Nothing has happened yet."
+        })),
+        AgentView::Outcome(outcome) => render_outcome(outcome),
+        AgentView::Done(row) => {
+            let result: Value = row.result.as_deref().and_then(|r| serde_json::from_str(r).ok()).unwrap_or(json!({}));
+            success(&json!({
+                "status": "done",
+                "ticket": ticket_of(&RequestId(row.id.clone())),
+                "result": result,
+                "note": "Approved and done. Only ids were kept: the full result went to whoever waited at the time."
+            }))
+        }
+        AgentView::Closed(row) => failure(&match row.state.as_str() {
+            "expired" => "Expired: not approved in time. Nothing happened.".to_owned(),
+            "cancelled" => "Cancelled. Nothing happened.".to_owned(),
+            "stale" => format!(
+                "Stale: the world changed since it was approved ({}). Nothing happened; make the request again.",
+                row.stale.as_deref().unwrap_or("details unknown")
+            ),
+            "failed" => "Approved, but it failed on the user's device.".to_owned(),
+            _ => "Approved, but whether it happened is unknown. Check before trying again.".to_owned(),
+        }),
     }
 }
 
@@ -668,7 +832,7 @@ mod tests {
     fn tool_definitions_are_strict_and_well_formed() {
         let tools = tool_definitions();
         let listed = connector::specs().iter().filter(|s| !s.desktop_only).count() - UNLISTED_TOOLS.len();
-        assert_eq!(tools.len(), 7 + listed);
+        assert_eq!(tools.len(), 11 + listed);
         for tool in &tools {
             assert!(tool["name"].is_string() && tool["description"].is_string(), "{tool}");
             assert_eq!(tool["inputSchema"]["type"], "object");
@@ -711,7 +875,7 @@ mod tests {
             let read = spec.effect != connector::Effect::Write;
             assert_eq!(annotations(spec.tool)["readOnlyHint"], read, "{}", spec.tool);
         }
-        for read in ["gmail_read", "gmail_search", "reins_get_result"] {
+        for read in ["gmail_read", "gmail_search", "reins_get_result", "reins_wait", "reins_tickets"] {
             assert_eq!(annotations(read)["readOnlyHint"], true, "{read}");
         }
         // reins_list_accounts with a service asks the phone for a permission to see accounts.
@@ -1003,6 +1167,14 @@ mod tests {
         assert!(invalid_msg("reins_get_result", &json!({"request_id": ""})).contains("request_id"));
         assert!(invalid_msg("reins_get_result", &json!({"request_id": "x".repeat(65)})).contains("request_id"));
         assert_eq!(
+            parse_invocation("reins_get_result", &json!({"ticket": "rt_r-1"})).unwrap(),
+            ToolInvocation::GetResult(RequestId("r-1".into())),
+            "a ticket is its request"
+        );
+        assert!(invalid_msg("reins_get_result", &json!({})).contains("either"));
+        assert!(invalid_msg("reins_get_result", &json!({"request_id": "a", "ticket": "rt_a"})).contains("either"));
+        assert!(invalid_msg("reins_get_result", &json!({"ticket": "rt_a/b"})).contains("ticket"));
+        assert_eq!(
             parse_invocation("delete_everything", &json!({})),
             Err(ToolArgError::UnknownTool("delete_everything".into()))
         );
@@ -1072,13 +1244,58 @@ mod tests {
     }
 
     #[test]
+    fn ticket_tools_parse_strictly() {
+        assert_eq!(
+            parse_invocation("reins_wait", &json!({"ticket": "rt_a"})).unwrap(),
+            ToolInvocation::Wait(RequestId("a".into()), 55)
+        );
+        assert_eq!(
+            parse_invocation("reins_wait", &json!({"ticket": "rt_a", "max_seconds": 600})).unwrap(),
+            ToolInvocation::Wait(RequestId("a".into()), 600)
+        );
+        assert!(invalid_msg("reins_wait", &json!({"ticket": "rt_a", "max_seconds": 601})).contains("max_seconds"));
+        assert!(invalid_msg("reins_wait", &json!({"ticket": "rt_a", "max_seconds": 0})).contains("max_seconds"));
+        assert!(invalid_msg("reins_wait", &json!({})).contains("ticket"));
+        assert_eq!(parse_invocation("reins_tickets", &json!({})).unwrap(), ToolInvocation::Tickets);
+        assert!(invalid_msg("reins_tickets", &json!({"all": true})).contains("all"));
+        assert_eq!(
+            parse_invocation("reins_cancel", &json!({"ticket": "rt_a"})).unwrap(),
+            ToolInvocation::Cancel(RequestId("a".into()))
+        );
+        assert_eq!(
+            parse_invocation("reins_reply", &json!({"ticket": "rt_a", "text": " because CI is red "})).unwrap(),
+            ToolInvocation::Reply(RequestId("a".into()), "because CI is red".into())
+        );
+        assert!(invalid_msg("reins_reply", &json!({"ticket": "rt_a", "text": "  "})).contains("empty"));
+        assert!(invalid_msg("reins_reply", &json!({"ticket": "rt_a", "text": "x".repeat(2001)})).contains("longer"));
+    }
+
+    #[test]
+    fn pending_review_is_not_an_error_and_closed_tickets_are() {
+        let wait = render_wait(&WaitResult::Deferred("rt_a".into()), &RequestId("a".into()), PhoneSeen::Never);
+        assert_eq!(
+            (wait["isError"].clone(), wait["structuredContent"]["status"].clone()),
+            (json!(false), json!("pending_review"))
+        );
+        assert_eq!(wait["structuredContent"]["ticket"], "rt_a");
+    }
+
+    #[test]
     fn denials_and_device_errors_are_tool_errors() {
         let denied = render_outcome(&RelayOutcome::Denied {
-            reason: Some("secret reason".into()),
+            reason: None,
         });
         assert_eq!(
             (denied["isError"].clone(), denied["content"][0]["text"].as_str()),
             (json!(true), Some(DENIED_TEXT))
+        );
+        // The reviewer's note (or the budget's refusal) reaches the agent, labelled, on one clean line.
+        let noted = render_outcome(&RelayOutcome::Denied {
+            reason: Some("use the\u{7} staging bucket".into()),
+        });
+        assert_eq!(
+            noted["content"][0]["text"],
+            "Denied by the user on their Reins device. Note: \"use the  staging bucket\""
         );
         let err = render_outcome(&RelayOutcome::Error {
             message: "Gmail needs consent".into(),

@@ -122,7 +122,8 @@ async fn the_device_key_goes_with_every_phone_api_call_and_nowhere_else() {
     env.core.register_device(Some("fcm".to_owned())).await.unwrap();
     let calls = registrations(&env.server).await;
     assert_eq!(calls.len(), 2, "no proof needed, no retry");
-    assert_eq!(calls[0].0, json!({"fcm_token": null}), "no proof is sent unasked");
+    assert_eq!(calls[0].0["fcm_token"], json!(null));
+    assert!(calls[0].0.get("master_password_hash").is_none(), "no proof is sent unasked");
     let key = calls[0].1.clone().expect("the device key header");
     assert!(device_key_hash(&key).is_some(), "32 bytes, base64url");
     assert_eq!(calls[1].1.as_deref(), Some(key.as_str()), "the same key every time");

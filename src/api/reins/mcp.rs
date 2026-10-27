@@ -29,7 +29,9 @@ is done until a result confirms it.
 - If a result says the device is offline, tell the user to open the Reins app on their phone.
 - If a result says a service is not connected, ask the user to add it in the Reins app, then call the tool again; \
 no new chat is needed.
-- If the user has several accounts for a service, call reins_list_accounts with that service to pick one.";
+- If the user has several accounts for a service, call reins_list_accounts with that service to pick one.
+- If a result says pending_review, the request became a ticket: continue with other work and check it later with \
+reins_get_result or reins_wait. Never say it is done until a result confirms it.";
 
 /// [`INSTRUCTIONS`] and, when the phone has reported them, the services the user has connected right now.
 pub fn instructions(services: Option<&[String]>) -> String {
@@ -85,7 +87,31 @@ pub enum Action {
         name: String,
         arguments: Value,
         modern: bool,
+        /// The client asked not to wait (`_meta["dev.reins/defer"]`): the call becomes a ticket at once.
+        defer: bool,
     },
+    /// A `resources/*` request about tickets (they need the database); answered with [`resource_reply`].
+    Resource {
+        id: Value,
+        method: String,
+        params: Value,
+        modern: bool,
+    },
+}
+
+/// The `_meta` key a client sets on `tools/call` to get a ticket at once instead of waiting.
+pub const META_DEFER: &str = "dev.reins/defer";
+/// URI prefix of a ticket resource (`reins://tickets/rt_…`).
+pub const TICKET_URI: &str = "reins://tickets/";
+
+/// What the server can do, in both eras: tools, and tickets as resources one can subscribe to.
+fn capabilities() -> Value {
+    json!({"tools": {"listChanged": false}, "resources": {"subscribe": true, "listChanged": false}})
+}
+
+/// The JSON-RPC reply for a `resources/*` request answered with `result`.
+pub fn resource_reply(id: &Value, modern: bool, result: Value) -> Value {
+    tool_reply(id, modern, result)
 }
 
 fn server_info() -> Value {
@@ -245,18 +271,18 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
             } else {
                 LEGACY_VERSION
             };
-            // `listChanged` stays false: with no server-to-client stream (GET /mcp is 405) a change cannot be pushed.
-            // Every Reins tool is listed from the start, so only the tools of MCP servers added later need a refresh.
+            // `listChanged` stays false: the server-to-client stream (GET /mcp) carries ticket updates only. Every Reins
+            // tool is listed from the start, so only the tools of MCP servers added later need a refresh.
             finish(json!({
                 "protocolVersion": negotiated,
-                "capabilities": {"tools": {"listChanged": false}},
+                "capabilities": capabilities(),
                 "serverInfo": server_info(),
                 "instructions": instructions(services)
             }))
         }
         "server/discover" => finish(json!({
             "supportedVersions": [MODERN_VERSION, LEGACY_VERSION],
-            "capabilities": {"tools": {"listChanged": false}},
+            "capabilities": capabilities(),
             "serverInfo": server_info(),
             "instructions": instructions(services)
         })),
@@ -278,8 +304,19 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
                 name: name.to_owned(),
                 arguments: params.get("arguments").cloned().unwrap_or_else(|| Value::Object(Map::new())),
                 modern,
+                defer: params.get("_meta").and_then(|m| m.get(META_DEFER)).and_then(Value::as_bool).unwrap_or(false),
             }
         }
+        "resources/list"
+        | "resources/read"
+        | "resources/templates/list"
+        | "resources/subscribe"
+        | "resources/unsubscribe" => Action::Resource {
+            id: reply_id,
+            method: method.to_owned(),
+            params,
+            modern,
+        },
         _ => error_reply(404, &reply_id, METHOD_NOT_FOUND, &format!("Method not found: {method}"), None),
     }
 }
@@ -311,9 +348,7 @@ mod tests {
                 status,
                 body,
             } => (status, body.unwrap_or(Value::Null)),
-            other @ Action::CallTool {
-                ..
-            } => panic!("expected a reply, got {other:?}"),
+            other => panic!("expected a reply, got {other:?}"),
         }
     }
 
@@ -377,6 +412,10 @@ mod tests {
                 "reins_request_access",
                 "reins_list_accounts",
                 "reins_get_result",
+                "reins_wait",
+                "reins_tickets",
+                "reins_cancel",
+                "reins_reply",
                 "reins_upload"
             ]
             .into_iter()
@@ -532,13 +571,12 @@ mod tests {
                 name,
                 arguments,
                 modern,
+                defer,
             } => {
-                assert_eq!((id, name.as_str(), modern), (json!(7), "gmail_search", true));
+                assert_eq!((id, name.as_str(), modern, defer), (json!(7), "gmail_search", true, false));
                 assert_eq!(arguments, json!({"query": "from:bank"}));
             }
-            other @ Action::Reply {
-                ..
-            } => panic!("{other:?}"),
+            other => panic!("{other:?}"),
         }
         match call(&McpHeaders::default(), rpc(8, "tools/call", json!({"name": "gmail_read"}))) {
             Action::CallTool {
@@ -546,12 +584,45 @@ mod tests {
                 modern,
                 ..
             } => assert_eq!((arguments, modern), (json!({}), false)),
-            other @ Action::Reply {
-                ..
-            } => panic!("{other:?}"),
+            other => panic!("{other:?}"),
         }
         let (status, body) = reply(call(&McpHeaders::default(), rpc(9, "tools/call", json!({"arguments": {}}))));
         assert_eq!((status, body["error"]["code"].as_i64()), (400, Some(INVALID_PARAMS)));
+    }
+
+    #[test]
+    fn defer_hint_is_read_from_meta() {
+        let params = json!({"name": "gmail_send", "arguments": {}, "_meta": {META_DEFER: true}});
+        assert!(matches!(
+            call(&McpHeaders::default(), rpc(1, "tools/call", params)),
+            Action::CallTool {
+                defer: true,
+                ..
+            }
+        ));
+        let params = json!({"name": "gmail_send", "arguments": {"defer": true}});
+        assert!(
+            matches!(
+                call(&McpHeaders::default(), rpc(2, "tools/call", params)),
+                Action::CallTool {
+                    defer: false,
+                    ..
+                }
+            ),
+            "an argument is the tool's, not a hint"
+        );
+    }
+
+    #[test]
+    fn resources_are_advertised_and_handed_on() {
+        let (_, init) = reply(call(&McpHeaders::default(), rpc(1, "initialize", json!({}))));
+        assert_eq!(init["result"]["capabilities"]["resources"]["subscribe"], true);
+        for method in ["resources/list", "resources/read", "resources/templates/list", "resources/subscribe"] {
+            assert!(
+                matches!(call(&McpHeaders::default(), rpc(2, method, json!({}))), Action::Resource { .. }),
+                "{method}"
+            );
+        }
     }
 
     #[test]

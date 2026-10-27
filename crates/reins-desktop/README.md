@@ -276,9 +276,9 @@ reins harness add claude-code   # or codex, gemini, cursor; `remove` undoes exac
 
 `add` registers `reins mcp --via <harness>` as an MCP server in the harness's user settings (`~/.claude.json`,
 `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.cursor/mcp.json`) and `reins hook <harness>` as its
-pre-command hook (`~/.claude/settings.json` `PreToolUse`, `~/.codex/hooks.json` `PreToolUse` (trust it once with
-`/hooks`), `~/.gemini/settings.json` `BeforeTool`, `~/.cursor/hooks.json` `beforeShellExecution`, `beforeReadFile`,
-`preToolUse`). Each change is one inserted entry; the rest of the file stays as it was, and `remove` gives back files
+pre-command hook (`~/.claude/settings.json` `PreToolUse`, plus `UserPromptSubmit` and `Stop`, `~/.codex/hooks.json`
+`PreToolUse` (trust it once with `/hooks`), `~/.gemini/settings.json` `BeforeTool`, `~/.cursor/hooks.json`
+`beforeShellExecution`, `beforeReadFile`, `preToolUse`). Each change is one inserted entry; the rest of the file stays as it was, and `remove` gives back files
 that existed byte for byte and deletes the ones `add` created.
 
 - `reins mcp` passes MCP messages to your Reins server with this app's session (renewed as needed); your phone
@@ -286,8 +286,21 @@ that existed byte for byte and deletes the ones `add` created.
 - `reins hook` asks your phone before risky commands (force pushes, `reset --hard`, `rm -r`, `terraform
   apply|destroy`, `kubectl apply|delete`, `DROP TABLE`, publishing…) and before reading or changing secret files
   (`.env`, keys, `~/.ssh`, cloud credentials). Everything else goes through without a question.
-- `reins ask "Deploy to production?" [--detail TEXT|-] [--topic T] [--timeout S]` asks anything: exit 0 yes, 1 no, 2
-  no answer. Without a phone it asks in the terminal, or with a desktop notification.
+- `reins ask "Deploy to production?" [--detail TEXT|-] [--topic T] [--timeout S] [--defer]` asks anything: exit 0
+  yes, 1 no, 2 no answer, 3 parked for a later review (the ticket on stdout). Without a phone it asks in the terminal,
+  or with a desktop notification.
+- **Decide later.** A question nobody answers within its Instant window, or that you move with Decide later, becomes a
+  ticket (`rt_…`). The hook denies it with `Parked for review (ticket rt_…, expected within 4 h). Continue with other
+  work; when it's approved, re-run this exact command.` Once you approve it, that exact command (the same harness,
+  folder and whole command, byte for byte) goes through once, within the hour. A command too long to reach your phone
+  whole is never parked. Claude Code also runs `reins hook` on `UserPromptSubmit` and `Stop`
+  so the session hears `Reins: rt_… (…) was approved — re-run it now.` (or denied, expired, stale) once. A parked git
+  push is refused with `remote: Reins: parked for review (ticket rt_…)…` (git exits non-zero) and kept here; once
+  approved, the daemon pushes it, but only if every ref is still where git found it, else it is stale and nothing is
+  pushed. `reins tickets` lists them; `reins wait rt_… [--timeout S]` exits 0 approved, 1 denied, 2 expired, stale,
+  cancelled or out of time. A pass works only in the session that asked. `reins tickets` also shows `Phone key 4821
+  9930 1274`, the phone's signing key pinned the first time it is seen; if it ever changes, nothing is collected or
+  pushed until you compare the digits with the phone (the connection's More) and run `reins tickets --trust-key`.
 
 ```toml
 [guard]

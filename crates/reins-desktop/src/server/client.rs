@@ -2,10 +2,18 @@
 //! /reins/desktop/calls/<id>` waits for its answer again. Both wait on the server side (like MCP calls) and answer
 //! `answered` with the phone's outcome, or `pending` / `offline` to be polled again. `GET /reins/desktop/phone` says when
 //! the approval phone last asked the server for work (for `reins doctor`).
+//!
+//! Deferred decisions (tickets): a call the reviewer did not answer within its Instant window, that the reviewer moved
+//! with Decide later, or that this app asked to defer (`X-Reins-Defer: 1`) answers `deferred` with its ticket
+//! (`rt_<request id>`) and when it is expected. Polling a ticket answers `deferred` while it waits, the phone's answer
+//! once approved (collected then) or denied, and `closed` when it expired, was cancelled or went stale. `GET
+//! /reins/desktop/tickets` lists this connection's tickets; `POST /reins/desktop/tickets/<ticket>/stale` says the remote
+//! moved before an approved push could go.
 
 use std::time::Duration;
 
 use reins_proto::relay::RelayOutcome;
+use reins_proto::ticket::{DesktopTickets, TicketState};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -25,6 +33,19 @@ pub enum CallStatus {
     Pending,
     /// The phone did not pick the request up (yet).
     Offline,
+    /// Parked for a later review: the ticket (`rt_…`), when an answer is expected (Unix seconds) and where it stands
+    /// (`deferred`, `needs_info`, `escalated`, `approved` while the phone has not produced the answer yet…; `None`:
+    /// not said).
+    Deferred {
+        ticket: String,
+        expected_by: i64,
+        state: Option<TicketState>,
+    },
+    /// The ticket ended without an answer for this app: expired, cancelled, failed, or stale (`stale`: what changed).
+    Closed {
+        state: TicketState,
+        stale: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,15 +113,56 @@ impl DesktopClient {
         account: Option<&str>,
         waits: Option<Duration>,
     ) -> Result<CallAnswer, LinkError> {
+        self.call_with(tool, arguments, account, waits, false).await
+    }
+
+    /// [`DesktopClient::call_waiting`]; `defer`: asks the server to park the call for a later review at once
+    /// (`X-Reins-Defer: 1`, `reins ask --defer`) instead of waiting for an answer now.
+    pub async fn call_with(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        account: Option<&str>,
+        waits: Option<Duration>,
+        defer: bool,
+    ) -> Result<CallAnswer, LinkError> {
         let body = serde_json::json!({"tool": tool, "arguments": arguments, "account": account});
         self.send(|server| {
-            let request = self.http.post(format!("{server}/reins/desktop/calls")).json(&body);
-            match waits {
-                Some(w) => request.header("X-Reins-Wait", w.as_secs().max(1).to_string()),
-                None => request,
+            let mut request = self.http.post(format!("{server}/reins/desktop/calls")).json(&body);
+            if let Some(w) = waits {
+                request = request.header("X-Reins-Wait", w.as_secs().max(1).to_string());
             }
+            if defer {
+                request = request.header("X-Reins-Defer", "1");
+            }
+            request
         })
         .await
+    }
+
+    /// This connection's tickets: the open ones and those closed in the last day. `LinkError::NotFound` from a server
+    /// too old to know them.
+    pub async fn tickets(&self) -> Result<DesktopTickets, LinkError> {
+        let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/tickets"))).await?;
+        serde_json::from_slice(&body)
+            .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
+    }
+
+    /// Tells the server a parked push it approved went to the git host: its ticket is done.
+    pub async fn report_pushed(&self, ticket: &str) -> Result<(), LinkError> {
+        let id: String = url::form_urlencoded::byte_serialize(ticket.as_bytes()).collect();
+        self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/tickets/{id}/pushed"))).await?;
+        Ok(())
+    }
+
+    /// Tells the server an approved push did not go because the remote moved (`diff`: what moved); the reviewer is
+    /// asked again.
+    pub async fn report_stale(&self, ticket: &str, diff: &str) -> Result<(), LinkError> {
+        let id: String = url::form_urlencoded::byte_serialize(ticket.as_bytes()).collect();
+        let body = serde_json::json!({"diff": diff});
+        self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/tickets/{id}/stale")).json(&body))
+            .await?;
+        Ok(())
     }
 
     /// Waits for the answer to an earlier call again.
@@ -201,6 +263,14 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
         decided: Option<reins_proto::autopilot::Decided>,
         #[serde(default, deserialize_with = "lenient")]
         suggestion: Option<reins_proto::autopilot::Suggestion>,
+        #[serde(default)]
+        ticket: Option<String>,
+        #[serde(default)]
+        expected_by: Option<i64>,
+        #[serde(default)]
+        state: Option<String>,
+        #[serde(default)]
+        stale: Option<String>,
     }
     let bad = |why: String| LinkError::Failed(format!("unexpected answer from the Reins server: {why}"));
     let w: Wire = serde_json::from_slice(body).map_err(|e| bad(e.to_string()))?;
@@ -213,6 +283,22 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
         }
         ("pending", _) => CallStatus::Pending,
         ("offline", _) => CallStatus::Offline,
+        ("deferred", _) => {
+            let ticket = w
+                .ticket
+                .filter(|t| reins_proto::ticket::request_of(t).is_some())
+                .ok_or_else(|| bad("a deferred call without a ticket".to_owned()))?;
+            CallStatus::Deferred {
+                ticket,
+                expected_by: w.expected_by.unwrap_or_default(),
+                state: w.state.as_deref().and_then(TicketState::parse),
+            }
+        }
+        ("closed", _) => CallStatus::Closed {
+            // A state this app does not know: the ticket is over all the same.
+            state: w.state.as_deref().and_then(TicketState::parse).unwrap_or(TicketState::Unknown),
+            stale: w.stale.map(|s| reins_proto::desktop::printable(&s)).filter(|s| !s.is_empty()),
+        },
         (other, _) => return Err(bad(format!("status `{other}`"))),
     };
     let answered = matches!(status, CallStatus::Answered(_));
@@ -257,6 +343,8 @@ mod tests {
         assert_eq!(parse_answer(br#"{"request_id":"r3","status":"pending"}"#).unwrap().status, CallStatus::Pending);
         assert_eq!(parse_answer(br#"{"request_id":"r4","status":"offline"}"#).unwrap().status, CallStatus::Offline);
         for bad in [
+            &br#"{"request_id":"r","status":"deferred"}"#[..],
+            br#"{"request_id":"r","status":"deferred","ticket":"rt_a/b"}"#,
             &br#"{"request_id":"r","status":"answered"}"#[..],
             br#"{"request_id":"r","status":"weird"}"#,
             br#"{"request_id":"","status":"pending"}"#,
@@ -265,6 +353,41 @@ mod tests {
         ] {
             assert!(matches!(parse_answer(bad), Err(LinkError::Failed(_))), "{}", String::from_utf8_lossy(bad));
         }
+    }
+
+    #[test]
+    fn deferred_and_closed_tickets_parse() {
+        let d = parse_answer(
+            br#"{"request_id":"r1","status":"deferred","ticket":"rt_r1","expected_by":1700000000,"state":"needs_info"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            d.status,
+            CallStatus::Deferred {
+                ticket: "rt_r1".to_owned(),
+                expected_by: 1_700_000_000,
+                state: Some(TicketState::NeedsInfo),
+            }
+        );
+        let c = parse_answer(
+            br#"{"request_id":"r1","status":"closed","ticket":"rt_r1","state":"stale","stale":"main moved\u0007"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.status,
+            CallStatus::Closed {
+                state: TicketState::Stale,
+                stale: Some("main moved".to_owned()),
+            }
+        );
+        let odd = parse_answer(br#"{"request_id":"r1","status":"closed","state":"vanished"}"#).unwrap();
+        assert_eq!(
+            odd.status,
+            CallStatus::Closed {
+                state: TicketState::Unknown,
+                stale: None,
+            }
+        );
     }
 
     #[test]

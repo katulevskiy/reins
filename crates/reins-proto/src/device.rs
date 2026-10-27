@@ -110,6 +110,13 @@ pub struct DeviceRegistration {
     pub fcm_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub master_password_hash: Option<String>,
+    /// The device's Ed25519 signing key (base64url): ticket events it signs are checked against it, and agents verify
+    /// webhooks with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_pub: Option<String>,
+    /// The device's X25519 box key (base64url): the server seals parked requests to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_pub: Option<String>,
 }
 
 impl std::fmt::Debug for DeviceRegistration {
@@ -117,6 +124,8 @@ impl std::fmt::Debug for DeviceRegistration {
         f.debug_struct("DeviceRegistration")
             .field("fcm_token", &self.fcm_token)
             .field("master_password_hash", &self.master_password_hash.as_ref().map(|_| "<redacted>"))
+            .field("sign_pub", &self.sign_pub)
+            .field("box_pub", &self.box_pub)
             .finish()
     }
 }
@@ -191,6 +200,12 @@ pub struct Pending {
     /// this poll. `GET /pending?log=<seq>` also returns as soon as the head passes `<seq>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_head: Option<u64>,
+    /// Tickets new or changed since this device last saw them, and approved ones an agent is collecting now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tickets: Vec<crate::ticket::TicketItem>,
+    /// This server's Instant window (seconds): when the phone turns a request it holds into a ticket by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instant_window_secs: Option<u64>,
 }
 
 impl Pending {
@@ -202,6 +217,7 @@ impl Pending {
             && self.blobs.is_empty()
             && self.joins.is_empty()
             && self.handovers.is_empty()
+            && self.tickets.is_empty()
     }
 }
 
@@ -366,6 +382,8 @@ mod tests {
         let proof = DeviceRegistration {
             fcm_token: None,
             master_password_hash: Some("HASH".to_owned()),
+            sign_pub: None,
+            box_pub: None,
         };
         assert_eq!(serde_json::to_value(&proof).unwrap(), json!({"fcm_token": null, "master_password_hash": "HASH"}));
         assert!(!format!("{proof:?}").contains("HASH"));
@@ -410,6 +428,8 @@ mod tests {
             joins: vec![],
             handovers: vec![],
             log_head: Some(4),
+            tickets: vec![],
+            instant_window_secs: None,
         };
         assert!(!p.is_empty());
         let v = serde_json::to_value(&p).unwrap();

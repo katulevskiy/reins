@@ -23,6 +23,7 @@ pub mod payments;
 pub mod relay;
 pub mod remote_mcp;
 pub mod roster;
+pub mod ticket;
 mod validate;
 
 pub use validate::{ValidationError, check_version, normalize_address};
