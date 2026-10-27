@@ -20,3 +20,6 @@ web-vault
 
 # Local service credentials (cloudflare.env, workos.env, ...)
 *.env
+
+# Python bytecode (scripts/ci is imported by its tests)
+__pycache__/

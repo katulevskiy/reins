@@ -55,17 +55,22 @@ jobs:
       contents: write # upload a missing core to the ios-core-cache prerelease
       id-token: write # attest it
       attestations: write
-      actions: read # its macOS gate reads the release runs
+      actions: read # its macOS admission reads the runs and their jobs
+      pull-requests: read # ... and ci:priority and ci:lock
+      issues: read # ... and when ci:lock was added
     with:
       ref: ${{ inputs.ref }}
       platforms: iphonesimulator
 
-  # Waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml).
+  # macOS admission (.github/workflows/macos-gate.yml), in turn with everyone else.
   macos-gate:
-    name: Yield to releases
+    name: macOS admission
     uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
     permissions:
-      actions: read # the release runs and their jobs
+      actions: read # the runs and their jobs
+      contents: read # scripts/ci
+      pull-requests: read # ci:priority and ci:lock
+      issues: read # when ci:lock was added
 
   run:
     name: "iOS job: ${{ inputs.run || 'snapshots' }}"

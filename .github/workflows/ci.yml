@@ -32,58 +32,60 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  changes:
-    name: Changed components
+  # Which suites this change needs, which of them already passed on the same inputs, and how many macOS jobs the run
+  # starts (scripts/ci/plan.py; docs/reference/ci.md). Pull requests get the fast tier: desktop-macos only when the
+  # change can be macOS specific; the `ci:full` label (then re-run, which also reuses nothing) or CI_PR_TIER=full runs
+  # it for every change its files select. On main every suite runs unless main already passed it on the same inputs.
+  # A suite that passed on the same inputs is skipped: every suite job records its pass as its last step. If anything
+  # goes wrong, the plan runs every suite and reuses nothing.
+  plan:
+    name: Plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the pull request's files and labels
+      actions: read # earlier passes (Actions cache entries)
     outputs:
-      rust: ${{ steps.paths.outputs.rust }}
-      android: ${{ steps.paths.outputs.android }}
-      docker: ${{ steps.paths.outputs.docker }}
-      desktop: ${{ steps.paths.outputs.desktop }}
+      suites: ${{ steps.plan.outputs.suites }}
+      keys: ${{ steps.plan.outputs.keys }}
+      macos: ${{ steps.plan.outputs.macos }}
+      docker: ${{ steps.plan.outputs.docker }}
+      pr: ${{ steps.plan.outputs.pr }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Select build lanes
-        id: paths
+      - name: Plan the suites
+        id: plan
         env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          rust=false android=false docker=false desktop=false
-          if [[ "$EVENT" == workflow_dispatch || "$EVENT" == schedule || -z "$BASE_SHA" ||
-                "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
-             ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            rust=true android=true docker=true desktop=true
-          else
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                .github/workflows/ci.yml) rust=true android=true docker=true desktop=true ;;
-                # The release's workflow and actions, CODEOWNERS, templates: the checks job (always run) lints them.
-                .github/*) ;;
-                # Toolchain and cargo config change every Rust build, including the desktop apps and Android natives.
-                Cargo.*|rust-toolchain.toml|.cargo/*) rust=true android=true desktop=true ;;
-                # reins-desktop depends on reins-proto and reins-policy; reins-desktop-app depends on those and reins-desktop.
-                # reins-core is on this lane as well: desktop CI should run when the shared core crate changes.
-                crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
-                  rust=true android=true desktop=true ;;
-                crates/reins-desktop/*|crates/reins-desktop-app/*) rust=true desktop=true ;;
-                rustfmt.toml|build.rs|src/*|macros/*|crates/*|migrations/*|tests/*) rust=true ;;
-                android/*) android=true ;;
-                # The Windows desktop job runs this installer against the test build.
-                scripts/install.ps1) rust=true android=true desktop=true ;;
-                scripts/*) rust=true android=true ;;
-                docker/*|Dockerfile|.dockerignore|.hadolint.yaml) docker=true ;;
-              esac
-            done < <(git diff --name-only -z "$BASE_SHA" HEAD)
-          fi
-          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; echo "desktop=$desktop"; } >> "$GITHUB_OUTPUT"
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_PR_TIER: ${{ vars.CI_PR_TIER }}
+          # What the iOS job's result depends on besides its files: part of its fingerprint.
+          CI_IOS_VARIANT: ${{ vars.IOS_RUNNER }} ${{ vars.IOS_XCODE_VERSION }} ${{ vars.IOS_DEVELOPER_DIR }}
+        run: python3 -I scripts/ci/plan.py
+
+  # Waits until macOS runners are free for every macOS job of this run (scripts/ci/admit.py): releases first, then
+  # ci:lock and ci:priority pull requests, everyone else first come, first served, and ios.yml's background runs last.
+  # Not on a push to main: that commit's release waits for this run, so nothing on its path waits for admission. The
+  # macOS jobs run when it failed too: it is a queue, never a check.
+  admit:
+    name: macOS admission
+    needs: plan
+    if: needs.plan.outputs.macos != '0' && github.event_name != 'push'
+    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
+    permissions:
+      actions: read # the runs and their jobs
+      contents: read # scripts/ci
+      pull-requests: read # ci:priority and ci:lock, and the heads of the pull requests that claim them
+      issues: read # when ci:lock was added
+    with:
+      macos: ${{ fromJSON(needs.plan.outputs.macos) }}
+      pr: ${{ needs.plan.outputs.pr }}
 
   checks:
     name: Format, docs, scripts and workflow checks
-    needs: changes
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -103,7 +105,9 @@ jobs:
       - run: python3 scripts/test-supersede-releases.py
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
-      - run: python3 scripts/test-macos-gate.py
+      - run: python3 scripts/test-ci-plan.py
+      - run: python3 scripts/test-ci-admit.py
+      - run: python3 scripts/test-ci-reuse.py
       - run: python3 scripts/test-prune-caches.py
       - run: python3 scripts/test-ios-ui-plan.py
       - name: Conflict markers and shell syntax
@@ -124,29 +128,29 @@ jobs:
           inputs: ./.github/
           advanced-security: false
       - name: Docker templates
-        if: needs.changes.outputs.docker == 'true'
+        if: needs.plan.outputs.docker == 'true'
         working-directory: docker
         run: |
           make
           git diff --exit-code
       - uses: hadolint/hadolint-action@v3.5.0
-        if: needs.changes.outputs.docker == 'true'
+        if: needs.plan.outputs.docker == 'true'
         with:
           dockerfile: docker/Dockerfile.debian
       - uses: hadolint/hadolint-action@v3.5.0
-        if: needs.changes.outputs.docker == 'true'
+        if: needs.plan.outputs.docker == 'true'
         with:
           dockerfile: docker/Dockerfile.alpine
       - name: Docker build checks
-        if: needs.changes.outputs.docker == 'true'
+        if: needs.plan.outputs.docker == 'true'
         run: |
           docker build --check . -f docker/Dockerfile.debian
           docker build --check . -f docker/Dockerfile.alpine
 
   rust:
     name: Server and core tests (Nextest)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['rust']
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # 2,000 grant-soundness cases on the weekly run and on a manual dispatch. Pull requests and pushes
@@ -179,11 +183,17 @@ jobs:
       # Nextest does not run doctests; retain Cargo's separate documentation test pass.
       - name: Documentation tests
         run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['rust']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['rust'] }}-rust
 
   rust-clippy:
     name: Server and core Clippy
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['clippy']
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -203,14 +213,21 @@ jobs:
       - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
       - run: cargo clippy --locked --features sqlite -- -D warnings
 
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['clippy']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['clippy'] }}-clippy
+
   # Decisions v2 (docs/design/decisions-v2/07-roadmap.md §3): every change to the consequence engine, the default
   # policy or the replay corpus is replayed against the labelled history. A labelled real risk or a case for a person
   # not asked, a known false positive asked again, Full certainty more than half a point below
   # crates/reins-replay/baseline.json, or an ask rate more than a point above it fails the build.
   replay:
     name: Replay gate (Decisions v2)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['replay']
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -228,11 +245,17 @@ jobs:
           set -o pipefail
           cargo run --locked -q -p reins-replay -- run --engine effects --check 2>&1 | tee replay.txt
           { echo '```'; cat replay.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['replay']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['replay'] }}-replay
 
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['desktop-linux']
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -253,13 +276,20 @@ jobs:
       - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
       - run: cargo test --locked -p reins-desktop-app
 
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['desktop-linux']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-linux'] }}-desktop-linux
+
   # The release's Linux packages and repositories (scripts/package/linux-packages.sh, linux-repos.sh, aur.sh and
   # release-feed.sh --packages) from a fake release: built, linted, signed with a throwaway key, checked with apt and
   # installed in Debian and Fedora containers (scripts/test-linux-packages.py). The same nfpm as release.yml.
   linux-packages:
     name: Linux packages and repositories
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['packages']
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -279,24 +309,21 @@ jobs:
           echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
       - run: NFPM="$RUNNER_TEMP/nfpm" python3 scripts/test-linux-packages.py
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['packages']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['packages'] }}-packages
 
-  # Waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml). Not on a push to main: the
-  # release of that commit waits for this run (scripts/wait-for-ci.sh), so its macOS job must not wait for the release.
-  macos-gate:
-    name: Yield to releases
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true'
-    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
-    permissions:
-      actions: read # the release runs and their jobs
-    with:
-      wait: ${{ github.event_name != 'push' }}
-
+  # After macOS admission. On a pull request only when the change can be macOS specific (the fast tier, plan.py).
   desktop-macos:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
-    needs: [changes, macos-gate]
-    if: needs.changes.outputs.desktop == 'true'
+    needs: [plan, admit]
+    if: >-
+      !cancelled() && needs.plan.result == 'success' && needs.admit.result != 'cancelled' &&
+      fromJSON(needs.plan.outputs.suites)['desktop-macos']
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -313,13 +340,19 @@ jobs:
       # The app's macOS parts (the menu bar item, notifications, the Dock) are otherwise first compiled by the release.
       - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
       - run: cargo test --locked -p reins-desktop-app
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['desktop-macos']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-macos'] }}-desktop-macos
 
   desktop-windows:
     name: Desktop app on Windows (clippy + tests)
     # The release builds the desktop app for Windows too (release.yml); this keeps it compiling and its tests passing,
     # and runs the background service for real (tests/windows_service.rs writes this runner's HKCU Run key).
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['desktop-windows']
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -372,11 +405,17 @@ jobs:
       - name: Check aarch64-pc-windows-msvc
         continue-on-error: true
         run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['desktop-windows']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-windows'] }}-desktop-windows
 
   android-native:
     name: Android debug native (${{ matrix.kind }})
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['android']
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -446,11 +485,17 @@ jobs:
           path: native/
           if-no-files-found: error
           retention-days: 1
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['android']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-native-${{ matrix.kind }}
 
   android-release-smoke:
     name: Android minified Trust smoke test
-    needs: [changes, android-native]
-    if: needs.changes.outputs.android == 'true'
+    needs: [plan, android-native]
+    if: fromJSON(needs.plan.outputs.suites)['android']
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -512,11 +557,17 @@ jobs:
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
             android/app/build/outputs/mapping/fullRelease/mapping.txt
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['android']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-smoke
 
   android:
     name: Android ${{ matrix.lane }}
-    needs: [changes, android-native]
-    if: needs.changes.outputs.android == 'true'
+    needs: [plan, android-native]
+    if: fromJSON(needs.plan.outputs.suites)['android']
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Three runners, so no lane waits on another's compiling or dexing. The shared suite runs under `full`; `play`
@@ -602,3 +653,159 @@ jobs:
           name: android-test-reports-${{ matrix.id }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['android']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-${{ matrix.id }}
+
+  # iOS for pull requests and manual runs, as one macOS job: the chain of three (core, build, tests) joined the macOS
+  # queue three times (docs/reference/ci.md). The prebuilt core ios-core.yml published from main (or this job's own
+  # build of it), the check of the committed bindings, the build for testing with main's Swift cache, then ReinsTests.
+  # Nothing here is saved to a cache: ios.yml writes them from main, where it runs iOS with the UI tests in the
+  # background (releases wait for this workflow, and iOS must never hold one). Same runner, Xcode and ad-hoc simulator
+  # signing as ios.yml: no secrets, no `environment:`.
+  ios:
+    name: iOS
+    needs: [plan, admit]
+    if: >-
+      !cancelled() && needs.plan.result == 'success' && needs.admit.result != 'cancelled' &&
+      fromJSON(needs.plan.outputs.suites)['ios']
+    permissions:
+      contents: read
+      attestations: read # core-cache.sh verifies the prebuilt core's provenance
+    runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 75
+    env:
+      XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
+      DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] || {
+            echo "::error::iOS CI needs Xcode $XCODE_VERSION (simulator SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"
+            exit 1
+          }
+          # build-core.sh strips DEVELOPER_DIR when it runs cargo. xcode-select is what that cargo still sees.
+          [[ "$(uname -m)" == arm64 ]] || { echo "::error::The simulator core is arm64-only; this runner is $(uname -m)"; exit 1; }
+      # The library and the bindings for exactly these sources (ios.yml's key). No prefix fallback: a partial match would
+      # link a core that was not built from this tree.
+      - uses: actions/cache/restore@v5
+        id: core
+        with:
+          path: target/ios-core/iphonesimulator
+          key: ios-sim-core-v1-${{ runner.os }}-${{ hashFiles('crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'ios/scripts/build-core.sh') }}
+      - name: Prebuilt core
+        id: prebuilt
+        if: steps.core.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ios/scripts/core-cache.sh fetch iphonesimulator; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Rust toolchain
+        if: steps.core.outputs.cache-hit != 'true' && steps.prebuilt.outputs.hit != 'true'
+        run: rustup toolchain install && rustup target add aarch64-apple-ios-sim && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        if: steps.core.outputs.cache-hit != 'true' && steps.prebuilt.outputs.hit != 'true'
+        with:
+          shared-key: macos-ios-sim-core
+          save-if: false
+      - name: Build the simulator core and check the committed bindings
+        env:
+          CACHE_HIT: ${{ steps.core.outputs.cache-hit == 'true' || steps.prebuilt.outputs.hit == 'true' }}
+        run: |
+          set -euo pipefail
+          lib="target/ios-core/iphonesimulator"
+          if [[ "$CACHE_HIT" == true && -s "$lib/libreins_core.a" && -s "$lib/include/module.modulemap" &&
+                -s "$lib/include/reins_coreFFI.h" && -s "$lib/reins_core.swift" ]]; then
+            if ! cmp -s "$lib/reins_core.swift" ios/Core/Generated/reins_core.swift; then
+              git diff --no-index -- "$lib/reins_core.swift" ios/Core/Generated/reins_core.swift || true
+              echo "::error::ios/Core/Generated/reins_core.swift does not match the UniFFI bindings for these sources."
+              exit 1
+            fi
+            echo "Reused the cached or prebuilt simulator core"
+          else
+            CONFIGURATION=Debug ios/scripts/build-core.sh iphonesimulator
+            test -s "$lib/libreins_core.a"
+            test -s "$lib/include/module.modulemap"
+            test -s "$lib/include/reins_coreFFI.h"
+            if ! git diff --exit-code -- ios/Core/Generated/reins_core.swift; then
+              echo "::error::ios/Core/Generated/reins_core.swift does not match the UniFFI bindings just generated. Commit the output of ios/scripts/build-core.sh."
+              exit 1
+            fi
+          fi
+          lipo -info "$lib/libreins_core.a" | grep -q arm64
+      # main's Swift compilation cache, module cache and packages (ios.yml saves them; the paths must be ios.yml's
+      # exactly, or the cache does not match). Restore only.
+      - uses: actions/cache/restore@v5
+        with:
+          path: |
+            derived/ModuleCache.noindex
+            derived/CompilationCache.noindex
+            spm
+            compilation-cache
+          key: ios-swift-v1-${{ runner.os }}-${{ hashFiles('ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'ios/**/*.swift', 'ios/**/*.m', 'ios/**/*.h') }}
+          restore-keys: |
+            ios-swift-v1-${{ runner.os }}-
+      - name: Build for testing
+        env:
+          MODE: build
+        run: bash ios/scripts/ci-xcode-test.sh
+      # ReinsTests: what ios.yml's unit shard runs (scripts/ios-ui-plan.py shard --name unit).
+      - name: ReinsTests
+        env:
+          MODE: test-without-building
+          ONLY: ReinsTests
+          SKIP: ""
+        run: bash ios/scripts/ci-xcode-test.sh
+      - name: Upload the test result
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-tests-unit-xcresult
+          path: results.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['ios']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['ios'] }}-ios
+
+  # The one check to require: it passes when the plan succeeded and no other job failed or was cancelled. A suite the
+  # plan did not select, or that already passed on the same inputs, is skipped and counts as passed.
+  result:
+    name: CI result
+    needs: [plan, admit, checks, rust, rust-clippy, replay, desktop-linux, linux-packages, desktop-macos, desktop-windows, android-native, android-release-smoke, android, ios]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # macOS admission is a queue, not a check: the jobs it gates run (and count) whatever it did.
+      - name: Result
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        shell: python3 {0}
+        run: |
+          import json, os, sys
+          results = {job: need["result"] for job, need in json.loads(os.environ["RESULTS"]).items()}
+          for job, result in results.items():
+              print(job.ljust(22), result)
+          bad = [job for job, result in results.items() if job != "admit" and result in ("failure", "cancelled")]
+          if results["plan"] != "success" or bad:
+              print(f"::error::CI failed: {', '.join(bad) or 'plan'}")
+              sys.exit(1)

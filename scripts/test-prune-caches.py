@@ -84,6 +84,10 @@ reasons = {c["id"]: why for c, why in delete}
 check(reasons[old_server["id"]] == f"superseded by {new_server['key']}", reasons[old_server["id"]])
 check("refs/pull/12/merge" in reasons[pr_idle["id"]], reasons[pr_idle["id"]])
 check(prune.plan([], NOW) == ([], []), "nothing to do")
+# CI's pass records stay on every ref, however long unused: pull requests read their own (scripts/ci/reuse.py).
+passes = [cache("ci-pass-v1-rust-" + "ab" * 20 + "-rust", 600, ref="refs/pull/12/merge"),
+          cache("ci-pass-v1-android-" + "cd" * 20 + "-native-x86_64", 600)]
+check(prune.plan(passes, NOW)[0] == [], "pass records are never pruned")
 
 # The workflows: caches are written from main only, and the release keeps no Rust cache a job restores once per run
 # except the macOS build's, which publication waits for.
@@ -108,8 +112,11 @@ for gone in ("release-server", "release-desktop-app-Linux", "release-desktop-app
 for prefix in prune.RETIRED:
     stem = prefix.removeprefix("v0-rust-").rstrip("-")
     check(not re.search(rf"(shared-key: |key: ){re.escape(stem)}", "".join(workflows.values())), f"{prefix} in use")
-check(keys.get("macos-ios-sim-core") == ["ios-core.yml", "ios.yml"] or
-      sorted(keys.get("macos-ios-sim-core", [])) == ["ios-core.yml", "ios.yml"], keys.get("macos-ios-sim-core"))
+# One simulator core cache: ios.yml and ios-core.yml write it from main; ci.yml's iOS job (pull requests) only reads it.
+check(sorted(keys.get("macos-ios-sim-core", [])) == ["ci.yml", "ios-core.yml", "ios.yml"], keys.get("macos-ios-sim-core"))
+ci_ios = workflows["ci.yml"].split("\n  ios:\n", 1)[1].split("\n\n  # ", 1)[0]
+check("save-if: false" in ci_ios and "actions/cache/save" not in ci_ios.split("Record the pass", 1)[0],
+      "ci.yml's iOS job saves no cache but its pass record")
 # No cache key hashes a workflow file: an edit to the workflow would orphan the cache.
 for name, text in workflows.items():
     for files in re.findall(r"hashFiles\(([^)]*)\)", text):
