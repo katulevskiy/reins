@@ -1007,7 +1007,13 @@ final class AppModel {
         syncTask = Task { [weak self] in
             var failures = 0
             while !Task.isCancelled {
-                guard let self, case .signedIn = self.session, !self.deviceReplaced, self.recoveryToRecord == nil, self.recoveryLoadError == nil else {
+                guard let self, case .signedIn = self.session, self.recoveryToRecord == nil, self.recoveryLoadError == nil else {
+                    try? await Task.sleep(for: .seconds(2))
+                    continue
+                }
+                // A phone that views the account follows its log here (the core's `sync`), whatever it once was.
+                let role = (try? await self.core.phoneRole()) ?? .legacy
+                guard Self.foregroundLoopRuns(role: role, deviceReplaced: self.deviceReplaced) else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
                 }
@@ -1031,6 +1037,16 @@ final class AppModel {
                     failures += 1
                 }
             }
+        }
+    }
+
+    /// Whether the foreground loop runs: on the approving phone, and on a phone that views the account (phone roles),
+    /// which follows the account's log with it (Activity, the modes and their timers), even when it was the approval
+    /// device once and was replaced. A replaced phone that views nothing waits (its poll is refused).
+    nonisolated static func foregroundLoopRuns(role: PhoneRole, deviceReplaced: Bool) -> Bool {
+        switch role {
+        case .viewer, .primary: true
+        case .legacy, .removed: !deviceReplaced
         }
     }
 
