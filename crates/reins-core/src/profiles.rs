@@ -52,6 +52,9 @@ pub struct AccountProfile {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Managed {
+    /// Signing in (not shown, not chosen) until [`ProfileRegistry::confirm_managed`].
+    #[serde(default)]
+    pending: bool,
     id: String,
     org_id: String,
     org_name: String,
@@ -74,16 +77,6 @@ struct Stored {
 pub struct ProfileRegistry {
     base: PathBuf,
     stored: Mutex<Stored>,
-}
-
-/// A work profile's id: stable for one org on one server.
-#[must_use]
-pub fn managed_id(server_url: &str, org_id: &str) -> String {
-    let mut input = server_url.trim_end_matches('/').to_ascii_lowercase().into_bytes();
-    input.push(0);
-    input.extend_from_slice(org_id.as_bytes());
-    let digest = ring::digest::digest(&ring::digest::SHA256, &input);
-    format!("work-{}", &data_encoding::HEXLOWER.encode(digest.as_ref())[..12])
 }
 
 impl ProfileRegistry {
@@ -158,10 +151,12 @@ impl ProfileRegistry {
         Arc::new(Self::open(Path::new(&base_dir)))
     }
 
-    /// Every profile, Personal first.
+    /// Every profile, Personal first (not the ones still signing in).
     pub fn list(&self) -> Vec<AccountProfile> {
         let stored = self.lock();
-        std::iter::once(self.personal(&stored)).chain(stored.managed.iter().map(|m| self.managed(m))).collect()
+        std::iter::once(self.personal(&stored))
+            .chain(stored.managed.iter().filter(|m| !m.pending).map(|m| self.managed(m)))
+            .collect()
     }
 
     /// The profile the app shows now (Personal unless another was chosen).
@@ -170,14 +165,14 @@ impl ProfileRegistry {
         stored
             .active
             .as_deref()
-            .and_then(|id| stored.managed.iter().find(|m| m.id == id))
+            .and_then(|id| stored.managed.iter().find(|m| m.id == id && !m.pending))
             .map_or_else(|| self.personal(&stored), |m| self.managed(m))
     }
 
     /// Shows `id` from now on.
     pub fn set_active(&self, id: String) -> Result<(), CoreError> {
         let mut stored = self.lock();
-        if id != PERSONAL && !stored.managed.iter().any(|m| m.id == id) {
+        if id != PERSONAL && !stored.managed.iter().any(|m| m.id == id && !m.pending) {
             return Err(CoreError::invalid("No such profile"));
         }
         stored.active = (id != PERSONAL).then_some(id);
@@ -195,42 +190,67 @@ impl ProfileRegistry {
         self.save(&stored)
     }
 
-    /// Adds (or renames) the work profile of `org_id`, signed in as `email` at `server_url`.
-    pub fn add_managed(
+    /// Reserves a new work profile for "Add work account": its data directory and key alias, before anyone signs in.
+    /// Sign in on a core at that directory, then [`Self::confirm_managed`] with the account's org, or
+    /// [`Self::remove`] it. An earlier unfinished one is dropped.
+    pub fn begin_managed(&self, server_url: String) -> Result<AccountProfile, CoreError> {
+        if server_url.trim().is_empty() {
+            return Err(CoreError::invalid("A work profile needs its server"));
+        }
+        let stale: Vec<String> = self.lock().managed.iter().filter(|m| m.pending).map(|m| m.id.clone()).collect();
+        for id in stale {
+            self.remove(id)?;
+        }
+        let mut stored = self.lock();
+        if stored.managed.len() >= MAX_MANAGED {
+            return Err(CoreError::invalid("This phone has as many work profiles as it can hold"));
+        }
+        let id = format!("work-{}", data_encoding::HEXLOWER.encode(&crate::crypto::random_bytes::<6>()?));
+        let m = Managed {
+            pending: true,
+            id,
+            org_id: String::new(),
+            org_name: "Work".to_owned(),
+            email: String::new(),
+            server_url: server_url.trim_end_matches('/').to_owned(),
+        };
+        stored.managed.push(m.clone());
+        self.save(&stored)?;
+        Ok(self.managed(&m))
+    }
+
+    /// Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
+    /// the Personal account, or when this phone already has that org's work profile.
+    pub fn confirm_managed(
         &self,
+        id: String,
         org_id: String,
         org_name: String,
         email: String,
-        server_url: String,
     ) -> Result<AccountProfile, CoreError> {
         let email = email.trim().to_lowercase();
         let org_name = crate::text::truncate_chars(&crate::text::one_line(org_name.trim()), 64);
-        if org_id.trim().is_empty() || email.is_empty() || server_url.trim().is_empty() {
-            return Err(CoreError::invalid("A work profile needs its organization, email and server"));
+        if org_id.trim().is_empty() || email.is_empty() {
+            return Err(CoreError::invalid("A work profile needs its organization and email"));
         }
         let mut stored = self.lock();
         if stored.personal_email.as_deref() == Some(email.as_str()) {
             return Err(CoreError::invalid("This is your personal account. Sign in with your work account."));
         }
-        let id = managed_id(&server_url, &org_id);
-        if let Some(m) = stored.managed.iter_mut().find(|m| m.id == id) {
-            m.org_name = org_name;
-            m.email = email;
-        } else {
-            if stored.managed.len() >= MAX_MANAGED {
-                return Err(CoreError::invalid("This phone has as many work profiles as it can hold"));
-            }
-            stored.managed.push(Managed {
-                id: id.clone(),
-                org_id,
-                org_name,
-                email,
-                server_url: server_url.trim_end_matches('/').to_owned(),
-            });
+        let Some(server) = stored.managed.iter().find(|m| m.id == id && m.pending).map(|m| m.server_url.clone()) else {
+            return Err(CoreError::invalid("No work account is being added"));
+        };
+        if stored.managed.iter().any(|m| !m.pending && m.org_id == org_id && m.server_url == server) {
+            return Err(CoreError::invalid("This phone already has this organization's work profile"));
         }
+        let m = stored.managed.iter_mut().find(|m| m.id == id).ok_or_else(|| CoreError::invalid("No such profile"))?;
+        m.pending = false;
+        m.org_id = org_id;
+        m.org_name = org_name;
+        m.email = email;
+        let confirmed = m.clone();
         self.save(&stored)?;
-        let m = stored.managed.iter().find(|m| m.id == id).cloned().unwrap_or_default();
-        Ok(self.managed(&m))
+        Ok(self.managed(&confirmed))
     }
 
     /// Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
@@ -273,6 +293,14 @@ mod tests {
         ProfileRegistry::new(dir.to_string_lossy().into_owned())
     }
 
+    /// "Add work account" from start to finish.
+    fn add(r: &ProfileRegistry, org: &str, name: &str, email: &str, server: &str) -> Result<AccountProfile, CoreError> {
+        let p = r.begin_managed(server.into())?;
+        r.confirm_managed(p.id.clone(), org.into(), name.into(), email.into()).inspect_err(|_| {
+            r.remove(p.id).unwrap();
+        })
+    }
+
     #[test]
     fn personal_keeps_todays_paths() {
         let dir = tempfile::tempdir().unwrap();
@@ -292,12 +320,17 @@ mod tests {
     fn managed_profiles_get_their_own_dir_alias_and_channels() {
         let dir = tempfile::tempdir().unwrap();
         let r = registry(dir.path());
-        let w = r
-            .add_managed("org1".into(), "Acme".into(), "Dana@Acme.com".into(), "https://app.reins2fa.com/".into())
-            .unwrap();
+        let pending = r.begin_managed("https://app.reins2fa.com/".into()).unwrap();
+        // Signing in: its paths are known, but it isn't a profile yet.
+        assert_eq!(r.list().len(), 1);
+        assert!(r.set_active(pending.id.clone()).is_err());
+        let w = r.confirm_managed(pending.id.clone(), "org1".into(), "Acme".into(), "Dana@Acme.com".into()).unwrap();
+        assert_eq!(w.id, pending.id);
+        assert_eq!(w.data_dir, pending.data_dir);
         assert_eq!(w.kind, ProfileKind::Managed);
         assert_eq!(w.label, "Acme");
         assert_eq!(w.email.as_deref(), Some("dana@acme.com"));
+        assert_eq!(w.server_url.as_deref(), Some("https://app.reins2fa.com"));
         assert!(w.id.starts_with("work-") && w.id.len() == 17, "{}", w.id);
         assert_eq!(w.key_alias, w.id);
         assert_eq!(w.channel_prefix, format!("{}.", w.id));
@@ -305,7 +338,6 @@ mod tests {
         let personal = &r.list()[0];
         assert_ne!(personal.data_dir, w.data_dir);
         assert_ne!(personal.key_alias, w.key_alias);
-        assert_eq!(w.id, managed_id("https://APP.reins2fa.com", "org1"));
     }
 
     #[test]
@@ -313,16 +345,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let r = registry(dir.path());
         r.note_personal(Some("dana@gmail.com".into())).unwrap();
-        assert!(r.add_managed("o".into(), "Acme".into(), "DANA@gmail.com".into(), "https://s".into()).is_err());
-        let a = r.add_managed("o".into(), "Acme".into(), "dana@acme.com".into(), "https://s".into()).unwrap();
-        let b = r.add_managed("o".into(), "Acme Inc".into(), "dana@acme.com".into(), "https://s".into()).unwrap();
-        assert_eq!(a.id, b.id);
+        assert!(add(&r, "o", "Acme", "DANA@gmail.com", "https://s").is_err());
+        add(&r, "o", "Acme", "dana@acme.com", "https://s").unwrap();
+        assert!(add(&r, "o", "Acme", "lee@acme.com", "https://s").is_err(), "the same org twice");
         assert_eq!(r.list().len(), 2);
-        assert_eq!(r.list()[1].label, "Acme Inc");
         for i in 0..MAX_MANAGED - 1 {
-            r.add_managed(format!("other{i}"), "X".into(), "x@x.io".into(), "https://s".into()).unwrap();
+            add(&r, &format!("other{i}"), "X", "x@x.io", "https://s").unwrap();
         }
-        assert!(r.add_managed("one-more".into(), "X".into(), "x@x.io".into(), "https://s".into()).is_err());
+        assert!(r.begin_managed("https://s".into()).is_err());
+    }
+
+    #[test]
+    fn an_unfinished_sign_in_is_dropped_by_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = registry(dir.path());
+        let first = r.begin_managed("https://s".into()).unwrap();
+        std::fs::create_dir_all(&first.data_dir).unwrap();
+        let second = r.begin_managed("https://s".into()).unwrap();
+        assert_ne!(first.id, second.id);
+        assert!(!Path::new(&first.data_dir).exists());
+        assert!(r.confirm_managed(first.id, "o".into(), "Acme".into(), "a@acme.com".into()).is_err());
     }
 
     #[test]
@@ -331,7 +373,7 @@ mod tests {
         let r = registry(dir.path());
         std::fs::create_dir_all(dir.path().join("core")).unwrap();
         std::fs::write(dir.path().join("core").join("reins.sealed"), b"personal").unwrap();
-        let w = r.add_managed("o".into(), "Acme".into(), "dana@acme.com".into(), "https://s".into()).unwrap();
+        let w = add(&r, "o", "Acme", "dana@acme.com", "https://s").unwrap();
         std::fs::create_dir_all(&w.data_dir).unwrap();
         std::fs::write(Path::new(&w.data_dir).join("reins.sealed"), b"work").unwrap();
         r.set_active(w.id.clone()).unwrap();
@@ -349,7 +391,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let w = {
             let r = registry(dir.path());
-            let w = r.add_managed("o".into(), "Acme".into(), "dana@acme.com".into(), "https://s".into()).unwrap();
+            let w = add(&r, "o", "Acme", "dana@acme.com", "https://s").unwrap();
             r.set_active(w.id.clone()).unwrap();
             w
         };

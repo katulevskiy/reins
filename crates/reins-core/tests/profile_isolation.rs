@@ -131,10 +131,13 @@ async fn two_profiles(
     registry.note_personal(Some(PERSONAL.to_owned())).unwrap();
     let personal = core(&registry.active().data_dir);
     personal.login(server.uri(), PERSONAL.to_owned(), "pw".to_owned(), None).await.unwrap();
-    let work_profile = registry.add_managed("o1".into(), "Acme".into(), WORK.into(), server.uri()).unwrap();
+    // "Add work account": a reserved profile, the work account signed in on its own core, then confirmed.
+    let work_profile = registry.begin_managed(server.uri()).unwrap();
     std::fs::create_dir_all(&work_profile.data_dir).unwrap();
     let work = core(&work_profile.data_dir);
     work.login(server.uri(), WORK.to_owned(), "pw".to_owned(), None).await.unwrap();
+    let org = work.org_membership().await.unwrap().expect("a work account");
+    registry.confirm_managed(work_profile.id, org.org_id, org.name, WORK.to_owned()).unwrap();
     (base, registry, personal, work)
 }
 
