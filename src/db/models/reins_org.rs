@@ -889,9 +889,10 @@ pub(crate) mod tests {
         };
         {
             use diesel_migrations::MigrationHarness;
+            let mut raw = SqliteConnection::establish(&url).unwrap();
+            raw.run_pending_migrations(crate::db::sqlite_migrations::MIGRATIONS).unwrap();
+            drop(raw);
             let mut c = open();
-            let DbConnInner::Sqlite(s) = &mut c;
-            s.run_pending_migrations(crate::db::sqlite_migrations::MIGRATIONS).unwrap();
             for org in ["o1", "o2"] {
                 add_org(&mut c, org);
                 q_insert_domain(&mut c, &domain(org, "acme.com")).unwrap();
