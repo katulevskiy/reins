@@ -20,13 +20,15 @@ pub struct User {
     pub email: String,
 }
 
+/// What a code stands for: the user, the PKCE challenge, and how they signed in (method, organization id).
+type Issued = (User, Option<String>, (Option<String>, Option<String>));
+
 #[derive(Default)]
 struct State {
     /// The user the next authorize signs in (the person at the browser).
     signing_in: Option<User>,
     authentication_method: Option<String>,
-    /// code -> (user, code_challenge, how: (method, organization id))
-    codes: HashMap<String, (User, Option<String>, (Option<String>, Option<String>))>,
+    codes: HashMap<String, Issued>,
     /// WorkOS organizations: id -> their verified domains.
     organizations: HashMap<String, Vec<String>>,
     /// Directories: id -> their organization.
