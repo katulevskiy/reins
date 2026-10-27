@@ -561,10 +561,6 @@ pub fn q_mark_issued_after_revocation(c: &mut DbConnInner, org: &str, id: &str, 
 /// one right now; whatever it mints after this is never handed out, and is revoked too). A pending lease of a request
 /// still under review waits: its end is set when it is decided.
 pub fn q_expire_leases(c: &mut DbConnInner, now: i64) -> QueryResult<usize> {
-    let reviewing: Vec<String> = reins_org_requests::table
-        .filter(reins_org_requests::state.eq(request_state::REVIEWING))
-        .select(reins_org_requests::uuid)
-        .load(c)?;
     let issued = diesel::update(
         reins_org_leases::table
             .filter(reins_org_leases::state.eq(lease_state::ISSUED))
@@ -576,11 +572,15 @@ pub fn q_expire_leases(c: &mut DbConnInner, now: i64) -> QueryResult<usize> {
         reins_org_leases::revoked_at.eq(Some(now)),
     ))
     .execute(c)?;
+    // Pending, and its request no longer under review (a correlated NOT EXISTS: nothing is loaded or bound).
+    let under_review = reins_org_requests::table
+        .filter(reins_org_requests::uuid.eq(reins_org_leases::request_uuid))
+        .filter(reins_org_requests::state.eq(request_state::REVIEWING));
     let pending = diesel::update(
         reins_org_leases::table
             .filter(reins_org_leases::state.eq(lease_state::PENDING))
             .filter(reins_org_leases::expires_at.le(now))
-            .filter(reins_org_leases::request_uuid.ne_all(reviewing)),
+            .filter(diesel::dsl::not(diesel::dsl::exists(under_review))),
     )
     .set((
         reins_org_leases::state.eq(lease_state::EXPIRED),
@@ -610,12 +610,10 @@ pub fn q_end_lease(c: &mut DbConnInner, org: &str, id: &str, from: &[&str], to: 
 
 /// Approved lease requests no executor took before their lease's end (the executor was offline): they end too.
 pub fn q_lapsed_lease_requests(c: &mut DbConnInner, now: i64) -> QueryResult<Vec<ReinsOrgRequest>> {
-    let lapsed: Vec<String> = reins_org_leases::table
+    let lapsed = reins_org_leases::table
         .filter(reins_org_leases::state.eq(lease_state::PENDING))
         .filter(reins_org_leases::expires_at.le(now))
-        .select(reins_org_leases::request_uuid)
-        .limit(500)
-        .load(c)?;
+        .select(reins_org_leases::request_uuid);
     reins_org_requests::table
         .filter(reins_org_requests::kind.eq(request_kind::LEASE))
         .filter(reins_org_requests::state.eq(request_state::APPROVED))
@@ -638,48 +636,71 @@ pub fn q_leases_to_revoke(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<Rei
         .load(c)
 }
 
-/// Of `requests` (ids in `org`), those `executor` claimed.
-fn claimed_by(c: &mut DbConnInner, org: &str, executor: &str, requests: &[String]) -> QueryResult<Vec<String>> {
-    reins_org_requests::table
-        .filter(reins_org_requests::org_uuid.eq(org))
-        .filter(reins_org_requests::uuid.eq_any(requests))
-        .filter(reins_org_requests::claimed_by.eq(executor))
-        .select(reins_org_requests::uuid)
-        .load(c)
-}
-
 /// The revocation queue for the leases `executor` minted (it claimed their request): only it holds their tokens.
+/// Filtered in the query, so one executor's backlog never hides another's.
 pub fn q_leases_to_revoke_by(c: &mut DbConnInner, org: &str, executor: &str) -> QueryResult<Vec<ReinsOrgLease>> {
-    let queued: Vec<ReinsOrgLease> = reins_org_leases::table
+    reins_org_leases::table
         .filter(reins_org_leases::org_uuid.eq(org))
         .filter(reins_org_leases::state.eq_any([lease_state::REVOKED, lease_state::EXPIRED]))
         .filter(reins_org_leases::issued_at.is_not_null())
         .filter(reins_org_leases::revoke_done_at.is_null())
+        .filter(
+            reins_org_leases::request_uuid.eq_any(
+                reins_org_requests::table
+                    .filter(reins_org_requests::org_uuid.eq(org))
+                    .filter(reins_org_requests::claimed_by.eq(executor))
+                    .select(reins_org_requests::uuid),
+            ),
+        )
         .order(reins_org_leases::created_at.asc())
-        .limit(1_000)
-        .load(c)?;
-    let ids: Vec<String> = queued.iter().map(|l| l.request_uuid.clone()).collect();
-    let mine = claimed_by(c, org, executor, &ids)?;
-    Ok(queued.into_iter().filter(|l| mine.contains(&l.request_uuid)).take(100).collect())
+        .limit(100)
+        .load(c)
 }
 
 /// Records that `executor` revoked lease `id`'s token upstream; only the executor that minted it may.
 pub fn q_mark_revoke_done_by(c: &mut DbConnInner, org: &str, id: &str, executor: &str, at: i64) -> QueryResult<bool> {
-    let Some(lease) = q_lease(c, org, id)? else {
-        return Ok(false);
-    };
-    if claimed_by(c, org, executor, std::slice::from_ref(&lease.request_uuid))?.is_empty() {
-        return Ok(false);
-    }
     let n = diesel::update(
         reins_org_leases::table
             .filter(reins_org_leases::org_uuid.eq(org))
             .filter(reins_org_leases::uuid.eq(id))
-            .filter(reins_org_leases::revoke_done_at.is_null()),
+            .filter(reins_org_leases::revoke_done_at.is_null())
+            .filter(
+                reins_org_leases::request_uuid.eq_any(
+                    reins_org_requests::table
+                        .filter(reins_org_requests::org_uuid.eq(org))
+                        .filter(reins_org_requests::claimed_by.eq(executor))
+                        .select(reins_org_requests::uuid),
+                ),
+            ),
     )
     .set(reins_org_leases::revoke_done_at.eq(Some(at)))
     .execute(c)?;
     Ok(n == 1)
+}
+
+/// The longest an upstream token minted for a lease lives (GitHub's installation tokens: one hour).
+pub const TOKEN_MAX_SECS: i64 = 3600;
+
+/// Queued revocations nobody did (the executor that minted them was offline the whole time, or was removed, and only
+/// it holds the token) whose token's own lifetime is over: the token is dead upstream, so they leave the queue. Every
+/// org's, at most 500 a pass; the leases settled.
+pub fn q_settle_lapsed_tokens(c: &mut DbConnInner, now: i64) -> QueryResult<Vec<ReinsOrgLease>> {
+    let lapsed: Vec<ReinsOrgLease> = reins_org_leases::table
+        .filter(reins_org_leases::state.eq_any([lease_state::REVOKED, lease_state::EXPIRED]))
+        .filter(reins_org_leases::issued_at.le(now - TOKEN_MAX_SECS))
+        .filter(reins_org_leases::revoke_done_at.is_null())
+        .limit(500)
+        .load(c)?;
+    for l in &lapsed {
+        diesel::update(
+            reins_org_leases::table
+                .filter(reins_org_leases::uuid.eq(&l.uuid))
+                .filter(reins_org_leases::revoke_done_at.is_null()),
+        )
+        .set(reins_org_leases::revoke_done_at.eq(Some(now)))
+        .execute(c)?;
+    }
+    Ok(lapsed)
 }
 
 #[cfg(test)]
@@ -795,6 +816,74 @@ pub(crate) mod tests {
         // Expired leases are revoked upstream as well.
         assert_eq!(q_expire_leases(&mut c, 1_000).unwrap(), 1);
         assert_eq!(q_leases_to_revoke(&mut c, "o1").unwrap().len(), 1);
+    }
+
+    /// A lease of `user` issued at `issued`, whose request `executor` claimed, revoked since (queued upstream).
+    fn queued(c: &mut DbConnInner, id: &str, executor: &str, created: i64, issued: i64) {
+        let mut r = request("o1", &format!("or_{id}"), request_state::DONE);
+        r.kind = request_kind::LEASE.to_owned();
+        r.claimed_by = Some(executor.to_owned());
+        q_insert_request(c, &r).unwrap();
+        let mut l = lease(id, "u1", lease_state::REVOKED, Some(issued));
+        l.created_at = created;
+        q_insert_lease(c, &l).unwrap();
+    }
+
+    #[test]
+    fn one_executors_backlog_never_hides_anothers_revocations() {
+        let mut c = test_db();
+        for i in 0..150 {
+            queued(&mut c, &format!("a{i}"), "e1", i, 1);
+        }
+        queued(&mut c, "b", "e2", 1_000, 1);
+        let ids = |c: &mut DbConnInner, ex: &str| -> Vec<String> {
+            q_leases_to_revoke_by(c, "o1", ex).unwrap().into_iter().map(|l| l.uuid).collect()
+        };
+        assert_eq!(ids(&mut c, "e2"), ["b"]);
+        assert_eq!(ids(&mut c, "e1").len(), 100);
+        assert!(ids(&mut c, "e3").is_empty());
+        assert!(!q_mark_revoke_done_by(&mut c, "o1", "b", "e1", 5).unwrap(), "not e1's");
+        assert!(q_mark_revoke_done_by(&mut c, "o1", "b", "e2", 5).unwrap());
+        assert!(ids(&mut c, "e2").is_empty());
+    }
+
+    #[test]
+    fn revocations_nobody_did_leave_the_queue_once_the_token_is_dead() {
+        let mut c = test_db();
+        // Minted by an executor that never came back (offline, or removed since).
+        queued(&mut c, "l1", "gone", 1, 10);
+        assert!(q_settle_lapsed_tokens(&mut c, 10 + TOKEN_MAX_SECS - 1).unwrap().is_empty());
+        assert_eq!(q_leases_to_revoke(&mut c, "o1").unwrap().len(), 1);
+        let settled = q_settle_lapsed_tokens(&mut c, 10 + TOKEN_MAX_SECS).unwrap();
+        assert_eq!(settled.iter().map(|l| l.uuid.as_str()).collect::<Vec<_>>(), ["l1"]);
+        assert!(q_leases_to_revoke(&mut c, "o1").unwrap().is_empty());
+        assert!(q_settle_lapsed_tokens(&mut c, 20_000).unwrap().is_empty(), "once");
+    }
+
+    #[test]
+    fn expiring_leases_binds_nothing_per_request_under_review() {
+        let mut c = test_db();
+        // More requests under review than SQLite takes bound parameters in one statement.
+        diesel::sql_query(
+            "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 39999) \
+             INSERT INTO reins_org_requests (uuid, org_uuid, user_uuid, connection_uuid, tool, digest, kind, state, \
+             outcome, snapshot, trace, obligations, created_at, expires_at) \
+             SELECT 'or_r' || i, 'o1', 'u1', 'c1', 'git_lease', 'd', 'lease', 'reviewing', 'review', 's', '{}', '[]', \
+             10, 100000 FROM n",
+        )
+        .execute(&mut c)
+        .unwrap();
+        // A pending lease of a decided request, and one of a request under review, both past their end.
+        q_insert_request(&mut c, &request("o1", "or_done", request_state::APPROVED)).unwrap();
+        let mut decided = lease("done", "u1", lease_state::PENDING, None);
+        decided.request_uuid = "or_done".to_owned();
+        let mut waiting = lease("waiting", "u1", lease_state::PENDING, None);
+        waiting.request_uuid = "or_r7".to_owned();
+        q_insert_lease(&mut c, &decided).unwrap();
+        q_insert_lease(&mut c, &waiting).unwrap();
+        assert_eq!(q_expire_leases(&mut c, 5_000).unwrap(), 1);
+        assert_eq!(q_lease(&mut c, "o1", "done").unwrap().unwrap().state, lease_state::EXPIRED);
+        assert_eq!(q_lease(&mut c, "o1", "waiting").unwrap().unwrap().state, lease_state::PENDING);
     }
 
     #[test]
