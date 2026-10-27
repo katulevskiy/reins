@@ -4615,7 +4615,7 @@ mod decisions_v2_p5 {
         }
     }
 
-    fn propose(args: Value) -> Value {
+    fn propose(args: &Value) -> Value {
         json!({"tool": "connector", "service": "tasks", "op": "propose", "args": args})
     }
 
@@ -4738,9 +4738,9 @@ mod decisions_v2_p5 {
             "ceiling": "reaches_people", "duration_minutes": 120, "budget": 10});
         // Never automatic: not in Auto, not in a bypass.
         env.mode(None, AutopilotMode::Auto).await;
-        env.relay("p1", OLD, propose(args.clone())).await;
+        env.relay("p1", OLD, propose(&args)).await;
         env.core.start_bypass(None, Some(15)).await.unwrap();
-        env.relay("p2", OLD, propose(args.clone())).await;
+        env.relay("p2", OLD, propose(&args)).await;
         assert!(env.decided().is_empty(), "{:?}", env.decided());
         env.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
         let card = item(&env, "p1").await.task_proposal.expect("the envelope on the card");

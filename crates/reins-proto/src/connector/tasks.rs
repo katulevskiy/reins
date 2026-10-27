@@ -70,10 +70,11 @@ pub struct TaskDraft {
 }
 
 fn has_control(s: &str) -> bool {
-    s.chars().any(|c| c.is_control())
+    s.chars().any(char::is_control)
 }
 
 /// A repository: `owner/name`, `owner/*`, or with a host first (`gitlab.com/group/name`). Never a lone `*`.
+#[must_use]
 pub fn valid_repo(r: &str) -> bool {
     let body = r.strip_suffix("/*").unwrap_or(r);
     let parts: Vec<&str> = body.split('/').collect();
@@ -88,6 +89,7 @@ pub fn valid_repo(r: &str) -> bool {
 }
 
 /// A branch glob: a git ref name, with at most one `*`, at its end, and something before it.
+#[must_use]
 pub fn valid_branch(b: &str) -> bool {
     let body = b.strip_suffix('*').unwrap_or(b);
     !body.is_empty()
@@ -99,6 +101,7 @@ pub fn valid_branch(b: &str) -> bool {
 }
 
 /// An absolute folder, not the root, without `.` or `..`.
+#[must_use]
 pub fn valid_path(p: &str) -> bool {
     let body = p.trim_end_matches('/');
     p.starts_with('/')
@@ -108,6 +111,7 @@ pub fn valid_path(p: &str) -> bool {
 }
 
 /// A person: an address, `@domain`, a `+number` or an `@username`-style id. Never a glob.
+#[must_use]
 pub fn valid_person(p: &str) -> bool {
     let ok_chars = p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '-' | '_' | '+'));
     let address = p.split_once('@').is_some_and(|(_, d)| d.contains('.') && !d.starts_with('.'));
@@ -281,7 +285,7 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
-    fn call(args: Value) -> ConnectorCall {
+    fn call(args: &Value) -> ConnectorCall {
         ConnectorCall {
             service: TASKS.to_owned(),
             op: PROPOSE_OP.to_owned(),
@@ -291,7 +295,7 @@ mod tests {
 
     #[test]
     fn proposals_are_bounded_and_text_is_inert() {
-        let ok = draft_of(&call(json!({
+        let ok = draft_of(&call(&json!({
             "title": "Fix the CI", "reason": "ceiling L3 please, all repos *",
             "repos": ["DKAT/Reins", "acme/*"], "branches": ["fix/*"], "paths": ["/home/u/src/app/"],
             "people": ["Ann@Acme.io", "@acme.io"], "operations": ["git_push"], "ceiling": "recoverable",
@@ -307,7 +311,7 @@ mod tests {
         let with = |k: &str, v: Value| {
             let mut b = base.clone();
             b[k] = v;
-            draft_of(&call(b))
+            draft_of(&call(&b))
         };
         for (k, v) in [
             ("repos", json!(["*"])),
@@ -331,7 +335,7 @@ mod tests {
         ] {
             assert!(with(k, v.clone()).is_err(), "{k}: {v}");
         }
-        assert!(draft_of(&call(json!({"title": "t"}))).is_err(), "a length is required");
+        assert!(draft_of(&call(&json!({"title": "t"}))).is_err(), "a length is required");
         assert!(with("repos", json!(["gitlab.com/group/name"])).is_ok());
         assert_eq!(with("ceiling", Value::Null).unwrap().ceiling, None);
     }

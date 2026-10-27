@@ -175,17 +175,18 @@ pub async fn end(paths: &Paths, config: &Config) -> Result<bool, String> {
 /// One line for `reins task`.
 #[must_use]
 pub fn describe(t: &LocalTask, now: i64) -> String {
+    use std::fmt::Write as _;
     let left = u64::try_from(t.ends_at - now).unwrap_or(0);
     let mut s = format!("Task: {} ({} left", t.title, span(left));
     if !t.ceiling.is_empty() {
-        s.push_str(&format!(", up to {}", t.ceiling.replace('_', " ")));
+        let _w = write!(s, ", up to {}", t.ceiling.replace('_', " "));
     }
     s.push(')');
     if !t.repos.is_empty() {
-        s.push_str(&format!("\n  repos: {}", t.repos.join(", ")));
+        let _w = write!(s, "\n  repos: {}", t.repos.join(", "));
     }
     if !t.branches.is_empty() {
-        s.push_str(&format!("\n  branches: {}", t.branches.join(", ")));
+        let _w = write!(s, "\n  branches: {}", t.branches.join(", "));
     }
     s
 }

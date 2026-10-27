@@ -663,6 +663,8 @@ mod tests {
         }
     }
 
+    type Change = Box<dyn Fn(&mut TaskView)>;
+
     #[test]
     fn narrowing_only() {
         let p = proposal();
@@ -676,7 +678,7 @@ mod tests {
         assert_eq!(n.repos, vec!["acme/app"]);
         assert_eq!(n.ceiling, 1);
         assert_eq!(n.uses_left, Some(5));
-        let changes: [(&str, Box<dyn Fn(&mut TaskView)>); 9] = [
+        let changes: [(&str, Change); 9] = [
             ("an added repo", Box::new(|v: &mut TaskView| v.repos.push("octo/x".to_owned()))),
             ("a raised ceiling", Box::new(|v: &mut TaskView| v.ceiling = 3)),
             ("a longer length", Box::new(|v: &mut TaskView| v.ends_at += 60)),

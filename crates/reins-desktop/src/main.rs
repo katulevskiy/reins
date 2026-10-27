@@ -586,9 +586,10 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Task {
             action: None,
         } => {
-            match reins_desktop::task_cli::current(&paths) {
-                Some(t) => out!("{}", reins_desktop::task_cli::describe(&t, reins_desktop::now_unix())),
-                None => out!("No task runs here. `reins task start --title ... --repo owner/name` proposes one."),
+            if let Some(t) = reins_desktop::task_cli::current(&paths) {
+                out!("{}", reins_desktop::task_cli::describe(&t, reins_desktop::now_unix()));
+            } else {
+                out!("No task runs here. `reins task start --title ... --repo owner/name` proposes one.");
             }
             Ok(())
         }
