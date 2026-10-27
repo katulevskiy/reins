@@ -1651,6 +1651,20 @@ impl ReinsCore {
         .await
     }
 
+    /// One Activity entry by its id, however far back (`activity` reads only the newest): to open an entry a day or a
+    /// search brought in. `None` when this device has no such entry.
+    pub async fn activity_entry(&self, entry_id: i64) -> Result<Option<ActivityEntry>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_entry(entry_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
     /// newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
     /// matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.

@@ -16,6 +16,8 @@ struct EmailScreen: View {
 
     @State private var load: Load = .loading
     @State private var attempt = 0
+    /// Set once the core has said it has no such entry (or could not be read); until then a missing entry is read.
+    @State private var missing: EntryMissing?
 
     var body: some View {
         let entry = model.entry(entryId)
@@ -23,16 +25,28 @@ struct EmailScreen: View {
         Group {
             if let entry, let logged {
                 ScrollView { content(entry, logged).padding(.bottom, 32) }
-            } else {
+            } else if case let .failed(message) = missing {
+                EmptyState(symbol: "envelope", title: "Can't open it", message: message)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("emailError")
+            } else if entry != nil || missing == .gone {
                 EmptyState(symbol: "envelope", title: "Not found", message: "That email is no longer in the history.")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("emailGone")
+            } else {
+                // Older than the history read at once: read from the core by its id.
+                Color.clear
             }
         }
         .pageBackground()
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: attempt) {
+        .task(id: "\(attempt):\(entry != nil)") {
+            if entry == nil {
+                // Once read it is kept, so this task runs again with the entry (its id changes).
+                missing = await EntryMissing.read(entryId, model: model)
+                return
+            }
             guard let entry, let logged, !logged.id.isEmpty else { return }
             load = .loading
             do {

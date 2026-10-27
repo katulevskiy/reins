@@ -113,9 +113,10 @@ fun ActivityDetailScreen(
     authenticator: Authenticator? = null,
 ) {
     val c = LocalColors.current
-    val entries by state.activity.collectAsStateWithLifecycle()
     val grants by state.grants.collectAsStateWithLifecycle()
-    val entry = entries.firstOrNull { it.id == entryId }
+    // An entry older than the history read at once (a day or a search opened it) is read from the core by its id.
+    val lookup = rememberEntry(entryId, state, container?.core)
+    val entry = lookup.entry
     val scope = rememberCoroutineScope()
     var asking by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -194,12 +195,14 @@ fun ActivityDetailScreen(
                 commits = commits.takeIf { shown.git != null },
             ),
         )
-    } else if (looked) {
+    } else if (looked && lookup != EntryLookup.Loading) {
         Box(Modifier.fillMaxSize().background(c.background)) {
             Column(Modifier.fillMaxSize().imePadding()) {
                 dev.reins.android.ui.approval.HistoryBar(entry?.connectionId.orEmpty(), entry?.connectionLabel.orEmpty(), onBack)
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
-                    if (entry == null) {
+                    if (lookup is EntryLookup.Failed) {
+                        EmptyState(Glyph.List, "Can't open it", lookup.message, tag = "entryError")
+                    } else if (entry == null) {
                         EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
                     } else {
                         DecidedHeader(entry)

@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
 import dev.reins.android.design.ButtonStyle
@@ -37,6 +36,7 @@ import dev.reins.android.ui.common.formatFull
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.EmailContent
+import dev.reins.core.ReinsCoreInterface
 import kotlin.coroutines.cancellation.CancellationException
 
 /** What opening an email came to. */
@@ -59,15 +59,17 @@ fun EmailScreen(
     state: AppState,
     load: suspend (account: String?, messageId: String) -> EmailContent,
     onBack: () -> Unit,
+    /** Reads an entry older than the history read at once by its id; without it such an entry is not found. */
+    core: ReinsCoreInterface? = null,
 ) {
     val c = LocalColors.current
-    val entries by state.activity.collectAsStateWithLifecycle()
-    val entry = entries.firstOrNull { it.id == entryId }
+    val lookup = rememberEntry(entryId, state, core)
+    val entry = lookup.entry
     val logged = entry?.info?.messages?.getOrNull(index)
     var result by remember(entryId, index) { mutableStateOf<EmailLoad>(EmailLoad.Loading) }
     var attempt by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(entryId, index, attempt) {
+    LaunchedEffect(entryId, index, attempt, logged?.id) {
         val id = logged?.id?.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
         result = EmailLoad.Loading
         result = try {
@@ -80,6 +82,11 @@ fun EmailScreen(
     }
 
     Screen(title = "Email", onBack = onBack) {
+        if (lookup == EntryLookup.Loading) return@Screen
+        if (lookup is EntryLookup.Failed) {
+            EmptyState(Glyph.Mail, "Can't open it", lookup.message, tag = "emailError")
+            return@Screen
+        }
         if (entry == null || logged == null) {
             EmptyState(Glyph.Mail, "Not found", "That email is no longer in the history.", tag = "emailGone")
             return@Screen

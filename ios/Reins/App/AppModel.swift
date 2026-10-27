@@ -891,6 +891,16 @@ final class AppModel {
         for e in entries where searchedEntries[e.id] != e { searchedEntries[e.id] = e }
     }
 
+    /// An entry by id, however far back: what `entry(_:)` has, else read from the core by its id (the history read at
+    /// once holds only the newest, and what searches and days brought in is dropped past 2,000). Kept once read; nil
+    /// when the core has no such entry.
+    func loadEntry(_ id: Int64) async throws -> ActivityEntry? {
+        if let known = entry(id) { return known }
+        guard let read = try await core.activityEntry(entryId: id) else { return nil }
+        remember([read])
+        return read
+    }
+
     /// Whether Activity's day `key` ("2026-10-15") is open; today's is unless closed. In memory for the session only.
     func activityDayOpen(_ key: String, today: String) -> Bool { activityOpenDays[key] ?? (key == today) }
 

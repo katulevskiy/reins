@@ -920,6 +920,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         locked { Array($0.activity.prefix(Int(limit))) }
     }
 
+    func activityEntry(entryId: Int64) async throws -> ActivityEntry? {
+        locked { $0.activity.first { $0.id == entryId } }
+    }
+
     /// As the core: the approval a request decided here showed; nil for the seeded history.
     func activityApproval(entryId: Int64) async throws -> ApprovalView? {
         locked { $0.recorded[entryId] }
