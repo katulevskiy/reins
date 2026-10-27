@@ -51,7 +51,9 @@ enum FieldLines {
         var lines: [FieldLine] = []
         let tags = ApprovalWords.dangerTags(view)
         for tag in tags {
-            lines.append(FieldLine(id: tag.id, text: line(tag), tone: tag.destructive ? .red : .amber, help: tag.help))
+            // A safety net reassures; it isn't a warning, so it doesn't wear the amber triangle.
+            let glyph: Glyph? = tag.id == "netted" ? .undo : nil
+            lines.append(FieldLine(id: tag.id, text: line(tag), tone: tag.destructive ? .red : .amber, help: tag.help, glyph: glyph))
         }
         if let ssh = view.ssh, (ssh.host ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
             let keyed = !(ssh.hostKey ?? "").trimmingCharacters(in: .whitespaces).isEmpty
