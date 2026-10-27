@@ -1,14 +1,13 @@
 name: iOS
 
-# A pull request runs the core, the build and ReinsTests (the unit shard): three macOS jobs, one after another.
-# The five UI shards run on a push to main (a newer push cancels the older run), the nightly and a hand run
-# (workflow_dispatch, also on a branch, for a pull request whose UI needs a look before merging).
+# Pull requests run iOS in ci.yml: one macOS job with the core, the build and ReinsTests (docs/reference/ci.md).
+# This workflow runs the core, the build, ReinsTests and the five UI shards on a push to main (a newer push cancels the
+# older run), the nightly and a hand run (workflow_dispatch, also on a branch, for a pull request whose UI needs a
+# look before merging). On main and at night it is background work: its macOS admission waits until nobody else wants
+# a runner (.github/workflows/macos-gate.yml), and each UI shard steps aside while anyone does.
 # scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow, so none of this holds a release.
-# The iOS check gates on the core, the build and ReinsTests. The UI shards never gate a merge: their failures are
-# warnings with the result bundle attached (docs/ios-dev.md).
+# The UI shards never gate a merge: their failures are warnings with the result bundle attached (docs/ios-dev.md).
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
   push:
     branches: [main]
@@ -29,14 +28,12 @@ on:
 permissions:
   contents: read
 
-# One group per pull request, and a newer push to it cancels its older run, in progress or queued: only the newest
-# commit's result counts, and a stale run's queued macOS jobs would otherwise take runners ahead of a release's.
-# Pull requests never cancel each other's runs. Pushes to main share one group, and a newer push cancels the older run
-# (its UI shards included): the newer commit has every change of the older one. A nightly or hand run keeps its own
-# group per commit and is not cancelled.
+# Pushes to main share one group, and a newer push cancels the older run (its UI shards included, and its admission
+# still waiting): the newer commit has every change of the older one. A nightly or hand run keeps its own group per
+# commit and is not cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 defaults:
   run:
@@ -57,10 +54,11 @@ defaults:
 # peak and may take all five. ActivityFlowTests is divided by method. scripts/ios-ui-plan.py owns that
 # list. Classes added later still land on rest.
 #
-# The account's five macOS runners are shared with release.yml. Before the core and again before the
-# tests, a Linux job waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml).
+# The account's five macOS runners are shared with CI, the agents' iOS jobs and release.yml. Before the core and again
+# before the tests, macOS admission (.github/workflows/macos-gate.yml) waits: on main and at night until nobody else
+# wants a runner, by hand in turn with everyone else.
 #
-# The simulator core and the Swift compile cache are written from main only. A pull request restores them.
+# The simulator core and the Swift compile cache are written from main only. Pull requests (ci.yml) restore them.
 # Build products are uploaded for the shards, not cached: they carry absolute paths, which match this
 # runner's workspace (/Users/runner/work/reins/reins) and would not match a different one.
 
@@ -81,7 +79,7 @@ jobs:
         id: paths
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.before }}
         run: |
           ios=false
           if [[ "$EVENT" == workflow_dispatch || "$EVENT" == schedule || -z "$BASE_SHA" ||
@@ -104,22 +102,29 @@ jobs:
             done < <(git diff --name-only -z "$BASE_SHA" HEAD)
           fi
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
-      # A pull request runs no UI shard.
       - name: Select UI tests
         id: uitests
-        if: steps.paths.outputs.ios == 'true' && github.event_name != 'pull_request'
+        if: steps.paths.outputs.ios == 'true'
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.before }}
         run: python3 scripts/ios-ui-plan.py select >> "$GITHUB_OUTPUT"
 
+  # The core and the build: one macOS job at a time.
   macos-gate:
-    name: Yield to releases
+    name: macOS admission
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
     permissions:
-      actions: read # the release runs and their jobs
+      actions: read # the runs and their jobs
+      contents: read # scripts/ci
+      pull-requests: read # ci:priority and ci:lock
+      issues: read # when ci:lock was added
+    with:
+      # Background on main and at night; a hand run (someone is waiting for it) queues with everyone else.
+      background: ${{ github.event_name != 'workflow_dispatch' }}
+      macos: 1
 
   ios-core:
     name: iOS Rust core
@@ -335,18 +340,24 @@ jobs:
           # Keep build inputs as long as test results so failed shards can be rerun.
           retention-days: 7
 
-  # Again before the tests: on main they are six jobs, and a release may have started since the core.
+  # Again before the tests: they are six jobs, three at a time (max-parallel), and others may wait by now.
   macos-gate-tests:
-    name: Yield to releases (tests)
+    name: macOS admission (tests)
     needs: [changes, ios-build]
     if: needs.changes.outputs.ios == 'true' && needs.ios-build.result == 'success'
     uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
     permissions:
-      actions: read # the release runs and their jobs
+      actions: read # the runs and their jobs
+      contents: read # scripts/ci
+      pull-requests: read # ci:priority and ci:lock
+      issues: read # when ci:lock was added
+    with:
+      # Background on main and at night; a hand run (someone is waiting for it) queues with everyone else.
+      background: ${{ github.event_name != 'workflow_dispatch' }}
+      macos: 3
 
   # unit (ReinsTests) gates the iOS check. The five UI shards do not: the job and its test step continue on error, so a
   # failing UI test is a warning on a green job, with its result bundle uploaded, and never holds a merge or a release.
-  # A pull request runs unit only; the UI shards run on a push to main, the nightly and a hand run.
   ios-test:
     name: iOS tests (${{ matrix.shard }})
     needs: [changes, ios-build, macos-gate-tests]
@@ -356,13 +367,13 @@ jobs:
     continue-on-error: ${{ matrix.shard != 'unit' }}
     permissions:
       contents: read
-      actions: read # the release runs and their jobs (Yield to a release)
+      actions: read # the runs and their jobs (Step aside)
     strategy:
       fail-fast: false
       # Three at a time on a main push or a hand run. The nightly uses all five.
       max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}
       matrix:
-        shard: ${{ fromJSON(github.event_name == 'pull_request' && '["unit"]' || '["unit", "autopilot", "grants", "onboarding", "field", "rest"]') }}
+        shard: [unit, autopilot, grants, onboarding, field, rest]
     env:
       XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
       DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
@@ -371,35 +382,26 @@ jobs:
         with:
           persist-credentials: false
       # max-parallel starts the later shards as the first ones end, long after macos-gate-tests passed, and a queued job
-      # takes a free runner in turn with the release's. So each UI shard asks again with its runner in hand, and steps
-      # aside (a warning, no tests: every later step needs the plan) while a release run wants a macOS runner: "macOS
-      # builds" not created yet or queued, or "TestFlight upload" queued. A backlog of shards then drains in seconds
-      # instead of holding the release back. The unit shard (it gates the iOS check) runs in the first batch, right after
-      # the gate, and never steps aside. An API error runs the shard.
-      - name: Yield to a release
+      # takes a free runner in turn with everyone else's. So each UI shard asks again with its runner in hand
+      # (scripts/ci/admit.py --yield), and steps aside (a warning, no tests: every later step needs the plan) while
+      # anyone else wants a macOS runner: a release whose "macOS builds" is not created yet, a queued macOS job of CI, a
+      # release or an iOS job, or a run waiting for admission. A backlog of shards then drains in seconds instead of
+      # holding pull requests and releases back; the nightly runs every shard. A hand run's shards (someone is waiting
+      # for them) and the unit shard never step aside. An API error runs the shard.
+      - name: Step aside
         id: yield
-        if: matrix.shard != 'unit'
+        if: matrix.shard != 'unit' && github.event_name != 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_MACOS_LABELS: ${{ vars.IOS_RUNNER || 'xcode-27' }}
           SHARD: ${{ matrix.shard }}
         run: |
           set -uo pipefail
-          wants=""
-          if runs="$(gh api "repos/$GH_REPO/actions/workflows/release.yml/runs?per_page=30" \
-            --jq '.workflow_runs[] | select(.status != "completed") | .id')"; then
-            for id in $runs; do
-              found="$(gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq '
-                (if any(.jobs[]; .name == "macOS builds") then empty else "macOS builds is not created yet" end),
-                (.jobs[] | select((.name == "macOS builds" or .name == "TestFlight upload")
-                  and (.status | test("^(requested|waiting|pending|queued)$"))) | "\(.name) is \(.status)")')" || continue
-              [[ -n "$found" ]] && wants+="release run $id: ${found//$'\n'/, }. "
-            done
-          fi
-          if [[ -n "$wants" ]]; then
-            echo "::warning title=iOS UI tests (${SHARD})::Skipped: a release waits for a macOS runner. $wants"
-            echo "Skipped the ${SHARD} shard: a release waits for a macOS runner. $wants" >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          python3 -I scripts/ci/admit.py --yield
+          if grep -q '^skip=true$' "$GITHUB_OUTPUT"; then
+            why="$(sed -n 's/^why=//p' "$GITHUB_OUTPUT" | tail -1)"
+            echo "::warning title=iOS UI tests (${SHARD})::Skipped: another run wants a macOS runner. $why"
+            echo "Skipped the ${SHARD} shard: another run wants a macOS runner. $why" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Plan this shard
         id: plan

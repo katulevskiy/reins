@@ -189,7 +189,7 @@ simulator between jobs, so a Swift-only change should be an incremental build pl
 
   The 10x loop is `ios-typecheck.sh` on Linux in seconds, plus `--mac` with a warm DerivedData folder and a booted
   simulator.
-- **Five macOS jobs at once,** shared with CI (`ios.yml`, the desktop macOS jobs) and releases. Jobs queue when they
+- **Five macOS jobs at once,** shared with CI (`ci.yml`'s iOS and desktop macOS jobs, `ios.yml`) and releases. Jobs queue when they
   are busy.
 - **Before a core change reaches main,** each job on that branch builds the core itself (about 9 minutes), because
   only main publishes cores.
@@ -230,17 +230,19 @@ You must be logged in on the Mac, because the simulator runs in your GUI session
 
 ## UI tests in CI
 
-`.github/workflows/ios.yml` runs on pull requests, main and nightly:
-- A pull request: the core, one build, then the `unit` shard (ReinsTests). No UI shard.
+- A pull request: `ci.yml`'s `iOS` job, one macOS job with the core, one build and ReinsTests. No UI shard. It is
+  part of the **CI result** check.
 - A push to main (a newer push cancels the older run), the nightly and a hand run (`gh workflow run ios.yml --ref
-  <branch>`, for a pull request whose UI needs a look): the same, plus the five UI shards.
-- The `iOS` check gates on the core, the build and the unit shard.
+  <branch>`, for a pull request whose UI needs a look): `.github/workflows/ios.yml`, with the core, the build, the
+  `unit` shard (ReinsTests) and the five UI shards.
 - The UI shards continue on error. A failing UI test shows as a warning on a green job, with its `.xcresult` as an
   artifact. It never holds a merge.
-- Releases wait only for `ci.yml` (`scripts/wait-for-ci.sh`), so iOS UI tests never hold a release either.
-- Before the core and before the tests, a Linux job waits while a release waits for its macOS runner
-  (`.github/workflows/macos-gate.yml`, at most an hour). `ios-core.yml`, `ios-job.yml` and `ci.yml`'s macOS job
-  wait the same way.
+- Releases wait only for `ci.yml` on `main` (`scripts/wait-for-ci.sh`), which runs no iOS, so iOS never holds a
+  release.
+- Every macOS job waits for free runners first (`.github/workflows/macos-gate.yml`; see
+  [the CI reference](reference/ci.md#admission)). Releases come first. `ios.yml` on main and at night is background
+  work: it waits until nobody else wants a runner, and each UI shard skips its tests while anyone does. The nightly
+  runs every shard.
 
 `scripts/test-ci-routing.py` checks all of this.
 

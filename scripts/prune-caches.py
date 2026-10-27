@@ -3,7 +3,7 @@
 10 GB per repository. Past that GitHub evicts the least recently used caches first, and those are the ones a release
 restores once per run: the macOS build's Rust cache went within minutes of its save (release 40476007982).
 
-Three kinds go (.github/workflows/cache-prune.yml runs this after CI and iOS on main, and every hour):
+CI's pass records (ci-pass-*, scripts/ci/reuse.py) always stay. Three kinds go (.github/workflows/cache-prune.yml runs this after CI and iOS on main, and every hour):
   - superseded: every key ends in hashes of its inputs (Cargo.lock, Package.resolved, the sources). Of one family (the
     key without its trailing hashes) only the most recently used entry is restored again: rust-cache and the Swift
     cache fall back to the newest entry of the family, the exact-source caches match only the current hash. The others
@@ -32,6 +32,7 @@ LIMIT = 10 * 1000**3
 # Warn when main's own caches (after pruning) leave less than this for a run's new entries before eviction starts.
 HEADROOM = 1 * 1000**3
 HASH = re.compile(r"-[0-9a-f]{8,}$")
+PASS_PREFIX = "ci-pass-"
 # Keys the workflows no longer use (10-27: the release's Linux, Windows, server, Android and iOS core Rust caches,
 # ios-core.yml's own, and the exact-source keys that hashed a workflow file). Kept here so their last copies go at once
 # instead of sitting in the 10 GB for the seven days GitHub keeps an unused cache.
@@ -67,6 +68,11 @@ def plan(caches, now):
     delete, keep = [], []
     families = {}
     for cache in caches:
+        # CI's records of a passing job (scripts/ci/reuse.py): a few hundred bytes each, on pull requests too, which
+        # read their own and main's to skip a suite whose inputs did not change. GitHub drops them after a week unused.
+        if cache["key"].startswith(PASS_PREFIX):
+            keep.append(cache)
+            continue
         if cache["ref"] != MAIN:
             if now - when(cache["last_accessed_at"]) > BRANCH_GRACE:
                 delete.append((cache, f"{cache['ref']}, unused for an hour"))

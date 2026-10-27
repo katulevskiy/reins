@@ -66,6 +66,7 @@ jobs:
     outputs:
       hash: ${{ steps.check.outputs.hash }}
       missing: ${{ steps.check.outputs.missing }}
+      count: ${{ steps.check.outputs.count }}
       # This run builds main's own commit: the only kind of run that may publish or save a cache.
       trusted: ${{ steps.check.outputs.trusted }}
     steps:
@@ -97,16 +98,21 @@ jobs:
           done
           list="$(IFS=,; echo "${missing[*]:-}")"
           echo "hash=$hash trusted=$trusted"
-          { echo "hash=$hash"; echo "missing=[$list]"; echo "trusted=$trusted"; } >> "$GITHUB_OUTPUT"
+          { echo "hash=$hash"; echo "missing=[$list]"; echo "count=${#missing[@]}"; echo "trusted=$trusted"; } >> "$GITHUB_OUTPUT"
 
-  # Waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml).
+  # macOS admission (.github/workflows/macos-gate.yml): one runner per core to build, in turn with everyone else.
   macos-gate:
-    name: Yield to releases
+    name: macOS admission
     needs: plan
     if: needs.plan.outputs.missing != '[]'
     uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
     permissions:
-      actions: read # the release runs and their jobs
+      actions: read # the runs and their jobs
+      contents: read # scripts/ci
+      pull-requests: read # ci:priority and ci:lock
+      issues: read # when ci:lock was added
+    with:
+      macos: ${{ fromJSON(needs.plan.outputs.count) }}
 
   build:
     name: iOS core (${{ matrix.platform }})
