@@ -204,6 +204,39 @@ class MainSafeCore(
 
     override suspend fun askWhy(requestId: String, question: String) = io { askWhy(requestId, question) }
 
+    // ---- Circles (Decisions v2, 04): people who share control of an account ---------------------------------------
+
+    override suspend fun circlesAvailable(): Boolean = io { circlesAvailable() }
+
+    override suspend fun circleInviteCreate(draft: dev.reins.core.CircleDraft): dev.reins.core.CircleInviteStart =
+        io { circleInviteCreate(draft) }
+
+    override suspend fun circleInvitePoll(id: String): dev.reins.core.CircleInviteProgress = io { circleInvitePoll(id) }
+
+    override suspend fun circleInviteConfirm(id: String): dev.reins.core.CirclePerson = io { circleInviteConfirm(id) }
+
+    override suspend fun circleInviteCancel(id: String) = io { circleInviteCancel(id) }
+
+    override suspend fun circleJoinOpen(link: String): dev.reins.core.CircleInviteView = io { circleJoinOpen(link) }
+
+    override suspend fun circleJoinPoll(id: String): dev.reins.core.CircleInviteView = io { circleJoinPoll(id) }
+
+    override suspend fun circleJoinAccept(id: String) = io { circleJoinAccept(id) }
+
+    override suspend fun circleJoinDecline(id: String) = io { circleJoinDecline(id) }
+
+    override suspend fun circlePeople(refresh: Boolean): List<dev.reins.core.CirclePerson> = io { circlePeople(refresh) }
+
+    override suspend fun circlePause(linkId: String, paused: Boolean) = io { circlePause(linkId, paused) }
+
+    override suspend fun circleEnd(linkId: String) = io { circleEnd(linkId) }
+
+    override suspend fun circleReviews(refresh: Boolean): List<dev.reins.core.CircleReviewView> = io { circleReviews(refresh) }
+
+    override suspend fun circleNotices(): List<dev.reins.core.CircleNoticeView> = io { circleNotices() }
+
+    override suspend fun circleAnswer(reviewId: String, approve: Boolean, note: String?) = io { circleAnswer(reviewId, approve, note) }
+
     override suspend fun signingKeyFingerprint(): String = io { signingKeyFingerprint() }
 
     override suspend fun gmailStatus(): GmailStatus = io { gmailStatus() }

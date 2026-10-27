@@ -82,11 +82,53 @@ object TestData {
         quick: Boolean = false,
         ticket: dev.reins.core.TicketView? = null,
         canDefer: Boolean = false,
+        circle: dev.reins.core.CircleProgress? = null,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
         service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
-        ticket = ticket, canDefer = canDefer,
+        ticket = ticket, canDefer = canDefer, circle = circle,
     )
+
+    // ---- Circles (Decisions v2, 04) -----------------------------------------------------------------------------------
+
+    /** Who else decides an owner's request ("Needs Alex too"). */
+    fun circleProgress(
+        needs: List<String> = listOf("alex@example.com"),
+        approved: List<String> = emptyList(),
+        waitingForYou: Boolean = true,
+        youApproved: Boolean = false,
+        line: String = "Needs Alex too",
+        deadline: Long = 1_700_014_500,
+    ) = dev.reins.core.CircleProgress(needs, approved, waitingForYou, youApproved, true, deadline, line)
+
+    /** One arrangement: [mine] when the other person helps this account. */
+    fun circlePerson(
+        linkId: String = "l1",
+        peer: String = "alex@example.com",
+        role: dev.reins.core.CircleRole = dev.reins.core.CircleRole.COSIGN,
+        mine: Boolean = true,
+        scopeLine: String = "Money",
+        deferred: Boolean = true,
+        state: dev.reins.core.CircleLinkState = dev.reins.core.CircleLinkState.ACTIVE,
+    ) = dev.reins.core.CirclePerson(linkId, peer, role, mine, scopeLine, deferred, 14_400uL, state, 1_699_000_000)
+
+    /** A request of [person]'s account waiting for this phone, due [left] seconds after the frozen now. */
+    fun circleReview(
+        id: String = "rv1",
+        person: String = "sam@example.com",
+        title: String = "Buy headphones",
+        left: Long = 3 * 3_600,
+        state: dev.reins.core.CircleReviewState = dev.reins.core.CircleReviewState.WAITING,
+        role: dev.reins.core.CircleRole = dev.reins.core.CircleRole.GUARDIAN,
+        createdAt: Long = 1_700_000_000,
+        detail: String? = null,
+    ) = dev.reins.core.CircleReviewView(
+        id, "link-$person", person, role, title, "\$42 at Example Store", "Spends money", "payments", "ChatGPT",
+        "Ask · Outside · Spends money", detail, "Money", createdAt, 1_700_000_100 + left, state,
+    )
+
+    fun circleNotice(id: String = "n1", person: String = "sam@example.com", text: String = "Sam turned on Bypass for 1 h", at: Long = 1_700_000_000) =
+        dev.reins.core.CircleNoticeView(id, person, text, null, at)
 
     /** A request that became a ticket [age] seconds before [now], due [left] seconds after it. */
     fun ticket(

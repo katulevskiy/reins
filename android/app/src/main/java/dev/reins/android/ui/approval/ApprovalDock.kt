@@ -225,11 +225,21 @@ private fun RowScope.Seg(title: String, selected: Boolean, tag: String, menu: Bo
 @Composable
 private fun Buttons(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel, authenticator: Authenticator) {
     val c = LocalColors.current
+    // Circles: the owner approved already; it runs once the others have (the button reads as done).
+    val item by viewModel.item.collectAsStateWithLifecycle()
+    val approvedByMe = dev.reins.android.ui.circles.approvedByMe(item?.circle)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         SignalButton(denyLabel(view), Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Outline, enabled = !ui.busy, onClick = viewModel::deny)
         val purchase = view.purchase
         val approveModifier = Modifier.weight(1.35f)
         when {
+            approvedByMe -> SignalButton(
+                "Approved",
+                approveModifier.testTag("approvedByMe"),
+                style = ButtonStyle.Soft,
+                enabled = false,
+                glyph = Glyph.Check,
+            ) {}
             purchase != null -> {
                 val context = LocalContext.current
                 val onPhone = purchase.methods.firstOrNull { it.id == ui.purchase.methodId }?.kind == "pay_on_phone"

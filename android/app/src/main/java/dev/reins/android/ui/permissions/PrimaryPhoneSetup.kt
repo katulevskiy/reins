@@ -120,9 +120,26 @@ class PrimaryPhoneSetupModel(
     )
 }
 
+/** What the primary-phone setup says, by where it is offered (automatic permissions, Circles). */
+data class PrimarySetupWords(
+    val header: String = "Automatic permissions on this phone",
+    val needed: String = "A verified primary phone is required before automatic permissions can be enabled.",
+    val open: String = "Enable automatic permissions on this phone",
+    val title: String = "Enable automatic permissions",
+    val reload: String = "Reload permissions",
+    val already: String = "This phone is already the primary. Current policy and history requirements still apply.",
+    val elsewhere: String = "to manage automatic permissions",
+)
+
 @Composable
 fun PrimaryPhoneSetupSection(model: AccountPermissionsViewModel, authenticator: Authenticator) {
     val setup = remember(model) { model.primaryPhoneSetup() }
+    PrimaryPhoneSetupSection(setup, authenticator, PrimarySetupWords(), onReload = model::reload)
+}
+
+/** The primary-phone setup for [setup], in [words]; [onReload] reads what depends on it again once this phone is it. */
+@Composable
+fun PrimaryPhoneSetupSection(setup: PrimaryPhoneSetupModel, authenticator: Authenticator, words: PrimarySetupWords, onReload: () -> Unit) {
     val state by setup.ui.collectAsState()
     val c = LocalColors.current
     var showing by remember(setup) { mutableStateOf(false) }
@@ -132,19 +149,19 @@ fun PrimaryPhoneSetupSection(model: AccountPermissionsViewModel, authenticator: 
     fun close() { proof = ""; enterProof = false; backupConfirmed = false; showing = false; setup.cancelAttempt() }
     DisposableEffect(setup) { onDispose { proof = ""; setup.deactivate() } }
     LaunchedEffect(setup) { setup.check() }
-    Group(header = "Automatic permissions on this phone") {
+    Group(header = words.header) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when {
                 state.checking -> RText("Checking this phone…", RType.sans(14f), c.ink2)
                 state.canCreate -> {
-                    RText("A verified primary phone is required before automatic permissions can be enabled.", RType.sans(14f), c.ink2)
-                    CapsuleButton("Enable automatic permissions on this phone", Modifier.fillMaxWidth().testTag("primarySetupOpen"), maxLines = Int.MAX_VALUE) { showing = true }
+                    RText(words.needed, RType.sans(14f), c.ink2)
+                    CapsuleButton(words.open, Modifier.fillMaxWidth().testTag("primarySetupOpen"), maxLines = Int.MAX_VALUE) { showing = true }
                 }
                 state.role == PhoneRole.PRIMARY -> {
-                    RText("This phone is already the primary. Current policy and history requirements still apply.", RType.sans(14f), c.ink2)
-                    CapsuleButton("Reload permissions", Modifier.fillMaxWidth().testTag("primarySetupReload"), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE, onClick = model::reload)
+                    RText(words.already, RType.sans(14f), c.ink2)
+                    CapsuleButton(words.reload, Modifier.fillMaxWidth().testTag("primarySetupReload"), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE, onClick = onReload)
                 }
-                state.role == PhoneRole.VIEWER || state.role == PhoneRole.REMOVED || state.hasRoster -> RText("Use your primary phone${state.primaryName?.let { " (${untrusted(it)})" }.orEmpty()} to manage automatic permissions. This setup cannot take over another phone's role.", RType.sans(14f), c.ink2, Modifier.testTag("primarySetupGuidance"))
+                state.role == PhoneRole.VIEWER || state.role == PhoneRole.REMOVED || state.hasRoster -> RText("Use your primary phone${state.primaryName?.let { " (${untrusted(it)})" }.orEmpty()} ${words.elsewhere}. This setup cannot take over another phone's role.", RType.sans(14f), c.ink2, Modifier.testTag("primarySetupGuidance"))
             }
             if (!showing) state.error?.let {
                 Banner(untrusted(it), kind = BannerKind.Error, tag = "primarySetupError")
@@ -155,7 +172,7 @@ fun PrimaryPhoneSetupSection(model: AccountPermissionsViewModel, authenticator: 
     if (showing) {
         SecureWindow()
         androidx.compose.ui.window.Dialog(onDismissRequest = ::close, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, securePolicy = if (dev.reins.android.BuildConfig.SECURE_SCREENS) androidx.compose.ui.window.SecureFlagPolicy.SecureOn else androidx.compose.ui.window.SecureFlagPolicy.Inherit)) {
-            Screen("Enable automatic permissions", onBack = ::close) {
+            Screen(words.title, onBack = ::close) {
                 Column(Modifier.padding(16.dp).testTag("primarySetupDialog"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     RText("This makes this phone the primary approval phone for your whole Reins account, including its other integrations. It creates protected recovery information. It does not allow any agent action by itself.", RType.sans(15f), c.ink)
                     CheckRow(backupConfirmed, { backupConfirmed = it }, enabled = !state.busy, tag = "primarySetupBackup") { RText("I have saved my recovery code or master password.", RType.sans(15f), c.ink) }
@@ -165,7 +182,7 @@ fun PrimaryPhoneSetupSection(model: AccountPermissionsViewModel, authenticator: 
                     if (!state.canCreate && !state.busy) RText("The phone's role changed. Close this screen and check its current status.", RType.sans(14f), c.ink2)
                     CapsuleButton("Make this my primary phone", Modifier.fillMaxWidth().testTag("primarySetupConfirm"), enabled = backupConfirmed && state.canCreate, busy = state.busy, maxLines = Int.MAX_VALUE) {
                         val entered = proof; proof = ""
-                        setup.enable(backupConfirmed, entered, authenticator) { close(); model.reload() }
+                        setup.enable(backupConfirmed, entered, authenticator) { close(); onReload() }
                     }
                     CapsuleButton("Cancel", Modifier.fillMaxWidth().testTag("primarySetupCancel"), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE, onClick = ::close)
                 }

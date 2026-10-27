@@ -84,6 +84,33 @@ class AppState {
         _autoQuestions.value = _autoQuestions.value.filter { it.id != id }
     }
 
+    /** Circles' For others: requests of other accounts waiting for this phone, and those settled lately. */
+    private val _circleReviews = MutableStateFlow<List<dev.reins.core.CircleReviewView>>(emptyList())
+    val circleReviews: StateFlow<List<dev.reins.core.CircleReviewView>> = _circleReviews.asStateFlow()
+
+    /** What a watcher was told lately (no buttons). */
+    private val _circleNotices = MutableStateFlow<List<dev.reins.core.CircleNoticeView>>(emptyList())
+    val circleNotices: StateFlow<List<dev.reins.core.CircleNoticeView>> = _circleNotices.asStateFlow()
+
+    /** Counts the core's "something about Circles changed": screens that list people read them again. */
+    private val _circleRevision = MutableStateFlow(0L)
+    val circleRevision: StateFlow<Long> = _circleRevision.asStateFlow()
+
+    fun setCircles(reviews: List<dev.reins.core.CircleReviewView>?, notices: List<dev.reins.core.CircleNoticeView>?) {
+        reviews?.let { _circleReviews.value = it }
+        notices?.let { _circleNotices.value = it }
+    }
+
+    /** A review answered here shows settled at once; the next read settles the list. */
+    fun markCircleAnswered(id: String, approve: Boolean) {
+        val state = if (approve) dev.reins.core.CircleReviewState.APPROVED else dev.reins.core.CircleReviewState.DENIED
+        _circleReviews.value = _circleReviews.value.map { if (it.id == id) it.copy(state = state) else it }
+    }
+
+    fun circlesChanged() {
+        _circleRevision.value += 1
+    }
+
     private val _services = MutableStateFlow<List<ServiceView>>(emptyList())
     val services: StateFlow<List<ServiceView>> = _services.asStateFlow()
 
@@ -297,6 +324,8 @@ class AppState {
             _services.value = emptyList()
             _startingPolicy.value = null
             _autoQuestions.value = emptyList()
+            _circleReviews.value = emptyList()
+            _circleNotices.value = emptyList()
             _connections.value = emptyList()
             _connectionsHidden.value = false
             setMcpServers(emptyList())

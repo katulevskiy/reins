@@ -40,6 +40,7 @@ class LiveServerTest {
         override fun itemResolved(id: String) = Unit
         override fun autoDecided(decision: dev.reins.core.AutoDecisionView) = Unit
         override fun autopilotChanged(event: dev.reins.core.AutopilotEvent) = Unit
+        override fun circleChanged(event: dev.reins.core.CircleEvent) = Unit
     }
 
     @Test

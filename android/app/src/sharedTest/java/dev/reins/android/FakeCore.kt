@@ -627,6 +627,136 @@ class FakeCore : ReinsCoreInterface {
         signingKeyCalls.set(0)
     }
 
+    // ---- Circles (Decisions v2, 04): people who share control ------------------------------------------------------
+
+    /** Whether this phone can take part in Circles (the account's primary phone). */
+    @Volatile var circlesOn: Boolean = true
+    /** The arrangements, either side. */
+    @Volatile var circlePeopleList: List<CirclePerson> = emptyList()
+    /** Requests of other accounts for this phone (For others), waiting and settled. */
+    @Volatile var circleReviewList: List<CircleReviewView> = emptyList()
+    /** What a watcher was told. */
+    @Volatile var circleNoticeList: List<CircleNoticeView> = emptyList()
+    /** `circleAnswer` calls: (review id, approve, note). */
+    val circleAnswers = CopyOnWriteArrayList<Triple<String, Boolean, String?>>()
+    /** Thrown by `circleAnswer` when set. */
+    @Volatile var circleAnswerFailure: Exception? = null
+    /** The drafts `circleInviteCreate` was given. */
+    val circleDrafts = CopyOnWriteArrayList<CircleDraft>()
+    /** What `circleInvitePoll` answers next, one per poll (the last one stays). */
+    val circleInviteSteps = java.util.concurrent.ConcurrentLinkedQueue<CircleInviteProgress>()
+    @Volatile private var circleInviteLast: CircleInviteProgress = CircleInviteProgress.Waiting
+    val circleInviteConfirms = CopyOnWriteArrayList<String>()
+    val circleInviteCancels = CopyOnWriteArrayList<String>()
+    /** The links `circleJoinOpen` was given. */
+    val circleJoinLinks = CopyOnWriteArrayList<String>()
+    /** What `circleJoinOpen` and `circleJoinPoll` answer. */
+    @Volatile var circleJoinView: CircleInviteView? = null
+    val circleJoinAccepts = CopyOnWriteArrayList<String>()
+    val circleJoinDeclines = CopyOnWriteArrayList<String>()
+    /** `circlePause` calls: (link id, paused). */
+    val circlePauses = CopyOnWriteArrayList<Pair<String, Boolean>>()
+    val circleEnds = CopyOnWriteArrayList<String>()
+    val circleReviewReads = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun circlesAvailable(): Boolean = circlesOn
+
+    override suspend fun circleInviteCreate(draft: CircleDraft): CircleInviteStart {
+        circleDrafts += draft
+        return CircleInviteStart("inv1", "reins-circle:127.0.0.1:8000/secret123", now() + 900)
+    }
+
+    override suspend fun circleInvitePoll(id: String): CircleInviteProgress {
+        circleInviteSteps.poll()?.let { circleInviteLast = it }
+        return circleInviteLast
+    }
+
+    override suspend fun circleInviteConfirm(id: String): CirclePerson {
+        circleInviteConfirms += id
+        val helper = (circleInviteLast as? CircleInviteProgress.Accepted)?.helper ?: "alex@example.com"
+        val draft = circleDrafts.lastOrNull()
+        val person = CirclePerson(
+            "link-$id", helper, draft?.role ?: CircleRole.COSIGN, true, "Money", draft?.deferred ?: true, 14_400uL,
+            CircleLinkState.ACTIVE, now(),
+        )
+        circlePeopleList = circlePeopleList + person
+        circleInviteLast = CircleInviteProgress.Active(person.linkId)
+        return person
+    }
+
+    override suspend fun circleInviteCancel(id: String) {
+        circleInviteCancels += id
+        circleInviteLast = CircleInviteProgress.Cancelled
+    }
+
+    override suspend fun circleJoinOpen(link: String): CircleInviteView {
+        circleJoinLinks += link
+        if (!link.startsWith("reins-circle:")) throw CoreException.Invalid("This is not a Circle invitation.")
+        return circleJoinView ?: throw CoreException.NotFound()
+    }
+
+    override suspend fun circleJoinPoll(id: String): CircleInviteView = circleJoinView ?: throw CoreException.NotFound()
+
+    override suspend fun circleJoinAccept(id: String) {
+        circleJoinAccepts += id
+        circleJoinView = circleJoinView?.copy(stage = CircleJoinStage.ACCEPTED)
+    }
+
+    override suspend fun circleJoinDecline(id: String) {
+        circleJoinDeclines += id
+        circleJoinView = circleJoinView?.copy(stage = CircleJoinStage.DECLINED)
+    }
+
+    override suspend fun circlePeople(refresh: Boolean): List<CirclePerson> = circlePeopleList
+
+    override suspend fun circlePause(linkId: String, paused: Boolean) {
+        circlePauses += linkId to paused
+        circlePeopleList = circlePeopleList.map {
+            if (it.linkId == linkId) it.copy(state = if (paused) CircleLinkState.PAUSED else CircleLinkState.ACTIVE) else it
+        }
+    }
+
+    override suspend fun circleEnd(linkId: String) {
+        circleEnds += linkId
+        circlePeopleList = circlePeopleList.filterNot { it.linkId == linkId }
+    }
+
+    override suspend fun circleReviews(refresh: Boolean): List<CircleReviewView> {
+        circleReviewReads.incrementAndGet()
+        return circleReviewList
+    }
+
+    override suspend fun circleNotices(): List<CircleNoticeView> = circleNoticeList
+
+    override suspend fun circleAnswer(reviewId: String, approve: Boolean, note: String?) {
+        circleAnswerFailure?.let { throw it }
+        circleAnswers += Triple(reviewId, approve, note)
+        circleReviewList = circleReviewList.map {
+            if (it.id == reviewId) it.copy(state = if (approve) CircleReviewState.APPROVED else CircleReviewState.DENIED) else it
+        }
+    }
+
+    fun resetCircles() {
+        circlesOn = true
+        circlePeopleList = emptyList()
+        circleReviewList = emptyList()
+        circleNoticeList = emptyList()
+        circleAnswers.clear()
+        circleAnswerFailure = null
+        circleDrafts.clear()
+        circleInviteSteps.clear()
+        circleInviteLast = CircleInviteProgress.Waiting
+        circleInviteConfirms.clear()
+        circleInviteCancels.clear()
+        circleJoinLinks.clear()
+        circleJoinView = null
+        circleJoinAccepts.clear()
+        circleJoinDeclines.clear()
+        circlePauses.clear()
+        circleEnds.clear()
+        circleReviewReads.set(0)
+    }
+
     override suspend fun gmailStatus() = gmail
 
     override suspend fun grants() = grants

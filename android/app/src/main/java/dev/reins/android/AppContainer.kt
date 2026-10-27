@@ -108,6 +108,15 @@ class AppContainer(private val context: Context) {
             appScope.launch { refreshAutopilot() }
         },
         onDecided = state::markAutoDecided,
+        // Circles: a review for this phone, a settled one, a person, the owner's progress on a card. Read again
+        // quietly; the waiting list too (an owner's card says who else approved).
+        onCircles = {
+            state.circlesChanged()
+            appScope.launch {
+                refreshCircles()
+                refreshPending()
+            }
+        },
     ) { appScope.launch { refreshPending() } }
 
     /** Runs Autopilot's model on this phone; handed to the core as it is built, so background pushes can use it. */
@@ -423,6 +432,35 @@ class AppContainer(private val context: Context) {
     @Volatile private var refreshedAt = Long.MIN_VALUE / 2
 
     /**
+     * Re-reads Circles' For others: the reviews waiting for this phone (asking the server first when [fromServer]) and
+     * what a watcher was told. A phone that can't take part, or a failed read, keeps what is shown.
+     */
+    suspend fun refreshCircles(fromServer: Boolean = false) {
+        if (!state.sessionChecked.value) return
+        val epoch = state.accountEpoch.value
+        val reviews = try {
+            core.circleReviews(fromServer)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        val notices = try {
+            core.circleNotices()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (!state.isCurrent(epoch)) return
+        state.setCircles(reviews, notices)
+        reviews?.let { list ->
+            val waiting = list.filter { it.state == dev.reins.core.CircleReviewState.WAITING }.map { it.id }.toSet()
+            withContext(Dispatchers.IO) { notifier.dropStaleCircles(waiting) }
+        }
+    }
+
+    /**
      * The window got its focus back. A dialog, the biometric prompt or the notification shade closing does that too,
      * often right after an action that refreshed already; only a list older than [FOCUS_REFRESH_MS] is read again.
      */
@@ -479,6 +517,7 @@ class AppContainer(private val context: Context) {
                 state.markLoaded()
                 state.setStartingPolicy(starting.await())
                 questions.await()?.let(state::setAutoQuestions)
+                refreshCircles()
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
                     if (state.isCurrent(epoch)) {

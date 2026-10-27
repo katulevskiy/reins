@@ -368,6 +368,8 @@ dependencies {
     implementation(libs.play.services.code.scanner)
     implementation(libs.coroutines.android)
     implementation(libs.androidsvg)
+    // Draws a Circle invitation as a QR code for the other person's phone.
+    implementation(libs.zxing.core)
     // Custom Tabs for MCP servers' sign-in pages.
     implementation(libs.androidx.browser)
     // Credential Manager for the passkey that opens the vault (Google Password Manager and other providers).
