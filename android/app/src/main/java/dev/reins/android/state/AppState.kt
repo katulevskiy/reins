@@ -71,6 +71,19 @@ class AppState {
         _startingPolicy.value = policy
     }
 
+    /** "Auto needs information": who a party a request named is, listed with the waiting items (never notified). */
+    private val _autoQuestions = MutableStateFlow<List<dev.reins.core.AutoQuestion>>(emptyList())
+    val autoQuestions: StateFlow<List<dev.reins.core.AutoQuestion>> = _autoQuestions.asStateFlow()
+
+    fun setAutoQuestions(questions: List<dev.reins.core.AutoQuestion>) {
+        _autoQuestions.value = questions
+    }
+
+    /** An answered or dismissed question leaves at once; the next read settles the list. */
+    fun removeAutoQuestion(id: String) {
+        _autoQuestions.value = _autoQuestions.value.filter { it.id != id }
+    }
+
     private val _services = MutableStateFlow<List<ServiceView>>(emptyList())
     val services: StateFlow<List<ServiceView>> = _services.asStateFlow()
 
@@ -283,6 +296,7 @@ class AppState {
             _connectedServers.value = emptyMap()
             _services.value = emptyList()
             _startingPolicy.value = null
+            _autoQuestions.value = emptyList()
             _connections.value = emptyList()
             _connectionsHidden.value = false
             setMcpServers(emptyList())

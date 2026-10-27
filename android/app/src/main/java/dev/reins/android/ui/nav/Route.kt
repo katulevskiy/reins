@@ -37,6 +37,9 @@ sealed interface Route {
     /** One Autopilot profile. */
     data class AutopilotProfile(val id: String) : Route
 
+    /** Turning on Auto the first time: the owner's world, the matrix, then Turn on (Decisions v2). */
+    data object AutoSetup : Route
+
     /** Autopilot's "Try it", for a profile (null = the default one). */
     data class TryIt(val profileId: String?) : Route
 
