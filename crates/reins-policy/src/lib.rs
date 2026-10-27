@@ -5,6 +5,7 @@
 //! Every check fails closed: malformed or unknown data never grants access.
 
 pub mod authorization;
+pub mod context;
 pub mod effects;
 mod evaluate;
 mod grant;
