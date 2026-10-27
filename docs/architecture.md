@@ -103,7 +103,8 @@ org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin ch
 (decisions, their trace and countersigned record), `reins_org_bodies` (sealed bodies, results and receipts, with
 retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`, `reins_org_leases` and
 `reins_org_checkpoints`. Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
-`reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`. Everything else is in memory with a time limit, so
+`reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`; guardianship adds
+`reins_circle_changes` (each signed change and when it arrived) and `reins_guardian_notices`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows
@@ -253,6 +254,13 @@ settle, `reins-core/src/circles` the phone side and `src/api/reins/circles.rs` t
 - **Changes:** pause, resume and end are signed changes (`…/links/<id>/change`); ending drops a delegate's or
   co-signer's part of what waits and lapses a guardian's.
 - **Receipts:** the owner's Activity names who decided ("Approved by …"); the helper's keeps "Approved for …".
+- **Guardianship** (P7, `reins-core/src/circles/guardian.rs`, `src/api/reins/guardian_notices.rs`): the ward's end is
+  a signed `EndRequested` that keeps the link until `effective_at` (the Circle sweep then ends it); a minor's waits for
+  the guardian's `EndConsented`. Every change is logged with its arrival time and returned in `GET …/circles/links`
+  (`changes`), so the guardian's phone checks each step against its own terms. The server writes guardian notices
+  for a reset, a deletion (before the rows go), roster changes and the ward's changes; `GET /reins/api/guardian/notices`
+  returns each once, and one that needs the guardian pushes `alert:<link>`. The ward opts in to a weekly digest (one
+  Notice packet after Monday 09:00 UTC).
 
 ### Pairing an AI or the desktop app
 

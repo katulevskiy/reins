@@ -438,6 +438,52 @@ handover's effect (the old primary's answers still count until the owner's phone
 mode is cooperative: a ward can reset the account (the guardian is told) or use credentials directly; enforceable
 guardianship is the Family tenant (P7).
 
+### Guardianship (cooperative, P7)
+
+Personal guardianship is **cooperative and tamper-evident** (08 R7), and called so everywhere. The ward's phone holds
+the credentials and evaluates the policy, and the server is blind, so leaving can't be prevented: it is made
+**visible**. Enforceable guardianship is only the Family tenant, where the family holds the credentials.
+
+**The terms** (signed into the arrangement at setup, so the server never sees them): the notice the **ward** chose
+before the code (0, 3 or 7 days: nothing longer, no "permanent"), a minor mark, and whether the weekly digest is on.
+The guardian's phone sees the notice before it accepts.
+
+**What the server learns** beyond other Circles: each signed change of a guardianship and when it arrived
+(`reins_circle_changes`: its body names no scope or terms), when a ward's end takes effect (`effective_at`), and the
+notices it writes to guardians (`reins_guardian_notices`: a reset, a deletion, a roster change, a change of the link).
+
+**What the guardian sees:** the request card within scope, as a summary (no bodies, no detail), and an opt-in weekly
+digest of automatic decisions in scope: the day and the matrix line, never a body, a recipient or a title. No inbox,
+chat history or vault. **The ward sees** the scope, every decision the guardian made, and each note.
+
+**Minors and age signals:** only the guardian proposes a minor mark, and it counts only once the ward's phone signs its
+acceptance, with Apple's Declared Age Range or Google Play Age Signals where available (an adult's range refuses it),
+else recorded as accepted by guardian and ward. A minor's end waits for the guardian's signed consent.
+
+**Abuse pass** (each with a test or a stated limit):
+- **Coercing an adult:** a notice is 0, 3 or 7 days (`circle::tests::notice_days_are_0_3_or_7`); a guardian can't mark
+  an adult a minor alone (`guardian::tests::a_guardian_cannot_mark_an_adult_minor_alone`,
+  `guardianship::a_minors_end_waits_for_consent`); the guardian can't turn the digest on
+  (`guardianship::no_notice_ends_at_once_and_only_the_ward_sets_the_digest`).
+- **A ward ending early:** the ward's phone signs an `EndRequested` that takes exactly its notice and keeps the review
+  until then (`guardian::tests::obligations_stay_during_the_notice`, `guardianship::guardian_end_to_end`); a ward
+  can't pause one (`circle::tests::wards_cannot_pause_guardians`, refused by the server too). The guardian's phone
+  checks every change against its own copy of the terms **and the time the server logged it**, so a plain end, a short
+  notice, a backdated request or a pause shows as "Ended early" or "Paused by Sam"
+  (`guardian::tests::an_early_end_is_flagged_to_the_guardian`,
+  `circle::tests::a_backdated_end_is_refused_and_never_shortens_the_notice`). The server refuses a request dated
+  more than 5 minutes from its own clock. A change without its arrival time is refused (fail closed), and a
+  guardianship step is refused on any other kind of link (`circle::tests::a_helper_still_only_ends_outside_a_guardianship`).
+- **The server forging or hiding notices:** it can drop or delay them. It can't forge a signed change (the guardian's
+  phone verifies the ward's owner key) or a roster change (checked from the anchor the code pinned); what nobody can
+  sign (a reset, a deletion, a link that vanished) shows as "Reported by the server"
+  (`guardian_notices::tests::*`, `guardianship::guardian_end_to_end`).
+- **Escaping by reset or deletion:** each guardian is told before the rows go
+  (`guardian_notices::tests::reset_notifies_every_guardian`, `a_deleted_account_notifies_before_erase`).
+- **Content beyond scope:** guardians get summary cards only (P6's redaction), and the digest carries matrix lines.
+- **R7's limit:** an uncooperative ward can start a new account, or use its credentials directly; the guardian learns
+  only of the reset or deletion. Use the Family tenant where that matters.
+
 ## The desktop app
 
 - It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which
