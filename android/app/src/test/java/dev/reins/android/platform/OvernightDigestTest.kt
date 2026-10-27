@@ -119,9 +119,17 @@ class OvernightDigestTest {
         val plan = TicketReminders.plan(listOf(parked), now)
         assertEquals(listOf(50, 90), plan.map { it.stage })
         assertTrue("no reminder before the morning", plan.all { it.fireAt > morning })
-        // Once the morning came, it is an ordinary ticket: its arrival would notify (quietly).
+        // After the morning it is still the digest's: a parked item never notifies on its own.
         Timers.frozenNowMillis = (morning + 1) * 1000
         AppNotifier(context) {}.itemPending(parked)
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        // An Overnight without an end parks until now: the flag, not the time, keeps it quiet.
+        val endless = TestData.pending("p2", parkedUntil = morning + 1, ticket = TestData.ticket("p2", left = 12 * 3_600, age = 0, now = morning + 1))
+        AppNotifier(context) {}.itemPending(endless)
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        // An ordinary ticket still arrives (quietly).
+        val ordinary = TestData.pending("t1", ticket = TestData.ticket("t1", left = 12 * 3_600, age = 0, now = morning + 1))
+        AppNotifier(context) {}.itemPending(ordinary)
         assertEquals(1, shadowOf(manager).allNotifications.size)
     }
 }
