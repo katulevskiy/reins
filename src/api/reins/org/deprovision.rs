@@ -17,7 +17,10 @@ use std::{
 use diesel::Connection;
 use serde_json::json;
 
-use super::{OrgError, event};
+use super::{
+    OrgError, event,
+    invariants::{EndPlan, OnLastOwner},
+};
 use crate::db::{
     DbConn, DbConnInner, DbPool,
     models::{
@@ -106,10 +109,27 @@ pub fn q_deprovision(
     if !active && !delete {
         return Ok(None);
     }
+    // The one membership rule every path shares: the directory may cut off the last Org owner, but the tenant keeps
+    // its owner (and asks for recovery) rather than being left with none.
+    let plan = super::invariants::plan_membership_end(c, org, membership.uuid.as_ref(), OnLastOwner::KeepOwner)?;
+    let keep_owner = plan == EndPlan::KeepOwner;
     let cut = reins_org::q_cut_off_user(c, user)?;
     let enrolled_devices = reins_org::q_revoke_devices(c, org, user, now)?;
-    reins_org::q_end_membership(c, org, membership.uuid.as_ref(), delete)?;
-    if delete {
+    if keep_owner {
+        super::invariants::set_owner_recovery(c, org, Some(now))?;
+        event(
+            c,
+            org,
+            "org.owner_recovery_needed",
+            actor,
+            Some(membership.uuid.as_ref()),
+            &json!({"reason": reason.as_str()}),
+            now,
+        )?;
+    } else {
+        reins_org::q_end_membership(c, org, membership.uuid.as_ref(), delete)?;
+    }
+    if delete && !keep_owner {
         // The account itself goes too (its vault, keys and the rest), through the WorkOS sync's retried deletion.
         let pending = super::super::workos_sync::pending_deletion(&UserId::from(user.to_owned()));
         crate::db::models::reins_workos::q_set_setting(c, &pending, user)?;
@@ -122,6 +142,7 @@ pub fn q_deprovision(
         Some(membership.uuid.as_ref()),
         &json!({
             "reason": reason.as_str(),
+            "kept_as_last_owner": keep_owner,
             "devices": cut.devices,
             "enrolled_devices": enrolled_devices,
             "connections": cut.connections,
@@ -292,6 +313,35 @@ mod tests {
         assert!(q_deprovision(&mut c, "o1", "u1", Reason::AdminRemoval, Some("u2"), 5).unwrap().is_some());
         assert!(q_deprovision(&mut c, "o1", "u1", Reason::AdminRemoval, Some("u2"), 6).unwrap().is_none());
         assert!(q_deprovision(&mut c, "o1", "nobody", Reason::DirectorySuspend, None, 6).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_directory_never_leaves_an_org_without_an_owner() {
+        let mut c = setup();
+        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
+        let r = q_deprovision(&mut c, "o1", "u1", Reason::DirectoryDelete, None, 5).unwrap().unwrap();
+        // Cut off like anyone…
+        assert_eq!((r.cut.devices, r.cut.connections), (2, 3));
+        let enabled: bool = users::table.filter(users::uuid.eq("u1")).select(users::enabled).first(&mut c).unwrap();
+        assert!(!enabled);
+        // …but still the owner, the account kept, and the tenant flagged.
+        assert_eq!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap(), [reins_proto::org::Role::OrgOwner]);
+        assert!(super::super::invariants::owner_recovery(&mut c, "o1").unwrap());
+        let pending = super::super::super::workos_sync::pending_deletion(&UserId::from("u1".to_owned()));
+        assert!(crate::db::models::reins_workos::q_get_setting(&mut c, &pending).unwrap().is_none());
+        let kinds: Vec<String> = crate::db::models::reins_org_event::q_events(&mut c, "o1", None, 2)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(kinds, ["member.deprovisioned", "org.owner_recovery_needed"]);
+        // A second owner present: the directory removes the first as usual.
+        let mut c = setup();
+        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
+        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m2", reins_proto::org::Role::OrgOwner);
+        q_deprovision(&mut c, "o1", "u1", Reason::DirectorySuspend, None, 5).unwrap().unwrap();
+        assert!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap().is_empty());
+        assert!(!super::super::invariants::owner_recovery(&mut c, "o1").unwrap());
     }
 
     struct Counting(AtomicU32);

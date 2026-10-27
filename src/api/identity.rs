@@ -302,6 +302,13 @@ async fn sso_login(
     // Organizations: a work account signs in only through its org's identity; a Personal account is never captured.
     let org_decision =
         crate::api::reins::org::gate::check(&user_infos, user_with_sso.as_ref().map(|(u, _)| u), conn).await?;
+    // The passkey rule: waived only for a sign-in that came through the org's own verified identity (never because of
+    // the email's domain).
+    crate::sso_workos::check_passkey(
+        &user_infos,
+        crate::sso_workos::passkeys_required(),
+        org_decision.through_org_identity(),
+    )?;
 
     let now = Utc::now().naive_utc();
     // Will trigger 2FA flow if needed
@@ -433,17 +440,6 @@ async fn password_login(
     // Set the user_id here to be passed back used for event logging.
     *user_id = Some(user.uuid.clone());
 
-    // A work account (an org's member) signs in only through its organization.
-    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
-        err!(
-            "This is a work account. Sign in with your organization's SSO.",
-            format!("IP: {}. Username: {username}.", ip.ip),
-            ErrorEvent {
-                event: EventType::UserFailedLogIn
-            }
-        )
-    }
-
     // Check if the user is disabled
     if !user.enabled {
         err!(
@@ -492,6 +488,18 @@ async fn password_login(
             format!("IP: {}. Username: {username}.", ip.ip),
             ErrorEvent {
                 event: EventType::UserFailedLogIn,
+            }
+        )
+    }
+
+    // A work account (an org's member) signs in only through its organization. Said only after a correct password or
+    // access code, so that a wrong guess can't tell work accounts from others.
+    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
+        err!(
+            "This is a work account. Sign in with your organization's SSO.",
+            format!("IP: {}. Username: {username}.", ip.ip),
+            ErrorEvent {
+                event: EventType::UserFailedLogIn
             }
         )
     }
@@ -675,17 +683,6 @@ async fn user_api_key_login(
     // Set the user_id here to be passed back used for event logging.
     *user_id = Some(user.uuid.clone());
 
-    // A work account (an org's member) signs in only through its organization.
-    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
-        err!(
-            "This is a work account. Sign in with your organization's SSO.",
-            format!("IP: {}. Username: {}.", ip.ip, user.email),
-            ErrorEvent {
-                event: EventType::UserFailedLogIn
-            }
-        )
-    }
-
     // Check if the user is disabled
     if !user.enabled {
         err!(
@@ -702,6 +699,17 @@ async fn user_api_key_login(
     if !user.check_valid_api_key(client_secret) {
         err!(
             "Incorrect client_secret",
+            format!("IP: {}. Username: {}.", ip.ip, user.email),
+            ErrorEvent {
+                event: EventType::UserFailedLogIn
+            }
+        )
+    }
+
+    // A work account (an org's member) signs in only through its organization (after the key checked out).
+    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
+        err!(
+            "This is a work account. Sign in with your organization's SSO.",
             format!("IP: {}. Username: {}.", ip.ip, user.email),
             ErrorEvent {
                 event: EventType::UserFailedLogIn

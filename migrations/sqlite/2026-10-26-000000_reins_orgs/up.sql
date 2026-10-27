@@ -2,15 +2,17 @@
 -- `users_organizations` its members (`external_id`: the WorkOS directory user) and `groups`/`groups_users` its SCIM
 -- groups. These tables add what Reins needs on top, keyed by the organization's uuid.
 
--- Tier and sign-in of the tenant.
+-- Tier and sign-in of the tenant. A WorkOS organization and a WorkOS directory each belong to one tenant at most.
+-- `owner_recovery_at`: when the directory removed the last Org owner (the role is kept, the account cut off).
 CREATE TABLE reins_orgs (
     org_uuid      TEXT    NOT NULL PRIMARY KEY REFERENCES organizations (uuid) ON DELETE CASCADE,
     tier          TEXT    NOT NULL,
     identity      TEXT    NOT NULL,
     workos_org_id TEXT    UNIQUE,
-    directory_id  TEXT,
+    directory_id  TEXT    UNIQUE,
     github_org    TEXT,
     two_person    BOOLEAN NOT NULL,
+    owner_recovery_at BIGINT,
     created_by    TEXT    NOT NULL,
     created_at    BIGINT  NOT NULL,
     updated_at    BIGINT  NOT NULL

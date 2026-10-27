@@ -5,15 +5,17 @@
 -- WorkOS ids, device ids, keys and hashes compare byte for byte (`utf8mb4_bin`): MySQL's default collations ignore
 -- case, and such ids can differ by case alone. Domains are kept lowercase ASCII.
 
--- Tier and sign-in of the tenant.
+-- Tier and sign-in of the tenant. A WorkOS organization and a WorkOS directory each belong to one tenant at most.
+-- `owner_recovery_at`: when the directory removed the last Org owner (the role is kept, the account cut off).
 CREATE TABLE reins_orgs (
     org_uuid      CHAR(36)     NOT NULL PRIMARY KEY,
     tier          VARCHAR(16)  NOT NULL,
     identity      VARCHAR(32)  NOT NULL,
     workos_org_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin UNIQUE,
-    directory_id  VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+    directory_id  VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin UNIQUE,
     github_org    VARCHAR(64),
     two_person    BOOLEAN      NOT NULL,
+    owner_recovery_at BIGINT,
     created_by    CHAR(36)     NOT NULL,
     created_at    BIGINT       NOT NULL,
     updated_at    BIGINT       NOT NULL,

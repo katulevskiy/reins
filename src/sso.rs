@@ -301,8 +301,6 @@ pub async fn exchange_code(
             check_client_challenge(&client_verifier, &sso_auth)?;
         }
         let authenticated_user = crate::sso_workos::exchange_code(&code, client_verifier).await?;
-        let managed = crate::api::reins::org::gate::domain_is_managed(&authenticated_user.email, conn).await;
-        crate::sso_workos::check_passkey(&authenticated_user, crate::sso_workos::passkeys_required(), managed)?;
         debug!("Authenticated user {authenticated_user:?}");
         sso_auth.auth_response = Some(authenticated_user.clone());
         sso_auth.updated_at = Utc::now().naive_utc();

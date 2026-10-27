@@ -495,6 +495,7 @@ table! {
         directory_id -> Nullable<Text>,
         github_org -> Nullable<Text>,
         two_person -> Bool,
+        owner_recovery_at -> Nullable<BigInt>,
         created_by -> Text,
         created_at -> BigInt,
         updated_at -> BigInt,

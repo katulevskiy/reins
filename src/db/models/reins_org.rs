@@ -35,6 +35,8 @@ pub struct ReinsOrg {
     pub directory_id: Option<String>,
     pub github_org: Option<String>,
     pub two_person: bool,
+    /// Set when the directory removed the last Org owner: the tenant needs a new owner ([`crate::api::reins::org::invariants`]).
+    pub owner_recovery_at: Option<i64>,
     pub created_by: String,
     pub created_at: i64,
     pub updated_at: i64,
@@ -129,6 +131,10 @@ pub fn q_org(c: &mut DbConnInner, org: &str) -> QueryResult<Option<ReinsOrg>> {
 
 pub fn q_org_by_workos(c: &mut DbConnInner, workos_org_id: &str) -> QueryResult<Option<ReinsOrg>> {
     reins_orgs::table.filter(reins_orgs::workos_org_id.eq(workos_org_id)).first(c).optional()
+}
+
+pub fn q_org_by_directory(c: &mut DbConnInner, directory_id: &str) -> QueryResult<Option<ReinsOrg>> {
+    reins_orgs::table.filter(reins_orgs::directory_id.eq(directory_id)).first(c).optional()
 }
 
 pub fn q_insert_org(c: &mut DbConnInner, org: &ReinsOrg) -> QueryResult<()> {
@@ -394,6 +400,13 @@ pub fn q_holders(c: &mut DbConnInner, org: &str, cap: Capability) -> QueryResult
         .filter(users_organizations::status.ge(ACTIVE_STATUS))
         .select(users_organizations::user_uuid)
         .load(c)?;
+    // A disabled account (cut off by the directory, kept as the last owner) can't act or approve.
+    let disabled: Vec<String> = crate::db::schema::users::table
+        .filter(crate::db::schema::users::uuid.eq_any(&users))
+        .filter(crate::db::schema::users::enabled.eq(false))
+        .select(crate::db::schema::users::uuid)
+        .load(c)?;
+    users.retain(|u| !disabled.contains(u));
     users.sort();
     users.dedup();
     Ok(users)
@@ -609,6 +622,7 @@ pub(crate) mod tests {
             directory_id: None,
             github_org: None,
             two_person: true,
+            owner_recovery_at: None,
             created_by: "u1".to_owned(),
             created_at: 1,
             updated_at: 1,

@@ -20,7 +20,9 @@ pub mod deprovision;
 pub mod dns;
 pub mod gate;
 pub mod github;
+pub mod invariants;
 pub mod tenant;
+pub mod workos_api;
 
 use reins_proto::org::{Capability, Role, role_grants};
 use rocket::Route;

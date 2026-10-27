@@ -259,7 +259,7 @@ pub fn check_passkey(user: &OIDCAuthenticatedUser, require: bool, managed: bool)
 
 /// Whether this server requires passkeys for personal accounts.
 pub fn passkeys_required() -> bool {
-    CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey()
+    CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey() && enabled()
 }
 
 fn parse_authenticated(text: &str, require_session: bool) -> ApiResult<OIDCAuthenticatedUser> {

@@ -88,7 +88,24 @@ pub enum Decision {
         org: String,
         /// The account joins the org at this sign-in.
         jit: bool,
+        /// The sign-in came through the org's own WorkOS organization (its SSO or Team provider), as WorkOS says, not
+        /// as the email's domain suggests. Only such a sign-in is exempt from the passkey rule.
+        verified: bool,
     },
+}
+
+impl Decision {
+    /// Whether this sign-in proved itself through the org's verified identity.
+    #[must_use]
+    pub fn through_org_identity(&self) -> bool {
+        matches!(
+            self,
+            Self::Managed {
+                verified: true,
+                ..
+            }
+        )
+    }
 }
 
 /// The rules in the module docs. `Err` carries the text shown to the person signing in.
@@ -106,26 +123,28 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
         } => true,
         Existing::NoAccount => false,
     };
-    let through_org = match org.identity {
-        // Not set up: only its members (its creator) get in, as they signed in before.
-        IdentityKind::None => {
-            return if active {
-                Ok(Decision::Managed {
-                    org: org.org_uuid.clone(),
-                    jit: false,
-                })
-            } else {
-                Err(format!("{} hasn't set up sign-in yet. Ask your IT team.", org.name))
-            };
-        }
-        IdentityKind::Sso => {
-            sign_in.method == Some("SSO")
-                && org.workos_org_id.is_some()
-                && sign_in.organization_id == org.workos_org_id.as_deref()
-        }
-        IdentityKind::GoogleWorkspace => sign_in.method == Some("GoogleOAuth"),
-        IdentityKind::GithubOrg => sign_in.method == Some("GitHubOAuth") && sign_in.github_member == Some(true),
-    };
+    // Not set up: only its members (its creator) get in, as they signed in before.
+    if org.identity == IdentityKind::None {
+        return if active {
+            Ok(Decision::Managed {
+                org: org.org_uuid.clone(),
+                jit: false,
+                verified: false,
+            })
+        } else {
+            Err(format!("{} hasn't set up sign-in yet. Ask your IT team.", org.name))
+        };
+    }
+    // Every identity goes through the tenant's own WorkOS organization (bound only once WorkOS confirmed it holds one of
+    // the tenant's verified domains): WorkOS names it on the sign-in. The method then says which way.
+    let through_workos_org = org.workos_org_id.is_some() && sign_in.organization_id == org.workos_org_id.as_deref();
+    let through_org = through_workos_org
+        && match org.identity {
+            IdentityKind::None => false,
+            IdentityKind::Sso => sign_in.method == Some("SSO"),
+            IdentityKind::GoogleWorkspace => sign_in.method == Some("GoogleOAuth"),
+            IdentityKind::GithubOrg => sign_in.method == Some("GitHubOAuth") && sign_in.github_member == Some(true),
+        };
     if !through_org {
         let how = match org.identity {
             IdentityKind::GoogleWorkspace => "Google",
@@ -140,6 +159,7 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
     Ok(Decision::Managed {
         org: org.org_uuid.clone(),
         jit: !active,
+        verified: true,
     })
 }
 
@@ -147,11 +167,6 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
 async fn org_of_domain(email: &str, conn: &DbConn) -> Option<String> {
     let domain = email_domain(email)?;
     conn.run(move |c| reins_org::q_verified_owner(c, &domain)).await.ok().flatten()
-}
-
-/// Whether `email` is on a domain an org verified (its sign-ins follow the org's rules, not the passkey rule).
-pub async fn domain_is_managed(email: &str, conn: &DbConn) -> bool {
-    enabled() && org_of_domain(email, conn).await.is_some()
 }
 
 /// Where a work account's sign-in goes, for `/identity/connect/authorize?domain_hint=`: `None` for a domain no org
@@ -169,21 +184,16 @@ pub async fn hint_for(domain: &str, conn: &DbConn) -> Option<OrgHint> {
         .await
         .ok()
         .flatten()?;
-    match org.identity() {
-        IdentityKind::Sso => org.workos_org_id.map(|id| OrgHint {
-            organization_id: Some(id),
-            provider: None,
-        }),
-        IdentityKind::GoogleWorkspace => Some(OrgHint {
-            organization_id: None,
-            provider: Some("GoogleOAuth"),
-        }),
-        IdentityKind::GithubOrg => Some(OrgHint {
-            organization_id: None,
-            provider: Some("GitHubOAuth"),
-        }),
-        IdentityKind::None => None,
-    }
+    let provider = match org.identity() {
+        IdentityKind::Sso => None,
+        IdentityKind::GoogleWorkspace => Some("GoogleOAuth"),
+        IdentityKind::GithubOrg => Some("GitHubOAuth"),
+        IdentityKind::None => return None,
+    };
+    org.workos_org_id.map(|id| OrgHint {
+        organization_id: Some(id),
+        provider,
+    })
 }
 
 /// Applies [`decide`] to a sign-in: the org is the one the existing account is a member of, else the one that
@@ -266,6 +276,7 @@ pub async fn after_sign_in(user: &User, decision: &Decision, conn: &DbConn) -> E
     let Decision::Managed {
         org,
         jit: true,
+        ..
     } = decision
     else {
         return Ok(());
@@ -331,6 +342,7 @@ mod tests {
         Ok(Decision::Managed {
             org: "o1".to_owned(),
             jit,
+            verified: true,
         })
     }
 
@@ -357,21 +369,26 @@ mod tests {
     #[test]
     fn team_google_requires_google() {
         let o = org(IdentityKind::GoogleWorkspace, Tier::Team);
-        assert_eq!(decide(Some(&o), Existing::NoAccount, &via("GoogleOAuth", None)), managed(true));
-        assert!(decide(Some(&o), MEMBER, &via("GitHubOAuth", None)).is_err());
+        assert_eq!(decide(Some(&o), Existing::NoAccount, &via("GoogleOAuth", Some("org_ACME"))), managed(true));
+        // A Google account with a work address that WorkOS doesn't count in the org (a consumer account) is refused.
+        assert!(decide(Some(&o), Existing::NoAccount, &via("GoogleOAuth", None)).is_err());
+        assert!(decide(Some(&o), MEMBER, &via("GitHubOAuth", Some("org_ACME"))).is_err());
         assert!(decide(Some(&o), MEMBER, &via("MagicAuth", None)).is_err());
     }
 
     #[test]
     fn team_github_requires_active_membership() {
         let o = org(IdentityKind::GithubOrg, Tier::Team);
-        let mut s = via("GitHubOAuth", None);
+        let mut s = via("GitHubOAuth", Some("org_ACME"));
         assert!(decide(Some(&o), MEMBER, &s).is_err(), "unchecked");
         s.github_member = Some(false);
         assert!(decide(Some(&o), MEMBER, &s).is_err());
         s.github_member = Some(true);
         assert_eq!(decide(Some(&o), MEMBER, &s), managed(false));
-        let mut google = via("GoogleOAuth", None);
+        let mut other_org = via("GitHubOAuth", Some("org_EVIL"));
+        other_org.github_member = Some(true);
+        assert!(decide(Some(&o), MEMBER, &other_org).is_err());
+        let mut google = via("GoogleOAuth", Some("org_ACME"));
         google.github_member = Some(true);
         assert!(decide(Some(&o), MEMBER, &google).is_err());
     }
@@ -410,14 +427,72 @@ mod tests {
         // A Team org has no directory, whatever the row says.
         let mut team = org(IdentityKind::GoogleWorkspace, Tier::Team);
         team.has_directory = true;
-        assert_eq!(decide(Some(&team), Existing::NoAccount, &via("GoogleOAuth", None)), managed(true));
+        assert_eq!(decide(Some(&team), Existing::NoAccount, &via("GoogleOAuth", Some("org_ACME"))), managed(true));
     }
 
     #[test]
     fn an_org_without_sign_in_lets_in_only_its_members() {
         let o = org(IdentityKind::None, Tier::Business);
-        assert_eq!(decide(Some(&o), MEMBER, &via("Passkey", None)), managed(false));
+        // Let in, but not through a verified identity: the passkey rule still applies to this sign-in.
+        let d = decide(Some(&o), MEMBER, &via("Passkey", None)).unwrap();
+        assert!(matches!(
+            d,
+            Decision::Managed {
+                verified: false,
+                ..
+            }
+        ));
+        assert!(!d.through_org_identity());
         assert!(decide(Some(&o), Existing::NoAccount, &via("Passkey", None)).unwrap_err().contains("hasn't set up"));
+    }
+
+    #[test]
+    fn only_a_sign_in_through_the_org_counts_as_verified() {
+        let o = org(IdentityKind::Sso, Tier::Business);
+        assert!(decide(Some(&o), MEMBER, &via("SSO", Some("org_ACME"))).unwrap().through_org_identity());
+        // A managed-domain address signing in some other way is either refused (a member) or Personal (not a
+        // member): never verified.
+        assert!(decide(Some(&o), MEMBER, &via("MagicAuth", None)).is_err());
+        assert!(!decide(Some(&o), Existing::NotMember, &via("MagicAuth", None)).unwrap().through_org_identity());
+        assert!(
+            !decide(None, Existing::NoAccount, &via("GoogleOAuth", Some("org_ACME"))).unwrap().through_org_identity()
+        );
+    }
+
+    fn signed_in(method: &str, org: Option<&str>) -> OIDCAuthenticatedUser {
+        OIDCAuthenticatedUser {
+            refresh_token: None,
+            access_token: String::new(),
+            expires_in: None,
+            identifier: crate::sso::OIDCIdentifier::from("https://api.workos.com/user_management/c/u".to_owned()),
+            email: "dana@acme.com".to_owned(),
+            email_verified: Some(true),
+            user_name: None,
+            session_id: Some("s".to_owned()),
+            workos: Some(crate::db::models::WorkosSignIn {
+                method: Some(method.to_owned()),
+                organization_id: org.map(str::to_owned),
+                provider_token: None,
+            }),
+        }
+    }
+
+    /// The passkey rule is waived for the org's own verified sign-in only, never for an address on its domain.
+    #[test]
+    fn a_managed_domain_address_through_another_idp_still_needs_a_passkey() {
+        let o = org(IdentityKind::Sso, Tier::Business);
+        for (existing, method, via_org) in
+            [(Existing::NotMember, "GoogleOAuth", None), (Existing::NotMember, "MagicAuth", Some("org_EVIL"))]
+        {
+            let d = decide(Some(&o), existing, &via(method, via_org)).unwrap();
+            let user = signed_in(method, via_org);
+            assert!(crate::sso_workos::check_passkey(&user, true, d.through_org_identity()).is_err(), "{method}");
+        }
+        let d = decide(Some(&o), MEMBER, &via("SSO", Some("org_ACME"))).unwrap();
+        assert!(
+            crate::sso_workos::check_passkey(&signed_in("SSO", Some("org_ACME")), true, d.through_org_identity())
+                .is_ok()
+        );
     }
 
     #[test]

@@ -87,6 +87,7 @@ pub fn create_org(
                 directory_id: None,
                 github_org: None,
                 two_person: true,
+                owner_recovery_at: None,
                 created_by: creator.to_owned(),
                 created_at: now,
                 updated_at: now,

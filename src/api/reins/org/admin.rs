@@ -13,7 +13,11 @@ use diesel::prelude::*;
 use reins_proto::org::{AdminAction, Capability, IdentityKind, Role, Subject};
 use serde_json::json;
 
-use super::{OrgError, can, deprovision, event};
+use super::{
+    OrgError, can, deprovision, event,
+    invariants::{self, OnLastOwner},
+    workos_api::VerifiedBinding,
+};
 use crate::db::{
     DbConnInner,
     models::reins_org::{
@@ -60,7 +64,22 @@ pub fn target_roles(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Res
 
 /// The capability `action` needs right now.
 pub fn needed(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<Capability, OrgError> {
+    if is_owner_recovery(c, org, action)? {
+        return Ok(Capability::AssignRoles);
+    }
     Ok(action.capability(&target_roles(c, org, action)?))
+}
+
+/// Making a new Org owner while the tenant waits for one (the directory removed the last): Security admins may, two of
+/// them together ([`invariants`]).
+fn is_owner_recovery(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<bool, OrgError> {
+    Ok(matches!(
+        action,
+        AdminAction::GrantRole {
+            subject: Subject::Member(_),
+            role: Role::OrgOwner
+        }
+    ) && invariants::owner_recovery(c, org)?)
 }
 
 fn other_holders(c: &mut DbConnInner, org: &str, cap: Capability, user: &str) -> Result<usize, OrgError> {
@@ -73,6 +92,7 @@ pub fn propose(
     org: &str,
     proposer: &str,
     action: &AdminAction,
+    binding: Option<&VerifiedBinding>,
     now: i64,
 ) -> Result<(Proposed, Followups), OrgError> {
     action.check_shape().map_err(OrgError::Invalid)?;
@@ -82,10 +102,15 @@ pub fn propose(
         if !can(c, org, proposer, cap)? {
             return Err(OrgError::Forbidden);
         }
-        validate(c, org, action)?;
+        validate(c, org, action, binding)?;
         let detail = serde_json::to_value(action).unwrap_or_default();
-        if !tenant.two_person || other_holders(c, org, cap, proposer)? == 0 {
-            let followups = apply(c, org, action, proposer, now)?;
+        let others = other_holders(c, org, cap, proposer)?;
+        if is_owner_recovery(c, org, action)? && others == 0 {
+            return Err(OrgError::Invalid("A new Org owner takes two Security admins. Ask Reins support."));
+        }
+        let alone = !tenant.two_person && !is_owner_recovery(c, org, action)?;
+        if alone || others == 0 {
+            let followups = apply(c, org, action, proposer, binding, now)?;
             event(
                 c,
                 org,
@@ -128,7 +153,14 @@ fn load_pending(c: &mut DbConnInner, org: &str, change: &str) -> Result<(ReinsOr
 }
 
 /// Approves and applies a pending change, as a second person.
-pub fn approve(c: &mut DbConnInner, org: &str, change: &str, approver: &str, now: i64) -> Result<Followups, OrgError> {
+pub fn approve(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &str,
+    approver: &str,
+    binding: Option<&VerifiedBinding>,
+    now: i64,
+) -> Result<Followups, OrgError> {
     let expired = c.transaction(|c| {
         let (row, action) = load_pending(c, org, change)?;
         if crate::crypto::ct_eq(&row.proposed_by, approver) {
@@ -144,11 +176,11 @@ pub fn approve(c: &mut DbConnInner, org: &str, change: &str, approver: &str, now
             event(c, org, "change.expired", Some(approver), Some(change), &json!({}), now)?;
             return Ok(None);
         }
-        validate(c, org, &action)?;
+        validate(c, org, &action, binding)?;
         if !reins_org::q_decide(c, change, CHANGE_APPLIED, approver, now)? {
             return Err(OrgError::Invalid("This change was already decided."));
         }
-        let followups = apply(c, org, &action, approver, now)?;
+        let followups = apply(c, org, &action, approver, binding, now)?;
         let detail = json!({"action": action, "proposed_by": row.proposed_by});
         event(c, org, "change.approved", Some(approver), Some(change), &detail, now)?;
         event(c, org, "change.applied", Some(approver), Some(change), &detail, now)?;
@@ -199,25 +231,6 @@ pub fn pending_for(c: &mut DbConnInner, org: &str, viewer: &str) -> Result<Vec<P
     Ok(out)
 }
 
-/// Org owners holding the role directly on an active membership.
-fn owners(c: &mut DbConnInner, org: &str) -> Result<Vec<String>, OrgError> {
-    let mut out = Vec::new();
-    for row in reins_org::q_role_rows(c, org)? {
-        if row.subject_kind == SUBJECT_MEMBER
-            && row.role == Role::OrgOwner.as_str()
-            && reins_org::q_membership_by_uuid(c, org, &row.subject_id)?.is_some_and(|m| m.status >= ACTIVE_STATUS)
-        {
-            out.push(row.subject_id);
-        }
-    }
-    Ok(out)
-}
-
-fn is_last_owner(c: &mut DbConnInner, org: &str, membership: &str) -> Result<bool, OrgError> {
-    let owners = owners(c, org)?;
-    Ok(owners.len() <= 1 && owners.iter().any(|o| o == membership))
-}
-
 fn active_member(c: &mut DbConnInner, org: &str, membership: &str) -> Result<(), OrgError> {
     match reins_org::q_membership_by_uuid(c, org, membership)? {
         Some(m) if m.status >= ACTIVE_STATUS => Ok(()),
@@ -248,8 +261,14 @@ fn workos_id_ok(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// Whether `action` can be applied to the org as it is now.
-fn validate(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<(), OrgError> {
+/// Whether `action` can be applied to the org as it is now. An SSO identity needs `binding`, WorkOS's own word that the
+/// WorkOS organization and directory are this tenant's ([`super::workos_api`]).
+fn validate(
+    c: &mut DbConnInner,
+    org: &str,
+    action: &AdminAction,
+    binding: Option<&VerifiedBinding>,
+) -> Result<(), OrgError> {
     let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
     match action {
         AdminAction::GrantRole {
@@ -262,23 +281,12 @@ fn validate(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<(), 
         AdminAction::RevokeRole {
             subject,
             role,
-        } => {
-            if let Subject::Member(m) = subject
-                && *role == Role::OrgOwner
-                && is_last_owner(c, org, m)?
-            {
-                return Err(OrgError::Invalid("An organization keeps at least one Org owner."));
-            }
-            Ok(())
-        }
+        } => invariants::check_role_removal(c, org, subject, *role),
         AdminAction::RemoveMember {
             member,
         } => {
             active_member(c, org, member)?;
-            if is_last_owner(c, org, member)? {
-                return Err(OrgError::Invalid("An organization keeps at least one Org owner."));
-            }
-            Ok(())
+            invariants::plan_membership_end(c, org, member, OnLastOwner::Refuse).map(drop)
         }
         AdminAction::SetIdentity {
             identity,
@@ -289,24 +297,30 @@ fn validate(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<(), 
             if !tenant.tier().allows(*identity) {
                 return Err(OrgError::Invalid("This plan signs in with Google Workspace or a GitHub organization."));
             }
-            match identity {
-                IdentityKind::Sso => {
-                    let Some(id) = workos_org_id.as_deref().filter(|id| workos_id_ok(id)) else {
-                        return Err(OrgError::Invalid("SSO needs the WorkOS organization id (org_…)."));
-                    };
-                    if reins_org::q_org_by_workos(c, id)?.is_some_and(|other| other.org_uuid != org) {
-                        return Err(OrgError::Taken("That WorkOS organization belongs to another tenant."));
-                    }
-                    if directory_id.as_deref().is_some_and(|d| !workos_id_ok(d)) {
-                        return Err(OrgError::Invalid("That isn't a WorkOS directory id (directory_…)."));
-                    }
+            if *identity == IdentityKind::None {
+                return Ok(());
+            }
+            // Every identity goes through the tenant's own WorkOS organization, confirmed by WorkOS.
+            let Some(id) = workos_org_id.as_deref().filter(|id| workos_id_ok(id)) else {
+                return Err(OrgError::Invalid("Name the WorkOS organization (org_…)."));
+            };
+            if reins_org::q_org_by_workos(c, id)?.is_some_and(|other| other.org_uuid != org) {
+                return Err(OrgError::Taken("That WorkOS organization belongs to another tenant."));
+            }
+            let directory = directory_id.as_deref().filter(|_| *identity == IdentityKind::Sso && tenant.tier().scim());
+            if let Some(d) = directory {
+                if !workos_id_ok(d) {
+                    return Err(OrgError::Invalid("That isn't a WorkOS directory id (directory_…)."));
                 }
-                IdentityKind::GithubOrg => {
-                    if !github_org.as_deref().is_some_and(github_login_ok) {
-                        return Err(OrgError::Invalid("Name the GitHub organization (its login)."));
-                    }
+                if reins_org::q_org_by_directory(c, d)?.is_some_and(|other| other.org_uuid != org) {
+                    return Err(OrgError::Taken("That directory belongs to another tenant."));
                 }
-                IdentityKind::GoogleWorkspace | IdentityKind::None => {}
+            }
+            if *identity == IdentityKind::GithubOrg && !github_org.as_deref().is_some_and(github_login_ok) {
+                return Err(OrgError::Invalid("Name the GitHub organization (its login)."));
+            }
+            if !binding.is_some_and(|b| b.proves(id, directory)) {
+                return Err(OrgError::Invalid("WorkOS hasn't confirmed this organization and directory."));
             }
             Ok(())
         }
@@ -331,8 +345,16 @@ fn validate(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Result<(), 
 }
 
 /// Applies a validated action inside the caller's transaction.
-fn apply(c: &mut DbConnInner, org: &str, action: &AdminAction, actor: &str, now: i64) -> Result<Followups, OrgError> {
-    validate(c, org, action)?;
+fn apply(
+    c: &mut DbConnInner,
+    org: &str,
+    action: &AdminAction,
+    actor: &str,
+    binding: Option<&VerifiedBinding>,
+    now: i64,
+) -> Result<Followups, OrgError> {
+    validate(c, org, action, binding)?;
+    let recovery = is_owner_recovery(c, org, action)?;
     let subject_row = |subject: &Subject| match subject {
         Subject::Member(m) => (SUBJECT_MEMBER, m.clone()),
         Subject::Group(g) => (SUBJECT_GROUP, g.clone()),
@@ -354,6 +376,10 @@ fn apply(c: &mut DbConnInner, org: &str, action: &AdminAction, actor: &str, now:
                     granted_by: actor.to_owned(),
                 },
             )?;
+            if recovery {
+                invariants::set_owner_recovery(c, org, None)?;
+                event(c, org, "org.owner_recovered", Some(actor), None, &serde_json::json!({}), now)?;
+            }
         }
         AdminAction::RevokeRole {
             subject,
@@ -371,7 +397,7 @@ fn apply(c: &mut DbConnInner, org: &str, action: &AdminAction, actor: &str, now:
             let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
             tenant.identity = identity.as_str().to_owned();
             let sso = *identity == IdentityKind::Sso;
-            tenant.workos_org_id = workos_org_id.clone().filter(|_| sso);
+            tenant.workos_org_id = workos_org_id.clone().filter(|_| *identity != IdentityKind::None);
             tenant.directory_id = directory_id.clone().filter(|_| sso && tenant.tier().scim());
             tenant.github_org = github_org.clone().filter(|_| *identity == IdentityKind::GithubOrg);
             tenant.updated_at = now;
@@ -463,7 +489,7 @@ mod tests {
     #[test]
     fn a_sole_owner_acts_alone_and_it_is_recorded() {
         let mut c = org(true);
-        let (p, _) = propose(&mut c, "o1", "u1", &grant_role("m4", Role::SecurityAdmin), 1).unwrap();
+        let (p, _) = propose(&mut c, "o1", "u1", &grant_role("m4", Role::SecurityAdmin), None, 1).unwrap();
         assert_eq!(p, Proposed::Applied);
         assert_eq!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap(), [Role::SecurityAdmin]);
         let e = crate::db::models::reins_org_event::q_events(&mut c, "o1", None, 1).unwrap().remove(0);
@@ -474,11 +500,11 @@ mod tests {
     #[test]
     fn with_a_second_holder_changes_wait_for_approval() {
         let mut c = org(false);
-        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::SecurityAdmin), 1).unwrap());
+        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::SecurityAdmin), None, 1).unwrap());
         assert!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap().is_empty());
-        approve(&mut c, "o1", &id, "u2", 2).unwrap();
+        approve(&mut c, "o1", &id, "u2", None, 2).unwrap();
         assert_eq!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap(), [Role::SecurityAdmin]);
-        assert!(approve(&mut c, "o1", &id, "u2", 3).is_err(), "decided once");
+        assert!(approve(&mut c, "o1", &id, "u2", None, 3).is_err(), "decided once");
     }
 
     #[test]
@@ -487,9 +513,9 @@ mod tests {
         // u1 also holds Org owner through a group: approving through it is still approving their own change.
         add_group(&mut c, "o1", "g1", &["m1"]);
         grant(&mut c, "o1", SUBJECT_GROUP, "g1", Role::Auditor);
-        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::OrgOwner), 1).unwrap());
+        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::OrgOwner), None, 1).unwrap());
         assert_eq!(
-            approve(&mut c, "o1", &id, "u1", 2).unwrap_err(),
+            approve(&mut c, "o1", &id, "u1", None, 2).unwrap_err(),
             OrgError::Invalid("You can't approve your own change.")
         );
         let views = pending_for(&mut c, "o1", "u1").unwrap();
@@ -501,19 +527,22 @@ mod tests {
     #[test]
     fn approvers_need_the_capability() {
         let mut c = org(false);
-        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::OrgOwner), 1).unwrap());
+        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::OrgOwner), None, 1).unwrap());
         // A Security admin can't approve making an owner; a plain member can't approve anything.
-        assert_eq!(approve(&mut c, "o1", &id, "u3", 2).unwrap_err(), OrgError::Forbidden);
-        assert_eq!(approve(&mut c, "o1", &id, "u4", 2).unwrap_err(), OrgError::Forbidden);
-        assert_eq!(approve(&mut c, "o1", &id, "stranger", 2).unwrap_err(), OrgError::Forbidden);
-        assert_eq!(propose(&mut c, "o1", "u4", &grant_role("m4", Role::Auditor), 1).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(approve(&mut c, "o1", &id, "u3", None, 2).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(approve(&mut c, "o1", &id, "u4", None, 2).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(approve(&mut c, "o1", &id, "stranger", None, 2).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(
+            propose(&mut c, "o1", "u4", &grant_role("m4", Role::Auditor), None, 1).unwrap_err(),
+            OrgError::Forbidden
+        );
     }
 
     #[test]
     fn expired_changes_are_not_applied() {
         let mut c = org(false);
-        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::Auditor), 1).unwrap());
-        assert!(approve(&mut c, "o1", &id, "u2", 1 + CHANGE_TTL_SECS).is_err());
+        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::Auditor), None, 1).unwrap());
+        assert!(approve(&mut c, "o1", &id, "u2", None, 1 + CHANGE_TTL_SECS).is_err());
         assert!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap().is_empty());
         assert_eq!(reins_org::q_change(&mut c, "o1", &id).unwrap().unwrap().state, CHANGE_EXPIRED);
     }
@@ -521,9 +550,9 @@ mod tests {
     #[test]
     fn a_change_lapses_when_its_proposer_lost_the_capability() {
         let mut c = org(false);
-        let id = pending(propose(&mut c, "o1", "u3", &grant_role("m4", Role::Auditor), 1).unwrap());
+        let id = pending(propose(&mut c, "o1", "u3", &grant_role("m4", Role::Auditor), None, 1).unwrap());
         reins_org::q_revoke(&mut c, "o1", SUBJECT_MEMBER, "m3", Role::SecurityAdmin.as_str()).unwrap();
-        assert!(approve(&mut c, "o1", &id, "u1", 2).is_err());
+        assert!(approve(&mut c, "o1", &id, "u1", None, 2).is_err());
         assert!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap().is_empty());
     }
 
@@ -534,17 +563,17 @@ mod tests {
             subject: Subject::Member("m1".to_owned()),
             role: Role::OrgOwner,
         };
-        assert!(matches!(propose(&mut c, "o1", "u1", &demote, 1), Err(OrgError::Invalid(_))));
-        assert!(matches!(propose(&mut c, "o1", "u1", &remove("m1"), 1), Err(OrgError::Invalid(_))));
+        assert!(matches!(propose(&mut c, "o1", "u1", &demote, None, 1), Err(OrgError::Invalid(_))));
+        assert!(matches!(propose(&mut c, "o1", "u1", &remove("m1"), None, 1), Err(OrgError::Invalid(_))));
         // With two owners one may go, but only with the other's approval; then the last one stays.
         grant(&mut c, "o1", SUBJECT_MEMBER, "m4", Role::OrgOwner);
-        let id = pending(propose(&mut c, "o1", "u1", &demote, 2).unwrap());
-        approve(&mut c, "o1", &id, "u4", 3).unwrap();
+        let id = pending(propose(&mut c, "o1", "u1", &demote, None, 2).unwrap());
+        approve(&mut c, "o1", &id, "u4", None, 3).unwrap();
         let demote_u4 = AdminAction::RevokeRole {
             subject: Subject::Member("m4".to_owned()),
             role: Role::OrgOwner,
         };
-        assert!(matches!(propose(&mut c, "o1", "u4", &demote_u4, 4), Err(OrgError::Invalid(_))));
+        assert!(matches!(propose(&mut c, "o1", "u4", &demote_u4, None, 4), Err(OrgError::Invalid(_))));
     }
 
     #[test]
@@ -554,22 +583,22 @@ mod tests {
         grant(&mut c, "o1", SUBJECT_MEMBER, "m5", Role::SecurityAdmin);
         // u3 (Security admin: ManageMembers, not AssignAdmins) can't remove another Security admin, nor a Connection
         // admin; it can remove a plain member.
-        assert_eq!(propose(&mut c, "o1", "u3", &remove("m5"), 1).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(propose(&mut c, "o1", "u3", &remove("m5"), None, 1).unwrap_err(), OrgError::Forbidden);
         grant(&mut c, "o1", SUBJECT_MEMBER, "m4", Role::ConnectionAdmin);
-        assert_eq!(propose(&mut c, "o1", "u3", &remove("m4"), 1).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(propose(&mut c, "o1", "u3", &remove("m4"), None, 1).unwrap_err(), OrgError::Forbidden);
         add_member(&mut c, "o1", "m6", "u6", ACTIVE_STATUS);
-        assert!(propose(&mut c, "o1", "u3", &remove("m6"), 1).is_ok());
+        assert!(propose(&mut c, "o1", "u3", &remove("m6"), None, 1).is_ok());
         // Nor can it approve an owner's proposal to remove one.
-        let id = pending(propose(&mut c, "o1", "u1", &remove("m5"), 2).unwrap());
-        assert_eq!(approve(&mut c, "o1", &id, "u3", 3).unwrap_err(), OrgError::Forbidden);
+        let id = pending(propose(&mut c, "o1", "u1", &remove("m5"), None, 2).unwrap());
+        assert_eq!(approve(&mut c, "o1", &id, "u3", None, 3).unwrap_err(), OrgError::Forbidden);
     }
 
     #[test]
     fn removing_an_admin_still_takes_two_people() {
         let mut c = org(false);
-        let id = pending(propose(&mut c, "o1", "u1", &remove("m3"), 1).unwrap());
+        let id = pending(propose(&mut c, "o1", "u1", &remove("m3"), None, 1).unwrap());
         assert!(reins_org::q_membership_by_uuid(&mut c, "o1", "m3").unwrap().unwrap().status >= ACTIVE_STATUS);
-        let followups = approve(&mut c, "o1", &id, "u2", 2).unwrap();
+        let followups = approve(&mut c, "o1", &id, "u2", None, 2).unwrap();
         assert_eq!(followups.len(), 1);
         assert!(reins_org::q_membership_by_uuid(&mut c, "o1", "m3").unwrap().unwrap().status < 0);
     }
@@ -582,7 +611,7 @@ mod tests {
             subject: Subject::Group("g1".to_owned()),
             role: Role::SecurityAdmin,
         };
-        assert!(matches!(propose(&mut c, "o1", "u1", &to_group, 1), Err(OrgError::Invalid(_))));
+        assert!(matches!(propose(&mut c, "o1", "u1", &to_group, None, 1), Err(OrgError::Invalid(_))));
     }
 
     #[test]
@@ -595,6 +624,7 @@ mod tests {
             &AdminAction::SetTier {
                 tier: Tier::Team,
             },
+            None,
             1,
         )
         .unwrap();
@@ -604,32 +634,119 @@ mod tests {
             directory_id: None,
             github_org: None,
         };
-        assert!(matches!(propose(&mut c, "o1", "u1", &sso, 2), Err(OrgError::Invalid(_))));
+        let proof = VerifiedBinding::for_tests("org_01ABC", None);
+        assert!(matches!(propose(&mut c, "o1", "u1", &sso, Some(&proof), 2), Err(OrgError::Invalid(_))));
         let gh = AdminAction::SetIdentity {
             identity: IdentityKind::GithubOrg,
-            workos_org_id: None,
+            workos_org_id: Some("org_01ABC".to_owned()),
             directory_id: None,
             github_org: Some("acme-inc".to_owned()),
         };
-        propose(&mut c, "o1", "u1", &gh, 3).unwrap();
-        assert_eq!(reins_org::q_org(&mut c, "o1").unwrap().unwrap().github_org.as_deref(), Some("acme-inc"));
+        propose(&mut c, "o1", "u1", &gh, Some(&proof), 3).unwrap();
+        let t = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        assert_eq!((t.github_org.as_deref(), t.workos_org_id.as_deref()), (Some("acme-inc"), Some("org_01ABC")));
+    }
+
+    fn sso(org: &str, dir: Option<&str>) -> AdminAction {
+        AdminAction::SetIdentity {
+            identity: IdentityKind::Sso,
+            workos_org_id: Some(org.to_owned()),
+            directory_id: dir.map(str::to_owned),
+            github_org: None,
+        }
     }
 
     #[test]
-    fn a_workos_org_is_bound_to_one_tenant() {
+    fn identities_need_workos_confirmation() {
+        let mut c = org(true);
+        // Typed ids prove nothing; a proof for other ids neither.
+        assert!(matches!(
+            propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), None, 1),
+            Err(OrgError::Invalid(_))
+        ));
+        let other = VerifiedBinding::for_tests("org_A", Some("directory_B"));
+        assert!(matches!(
+            propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), Some(&other), 1),
+            Err(OrgError::Invalid(_))
+        ));
+        let google = AdminAction::SetIdentity {
+            identity: IdentityKind::GoogleWorkspace,
+            workos_org_id: None,
+            directory_id: None,
+            github_org: None,
+        };
+        assert!(matches!(propose(&mut c, "o1", "u1", &google, None, 1), Err(OrgError::Invalid(_))));
+        let proof = VerifiedBinding::for_tests("org_A", Some("directory_A"));
+        propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), Some(&proof), 1).unwrap();
+        // A pending change is re-checked on approval: the approver must bring the proof too.
+        add_member(&mut c, "o1", "m2", "u2", ACTIVE_STATUS);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m2", Role::OrgOwner);
+        let proof_b = VerifiedBinding::for_tests("org_B", None);
+        let id = pending(propose(&mut c, "o1", "u1", &sso("org_B", None), Some(&proof_b), 2).unwrap());
+        assert!(approve(&mut c, "o1", &id, "u2", None, 3).is_err());
+        approve(&mut c, "o1", &id, "u2", Some(&proof_b), 3).unwrap();
+    }
+
+    #[test]
+    fn a_workos_org_and_a_directory_are_bound_to_one_tenant() {
         let mut c = org(true);
         add_org(&mut c, "o2");
         add_member(&mut c, "o2", "n1", "v1", ACTIVE_STATUS);
         grant(&mut c, "o2", SUBJECT_MEMBER, "n1", Role::OrgOwner);
-        let sso = AdminAction::SetIdentity {
-            identity: IdentityKind::Sso,
-            workos_org_id: Some("org_01ABC".to_owned()),
-            directory_id: Some("directory_01X".to_owned()),
-            github_org: None,
-        };
-        propose(&mut c, "o1", "u1", &sso, 1).unwrap();
-        assert!(matches!(propose(&mut c, "o2", "v1", &sso, 2), Err(OrgError::Taken(_))));
+        let proof = VerifiedBinding::for_tests("org_01ABC", Some("directory_01X"));
+        propose(&mut c, "o1", "u1", &sso("org_01ABC", Some("directory_01X")), Some(&proof), 1).unwrap();
+        assert!(matches!(
+            propose(&mut c, "o2", "v1", &sso("org_01ABC", Some("directory_01X")), Some(&proof), 2),
+            Err(OrgError::Taken(_))
+        ));
+        let proof2 = VerifiedBinding::for_tests("org_02DEF", Some("directory_01X"));
+        assert!(matches!(
+            propose(&mut c, "o2", "v1", &sso("org_02DEF", Some("directory_01X")), Some(&proof2), 2),
+            Err(OrgError::Taken(_))
+        ));
         let t = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
         assert_eq!((t.workos_org_id.as_deref(), t.directory_id.as_deref()), (Some("org_01ABC"), Some("directory_01X")));
+        // The database has the last word: a second tenant row with the same directory is refused.
+        let mut dup = reins_org::q_org(&mut c, "o2").unwrap().unwrap();
+        dup.directory_id = Some("directory_01X".to_owned());
+        assert!(reins_org::q_save_org(&mut c, &dup).is_err());
+    }
+
+    #[test]
+    fn owner_recovery_takes_two_security_admins() {
+        let mut c = org(true);
+        // The directory removed the last owner: kept, flagged.
+        invariants::set_owner_recovery(&mut c, "o1", Some(1)).unwrap();
+        add_user(&mut c, "u1", "owner@acme.com");
+        diesel::update(crate::db::schema::users::table)
+            .filter(crate::db::schema::users::uuid.eq("u1"))
+            .set(crate::db::schema::users::enabled.eq(false))
+            .execute(&mut c)
+            .unwrap();
+        diesel::update(crate::db::schema::users_organizations::table)
+            .filter(crate::db::schema::users_organizations::uuid.eq("m1"))
+            .set(crate::db::schema::users_organizations::status.eq(ACTIVE_STATUS))
+            .execute(&mut c)
+            .unwrap();
+        // One Security admin alone can't make an owner.
+        assert!(matches!(
+            propose(&mut c, "o1", "u3", &grant_role("m4", Role::OrgOwner), None, 2),
+            Err(OrgError::Invalid(_))
+        ));
+        add_member(&mut c, "o1", "m5", "u5", ACTIVE_STATUS);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m5", Role::SecurityAdmin);
+        let id = pending(propose(&mut c, "o1", "u3", &grant_role("m4", Role::OrgOwner), None, 3).unwrap());
+        assert_eq!(
+            approve(&mut c, "o1", &id, "u3", None, 4).unwrap_err(),
+            OrgError::Invalid("You can't approve your own change.")
+        );
+        approve(&mut c, "o1", &id, "u5", None, 4).unwrap();
+        assert!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap().contains(&Role::OrgOwner));
+        assert!(!invariants::owner_recovery(&mut c, "o1").unwrap());
+        // Without the flag, Security admins can't make owners.
+        assert_eq!(
+            propose(&mut c, "o1", "u3", &grant_role("m5", Role::OrgOwner), None, 5).unwrap_err(),
+            OrgError::Forbidden
+        );
     }
 }
