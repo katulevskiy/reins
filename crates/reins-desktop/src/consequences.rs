@@ -101,7 +101,8 @@ pub fn of_action(config: &Config, action: &Action, cwd: Option<&str>, head: Opti
     }
 }
 
-#[cfg(test)]
+// POSIX paths: the engine reads POSIX shells (Windows commands are not modelled yet, and are asked).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
