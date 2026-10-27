@@ -94,7 +94,7 @@ sealed interface ApprovalPage {
 }
 
 /** What slides up over the approval screen. */
-enum class ApprovalOverlay { Remember, Autopilot, Grant }
+enum class ApprovalOverlay { Remember, Autopilot, Grant, DenyNote, Why }
 
 /** A (?) explanation, shown in a bubble under the button at [y] (root coordinates, px). */
 data class HelpTip(val key: String, val text: String, val y: Float)

@@ -840,6 +840,22 @@ final class AppModel {
         }
     }
 
+    /// Later or Why?: the request is not answered but becomes (or stays) a ticket under "Waiting for you". `work` runs
+    /// without anyone waiting for it; with `leaveStack` the card leaves the stack now and the next read brings it back
+    /// as a ticket. If it fails, a few words say why and the next read shows the request as it is.
+    func ticketInBackground(_ id: String, failed: String, leaveStack: Bool, work: @escaping @Sendable () async throws -> Void) {
+        if leaveStack { dropPending(id) }
+        Task {
+            do {
+                try await work()
+            } catch {
+                feedback.play(.error)
+                notice = "\(failed): \(decisionErrorMessage(error))"
+            }
+            await refreshPending()
+        }
+    }
+
     /// A bypass, Lockdown, Overnight or Autopilot decided `id` (`AppNotifier.autoDecided`): it leaves the list now and
     /// stays out of it, and an ask open on it closes, since the owner has nothing left to answer.
     func decidedAutomatically(_ id: String) {

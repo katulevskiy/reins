@@ -238,7 +238,8 @@ fun pendingTone(item: PendingItem, suggestion: SuggestionView?): Tone = when (it
 
 /**
  * The cards of the waiting section, in order: each AI's routine requests (a burst of at least two) fold into one
- * group card where the first of them was; everything else is a card of its own.
+ * group card where the first of them was; everything else is a card of its own. Tickets are not here: they wait
+ * under "Waiting for you" ([waitingInbox]).
  */
 sealed interface WaitCard {
     data class One(val item: PendingItem) : WaitCard
@@ -246,7 +247,8 @@ sealed interface WaitCard {
     data class Group(val burst: Burst, val items: List<PendingItem>) : WaitCard
 }
 
-fun waitCards(pending: List<PendingItem>): List<WaitCard> {
+fun waitCards(all: List<PendingItem>): List<WaitCard> {
+    val pending = all.filter { it.ticket == null }
     val groups = bursts(pending).associateBy { it.connectionId }
     val grouped = groups.values.flatMap { it.quick }.toSet()
     val placed = mutableSetOf<String>()

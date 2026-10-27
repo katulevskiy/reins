@@ -336,11 +336,17 @@ struct ActivityScreen: View {
             NewAccountActivity(connectComputer: { model.openSheet(.connectComputer) }, connectAi: copyAddress)
                 .padding(.top, wallpaper ? 337 : 120)
         } else {
-            if !model.pending.isEmpty {
-                WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
+            // Tickets wait under "Waiting for you", not in the stack: nobody waits on them.
+            let instant = TicketInbox.instant(model.pending)
+            let waiting = TicketInbox.groups(model.pending)
+            if !instant.isEmpty {
+                WaitStack(groups: WaitGroup.of(instant), suggestions: suggestions)
                     .padding(.top, wallpaper ? 70 : 14)
                     .padding(.bottom, wallpaper ? 10 : 0)
-                    .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
+                    .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: instant.map(\.id))
+            } else if !waiting.isEmpty {
+                // Only tickets: the art stays open a little above them.
+                Color.clear.frame(height: wallpaper ? 70 : 6)
             } else if let missing = missingHalf {
                 ActionSlotCard(missing: missing, connect: copyAddress, scan: { model.openSheet(.connectComputer) }, typeCode: { model.openSheet(.connectComputer) })
                     .padding(.top, 70)
@@ -354,6 +360,12 @@ struct ActivityScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                     .accessibilityIdentifier("pond")
+            }
+            if !waiting.isEmpty {
+                WaitingInbox(groups: waiting)
+                    .padding(.top, 8)
+                    .padding(.bottom, wallpaper ? 0 : 4)
+                    .animation(Motion.of(.smooth(duration: 0.25), reduce: reduceMotion), value: waiting.flatMap { $0.items.map(\.id) })
             }
             river(wallpaper: wallpaper)
         }

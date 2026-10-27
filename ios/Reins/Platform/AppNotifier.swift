@@ -33,8 +33,9 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             guard let model else { return }
             if model.isActive {
                 await model.refreshPending()
-                // The chime still sounds (once per request and per burst), for a phone left open on the desk.
-                model.feedback.requestArrived(item.id, needsUser: true)
+                // The chime still sounds (once per request and per burst), for a phone left open on the desk; a
+                // ticket (nobody waits on it) and news about one arrive quietly.
+                model.feedback.requestArrived(item.id, needsUser: item.ticket == nil)
                 return
             }
             // Posted before the refresh: in the background the app may be suspended any moment, and the notification

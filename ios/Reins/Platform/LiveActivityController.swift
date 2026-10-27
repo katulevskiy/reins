@@ -73,7 +73,8 @@ final class LiveActivityController {
         guard let model else { return }
         let now = Glance.now()
         let signedIn: Bool = if case .signedIn = model.session { true } else { false }
-        let approval = signedIn ? Glance.approvalState(model.pending.map(model.snapshotItem), now: now) : nil
+        // A ticket waits hours, not seconds: it has no countdown on the Lock Screen (it is under "Waiting for you").
+        let approval = signedIn ? Glance.approvalState(TicketInbox.instant(model.pending).map(model.snapshotItem), now: now) : nil
         let previous = Activity<BypassActivityAttributes>.activities.first?.content.state
         let bypass: BypassActivityAttributes.ContentState? = if signedIn, let s = model.autopilot {
             Glance.bypassState(

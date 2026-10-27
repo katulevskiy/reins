@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -134,6 +135,7 @@ internal fun ApprovalOverlays(view: ApprovalView, ui: ApprovalUi, viewModel: App
                     // Taps on the sheet stay on it (no semantics, so the content keeps its own).
                     .pointerInput(Unit) { detectTapGestures {} }
                     .windowInsetsPadding(WindowInsets.navigationBars)
+                    .imePadding()
                     .padding(bottom = 16.dp),
             ) {
                 Box(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp), contentAlignment = Alignment.Center) {
@@ -143,6 +145,8 @@ internal fun ApprovalOverlays(view: ApprovalView, ui: ApprovalUi, viewModel: App
                     ApprovalOverlay.Remember -> RememberSheet(view, ui, viewModel, dismiss)
                     ApprovalOverlay.Autopilot -> ui.suggestion?.let { AutopilotSheet(it, dismiss) { nav.overlay = null; onOpenAutopilot() } }
                     ApprovalOverlay.Grant -> GrantSheet(view, ui, viewModel, dismiss)
+                    ApprovalOverlay.DenyNote -> DenyNoteSheet(viewModel, dismiss)
+                    ApprovalOverlay.Why -> WhySheet(viewModel, dismiss)
                     null -> Unit
                 }
             }
@@ -151,7 +155,7 @@ internal fun ApprovalOverlays(view: ApprovalView, ui: ApprovalUi, viewModel: App
 }
 
 @Composable
-private fun SheetHead(title: String, onClose: () -> Unit) {
+internal fun SheetHead(title: String, onClose: () -> Unit) {
     val c = LocalColors.current
     // Next: the display title (`--s 30`) and a round close button.
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {

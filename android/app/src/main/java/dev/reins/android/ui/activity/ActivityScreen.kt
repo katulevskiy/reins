@@ -189,6 +189,8 @@ fun ActivityScreen(
     val searching = search.searching
     val details = rememberPendingDetails(container, pending, entries)
     val cards = remember(pending) { waitCards(pending) }
+    // Requests that became tickets wait in their own section above Today (Decisions v2).
+    val tickets = remember(pending) { pending.filter { it.ticket != null } }
     val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
     val zone = ZoneId.systemDefault()
     val today = localDay(nowSeconds, zone)
@@ -254,7 +256,7 @@ fun ActivityScreen(
     }
     // The items above the river, in the order the list lays them out.
     val headerCount = (if (warnings.isEmpty()) 0 else 1) + 2 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
-        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1)
+        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1) + (if (searching || tickets.isEmpty()) 0 else 1)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
@@ -385,8 +387,9 @@ fun ActivityScreen(
                                 answeredAt = System.currentTimeMillis()
                                 onAnswerBurst(burst, approve)
                             },
+                            onLater = { item -> container.keepWaitingInBackground(item.id, "Not moved") { container.core.decideLater(item.id) } },
                         )
-                        if (pending.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
+                        if (cards.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
                         AnimatedVisibility(
                             pending.isEmpty() && loaded && !filtersOpen,
                             enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
@@ -394,6 +397,22 @@ fun ActivityScreen(
                         ) {
                             Quiet(ais, computers, entries.isEmpty(), onConnectComputer, onConnectAi)
                         }
+                    }
+                }
+                if (tickets.isNotEmpty()) {
+                    item(key = "waiting") {
+                        WaitingInbox(
+                            tickets,
+                            details,
+                            onOpen = onOpenPending,
+                            onBatch = { burst, approve ->
+                                scope.launch {
+                                    answeredAt = System.currentTimeMillis()
+                                    onAnswerBurst(burst, approve)
+                                }
+                            },
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
                     }
                 }
             }
