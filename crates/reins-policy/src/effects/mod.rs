@@ -27,7 +27,8 @@ pub use git::{analyze_git_read, analyze_push, is_default};
 pub use infra::sql_change;
 pub use level::{ACCOUNTS, AGENT, Analysis, MASS_MESSAGE, MAX_LINES, Summary, floor_of, level_of, local_host};
 pub use model::{
-    Area, Certainty, Channel, CodeSource, Effect, FileKind, Floor, InfraChange, Level, NetMethod, PathRef, SecretKind,
+    Area, Certainty, Channel, CodeSource, Effect, EffectKind, FileKind, Floor, InfraChange, Level, NetMethod, PathRef,
+    SecretKind,
 };
 pub use programs::url_host;
 pub use shell::{Context, analyze_command, file_kind};
