@@ -100,6 +100,8 @@ impl Scrubber {
         add(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", Replace::With("person@example.com".to_owned()));
         add(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b", Replace::By(ip));
         add(r"\b[0-9a-f]{16,}\b", Replace::With("abcdef0123456789".to_owned()));
+        // ULIDs, also after a prefix (`org_01M3…`, `user_01M3…`).
+        add(r"[0-9A-HJKMNP-TV-Z]{26}\b", Replace::With("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()));
         add(r"\b[A-Za-z0-9]{20,}\b", Replace::By(key_like));
         Self {
             rules,
@@ -167,28 +169,44 @@ fn body_and_cwd(detail: &str) -> (String, Option<String>) {
 pub fn repair(command: &str) -> Option<String> {
     let cut = command.strip_suffix('…')?;
     let mut text = cut.to_owned();
-    for _ in 0..8 {
+    let mut closed_something = false;
+    for _ in 0..16 {
         let parsed = reins_policy::shell::ast::parse(&text);
         if parsed.complete {
-            return Some(text);
+            if closed_something {
+                return Some(text);
+            }
+            // The last command was cut mid-word (`rm -f /home/us…`): drop it, its words are not what ran.
+            closed_something = true;
+            let trimmed = text.trim_end();
+            let cut_at = ["\n", "; ", " && ", " || ", " | "].iter().filter_map(|sep| trimmed.rfind(sep)).max();
+            text = cut_at.map_or_else(String::new, |at| trimmed[..at].to_owned());
+            continue;
         }
+        let has = |p: &str| parsed.problems.iter().any(|x| x.contains(p));
         if let Some(p) = parsed.problems.iter().find(|p| p.starts_with("the heredoc `")) {
+            // Cut inside a heredoc's body: the body is text; drop its cut line and close it.
             let delim = p.trim_start_matches("the heredoc `").split('`').next().unwrap_or("EOF").to_owned();
             if !text.ends_with('\n') {
-                // The last line is cut: drop it.
                 text = text.rsplit_once('\n').map_or_else(String::new, |(a, _)| a.to_owned());
                 text.push('\n');
             }
             text.push_str(&delim);
             text.push('\n');
-            continue;
-        }
-        // An unclosed quote or substitution: drop the last command (up to a newline, `;`, `&&`, `||` or `|`).
-        let trimmed = text.trim_end();
-        let cut_at = ["\n", "; ", " && ", " || ", " | "].iter().filter_map(|sep| trimmed.rfind(sep)).max();
-        match cut_at {
-            Some(at) if at > 0 => text = trimmed[..at].to_owned(),
-            _ => return Some(String::new()),
+            closed_something = true;
+        } else if closed_something && has("`$(`") {
+            text.push(')');
+        } else if closed_something && has("`\"`") {
+            text.push('"');
+        } else {
+            // An unclosed quote or substitution in a command: drop that command.
+            closed_something = true;
+            let trimmed = text.trim_end();
+            let cut_at = ["\n", "; ", " && ", " || ", " | "].iter().filter_map(|sep| trimmed.rfind(sep)).max();
+            match cut_at {
+                Some(at) if at > 0 => text = trimmed[..at].to_owned(),
+                _ => return Some(String::new()),
+            }
         }
     }
     Some(text)
@@ -444,9 +462,11 @@ mod tests {
         };
         let s = Scrubber::new(&labels);
         let out = s.scrub(
-            "ssh debian@203.0.113.7 && git push github.com/katname/reins && grep secrethost ~/.ssh/config; infisical run --projectId=e21d41de-d3f4-41bf-accb-b4c2df9f164d; echo ghp_abcdefghijklmnopqrstuvwxyz0123; tts cgSgspJ2msm6clMCkdW9 36:d8:a1:d4:f8:c9",
+            "ssh debian@203.0.113.7 && git push github.com/katname/reins && grep secrethost ~/.ssh/config; infisical run --projectId=e21d41de-d3f4-41bf-accb-b4c2df9f164d; echo ghp_abcdefghijklmnopqrstuvwxyz0123; tts cgSgspJ2msm6clMCkdW9 36:d8:a1:d4:f8:c9 ~/.zeron/orgs/org_01M35M10S10FBZ86WNNSP2EMJA/x",
         );
-        for bad in ["203.0.113.7", "katname", "secrethost", "e21d41de", "ghp_", "cgSgspJ2msm6clMCkdW9", "36:d8"] {
+        for bad in
+            ["203.0.113.7", "katname", "secrethost", "e21d41de", "ghp_", "cgSgspJ2msm6clMCkdW9", "36:d8", "01M35M10S10"]
+        {
             assert!(!out.contains(bad), "{bad} in {out}");
         }
         assert!(out.contains("dkat/reins") && out.contains("host-1") && out.contains("~/.ssh/config"), "{out}");
@@ -464,7 +484,11 @@ mod tests {
         assert!(reins_policy::shell::ast::parse(&fixed).complete, "{fixed}");
         assert!(fixed.ends_with("EOF\n"));
         let fixed = repair("ls && echo 'half…").unwrap();
+        assert_eq!(fixed, "ls");
+        assert_eq!(repair("cd /a && rm -f /home/us…").unwrap(), "cd /a", "a command cut mid-word is dropped");
+        let fixed = repair("gh pr create --body \"$(cat <<'EOF'\nline one\nline tw…").unwrap();
         assert!(reins_policy::shell::ast::parse(&fixed).complete, "{fixed}");
+        assert!(fixed.starts_with("gh pr create"), "{fixed}");
     }
 
     #[test]

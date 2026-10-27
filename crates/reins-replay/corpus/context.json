@@ -1,0 +1,82 @@
+{
+  "home": "/home/user",
+  "roots": [
+    "~/Documents/dev"
+  ],
+  "scratch": [
+    "~/Documents/dev/tmp",
+    "~/.claude/projects/*/memory",
+    "~/.zeron/orgs/*/*/uploads"
+  ],
+  "worktrees": [
+    "~/Documents/dev/reins",
+    "~/Documents/dev/reins-activity-grants",
+    "~/Documents/dev/reins-approval-native",
+    "~/Documents/dev/reins-approval-ui",
+    "~/Documents/dev/reins-autopilot-page",
+    "~/Documents/dev/reins-bypass",
+    "~/Documents/dev/reins-ci",
+    "~/Documents/dev/reins-desktop-ui",
+    "~/Documents/dev/reins-entry-fix",
+    "~/Documents/dev/reins-help-click",
+    "~/Documents/dev/reins-human-only",
+    "~/Documents/dev/reins-ios-fast",
+    "~/Documents/dev/reins-model-update",
+    "~/Documents/dev/reins-next-desktop",
+    "~/Documents/dev/reins-no-assisted",
+    "~/Documents/dev/reins-notice",
+    "~/Documents/dev/reins-polish",
+    "~/Documents/dev/reins-pr47",
+    "~/Documents/dev/reins-quiet-auto",
+    "~/Documents/dev/reins-risk",
+    "~/Documents/dev/reins-secrets-a",
+    "~/Documents/dev/reins-secrets-b",
+    "~/Documents/dev/reins-signal",
+    "~/Documents/dev/reins-site",
+    "~/Documents/dev/reins-site-signal",
+    "~/Documents/dev/reins-swiftdup",
+    "~/Documents/dev/reins-viewer-enroll",
+    "~/Documents/dev/reins-viewer-fix",
+    "~/Documents/dev/reins-viewer-sync",
+    "~/Documents/dev/zeron",
+    "~/Documents/dev/zeron-wt",
+    "~/Documents/dev/zeron-wt-claude-chrome-setting",
+    "~/Documents/dev/zgui",
+    "~/Documents/dev/reins/.claude/worktrees/*",
+    "~/Documents/dev/zeron/.claude/worktrees/*"
+  ],
+  "mine_owners": [
+    "dkat",
+    "zeronsh"
+  ],
+  "mine_hosts": [
+    "host-1",
+    "host-2",
+    "host-3",
+    "work-host",
+    "cloud-host",
+    "mac",
+    "macbook",
+    "192.168.1.1",
+    "reins"
+  ],
+  "default_branch": "main",
+  "env": {
+    "PATH": "/home/user/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+    "USER": "user",
+    "SHELL": "/bin/bash",
+    "LANG": "en_US.UTF-8",
+    "XDG_RUNTIME_DIR": "/run/user/1000",
+    "WAYLAND_DISPLAY": "wayland-1",
+    "DISPLAY": ":0",
+    "SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.socket",
+    "XDG_CONFIG_HOME": "/home/user/.config",
+    "XDG_DATA_HOME": "/home/user/.local/share",
+    "XDG_STATE_HOME": "/home/user/.local/state",
+    "XDG_CACHE_HOME": "/home/user/.cache",
+    "CARGO_HOME": "/home/user/.cargo",
+    "RUSTUP_HOME": "/home/user/.rustup",
+    "ANDROID_HOME": "/home/user/Android/Sdk",
+    "JAVA_HOME": "/usr/lib/jvm/default"
+  }
+}

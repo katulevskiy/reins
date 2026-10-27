@@ -351,6 +351,12 @@ impl<'a> Walk<'a> {
 
     /// Records a write to `p` (nothing for a fresh path's own creation).
     pub fn write(&mut self, p: PathRef) {
+        let t = p.path.as_str();
+        if matches!(t, "/dev/null" | "/dev/stdout" | "/dev/stderr" | "/dev/tty" | "/dev/zero")
+            || t.starts_with("/dev/fd/")
+        {
+            return;
+        }
         self.effect(Effect::FileWrite {
             path: p,
         });
@@ -361,7 +367,9 @@ impl<'a> Walk<'a> {
         self.note(e);
         let path = self.path(e);
         let kind = file_kind(&path.path);
-        if kind == FileKind::Other && path.area.in_workspace() {
+        if kind == FileKind::Other
+            && (path.area.in_workspace() || path.path.starts_with("/dev/") || path.path.starts_with("/proc/"))
+        {
             // Reading the project's own files is no effect worth a line.
             return;
         }
@@ -434,6 +442,13 @@ impl<'a> Walk<'a> {
 
     /// Expands a word: its values (more than one for a brace expansion or `$@`).
     pub fn expand(&mut self, w: &Word) -> Vec<Exp> {
+        // `"$@"` alone is one word per argument.
+        if let [Part::Var(name)] = w.0.as_slice()
+            && name == "@"
+            && let Some(args) = &self.args
+        {
+            return args.clone();
+        }
         let mut outs = vec![Exp::lit("")];
         for part in &w.0 {
             let alts: Vec<Exp> = match part {
@@ -716,6 +731,14 @@ impl<'a> Walk<'a> {
         self.vars.insert(name.to_owned(), None);
     }
 
+    /// `shift [n]`: drops the first `n` positional parameters.
+    pub fn shift(&mut self, n: usize) {
+        if let Some(args) = &mut self.args {
+            let n = n.min(args.len());
+            args.drain(..n);
+        }
+    }
+
     pub fn set_var(&mut self, name: &str, value: Option<String>) {
         self.vars.insert(name.to_owned(), value);
     }
@@ -792,12 +815,8 @@ impl<'a> Walk<'a> {
             let exps = self.expand(w);
             return match exps.as_slice() {
                 [one] if one.known() => Input::Text(format!("{}\n", one.text)),
-                _ => {
-                    for e in &exps {
-                        self.note(e);
-                    }
-                    Input::Opaque("a here-string with values not known".to_owned())
-                }
+                // What it feeds matters only to a shell or an interpreter, which then can't read it.
+                _ => Input::Opaque("a here-string with values not known".to_owned()),
             };
         }
         if !d.expand {

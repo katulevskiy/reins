@@ -99,6 +99,9 @@ pub fn engine_context(ctx: &Context, case: &Case) -> EngineContext {
     };
     let mut c = EngineContext::new(case.cwd.as_deref().unwrap_or_default(), workspace);
     c.default_branch.clone_from(&ctx.default_branch);
+    for (k, v) in &ctx.env {
+        c.env.entry(k.clone()).or_insert_with(|| v.clone());
+    }
     c
 }
 
@@ -127,7 +130,14 @@ pub fn analyze(ctx: &Context, case: &Case) -> Analysis {
 
 /// The owner of `github.com/<owner>/<name>` or `<owner>/<name>`.
 fn owner(repo: &str) -> Option<&str> {
-    let r = repo.trim_start_matches("https://").trim_start_matches("github.com/");
+    // `https://host/owner/name.git`, `git@host:owner/name`, `github.com/owner/name`, `owner/name`.
+    let r = match repo.split_once("://") {
+        Some((_, rest)) => rest.split_once('/').map_or("", |(_, path)| path),
+        None => match repo.split_once(':') {
+            Some((host, path)) if host.contains('@') => path,
+            _ => repo.strip_prefix("github.com/").unwrap_or(repo),
+        },
+    };
     let (o, n) = r.split_once('/')?;
     (!o.is_empty() && !n.is_empty()).then_some(o)
 }

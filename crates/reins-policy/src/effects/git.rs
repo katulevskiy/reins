@@ -366,9 +366,16 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 for t in ops.iter().skip(1) {
                     let p = w.path(t);
                     // A worktree's commits stay in the repository; uncommitted work goes with it.
+                    // A git worktree is part of the workspace wherever it is (01 §2.5), and git removes only a
+                    // worktree: its commits stay in the repository.
+                    let area = match p.area {
+                        super::model::Area::Generated | super::model::Area::Scratch => p.area.clone(),
+                        _ => super::model::Area::Source,
+                    };
                     w.effect(Effect::FileDelete {
                         paths: vec![super::model::PathRef {
-                            recoverable: p.recoverable || p.area.in_workspace(),
+                            recoverable: true,
+                            area,
                             ..p
                         }],
                         recursive: true,
@@ -550,7 +557,17 @@ fn push(w: &mut Walk<'_>, rest: &[Exp]) {
 /// `gh …`.
 #[allow(clippy::too_many_lines, reason = "one arm per command family")]
 pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
-    let words: Vec<&str> = args.iter().map(|a| a.text.as_str()).collect();
+    // `gh -R owner/name pr …`: the global option before the command.
+    let mut words: Vec<&str> = Vec::new();
+    let mut k = 0;
+    while k < args.len() {
+        if matches!(args[k].text.as_str(), "-R" | "--repo") && words.is_empty() {
+            k += 2;
+            continue;
+        }
+        words.push(args[k].text.as_str());
+        k += 1;
+    }
     let repo = args
         .iter()
         .position(|a| a.text == "-R" || a.text == "--repo")
@@ -705,8 +722,40 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                     "GET".to_owned()
                 }
             });
-            let path =
-                args.iter().skip(1).find(|a| !a.text.starts_with('-')).map(|a| a.text.clone()).unwrap_or_default();
+            // The endpoint: the first word that is neither an option nor an option's value.
+            let takes_value = [
+                "-X",
+                "--method",
+                "-f",
+                "-F",
+                "--field",
+                "--raw-field",
+                "-H",
+                "--header",
+                "--input",
+                "-q",
+                "--jq",
+                "-t",
+                "--template",
+                "--hostname",
+                "--cache",
+                "-p",
+                "--preview",
+            ];
+            let mut path = String::new();
+            let mut k = 1;
+            while k < args.len() {
+                let t = args[k].text.as_str();
+                if takes_value.contains(&t) {
+                    k += 2;
+                    continue;
+                }
+                if !t.starts_with('-') {
+                    path = t.to_owned();
+                    break;
+                }
+                k += 1;
+            }
             let a = super::connectors::github_api(&method, &path);
             for e in a.effects {
                 w.effect(e);

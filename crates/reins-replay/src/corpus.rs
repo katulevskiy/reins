@@ -126,6 +126,9 @@ pub struct Context {
     /// The repositories' default branch.
     #[serde(default)]
     pub default_branch: Option<String>,
+    /// Environment variables the hook passes from the agent's environment (not secrets: `PATH`, `XDG_RUNTIME_DIR`).
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

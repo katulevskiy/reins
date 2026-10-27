@@ -76,7 +76,7 @@ enum Tok {
     /// Shell text run by the language (Ruby and Perl backticks, `%x(…)`, `qx(…)`).
     Cmd(String),
     Punct(char),
-    Num,
+    Num(String),
 }
 
 /// The tokens of `code`.
@@ -282,10 +282,11 @@ fn lex(lang: Lang, code: &str) -> Vec<Tok> {
             continue;
         }
         if ch.is_ascii_digit() {
+            let start = i;
             while i < c.len() && (c[i].is_ascii_alphanumeric() || c[i] == '.' || c[i] == '_') {
                 i += 1;
             }
-            out.push(Tok::Num);
+            out.push(Tok::Num(c[start..i].iter().collect()));
             continue;
         }
         match ch {
@@ -321,16 +322,28 @@ struct Reader<'w, 'a> {
     /// Parameters of functions defined in the code, with the values their calls pass (by name).
     params: BTreeMap<String, Val>,
     cwd: String,
+    /// The script's arguments (`sys.argv[1:]`, `process.argv[2:]`), as the shell gave them.
+    argv: Vec<Val>,
 }
 
 /// Records what `code` in `lang` does.
-pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str) {
+pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str, args: &[Exp]) {
     if lang == Lang::Shell {
-        w.run_script(code, Vec::new());
+        w.run_script(code, args.to_vec());
         return;
     }
     let toks = lex(lang, code);
     let cwd = w.cwd.clone();
+    let argv = args
+        .iter()
+        .map(|a| {
+            if a.known() {
+                Val::Strs(vec![a.text.clone()])
+            } else {
+                Val::Unknown
+            }
+        })
+        .collect();
     let mut r = Reader {
         w,
         lang,
@@ -338,6 +351,7 @@ pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str) {
         vars: BTreeMap::new(),
         params: BTreeMap::new(),
         cwd,
+        argv,
     };
     r.function_params();
     r.read();
@@ -460,6 +474,25 @@ impl Reader<'_, '_> {
         }
         match toks {
             [Tok::Str(v)] => Val::Strs(vec![v.clone()]),
+            // `sys.argv[1]` (Python), `process.argv[2]` (Node), `ARGV[0]` (Ruby), `$ARGV[0]` (Perl).
+            [Tok::Ident(m), Tok::Punct('.'), Tok::Ident(a), Tok::Punct('['), Tok::Num(n), Tok::Punct(']')]
+                if (m == "sys" || m == "process") && a == "argv" =>
+            {
+                let skip = if m == "process" {
+                    2
+                } else {
+                    1
+                };
+                n.parse::<usize>()
+                    .ok()
+                    .and_then(|n| n.checked_sub(skip))
+                    .and_then(|n| self.argv.get(n))
+                    .cloned()
+                    .unwrap_or(Val::Unknown)
+            }
+            [Tok::Ident(a), Tok::Punct('['), Tok::Num(n), Tok::Punct(']')] if a == "ARGV" || a == "$ARGV" => {
+                n.parse::<usize>().ok().and_then(|n| self.argv.get(n)).cloned().unwrap_or(Val::Unknown)
+            }
             [Tok::Ident(name)] => {
                 self.vars.get(name).or_else(|| self.params.get(name)).cloned().unwrap_or(Val::Unknown)
             }
@@ -529,6 +562,7 @@ impl Reader<'_, '_> {
                         }
                     }
                     "home" if callee.ends_with("Path.home") => Val::Strs(vec![self.w.ctx.workspace.home.clone()]),
+                    "homedir" | "gethome" => Val::Strs(vec![self.w.ctx.workspace.home.clone()]),
                     "cwd" | "getcwd" => Val::Strs(vec![self.cwd.clone()]),
                     "join" | "joinpath" | "resolve_path" if callee != "join" => {
                         let mut acc = if last == "joinpath" {
@@ -1089,7 +1123,12 @@ impl Reader<'_, '_> {
                 | "runpy.run_path"
                 | "runpy.run_module" => {
                     if !matches!(first, Some(Val::Strs(_))) {
-                        self.w.lower(Certainty::Partial, format!("code the Python code builds and runs ({last})"));
+                        if matches!(last, "eval" | "exec" | "compile") {
+                            // Code made while it runs (decoded, downloaded, assembled): nothing to read.
+                            self.w.lower(Certainty::None, format!("code the Python code builds and runs ({last})"));
+                        } else {
+                            self.w.lower(Certainty::Partial, format!("a module the Python code chooses ({last})"));
+                        }
                     }
                 }
                 _ => match last {
@@ -1199,7 +1238,7 @@ impl Reader<'_, '_> {
                 }
                 "eval" | "Function" | "runInThisContext" | "runInNewContext" | "runInContext" => {
                     if !matches!(first, Some(Val::Strs(_))) {
-                        self.w.lower(Certainty::Partial, "code the JavaScript builds and runs");
+                        self.w.lower(Certainty::None, "code the JavaScript builds and runs");
                     }
                 }
                 _ => {}

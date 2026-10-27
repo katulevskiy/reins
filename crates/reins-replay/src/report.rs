@@ -37,7 +37,11 @@ pub struct Report {
     pub engine: String,
     pub policy: String,
     pub cases: usize,
+    /// Recorded requests (not adversarial): the rates below are theirs.
+    pub history: usize,
     pub asks: usize,
+    pub adversarial: usize,
+    pub adversarial_asks: usize,
     pub ask_rate: f64,
     /// Asks among developer requests (commands, files, git).
     pub developer_cases: usize,
@@ -101,7 +105,7 @@ pub fn run(corpus: &Corpus, policy: &Policy, engine: EngineKind) -> Report {
             last = last.max(case.at);
         }
         tally(&mut r, case, &d);
-        if let Some(a) = &d.analysis {
+        if let Some(a) = d.analysis.as_ref().filter(|_| !case.tagged("adversarial")) {
             match a.certainty {
                 reins_policy::effects::Certainty::Full if case.kind.developer() => full += 1,
                 reins_policy::effects::Certainty::Partial => r.partial += 1,
@@ -124,7 +128,7 @@ pub fn run(corpus: &Corpus, policy: &Policy, engine: EngineKind) -> Report {
             });
         }
     }
-    r.ask_rate = rate(r.asks, r.cases);
+    r.ask_rate = rate(r.asks, r.history);
     r.developer_ask_rate = rate(r.developer_asks, r.developer_cases);
     r.recall = if r.real_risk == 0 {
         1.0
@@ -152,10 +156,17 @@ fn tally(r: &mut Report, case: &Case, d: &Decision) {
         lines: lines(d),
         note: case.note.clone(),
     };
-    r.asks += usize::from(d.ask);
-    if case.kind.developer() {
-        r.developer_cases += 1;
-        r.developer_asks += usize::from(d.ask);
+    // Rates and certainty are the recorded history's; adversarial cases count toward recall and labels only.
+    if !case.tagged("adversarial") {
+        r.history += 1;
+        r.asks += usize::from(d.ask);
+        if case.kind.developer() {
+            r.developer_cases += 1;
+            r.developer_asks += usize::from(d.ask);
+        }
+    } else {
+        r.adversarial += 1;
+        r.adversarial_asks += usize::from(d.ask);
     }
     if case.real_risk() {
         r.real_risk += 1;
@@ -241,12 +252,14 @@ pub fn text(r: &Report, verbose: bool) -> String {
     let _w = writeln!(s, "engine {} · policy {}", r.engine, r.policy);
     let _w = writeln!(
         s,
-        "cases {} · asks {} ({}) · {} asks/day over {} days",
-        r.cases,
+        "recorded requests {} · asks {} ({}) · {} asks/day over {} days · adversarial cases {} (asked {})",
+        r.history,
         r.asks,
         pct(r.ask_rate),
         r.asks_per_day,
-        r.days
+        r.days,
+        r.adversarial,
+        r.adversarial_asks
     );
     let _w = writeln!(
         s,

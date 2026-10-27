@@ -168,6 +168,12 @@ const HARMLESS: &[&str] = &[
     "fdfind",
     "locate",
     "notify-send",
+    "sysctl",
+    "sw_vers",
+    "system_profiler",
+    "defaults",
+    "scutil",
+    "launchctl print",
     "wl-copy",
     "wl-paste",
     "xclip",
@@ -425,8 +431,50 @@ const TOOLCHAIN: &[&str] = &[
     "ollama",
     "vllm",
     "llama-server",
-    "python",
     "elevenlabs",
+    "javap",
+    "jar",
+    "jdeps",
+    "jlink",
+    "jshell",
+    "d8",
+    "r8",
+    "studio",
+    "idea",
+    "code",
+    "xcode-select",
+    "qemu-img",
+    "caddy",
+    "nginx",
+    "http-server",
+    "serve",
+    "live-server",
+    "stripe",
+    "ngrok",
+    "cloudflared",
+    "uvicorn",
+    "gunicorn",
+    "flask",
+    "django-admin",
+    "rails",
+    "rake",
+    "mix",
+    "elixir",
+    "erl",
+    "ghc",
+    "cabal",
+    "stack",
+    "zig",
+    "nim",
+    "crystal",
+    "dune",
+    "opam",
+    "swiftly",
+    "tuist",
+    "sccache",
+    "ccache",
+    "mold",
+    "lld",
 ];
 
 /// System package managers: installing changes the whole computer.
@@ -588,9 +636,6 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
     let program = program_name(&words[0].text);
     let lower = program.to_ascii_lowercase();
     let args = &words[1..];
-    for a in args {
-        w.note(a);
-    }
     let runs_from_path = words[0].text.contains('/');
     match lower.as_str() {
         // ---- wrappers: what they run is read
@@ -742,21 +787,36 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                         let text = script.text.clone();
                         w.run_script(&text, rest.into_iter().skip(1).collect());
                     }
-                    Some(script) => {
+                    Some(script) if script.text.trim_matches(UNKNOWN).trim().is_empty() => {
                         w.note(script);
-                        w.lower(Certainty::None, "a shell runs a script with values not known");
+                        w.lower(Certainty::None, "a shell runs a script that is not in the command");
+                    }
+                    Some(script) => {
+                        // A script with values from elsewhere in it: read with those values unknown.
+                        w.note(script);
+                        let text = script.text.replace(UNKNOWN, "\"$__reins_unknown__\"");
+                        let rest = args[k + 2..].to_vec();
+                        w.run_script(&text, rest.into_iter().skip(1).collect());
                     }
                     None => w.lower(Certainty::None, "a shell's -c without a script"),
                 }
                 return Input::Opaque("a shell".to_owned());
             }
+            // `sh -s -- args`: the script comes from the input, the words are its arguments.
+            let from_input = args.iter().take_while(|a| a.text != "--").any(|a| {
+                a.text == "-s"
+                    || (a.text.starts_with('-')
+                        && !a.text.starts_with("--")
+                        && a.text.contains('s')
+                        && a.text.len() <= 4)
+            });
             let file = positional(args, &["-o", "+o", "-O", "+O"])
                 .into_iter()
                 .next()
-                .filter(|a| a.text != "-s" && a.text != "-");
+                .filter(|a| !from_input && a.text != "-s" && a.text != "-");
             match file {
                 Some(f) => run_file(w, f, &args[args.iter().position(|a| a == f).unwrap_or(0) + 1..], Lang::Shell),
-                None => run_input(w, input, Lang::Shell, &lower),
+                None => run_input(w, input, Lang::Shell, &lower, &[]),
             }
             Input::Opaque("a shell".to_owned())
         }
@@ -769,11 +829,19 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 Lang::Shell => &["-c"],
             };
             if let Some(code) = opt_value(args, code_flag) {
+                let argv: Vec<Exp> = args.iter().skip_while(|a| a.text != code.text).skip(1).cloned().collect();
                 if code.known() {
                     let code = code.text.clone();
-                    inline::analyze_code(w, lang, &code);
+                    inline::analyze_code(w, lang, &code, &argv);
+                } else if code.text.trim_matches(UNKNOWN).trim().is_empty() {
+                    // The whole program is a value from elsewhere.
+                    w.note(code);
+                    w.lower(Certainty::None, format!("{p} runs code that is not in the command"));
                 } else {
-                    w.lower(Certainty::None, format!("{p} runs code with values not known"));
+                    // Code with a value or two from the shell in it: read with those values unknown.
+                    w.note(code);
+                    let text = code.text.replace(UNKNOWN, "__reins_unknown__");
+                    inline::analyze_code(w, lang, &text, &argv);
                 }
                 return Input::Opaque(p.to_owned());
             }
@@ -805,14 +873,20 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 }
                 return Input::None;
             }
-            let script =
-                positional(args, &["-W", "-X", "-I", "-r", "--require", "--import", "--loader"]).into_iter().next();
-            match script {
-                Some(s) if s.text != "-" => {
-                    let rest_at = args.iter().position(|a| a == s).map_or(args.len(), |k| k + 1);
-                    run_file(w, s, &args[rest_at..], lang);
+            let value_opts: &[&str] = match lang {
+                Lang::Python => &["-W", "-X", "--check-hash-based-pycs"],
+                Lang::Node => {
+                    &["-r", "--require", "--import", "--loader", "--conditions", "-C", "--env-file", "--inspect-port"]
                 }
-                _ => run_input(w, input, lang, p),
+                Lang::Ruby => &["-I", "-r", "-C", "-E", "-F", "-K", "-T", "-x"],
+                Lang::Perl => &["-I", "-M", "-m", "-x"],
+                Lang::Shell => &[],
+            };
+            let script = positional(args, value_opts).into_iter().next();
+            let rest_at = script.and_then(|s| args.iter().position(|a| a == s)).map_or(args.len(), |k| k + 1);
+            match script {
+                Some(s) if s.text != "-" && s.text != "/dev/stdin" => run_file(w, s, &args[rest_at..], lang),
+                _ => run_input(w, input, lang, p, &args[rest_at..]),
             }
             Input::Opaque(p.to_owned())
         }
@@ -862,6 +936,11 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                     w.set_var(n, a.known().then(|| v.to_owned()));
                 }
             }
+            Input::None
+        }
+        "shift" => {
+            let n = args.first().and_then(|a| a.text.parse::<usize>().ok()).unwrap_or(1);
+            w.shift(n);
             Input::None
         }
         "read" | "mapfile" | "readarray" | "getopts" => {
@@ -1037,7 +1116,13 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             if lower == "unzip" && short(args, 'l') {
                 return Input::None;
             }
-            let dest = opt_value(args, &["-d", "-o"]).cloned();
+            let dest = opt_value(args, &["-d"]).cloned().or_else(|| {
+                if lower == "7z" || lower == "7za" {
+                    args.iter().find_map(|a| a.text.strip_prefix("-o").filter(|d| !d.is_empty()).map(Exp::lit))
+                } else {
+                    None
+                }
+            });
             match dest {
                 Some(d) => {
                     let p = w.path(&d);
@@ -1388,7 +1473,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             }
             output(p, args)
         }
-        p if TOOLCHAIN.contains(&p) => {
+        p if TOOLCHAIN.contains(&p) || p.starts_with("llvm-") || p.starts_with("clang-") || p.starts_with("gcc-") => {
             toolchain(w, p, args, runs_from_path);
             Input::Opaque(p.to_owned())
         }
@@ -1488,7 +1573,7 @@ fn run_file(w: &mut Walk<'_>, file: &Exp, args: &[Exp], lang: Lang) {
             if lang == Lang::Shell {
                 w.run_script(&text, args.to_vec());
             } else {
-                inline::analyze_code(w, lang, &text);
+                inline::analyze_code(w, lang, &text, args);
             }
         }
         Some(None) => {
@@ -1526,13 +1611,13 @@ fn run_file(w: &mut Walk<'_>, file: &Exp, args: &[Exp], lang: Lang) {
 }
 
 /// A shell or interpreter reading the code it runs from its input.
-fn run_input(w: &mut Walk<'_>, input: Input, lang: Lang, program: &str) {
+fn run_input(w: &mut Walk<'_>, input: Input, lang: Lang, program: &str, args: &[Exp]) {
     match input {
         Input::Text(t) => {
             if lang == Lang::Shell {
                 w.run_script(&t, Vec::new());
             } else {
-                inline::analyze_code(w, lang, &t);
+                inline::analyze_code(w, lang, &t, args);
             }
         }
         Input::Downloaded(host) => {
@@ -1825,6 +1910,7 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
         hosts
     };
     let hosts = if hosts.is_empty() {
+        w.lower(Certainty::Partial, format!("the host {program} talks to"));
         vec!["a host not known".to_owned()]
     } else {
         hosts
@@ -1953,7 +2039,11 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
             method,
         });
     }
-    if program == "wget" {
+    let to_stdout = args.iter().any(|a| matches!(a.text.as_str(), "-O-" | "-qO-" | "-qO" | "--output-document=-"))
+        || args
+            .windows(2)
+            .any(|p| (p[0].text == "-O" || p[0].text == "--output-document" || p[0].text == "-qO") && p[1].text == "-");
+    if program == "wget" && !to_stdout {
         Input::Opaque("wget".to_owned())
     } else {
         Input::Downloaded(hosts[0].clone())

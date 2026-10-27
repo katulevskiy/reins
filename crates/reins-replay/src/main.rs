@@ -88,11 +88,97 @@ fn import(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `reins-replay explain ID…`: a case's request, effects and decision, for reviewing labels and the engine.
+fn explain(args: &[String]) -> Result<ExitCode, String> {
+    let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
+    let corpus = Corpus::load(&corpus_dir)?;
+    let policy = Policy::default();
+    for id in args.iter().filter(|a| !a.starts_with("--")) {
+        let Some(case) = corpus.cases.iter().find(|c| &c.id == id) else {
+            eprintln!("{id}: no such case");
+            continue;
+        };
+        let d = reins_replay::engine::decide(&corpus.context, case, &policy, EngineKind::Effects);
+        println!("=== {id} · {:?} · {:?} {:?} · {}", case.kind, case.label, case.tags, d.why);
+        if let Some(c) = &case.command {
+            println!("{c}");
+        }
+        if let Some(a) = &d.analysis {
+            println!("--- level {:?} · certainty {:?} · floor {:?}", a.level, a.certainty, a.floor);
+            for e in &a.effects {
+                println!("  {e:?}");
+            }
+            for u in &a.unresolved {
+                println!("  ? {u}");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `reins-replay unresolved`: what the engine could not read, by reason, over the corpus.
+fn unresolved(args: &[String]) -> Result<ExitCode, String> {
+    let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
+    let corpus = Corpus::load(&corpus_dir)?;
+    let mut by: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for case in &corpus.cases {
+        let a = reins_replay::engine::analyze(&corpus.context, case);
+        if a.certainty == reins_policy::effects::Certainty::Full || !case.kind.developer() {
+            continue;
+        }
+        for u in &a.unresolved {
+            by.entry(u.clone()).or_default().push(format!("{}:{:?}", case.id, a.certainty));
+        }
+    }
+    let mut v: Vec<_> = by.into_iter().collect();
+    v.sort_by_key(|(_, ids)| std::cmp::Reverse(ids.len()));
+    for (u, ids) in v {
+        println!("{:3} {u} · {}", ids.len(), ids.iter().take(4).cloned().collect::<Vec<_>>().join(" "));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `reins-replay list [--auto|--ask] [--level L2] [--certainty Partial]`: one line per matching case.
+fn list(args: &[String]) -> Result<ExitCode, String> {
+    let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
+    let corpus = Corpus::load(&corpus_dir)?;
+    let policy = Policy::default();
+    let level = value(args, "--level");
+    let certainty = value(args, "--certainty");
+    for case in &corpus.cases {
+        let d = reins_replay::engine::decide(&corpus.context, case, &policy, EngineKind::Effects);
+        let Some(a) = &d.analysis else {
+            continue;
+        };
+        if (args.iter().any(|x| x == "--auto") && d.ask) || (args.iter().any(|x| x == "--ask") && !d.ask) {
+            continue;
+        }
+        if level.as_deref().is_some_and(|l| format!("{:?}", a.level) != l)
+            || certainty.as_deref().is_some_and(|c| format!("{:?}", a.certainty) != c)
+        {
+            continue;
+        }
+        println!(
+            "{} · {:?} · {:?} {:?} · {} · {}",
+            case.id,
+            case.kind,
+            a.level,
+            a.certainty,
+            d.why,
+            a.lines().join(" | ")
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
         Some("import") => import(&args[1..]),
+        Some("explain") => explain(&args[1..]),
+        Some("unresolved") => unresolved(&args[1..]),
+        Some("list") => list(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {

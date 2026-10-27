@@ -24,6 +24,7 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 
 fn repo_of(args: &Value) -> String {
     match (str_arg(args, "owner"), str_arg(args, "repo")) {
+        (_, Some(r)) if r.contains('/') => r.to_owned(),
         (Some(o), Some(r)) => format!("{o}/{r}"),
         (None, Some(r)) => r.to_owned(),
         _ => "a repository".to_owned(),
