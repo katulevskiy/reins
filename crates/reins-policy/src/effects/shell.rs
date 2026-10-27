@@ -747,6 +747,11 @@ impl<'a> Walk<'a> {
 
     /// A variable this line set: `Some(Some(value))`, `Some(None)` when set to a value not known, `None` when the line
     /// never set it (nor the caller's environment).
+    /// A variable whose name starts with `prefix` is set on this line (or in the caller's environment).
+    pub fn has_var_prefix(&self, prefix: &str) -> bool {
+        self.vars.keys().any(|k| k.starts_with(prefix))
+    }
+
     #[allow(clippy::option_option, reason = "never set, set to a value not known, or set to a value")]
     pub fn var_state(&self, name: &str) -> Option<Option<String>> {
         self.vars.get(name).cloned()

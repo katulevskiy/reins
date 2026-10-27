@@ -647,3 +647,41 @@ fn second_review_findings() {
     // An unmodelled program is asked.
     assert_eq!(run("frobnicate --all").certainty, Certainty::None);
 }
+
+/// The third security review: git's options fail closed.
+#[test]
+fn git_options_fail_closed() {
+    // 1. `-x`/`--exec` in every form is a command; any other unknown rebase option is not read.
+    for cmd in [
+        "git rebase -x 'rm -rf ~/Documents' main",
+        "git rebase '-xrm -rf ~/Documents' main",
+        "git rebase -ix 'rm -rf ~/Documents' main",
+        "git rebase --exec='rm -rf ~/Documents' main",
+        "git rebase --exe 'rm -rf ~/Documents' main",
+        "git rebase --ex='rm -rf ~/Documents' main",
+    ] {
+        assert_eq!(level(cmd), Level::L3, "{cmd}: {:?}", run(cmd));
+    }
+    assert_eq!(run("git rebase --frobnicate main").certainty, Certainty::None);
+    assert_eq!(run("git rebase -Z main").certainty, Certainty::None);
+    assert_eq!(run("git rebase -s custom main").certainty, Certainty::None);
+    assert_eq!(run("git rebase -i --autosquash origin/main").certainty, Certainty::Full);
+    // 2. bisect run and submodule foreach read their command as words, with what is unknown.
+    assert_eq!(level("git bisect run rm -rf ~/Documents"), Level::L3);
+    assert_eq!(level("git bisect run sh -c 'rm -rf ~/Documents'"), Level::L3);
+    assert_eq!(level("git submodule foreach --recursive 'rm -rf ~/Documents'"), Level::L3);
+    assert_eq!(level("git submodule --quiet foreach rm -rf ~/Documents"), Level::L3);
+    assert_eq!(run("git submodule foreach \"$CMD\"").certainty, Certainty::None);
+    // 3. Configuration from the environment or `--config-env`: not read.
+    for cmd in [
+        "git --config-env=core.sshCommand=EVIL fetch",
+        "git --config-env core.pager=X log",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='rm -rf ~' git log",
+        "GIT_CONFIG_PARAMETERS=\"'core.pager'='x'\" git log",
+        "GIT_CONFIG_GLOBAL=/tmp/evil git log",
+        "GIT_EXEC_PATH=/tmp/evil git status",
+        "git -c \"core.pager=$X\" log",
+    ] {
+        assert_eq!(run(cmd).certainty, Certainty::None, "{cmd}");
+    }
+}

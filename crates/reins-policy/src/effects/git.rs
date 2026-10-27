@@ -149,7 +149,7 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             }
             "-c" => {
                 if let Some(s) = args.get(k + 1)
-                    && runs_program(&s.text)
+                    && (runs_program(&s.text) || !s.known())
                 {
                     w.effect(Effect::Exec {
                         program: "a program set in git's configuration".to_owned(),
@@ -159,7 +159,28 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 }
                 k += 2;
             }
-            "--git-dir" | "--work-tree" | "--namespace" | "--config-env" => k += 2,
+            "--git-dir" | "--work-tree" | "--namespace" => k += 2,
+            // `--config-env name=VAR`: a setting whose value comes from the environment, unseen here.
+            t if t == "--config-env" || t.starts_with("--config-env=") => {
+                let setting = t
+                    .strip_prefix("--config-env=")
+                    .map(str::to_owned)
+                    .or_else(|| args.get(k + 1).map(|a| a.text.clone()));
+                let key = setting.as_deref().unwrap_or_default();
+                if runs_program(key)
+                    || setting.is_none()
+                    || args.get(k + 1).is_some_and(|a| t == "--config-env" && !a.known())
+                {
+                    w.lower(Certainty::None, "a program git's configuration runs (from the environment)");
+                } else {
+                    w.lower(Certainty::None, format!("a git setting from the environment ({key})"));
+                }
+                k += if t == "--config-env" {
+                    2
+                } else {
+                    1
+                };
+            }
             "--no-pager"
             | "-P"
             | "--paginate"
@@ -193,6 +214,21 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     let rest = &args[k + 1..];
     let worktree = w.repo_root().unwrap_or_else(|| w.cwd.clone());
     let wt = Exp::lit(&worktree);
+    // Configuration given through the environment on this line: not read.
+    for prefix in [
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_",
+        "GIT_CONFIG_VALUE_",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_EXEC_PATH",
+        "GIT_CONFIG",
+    ] {
+        if w.has_var_prefix(prefix) {
+            w.lower(Certainty::None, format!("git configuration from the environment ({prefix})"));
+        }
+    }
     // Programs git runs from its environment (`GIT_SEQUENCE_EDITOR=… git rebase -i`): read as commands.
     for var in [
         "GIT_EDITOR",
@@ -238,24 +274,39 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
         }
     };
     match sub.as_str() {
+        // `git bisect run cmd args…`: the command's own words, as they are.
         "bisect" => {
             if rest.first().is_some_and(|a| a.text == "run") {
-                let line = rest[1..].iter().map(|a| a.text.clone()).collect::<Vec<_>>().join(" ");
-                w.run_script(&line, Vec::new());
+                if rest.len() > 1 {
+                    let _out: Input = super::programs::run(w, &rest[1..], Input::None, false);
+                } else {
+                    w.lower(Certainty::None, "git bisect run without a command");
+                }
             }
         }
+        // `git submodule [--quiet] foreach [--recursive] cmd…`: one word is a shell script, more are a command.
         "submodule" if rest.iter().any(|a| a.text == "foreach") => {
-            let at = rest.iter().position(|a| a.text == "foreach").map_or(rest.len(), |p| p + 1);
-            let line = rest[at..]
-                .iter()
-                .filter(|a| !a.text.starts_with("--"))
-                .map(|a| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ");
-            w.run_script(&line, Vec::new());
+            let mut at = rest.iter().position(|a| a.text == "foreach").map_or(rest.len(), |p| p + 1);
+            while rest.get(at).is_some_and(|a| matches!(a.text.as_str(), "--recursive" | "--quiet" | "-q")) {
+                at += 1;
+            }
+            let words = &rest[at..];
+            if words.iter().any(|a| !a.known()) {
+                w.lower(
+                    Certainty::None,
+                    "a command git submodule foreach runs, with values that are not in the command",
+                );
+            }
+            match words {
+                [] => w.lower(Certainty::None, "git submodule foreach without a command"),
+                [one] => w.run_script(&one.text, Vec::new()),
+                many => {
+                    let _out: Input = super::programs::run(w, many, Input::None, false);
+                }
+            }
         }
-        "rebase" if rest.iter().any(|a| a.text == "-x" || a.text.starts_with("--exec")) => {
-            run_value(w, &["-x", "--exec"]);
+        "rebase" => {
+            rebase(w, rest);
             local_change(w, &sub, rest, &worktree);
         }
         "filter-branch" => {
@@ -344,10 +395,10 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 });
             }
         }
-        "add" | "commit" | "stash" | "tag" | "checkout" | "switch" | "branch" | "merge" | "rebase" | "cherry-pick"
-        | "revert" | "am" | "apply" | "mv" | "rm" | "restore" | "reset" | "clean" | "worktree" | "config"
-        | "update-ref" | "reflog" | "replace" | "filter-repo" | "sparse-checkout" | "init" | "update-index"
-        | "commit-tree" | "hash-object" | "read-tree" | "write-tree" | "mktag" | "mktree" | "rerere" => {
+        "add" | "commit" | "stash" | "tag" | "checkout" | "switch" | "branch" | "merge" | "cherry-pick" | "revert"
+        | "am" | "apply" | "mv" | "rm" | "restore" | "reset" | "clean" | "worktree" | "config" | "update-ref"
+        | "reflog" | "replace" | "filter-repo" | "sparse-checkout" | "init" | "update-index" | "commit-tree"
+        | "hash-object" | "read-tree" | "write-tree" | "mktag" | "mktree" | "rerere" => {
             local_change(w, &sub, rest, &worktree);
         }
         "push" | "send-pack" => push(w, rest),
@@ -362,6 +413,166 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     }
     w.cwd = saved_cwd;
     Input::Opaque("git".to_owned())
+}
+
+/// `git rebase`'s options. `-x`/`--exec` in every form (`-x cmd`, `-xcmd`, `-ix cmd`, `--exec=cmd`, `--exe cmd`)
+/// runs a command, read as one; any option not on this list is not read.
+#[allow(clippy::too_many_lines, reason = "one case per option form")]
+#[allow(clippy::many_single_char_names, reason = "w(alk), k, a, t, c, o, v as in the other option readers")]
+fn rebase(w: &mut Walk<'_>, rest: &[Exp]) {
+    const LONG: &[&str] = &[
+        "interactive",
+        "onto",
+        "root",
+        "continue",
+        "abort",
+        "skip",
+        "quit",
+        "edit-todo",
+        "show-current-patch",
+        "autosquash",
+        "no-autosquash",
+        "autostash",
+        "no-autostash",
+        "quiet",
+        "verbose",
+        "stat",
+        "no-stat",
+        "keep-base",
+        "update-refs",
+        "no-update-refs",
+        "committer-date-is-author-date",
+        "ignore-date",
+        "reset-author-date",
+        "signoff",
+        "no-verify",
+        "verify",
+        "force-rebase",
+        "no-ff",
+        "fork-point",
+        "no-fork-point",
+        "merge",
+        "strategy",
+        "strategy-option",
+        "empty",
+        "rebase-merges",
+        "no-rebase-merges",
+        "apply",
+        "whitespace",
+        "reapply-cherry-picks",
+        "no-reapply-cherry-picks",
+        "allow-empty-message",
+        "keep-empty",
+        "no-keep-empty",
+        "exec",
+        "gpg-sign",
+        "no-gpg-sign",
+        "trailer",
+        "context",
+    ];
+    // Options that take the next word when no `=value` is attached.
+    const LONG_VALUE: &[&str] = &["onto", "strategy", "strategy-option", "exec", "trailer"];
+    let exec = |w: &mut Walk<'_>, v: Option<Exp>| match v {
+        Some(v) if v.known() => w.run_script(&v.text, Vec::new()),
+        Some(_) => {
+            w.lower(Certainty::None, "a command git rebase --exec runs, with values that are not in the command");
+        }
+        None => w.lower(Certainty::None, "git rebase --exec without a command"),
+    };
+    let mut k = 0;
+    while k < rest.len() {
+        let a = &rest[k];
+        let t = a.text.as_str();
+        k += 1;
+        if t == "--" {
+            break;
+        }
+        if let Some(long) = t.strip_prefix("--") {
+            let (name, value) = long.split_once('=').map_or((long, None), |(n, v)| (n, Some(v)));
+            // Git takes any unambiguous prefix of a long option.
+            let matches: Vec<&str> = LONG.iter().copied().filter(|o| *o == name || o.starts_with(name)).collect();
+            let option = if matches.contains(&name) {
+                Some(name)
+            } else if matches.len() == 1 {
+                Some(matches[0])
+            } else {
+                None
+            };
+            match option {
+                Some(o) => {
+                    let v = value
+                        .map(|v| Exp {
+                            text: v.to_owned(),
+                            ..a.clone()
+                        })
+                        .or_else(|| {
+                            LONG_VALUE.contains(&o).then(|| {
+                                k += 1;
+                                rest.get(k - 1).cloned()
+                            })?
+                        });
+                    if o == "exec" {
+                        exec(w, v);
+                    } else if o == "strategy"
+                        && v.as_ref().is_none_or(|v| {
+                            !matches!(v.text.as_str(), "ort" | "recursive" | "resolve" | "octopus" | "ours" | "subtree")
+                        })
+                    {
+                        // A custom strategy is a program (`git-merge-<name>`).
+                        w.lower(Certainty::None, "a merge strategy program git rebase runs");
+                    }
+                }
+                None => w.lower(Certainty::None, format!("the git rebase option --{name}")),
+            }
+            continue;
+        }
+        let Some(short) = t.strip_prefix('-').filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        for (i, c) in short.char_indices() {
+            let attached = &short[i + c.len_utf8()..];
+            match c {
+                'i' | 'q' | 'v' | 'n' | 'f' | 'm' | 'r' | 'k' => {}
+                'x' => {
+                    let v = if attached.is_empty() {
+                        k += 1;
+                        rest.get(k - 1).cloned()
+                    } else {
+                        Some(Exp {
+                            text: attached.to_owned(),
+                            ..a.clone()
+                        })
+                    };
+                    exec(w, v);
+                    break;
+                }
+                's' | 'X' => {
+                    if attached.is_empty() {
+                        k += 1;
+                    }
+                    if c == 's' {
+                        let v = if attached.is_empty() {
+                            rest.get(k - 1).map(|v| v.text.as_str())
+                        } else {
+                            Some(attached)
+                        };
+                        if v.is_none_or(|v| {
+                            !matches!(v, "ort" | "recursive" | "resolve" | "octopus" | "ours" | "subtree")
+                        }) {
+                            w.lower(Certainty::None, "a merge strategy program git rebase runs");
+                        }
+                    }
+                    break;
+                }
+                // `-C<n>`, `-S[<key>]`: the rest is its value.
+                'C' | 'S' => break,
+                other => {
+                    w.lower(Certainty::None, format!("the git rebase option -{other}"));
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Local repository changes: most are recoverable from the reflog; the ones that discard work in the worktree are
