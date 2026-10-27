@@ -339,7 +339,7 @@ async fn a_pilot_org_is_provisioned_and_deprovisioned_end_to_end() {
                 && member_state(&server, "lee@acme.com").as_deref() == Some("deprovisioned_by_directory")
     })
     .await;
-    wait_for("erasure", Duration::from_secs(60) - took, || !user_exists(&server, "lee@acme.com")).await;
+    wait_for("erasure", Duration::from_secs(60).saturating_sub(took), || !user_exists(&server, "lee@acme.com")).await;
     assert!(started.elapsed() < Duration::from_secs(60), "deprovisioning took {took:?}");
     assert!(lee_phone.core.org_membership().await.is_err(), "the phone's session is gone");
 
