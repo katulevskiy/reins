@@ -210,6 +210,10 @@ private struct PairingContent: View {
                     PairFact(glyph: PairWords.computer(view) ? .laptop : .globe, value: PairWords.quoted(view.clientName), valueId: "pairName")
                     let host = asciiHost(untrustedName(view.clientHost, limit: 64))
                     if !host.isEmpty { PairFact(glyph: .globe, value: host, mono: true, valueId: "pairHost") }
+                    // Agents pair with one profile: the one this sign-in reached (switch in Settings for the other).
+                    if WorkProfiles.hasWork {
+                        PairFact(glyph: .briefcase, value: WorkProfiles.active.label, valueId: "pairProfile")
+                    }
                 }
                 .padding(.top, 14)
                 SectionHeader("Tap the code it shows")

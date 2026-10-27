@@ -95,7 +95,7 @@ final class NotificationService: UNNotificationServiceExtension {
         // `mayReset: false`: whatever goes wrong with the keychain here, the core never starts over from this process.
         let core: ReinsCore
         do {
-            core = try CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false))
+            core = try CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false, account: CoreFactory.keyAccount))
         } catch CoreError.Storage {
             return .busy
         } catch {

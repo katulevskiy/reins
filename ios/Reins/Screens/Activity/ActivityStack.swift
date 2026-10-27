@@ -230,6 +230,7 @@ struct FieldWaitCard: View {
                     .layoutPriority(1)
                 }
                 Spacer(minLength: 0)
+                ProfileBadge(onField: true)
                 TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min(), onField: true)
                     .fixedSize()
             }

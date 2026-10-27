@@ -1,0 +1,178 @@
+@testable import Reins
+import XCTest
+
+/// The profiles on this phone in memory, as the core's registry keeps them.
+private final class FakeRegistry: ProfileRegistryProtocol, @unchecked Sendable {
+    var profiles = [FakeRegistry.profile("personal", .personal, "Personal")]
+    var pending: [AccountProfile] = []
+    var activeId = "personal"
+    var personalEmail: String?
+    var removed: [String] = []
+
+    static func profile(_ id: String, _ kind: ProfileKind, _ label: String) -> AccountProfile {
+        AccountProfile(
+            id: id, kind: kind, label: label, orgId: nil, email: nil, serverUrl: nil, dataDir: "/data/\(id)/core",
+            keyAlias: kind == .personal ? "" : id, channelPrefix: kind == .personal ? "" : "\(id).")
+    }
+
+    func active() -> AccountProfile { profiles.first { $0.id == activeId }! }
+    func beginManaged(serverUrl: String) throws -> AccountProfile {
+        var p = FakeRegistry.profile("work-00000000000\(pending.count + 1)", .managed, "Work")
+        p.serverUrl = serverUrl
+        pending.append(p)
+        return p
+    }
+    func confirmManaged(id: String, orgId: String, orgName: String, email: String) throws -> AccountProfile {
+        if email == personalEmail { throw CoreError.Invalid(reason: "This is your personal account.") }
+        guard var p = pending.first(where: { $0.id == id }) else { throw CoreError.Invalid(reason: "No such profile") }
+        pending.removeAll { $0.id == id }
+        p.label = orgName
+        p.orgId = orgId
+        p.email = email
+        profiles.append(p)
+        return p
+    }
+    func list() -> [AccountProfile] { profiles }
+    func notePersonal(email: String?) throws { personalEmail = email }
+    func remove(id: String) throws {
+        removed.append(id)
+        pending.removeAll { $0.id == id }
+        profiles.removeAll { $0.id == id }
+    }
+    func setActive(id: String) throws {
+        guard profiles.contains(where: { $0.id == id }) else { throw CoreError.Invalid(reason: "No such profile") }
+        activeId = id
+    }
+}
+
+/// A work account's core: its org (nil for a Personal account), and what it was asked.
+private final class FakeWorkCore: WorkSignInCore, @unchecked Sendable {
+    var org: OrgView?
+    var begins: [(String, String)] = []
+    var enrollments: [(String, EnrollInput)] = []
+
+    func ssoBeginWork(serverUrl: String, domain: String) async throws -> SsoStart {
+        begins.append((serverUrl, domain))
+        return SsoStart(url: "\(serverUrl)/identity/connect/authorize?domain_hint=\(domain)", callbackScheme: "com.reins2fa.app",
+                        state: "st4te", verifier: "v")
+    }
+    func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws -> SsoOutcome {
+        SsoOutcome(session: SessionInfo(serverUrl: serverUrl, email: "dana@acme.com"), keys: .created)
+    }
+    func orgMembership() async throws -> OrgView? { org }
+    func registerDevice(fcmToken: String?) async throws {}
+    func orgChallenge() async throws -> String { "challenge-1" }
+    func orgEnroll(challenge: String, input: EnrollInput) async throws { enrollments.append((challenge, input)) }
+}
+
+private struct FakeKeys: DeviceKeys {
+    func create(profileId: String) throws -> (publicKey: Data, hardware: Bool) { (Data([0x30, 0x59]), true) }
+    func sign(profileId: String, data: Data) throws -> Data {
+        XCTAssertEqual(data, Data("reins/org-enroll/v1\nchallenge-1".utf8))
+        return Data([0x30, 0x44])
+    }
+    func attest(challenge: Data) async -> Data? { Data("attested".utf8) }
+}
+
+final class WorkProfilesTests: XCTestCase {
+    override func tearDown() {
+        WorkProfiles.active = WorkProfiles.personal
+        WorkProfiles.hasWork = false
+    }
+
+    func testPersonalKeepsTodaysKeychainItemAndWorkProfilesGetTheirOwn() {
+        let acme = WorkProfiles.of(FakeRegistry.profile("work-1", .managed, "Acme"))
+        XCTAssertEqual(WorkProfiles.keychainAccount(keyAlias: WorkProfiles.personal.keyAlias), "core-dek-wrap-v1")
+        XCTAssertEqual(WorkProfiles.keychainAccount(keyAlias: acme.keyAlias), "core-dek-wrap-v1.work-1")
+        XCTAssertNotEqual(WorkProfiles.orgKeyTag(profileId: "work-1"), WorkProfiles.orgKeyTag(profileId: "work-2"))
+    }
+
+    func testThreadsArePrefixedPerProfile() {
+        XCTAssertEqual(NotificationCategory.request.thread, "requests")
+        WorkProfiles.active = WorkProfiles.of(FakeRegistry.profile("work-1", .managed, "Acme"))
+        XCTAssertEqual(NotificationCategory.request.thread, "work-1.requests")
+        XCTAssertEqual(NotificationCategory.grant.thread, "work-1.grants")
+    }
+
+    func testTheEnrollmentMessageIsTheProtocols() {
+        XCTAssertEqual(WorkProfiles.enrollmentMessage(challenge: "abc"), Data("reins/org-enroll/v1\nabc".utf8))
+    }
+}
+
+final class ProfileBadgeTests: XCTestCase {
+    func testWorkCardsCarryTheOrgName() {
+        XCTAssertEqual(WorkProfiles.badge(WorkProfiles.of(FakeRegistry.profile("work-1", .managed, "Acme"))), "Acme")
+    }
+
+    func testPersonalCardsCarryNone() {
+        XCTAssertNil(WorkProfiles.badge(WorkProfiles.personal))
+    }
+}
+
+final class OrgPostureTests: XCTestCase {
+    func testJailbreakSignsAreReported() {
+        XCTAssertEqual(OrgPosture.jailbroken(exists: { _ in false }, canWriteOutside: { false }), false)
+        XCTAssertEqual(OrgPosture.jailbroken(exists: { $0 == "/Applications/Cydia.app" }, canWriteOutside: { false }), true)
+        XCTAssertEqual(OrgPosture.jailbroken(exists: { _ in false }, canWriteOutside: { true }), true)
+    }
+
+    func testPostureReportsPasscodeOSAndAppVersion() {
+        let p = OrgPosture.collect(screenLock: true)
+        XCTAssertTrue(p.screenLock)
+        XCTAssertEqual(p.osName, "iOS")
+        XCTAssertFalse(p.osVersion.isEmpty)
+        XCTAssertFalse(p.appVersion.isEmpty)
+    }
+}
+
+@MainActor
+final class AddWorkAccountTests: XCTestCase {
+    private func flow(_ core: FakeWorkCore, _ registry: FakeRegistry) -> AddWorkAccount {
+        AddWorkAccount(
+            server: "https://reins.example", registry: registry, makeCore: { _ in core },
+            browse: { url, _ in
+                XCTAssertTrue(url.absoluteString.contains("domain_hint=acme.com"))
+                return URL(string: "com.reins2fa.app://sso-callback?code=c&state=st4te")!
+            },
+            keys: FakeKeys(),
+            posture: { PostureInput(screenLock: true, osName: "iOS", osVersion: "26.1", rooted: false, appVersion: "1.0") }
+        )
+    }
+
+    func testAWorkAccountIsAddedAndThePhoneEnrolled() async {
+        let core = FakeWorkCore()
+        core.org = OrgView(orgId: "o1", name: "Acme", tier: "business", roles: ["Approver"], enrolled: false, githubOrgs: [])
+        let registry = FakeRegistry()
+        let add = flow(core, registry)
+        await add.run(domain: " acme.com ")
+        guard case let .added(label, _, enrolled) = add.step else { return XCTFail("\(add.step)") }
+        XCTAssertEqual(label, "Acme")
+        XCTAssertTrue(enrolled)
+        XCTAssertEqual(core.begins.first?.1, "acme.com")
+        XCTAssertEqual(core.enrollments.first?.0, "challenge-1")
+        XCTAssertEqual(core.enrollments.first?.1.attestations.first?.kind, .appAttest)
+        XCTAssertTrue(registry.list().contains { $0.label == "Acme" && $0.kind == .managed })
+    }
+
+    func testAnAccountWithoutAnOrgIsRefused() async {
+        let registry = FakeRegistry()
+        let add = flow(FakeWorkCore(), registry)
+        await add.run(domain: "acme.com")
+        XCTAssertEqual(add.error, "This account isn't managed by an organization.")
+        XCTAssertEqual(add.step, .domain)
+        XCTAssertEqual(registry.list().count, 1)
+        XCTAssertEqual(registry.removed.count, 1)
+    }
+
+    func testThePersonalAccountIsNeverAddedAsWork() async {
+        let core = FakeWorkCore()
+        core.org = OrgView(orgId: "o1", name: "Acme", tier: "team", roles: [], enrolled: false, githubOrgs: [])
+        let registry = FakeRegistry()
+        registry.personalEmail = "dana@acme.com"
+        let add = flow(core, registry)
+        await add.run(domain: "acme.com")
+        XCTAssertNotNil(add.error)
+        XCTAssertEqual(registry.list().count, 1)
+        XCTAssertTrue(core.enrollments.isEmpty)
+    }
+}
