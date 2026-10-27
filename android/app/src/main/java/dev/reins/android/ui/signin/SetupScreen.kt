@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -46,8 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -56,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.AppContainer
+import dev.reins.android.R
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.DownloadJob
 import dev.reins.android.design.AskText
@@ -279,7 +283,13 @@ private fun NotificationsPage(notifications: NotificationState, screenLock: Scre
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(20.dp).background(c.inverse, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
-                    GlyphIcon(Glyph.ShieldCheck, c.onInverse, size = 12.dp)
+                    // The notification's small icon (the R), as the shade draws it.
+                    Image(
+                        painterResource(R.drawable.ic_notification),
+                        null,
+                        Modifier.size(13.dp),
+                        colorFilter = ColorFilter.tint(c.onInverse),
+                    )
                 }
                 Spacer(Modifier.width(8.dp))
                 RText("Reins", RType.sans(13f, FontWeight.Medium), c.ink, Modifier.weight(1f))

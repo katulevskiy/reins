@@ -2,7 +2,7 @@
 
 The app for people who never open a terminal: a welcome flow that pairs this computer with the phone (a QR code),
 connects the AI tools it finds, starts the background service and sends git through it, and afterwards a status
-window (with health checks, a test to the phone and work sessions) and a shield in the menu bar (macOS) or tray
+window (with health checks, a test to the phone and work sessions) and the Reins R in the menu bar (macOS) or tray
 (Windows, Linux) with a Pause submenu, Resume, End work session, Open Reins and Quit. It is built with
 [GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in Reins Next, the look of
 all three apps (`design/next`): paper, ink and hairlines for everything you read, panes of rows (frosted over a
@@ -172,8 +172,9 @@ sidebar shows a section's shortcut under the pointer, and Settings lists them al
 
 ### The tray icon
 
-The shield shows the state: a check while Reins is on, pause bars while paused, three dots and an amber dot while a
-request waits on the phone (the menu's first line and the tooltip then say "Waiting on your phone: …"), and an
+The icon shows the state: the R while Reins is on (on the mode's colour while Bypass, Overnight or Lockdown runs), and
+the R on the field's colour with a badge in its corner when something needs the user: pause bars while paused, a clock
+while a request waits on the phone (the menu's first line and the tooltip then say "Waiting on your phone: …"), and an
 exclamation mark while it needs the user (not paired, the service not running). While a work session runs and nothing
 needs the user or waits on the phone, the first line and the tooltip say "Work session: 1 h 12 min left"; **End work
 session** (enabled while one runs) ends it at once. macOS uses the template images (`tray-*.png`), the others the
@@ -261,7 +262,7 @@ the daemon inside the app instead of installing the background service. `REINS_S
 | `macos.sh` | `Reins.app` in `Reins-<version>-macOS.dmg` (drag to Applications) | a Mac |
 | `windows.ps1` | `Reins-<version>-Windows-x64.msi` (WiX v4, per user) | Windows |
 | `linux.sh` | `Reins-<version>-Linux-<arch>.AppImage` and a tarball | Linux (a container works) |
-| `icons.sh` | the icons and the disk image background, from `docs/assets/logo.svg` | anywhere with resvg and ImageMagick |
+| `icons.sh` | the disk image background (the app icons and the tray: `scripts/brand/render-logo.sh`, from `design/brand/reins-origami-r.svg`) | anywhere with resvg |
 
 Each also writes the file without the version (`Reins-macOS.dmg`, ...), the name the website's download links use.
 Signing: `REINS_DEVELOPER_ID` and `REINS_NOTARY_PROFILE` (or `REINS_NOTARY_KEY*`) on macOS, `REINS_WINDOWS_CERT` on

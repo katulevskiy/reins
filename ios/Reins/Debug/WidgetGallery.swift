@@ -424,10 +424,10 @@ private struct MockNotification: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
-                FixedGlyph(.shieldCheck, size: 13)
-                    .foregroundStyle(.white)
+                Image("ReinsIcon")
+                    .resizable()
                     .frame(width: 22, height: 22)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(red: 0.13, green: 0.1, blue: 0.3)))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 Text("Reins").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Text(when).font(.system(size: 12.5)).foregroundStyle(Color(red: 0.42, green: 0.42, blue: 0.47))

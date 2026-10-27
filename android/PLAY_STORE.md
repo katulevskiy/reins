@@ -361,8 +361,8 @@ In `play/` (no fastlane needed; paste or upload them in Grow users > Store prese
 | `play/graphics/feature-graphic.png` | Feature graphic | 1024 × 500, 24-bit PNG |
 | `play/graphics/phone-screenshots/*.png` | Phone screenshots (8) | 1215 × 2160 (9:16), 24-bit PNG |
 
-`play/graphics/render.sh` renders them: the icon from `icon.svg` (the launcher icon, full-bleed; Play rounds the
-corners), the feature graphic from `feature-graphic.svg` (headless Chromium, with the app's Geist faces), and the
+`play/graphics/render.sh` renders them: the icon from `icon.svg` (the app icon, full-bleed, a copy of
+`design/brand/reins-origami-r.svg` that `scripts/brand/render-logo.sh` writes; Play rounds the corners), the feature graphic from `feature-graphic.svg` (headless Chromium, with the app's Geist faces), and the
 screenshots from the `play` build itself (`PlayStoreScreenshots`, Robolectric, dark theme, frozen clock; no text
 messages or updater). `scripts/test-play-upload.py` (CI) checks every limit and that the listing never mentions text
 messages, the APK or self-updating. Keep the text to what the app does (README "Features"); tablet screenshots are

@@ -306,10 +306,11 @@ private struct SampleNotification: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                GlyphIcon(.shieldCheck, size: 13)
-                    .foregroundStyle(.white)
+                Image("ReinsIcon")
+                    .resizable()
                     .frame(width: 22, height: 22)
-                    .background(Palette.onFieldInk, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .accessibilityHidden(true)
                 Text("Reins").font(RFont.fixedSans(13, .semibold)).foregroundStyle(Color(red: 95 / 255, green: 94 / 255, blue: 107 / 255))
                 Spacer()
                 Text("now").font(RFont.fixedSans(13)).foregroundStyle(Color(red: 107 / 255, green: 106 / 255, blue: 120 / 255))
