@@ -465,6 +465,7 @@ impl Engine {
             since: unix_now(),
             signed,
             guardian: None,
+            server_gone: false,
         };
         // Kept before the server hears: a retry after a lost answer finds it.
         self.with_circles(&me.slot, |s| {
@@ -730,6 +731,7 @@ impl Engine {
             since: unix_now(),
             signed,
             guardian: None,
+            server_gone: false,
         };
         self.with_circles(&me.slot, |s| {
             s.held.retain(|h| h.id() != arrangement.id);

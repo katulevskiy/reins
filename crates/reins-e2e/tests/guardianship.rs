@@ -329,31 +329,26 @@ fn reins_now() -> i64 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_ward_ends_a_guardianship_whose_guardian_is_gone() {
+async fn a_guardian_gone_from_the_server_never_suspends_and_the_ward_still_leaves() {
     let w = world().await;
-    let link = invite(&w, guardian(Some(7), false)).await;
+    let link = invite(&w, guardian(Some(0), false)).await;
     // The guardian deletes the account: the link vanishes from the server.
     w.mom.core.delete_account(GUARDIAN.to_owned()).await.expect("deleted");
-    let mine = poll(async || {
+    for _ in 0..3 {
         w.sam.core.sync(1).await.unwrap();
-        w.sam
-            .core
-            .circle_people(true)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|p| p.link_id == link && p.state == CircleLinkState::Suspended)
-    })
-    .await;
-    assert_eq!(mine.role, CircleRole::Guardian);
-    // Nobody can review any more: the ward ends it at once (no notice to wait out), and its requests are its own.
+        w.sam.core.circle_people(true).await.unwrap();
+    }
+    // Absence alone proves nothing: not suspended (which would end at once), still active.
+    let mine = w.sam.core.circle_people(false).await.unwrap().into_iter().find(|p| p.link_id == link).unwrap();
+    assert_eq!(mine.state, CircleLinkState::Active, "a missing link never suspends a ward's guardianship");
+    // The ward still leaves: its end request is kept on its phone and takes the notice it chose (none here).
     w.sam.core.circle_end(link.clone()).await.expect("ended");
     let ended = w.sam.core.circle_people(false).await.unwrap().into_iter().find(|p| p.link_id == link).unwrap();
     assert_eq!(ended.state, CircleLinkState::Ended);
     let args_six = send_args("Six");
     let (_, ()) = tokio::join!(w.ai.tool("gmail_send", &args_six), async {
         let item = next_item(&w.sam).await;
-        assert!(item.circle.is_none(), "no request waits on a guardian who is gone");
+        assert!(item.circle.is_none(), "no request waits on a guardianship that ended");
         w.sam.core.approve(item.id.clone(), none()).await.unwrap();
     });
     poll(async || {

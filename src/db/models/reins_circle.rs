@@ -167,6 +167,11 @@ impl ReinsCircleLink {
         conn.run(move |c| q_links_for(c, user)).await
     }
 
+    /// Links `user` is on, or the error: what a phone reads, which must never take a failed load for "no links".
+    pub async fn try_for_user(user: &str, conn: &DbConn) -> Result<Vec<Self>, crate::Error> {
+        conn.run(move |c| q_try_links_for(c, user)).await.map_res("Error reading Circle links")
+    }
+
     /// Writes `self` if the stored state is still `from`.
     pub async fn update(&self, from: &str, conn: &DbConn) -> Result<bool, crate::Error> {
         conn.run(move |c| q_update_link(c, self, from)).await.map_res("Error updating a Circle link")
@@ -354,11 +359,14 @@ pub(crate) fn q_find_link(c: &mut DbConnInner, id: &str) -> Option<ReinsCircleLi
 }
 
 fn q_links_for(c: &mut DbConnInner, user: &str) -> Vec<ReinsCircleLink> {
+    q_try_links_for(c, user).unwrap_or_default()
+}
+
+fn q_try_links_for(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<ReinsCircleLink>> {
     reins_circle_links::table
         .filter(reins_circle_links::owner_uuid.eq(user).or(reins_circle_links::helper_uuid.eq(user)))
         .order(reins_circle_links::created_at.asc())
         .load(c)
-        .unwrap_or_default()
 }
 
 pub(crate) fn q_update_link(c: &mut DbConnInner, row: &ReinsCircleLink, from: &str) -> QueryResult<bool> {

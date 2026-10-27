@@ -86,6 +86,11 @@ pub(crate) struct Held {
     /// signed terms then: [`Held::guardian_status`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guardian: Option<circle::GuardianStatus>,
+    /// The ward's side of a guardianship the server no longer routes (missing from a list it returned, or ended there
+    /// without a signature). Never a reason to drop the guardian: the ward's own end request is kept here and lapses
+    /// after its full notice, on this phone's clock (the server can't attest it any more).
+    #[serde(default)]
+    pub server_gone: bool,
 }
 
 impl Held {
@@ -106,6 +111,8 @@ impl Held {
     pub fn in_force(&self, now: i64) -> bool {
         self.standing == Standing::Active
             && self.guardian_status().is_none_or(|g| match self.side {
+                // The server routes it: only its end (on its clock) lapses the notice. It doesn't: the full notice.
+                Side::Owner if self.server_gone => g.in_force(now),
                 Side::Owner => !g.ended,
                 Side::Helper => g.in_force(now),
             })
@@ -435,9 +442,16 @@ impl Engine {
                 && let Some(h) = self.circle_state(&me.slot)?.held(&link.id)
                 && matches!(h.standing, Standing::Active | Standing::Paused)
             {
+                // A ward's guardianship is never suspended on the server's word alone (suspended ends at once): it is
+                // only gone from the server, and the ward's end still takes its notice.
+                let ward = h.side == Side::Owner && h.arrangement.terms.kind == circle::CircleKind::Guardian;
                 self.with_circles(&me.slot, |s| {
                     if let Some(h) = s.held_mut(&link.id) {
-                        h.standing = Standing::Suspended;
+                        if ward {
+                            h.server_gone = true;
+                        } else {
+                            h.standing = Standing::Suspended;
+                        }
                     }
                     Ok(())
                 })?;
@@ -491,6 +505,7 @@ impl Engine {
             since: a.created_at,
             signed,
             guardian: None,
+            server_gone: false,
         };
         self.with_circles(&me.slot, |s| {
             s.held.retain(|h| h.id() != a.id);
@@ -580,8 +595,8 @@ impl Engine {
             && h.arrangement.terms.kind == circle::CircleKind::Guardian
             && h.side == Side::Owner
         {
-            // Suspended (the guardian's account was reset, recovered or deleted, or the link vanished): nobody can
-            // review any more, so it ends now rather than leaving everything in scope waiting to be denied.
+            // Suspended (proved: the guardian's owner key changed, through its roster chain): nobody can review any
+            // more, so it ends now rather than leaving everything in scope waiting to be denied.
             if h.standing == Standing::Suspended {
                 return self.guardian_end_suspended(link_id).await;
             }

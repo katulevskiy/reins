@@ -243,6 +243,10 @@ impl Engine {
             body,
             sig,
         };
+        // The server no longer routes it (the ward's side only): the step is kept here, signed, and counts here.
+        if held.server_gone && held.side == Side::Owner {
+            return Ok(change);
+        }
         api_call!(session, |api| api.circle_change(held.id(), &signed)).map_err(|e| match e {
             ApiFailure::Status {
                 status: 409,
@@ -329,8 +333,8 @@ impl Engine {
         .await
     }
 
-    /// The ward ends a guardianship that can't be reviewed any more (suspended: the guardian's account was reset,
-    /// recovered or deleted, or the link vanished): at once, here first. The server is told where it still holds the
+    /// The ward ends a guardianship that can't be reviewed any more (suspended: the guardian's owner key changed, as
+    /// its roster chain proved): at once, here first. A link merely missing on the server is never suspended. The server is told where it still holds the
     /// link; a refusal there changes nothing here.
     pub(crate) async fn guardian_end_suspended(&self, link: &str) -> Result<(), CoreError> {
         let session = self.session()?;
@@ -648,15 +652,21 @@ impl Engine {
             .filter(|h| {
                 h.arrangement.terms.kind == CircleKind::Guardian
                     && matches!(h.standing, Standing::Active | Standing::Paused)
+                    && !h.server_gone
                     && !links.iter().any(|l| l.id == h.id())
             })
             .cloned()
             .collect();
         for h in &gone {
-            // Suspended on both sides: the ward's requests in scope wait for it to end it (it can, at once).
+            // Absence alone proves nothing: the ward's side is only "gone from the server" (its end still takes the
+            // full notice); the guardian's side stops expecting reviews and says so, as reported by the server.
             self.with_circles(&me.slot, |s| {
-                if let Some(h) = s.held_mut(h.id()) {
-                    h.standing = Standing::Suspended;
+                if let Some(held) = s.held_mut(h.id()) {
+                    if held.side == Side::Owner {
+                        held.server_gone = true;
+                    } else {
+                        held.standing = Standing::Suspended;
+                    }
                 }
                 Ok(())
             })?;
@@ -948,6 +958,7 @@ mod tests {
             last_seq: 0,
             since: 1,
             guardian: None,
+            server_gone: false,
         }
     }
 
@@ -989,6 +1000,18 @@ mod tests {
         judge(&mut mom, &end(1, t, t + 3 * DAY), Some(t), "l", "sam@example.com");
         assert!(mom.in_force(t + 3 * DAY - 1));
         assert!(!mom.in_force(t + 3 * DAY));
+    }
+
+    #[test]
+    fn a_link_gone_from_the_server_still_takes_the_full_notice() {
+        let t = 1_000_000;
+        let mut ward = held(Side::Owner, 7);
+        ward.server_gone = true;
+        assert_eq!(ward.standing, Standing::Active, "absence never suspends");
+        assert!(ward.in_force(t + 365 * DAY), "nothing lapses without an end request");
+        judge(&mut ward, &end(1, t, t + 7 * DAY), Some(t), "l", "sam");
+        assert!(ward.in_force(t + 7 * DAY - 1), "the full notice, on this phone's clock");
+        assert!(!ward.in_force(t + 7 * DAY));
     }
 
     #[test]

@@ -581,7 +581,8 @@ async fn get_links(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResul
     require_approval_device(&headers, &key, &conn).await?;
     let user = user_key(&headers);
     let mut out = Vec::new();
-    for link in ReinsCircleLink::for_user(&user, &conn).await {
+    // A failed load is an error, never an empty list: a phone reads a missing link as news.
+    for link in ReinsCircleLink::try_for_user(&user, &conn).await.map_err(|e| internal(&e))? {
         let owner = link.owner_uuid == user;
         let peer_account = if owner {
             link.helper_uuid.clone()
@@ -730,7 +731,7 @@ async fn post_change(
     if change.seq <= last_seq {
         return Err(conflict("An older change"));
     }
-    if ReinsCircleLink::changes(&link.id, &conn).await.len() >= MAX_CHANGES_PER_LINK {
+    if !exempt_from_cap(&change) && ReinsCircleLink::changes(&link.id, &conn).await.len() >= MAX_CHANGES_PER_LINK {
         return Err(api_err(Status::TooManyRequests, codes::RATE_LIMITED, "Too many changes of this arrangement"));
     }
     // Signed by the changer's current owner key (the phones check it against the key they pinned).
@@ -992,6 +993,14 @@ pub async fn sweep(pool: &DbPool, now: i64, purge: bool) {
     }
 }
 
+/// Whether a change goes through even when its link's history is full: every way out (an end, a ward's end request,
+/// a guardian's consent), so neither side can fill the history to keep the other from ending it.
+#[must_use]
+pub fn exempt_from_cap(change: &circle::LinkChange) -> bool {
+    change.state == LinkState::Ended
+        || matches!(change.guardian, Some(GuardianChange::EndRequested { .. } | GuardianChange::EndConsented { .. }))
+}
+
 /// The ward's last logged `EndRequested` of `link`: what an end at its notice reports to the guardian.
 async fn ending_request(link: &str, conn: &DbConn) -> Option<SignedChange> {
     ReinsCircleLink::changes(link, conn).await.into_iter().rev().find_map(|row| {
@@ -1096,6 +1105,46 @@ mod tests {
         assert!(!change_allowed(Active, Paused, Side::Helper));
         assert!(!change_allowed(Ended, Active, Side::Owner));
         assert!(!change_allowed(Ended, Ended, Side::Helper));
+    }
+
+    #[test]
+    fn ending_steps_are_never_capped() {
+        let change = |state, by, guardian| circle::LinkChange {
+            v: 1,
+            link: "0123456789abcdef0123456789abcdef".to_owned(),
+            arrangement: "0".repeat(64),
+            seq: 1,
+            state,
+            by,
+            at: 1,
+            guardian,
+        };
+        assert!(exempt_from_cap(&change(LinkState::Ended, Side::Helper, None)), "the guardian leaving");
+        assert!(exempt_from_cap(&change(LinkState::Ended, Side::Owner, None)));
+        assert!(exempt_from_cap(&change(
+            LinkState::Active,
+            Side::Owner,
+            Some(GuardianChange::EndRequested {
+                effective_at: 9
+            })
+        )));
+        assert!(exempt_from_cap(&change(
+            LinkState::Ended,
+            Side::Helper,
+            Some(GuardianChange::EndConsented {
+                request_at: 1
+            })
+        )));
+        // What can fill a history is capped: pauses, resumes, digests, minor marks.
+        assert!(!exempt_from_cap(&change(LinkState::Paused, Side::Owner, None)));
+        assert!(!exempt_from_cap(&change(
+            LinkState::Active,
+            Side::Owner,
+            Some(GuardianChange::Digest {
+                on: true
+            })
+        )));
+        assert!(!exempt_from_cap(&change(LinkState::Active, Side::Helper, Some(GuardianChange::MinorProposed))));
     }
 
     #[test]

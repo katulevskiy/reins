@@ -464,9 +464,12 @@ which platform. The server does learn that a ward accepted a minor mark. A minor
 consent, which the core also gates on the owner check.
 
 **Whose clock:** a ward's end lapses on the ward's phone only when the server ends the link (its sweep, on the server's
-clock), so a ward's clock set forward ends nothing early; the guardian's phone uses its own clock. A guardianship
-whose guardian is gone (the account reset or deleted, or the link vanished) is suspended, and the ward can end it at
-once, so nothing in scope waits to be denied.
+clock), so a ward's clock set forward ends nothing early; the guardian's phone uses its own clock. Only proof
+suspends a ward's guardianship (the guardian's owner key changed, through its roster chain), and then the ward can end
+it at once. A link merely missing on the server, or ended there without a signature, is never a reason: the ward's end
+request is then kept on its phone and lapses after the full notice, on its clock (the server can't attest it any more;
+a cooperative limit). The server answers an error, never an empty list, when it can't read a phone's links. Ending
+steps (an end, a ward's end request, a guardian's consent) are never refused by the per-link change cap.
 
 **Notices** are returned until the guardian's phone acknowledges them (`POST /reins/api/guardian/notices/seen`), so one
 lost in transit comes again. A guardian's phone counts a guardianship's changes strictly in order: if the server
