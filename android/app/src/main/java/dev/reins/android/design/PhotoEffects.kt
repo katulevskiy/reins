@@ -34,7 +34,7 @@ enum class PhotoEffect(val label: String) {
 
 /**
  * Turning an image into a wallpaper on this phone: a photo cropped to the shipped art's shape (780 × 1000, from its
- * top), given an effect, and faded into the paper at its foot ([fade] 0 none … 1 from a third of the way down). Pure
+ * top), given an effect, and faded into the paper at its foot ([fade] 0 none … 1 from 30 % of the way down). Pure
  * functions on pixels; nothing leaves the phone.
  *
  * The effects are the Next boards' (design/next, `source/art/fx.py`), and the iPhone draws them with the same steps
@@ -68,6 +68,16 @@ object PhotoEffects {
      */
     class Foot(val start: Double, val end: Double)
 
+    /**
+     * The share of the height at the bottom that an effect fades into the paper on an image with no [Foot] of its own
+     * (the owner's photo), whatever the added fade: an effect can turn the bottom pure black, so the art never ends on
+     * a hard line. As on the iPhone (`WallpaperRender.effectFoot`).
+     */
+    const val EFFECT_FOOT = 0.2f
+
+    /** Where the fade starts, as a share of the height from the top: later with less fade, none at 0 (as the iPhone's). */
+    fun fadeStart(fade: Float): Float = 1f - 0.7f * fade.coerceIn(0f, 1f)
+
     /** [src] with [effect] and [fade], for a theme; [foot]: where [src] already fades into the page. */
     fun apply(src: Bitmap, effect: PhotoEffect, fade: Float, dark: Boolean, foot: Foot? = null): Bitmap {
         val w = src.width
@@ -77,7 +87,9 @@ object PhotoEffects {
         val plain = if (foot != null && effect != PhotoEffect.Original) px.copyOf() else null
         render(px, w, h, effect, dark)
         if (plain != null) footOut(px, plain, w, h, foot!!)
-        fadeOut(px, w, h, fade, paper(dark).toArgb())
+        // Original keeps the bottom as chosen; a shipped image has its own foot.
+        val minimumFoot = if (effect == PhotoEffect.Original || foot != null) 0f else EFFECT_FOOT
+        fadeOut(px, w, h, fade, paper(dark).toArgb(), minimumFoot)
         return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
@@ -107,10 +119,13 @@ object PhotoEffects {
         }
     }
 
-    /** Fades into [paper] over the lower part; the more fade, the higher it starts. */
-    private fun fadeOut(px: IntArray, w: Int, h: Int, fade: Float, paper: Int) {
-        if (fade <= 0f) return
-        val start = 1f - fade * 0.66f
+    /**
+     * Fades into [paper] over the lower part, eased, from [fadeStart] down (and at least the bottom [minimumFoot]); the
+     * more fade, the higher it starts.
+     */
+    private fun fadeOut(px: IntArray, w: Int, h: Int, fade: Float, paper: Int, minimumFoot: Float) {
+        val start = minOf(fadeStart(fade), 1f - minimumFoot.coerceIn(0f, 1f))
+        if (start >= 1f) return
         for (y in 0 until h) {
             val t = ((y.toFloat() / h - start) / (1f - start)).coerceIn(0f, 1f)
             if (t <= 0f) continue

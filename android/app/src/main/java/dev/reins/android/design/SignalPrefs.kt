@@ -56,7 +56,7 @@ enum class ThemeChoice(val label: String) {
 data class WallpaperChoice(
     val image: Wallpaper,
     val effect: PhotoEffect = PhotoEffect.Original,
-    /** 0 none … 1 from a third of the way down ([PhotoEffects.apply]). */
+    /** 0 none … 1 from 30 % of the way down ([PhotoEffects.fadeStart]). */
     val fade: Float = 0f,
 ) {
     /** The fade in hundredths: the step the slider keeps and the made pictures are keyed by. */

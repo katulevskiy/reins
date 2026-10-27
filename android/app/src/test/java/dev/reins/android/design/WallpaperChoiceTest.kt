@@ -197,7 +197,7 @@ class WallpaperChoiceTest {
         assertEquals(keys.size, keys.toSet().size)
         // The fade is kept in hundredths: the same step is the same picture.
         assertEquals(Wallpapers.key(base.copy(fade = 0.501f), true), Wallpapers.key(base.copy(fade = 0.499f), true))
-        assertEquals("Eyes-Dither-50-dark", Wallpapers.key(base, true))
+        assertEquals("Eyes-Dither-50-dark-r3", Wallpapers.key(base, true))
     }
 
     @Test

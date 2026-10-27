@@ -135,9 +135,15 @@ object Wallpapers {
     /** Where made pictures were kept before; dropped once ([Appearance.load]). */
     internal fun oldMadeDir(context: Context): File = File(context.cacheDir, "wallpapers")
 
-    /** The name a made picture is kept under: one per image, effect drawn, fade step and theme. */
+    /**
+     * Bumped when the drawing itself changes, so pictures made by an earlier version are made again (3, as the
+     * iPhone's `WallpaperArt.renderVersion`: colour effects with a foot; an effect on a photo fades into the paper).
+     */
+    const val RENDER_VERSION = 3
+
+    /** The name a made picture is kept under: one per image, effect drawn, fade step, theme and render version. */
     fun key(choice: WallpaperChoice, dark: Boolean): String =
-        "${choice.image.name}-${choice.drawnEffect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}"
+        "${choice.image.name}-${choice.drawnEffect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}-r$RENDER_VERSION"
 
     fun madeFile(context: Context, choice: WallpaperChoice, dark: Boolean): File = File(madeDir(context), key(choice, dark) + ".png")
 
