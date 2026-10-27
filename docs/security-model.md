@@ -447,6 +447,19 @@ give that word another meaning are never rewritten:
 
 A net that can't be made deletes nothing and leaves the request at its own level.
 
+`reins net run` is bound to the hook's plan:
+
+- the plan names its store;
+- it runs only the planned programs, in the planned folders, within 12 hours;
+- it deletes for real only the scratch roots the hook recorded.
+
+Commands that set `HOME`, `PATH`, `XDG_*`, `GIT_*` or `REINS_*` are never netted.
+
+Activity says Netted only once something was really kept. The trash keeps at most a tenth of its disk, oldest first.
+
+A force push is pinned to the remote tip that was kept. Backup refs live under `refs/reins/backup/`, so a
+`git push --mirror` would publish them; Reins never nets a mirror push.
+
 Nets are a guardrail, not a boundary. An agent running as the same user can delete without a hook, or edit the
 trash. The phone shows the net it is told about read-only, and never asks less because of it. The net travels as its
 own argument, which only the hook sets. `reins ask`'s words are the agent's own, so they can't claim one.
