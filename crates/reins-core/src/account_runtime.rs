@@ -528,6 +528,11 @@ impl Notifier for ScopedNotifier {
             self.target.autopilot_changed(event);
         }
     }
+    fn circle_changed(&self, event: crate::circles::CircleEvent) {
+        if self.active() {
+            self.target.circle_changed(event);
+        }
+    }
 }
 
 #[cfg(test)]

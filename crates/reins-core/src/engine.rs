@@ -110,6 +110,8 @@ pub struct Engine {
     pub(crate) not_approval: std::sync::atomic::AtomicBool,
     /// The server's Instant window (seconds), as its last poll said.
     pub(crate) instant_window: std::sync::atomic::AtomicI64,
+    /// Serializes changes to this account's Circle state (`circles`).
+    pub(crate) circles_lock: Mutex<()>,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -264,6 +266,7 @@ impl Engine {
             synced_writes: std::sync::atomic::AtomicU64::new(u64::MAX),
             sync_queued: std::sync::atomic::AtomicBool::new(false),
             not_approval: std::sync::atomic::AtomicBool::new(false),
+            circles_lock: Mutex::new(()),
             instant_window: std::sync::atomic::AtomicI64::new(
                 i64::try_from(reins_proto::ticket::INSTANT_DEFAULT_SECS).unwrap_or(i64::MAX),
             ),
@@ -816,7 +819,18 @@ impl Engine {
     pub async fn handle_push(&self, kind: &str, id: &str) -> Result<(), CoreError> {
         let result = self.handle_push_inner(kind, id).await;
         self.autopilot_pass().await;
+        self.circles_after(kind == "circle").await;
         result
+    }
+
+    /// Circles after an intake: packets for what was just parked, answers and reviews when the server had news.
+    async fn circles_after(&self, news: bool) {
+        let Ok(session) = self.session() else {
+            return;
+        };
+        if let Err(e) = Box::pin(self.circles_sync(&session, news)).await {
+            log::info!("Circles: {e}");
+        }
     }
 
     /// Like [`Engine::handle_push`], for a process that cannot run the model (the iOS notification extension): Bypass
@@ -827,6 +841,7 @@ impl Engine {
         let result = self.handle_push_inner(kind, id).await;
         // Bypass and Lockdown need no model: they decide here, so a bypass answers while the app is not running.
         self.autopilot_pass_without_model().await;
+        self.circles_after(kind == "circle").await;
         result
     }
 
@@ -838,6 +853,8 @@ impl Engine {
             }
             "blob" => self.handle_blob_push(id).await,
             "join" => self.fetch_and_park_join(id).await,
+            // Circles: handled after the pass (`circles_after`), with everything else that is new.
+            "circle" => Ok(()),
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;
@@ -886,11 +903,14 @@ impl Engine {
         }
         let result = self.sync_inner(wait_secs).await;
         self.autopilot_pass().await;
+        let news = matches!(&result, Ok(true));
+        self.circles_after(news).await;
         result?;
         self.pending()
     }
 
-    pub(crate) async fn sync_inner(&self, wait_secs: u32) -> Result<(), CoreError> {
+    /// `Ok(true)`: the server had Circle news.
+    pub(crate) async fn sync_inner(&self, wait_secs: u32) -> Result<bool, CoreError> {
         let session = self.session()?;
         self.report_services(&session).await;
         self.report_modes(&session).await;
@@ -945,7 +965,7 @@ impl Engine {
         {
             log::warn!("the account's log did not sync: {e}");
         }
-        Ok(())
+        Ok(pending.circles)
     }
 
     // ---- read-only views -----------------------------------------------------------

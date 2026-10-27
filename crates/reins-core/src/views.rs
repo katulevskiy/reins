@@ -287,6 +287,7 @@ pub fn request_item(parked: &ParkedRequest) -> PendingItem {
     PendingItem {
         ticket: None,
         can_defer: false,
+        circle: None,
         kind: PendingKind::Request,
         id: parked.request.id.0.clone(),
         title: request_title(parked),
@@ -365,6 +366,7 @@ pub fn pairing_item(p: &PairingRequest) -> PendingItem {
     PendingItem {
         ticket: None,
         can_defer: false,
+        circle: None,
         kind: PendingKind::Pairing,
         id: p.id.0.clone(),
         title: format!("Connect {} to Reins?", p.client_name),

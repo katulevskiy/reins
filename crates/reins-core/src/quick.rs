@@ -452,6 +452,7 @@ impl Engine {
             item.wait_until = Some(ticket.deadline);
         }
         item.can_defer = item.ticket.is_none();
+        item.circle = self.circle_progress(&parked.request.id.0);
         item
     }
 

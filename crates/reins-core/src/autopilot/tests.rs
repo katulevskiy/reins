@@ -91,6 +91,7 @@ struct Notes {
     /// refresh), and keeps every id it ever listed in `listed`.
     watch: Mutex<Option<std::sync::Weak<ReinsCore>>>,
     listed: Mutex<std::collections::BTreeSet<String>>,
+    circle: Mutex<Vec<crate::circles::CircleEvent>>,
 }
 
 impl Notes {
@@ -127,6 +128,9 @@ impl Notifier for Notes {
 
     fn autopilot_changed(&self, event: AutopilotEvent) {
         self.events.lock().unwrap().push(event);
+    }
+    fn circle_changed(&self, event: crate::circles::CircleEvent) {
+        self.circle.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(event);
     }
 }
 

@@ -41,6 +41,8 @@ pub struct Notes {
     /// What Autopilot (or a bypass, or Lockdown) decided on its own.
     pub decided: Mutex<Vec<AutoDecisionView>>,
     pub events: Mutex<Vec<AutopilotEvent>>,
+    /// Circle events (reviews waiting, changes).
+    pub circle: Mutex<Vec<reins_core::CircleEvent>>,
 }
 
 impl Notifier for Notes {
@@ -56,6 +58,9 @@ impl Notifier for Notes {
 
     fn autopilot_changed(&self, event: AutopilotEvent) {
         self.events.lock().expect("notes").push(event);
+    }
+    fn circle_changed(&self, event: reins_core::CircleEvent) {
+        self.circle.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(event);
     }
 }
 

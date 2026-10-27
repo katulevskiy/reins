@@ -132,6 +132,9 @@ pub struct PendingItem {
     /// An Instant request the reviewer can move to later (`decide_later`).
     #[uniffi(default)]
     pub can_defer: bool,
+    /// Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
+    #[uniffi(default)]
+    pub circle: Option<crate::circles::CircleProgress>,
 }
 
 /// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.

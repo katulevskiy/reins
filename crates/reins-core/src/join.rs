@@ -75,6 +75,7 @@ pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
     PendingItem {
         ticket: None,
         can_defer: false,
+        circle: None,
         kind: PendingKind::Join,
         id: j.id.clone(),
         title,

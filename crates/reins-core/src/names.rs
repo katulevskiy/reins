@@ -244,6 +244,7 @@ mod tests {
         let mut item = PendingItem {
             ticket: None,
             can_defer: false,
+            circle: None,
             kind: crate::types::PendingKind::Request,
             id: "r1".to_owned(),
             title: "Claude wants to read 2 emails".to_owned(),

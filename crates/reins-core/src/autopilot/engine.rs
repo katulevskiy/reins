@@ -941,6 +941,23 @@ impl Engine {
                 return self.ap_wait(&subject, &suggestion);
             }
         }
+        if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
+            // A Circle request (04, 08 R3): others decide it too, so no automatic mode approves it; the owner's tap
+            // fills the owner's slot. Routed again here (idempotent), and when that fails it waits for the owner too.
+            let routed = self.circle_route(&row.id);
+            if let Err(e) = &routed {
+                log::warn!("a Circle could not be applied; the request waits: {e}");
+            }
+            if routed.is_err() || self.circle_hold(&row.id).is_some() {
+                let reason = self
+                    .circle_progress(&row.id)
+                    .map(|p| p.line)
+                    .filter(|l| !l.is_empty())
+                    .unwrap_or_else(|| "Your Circle decides this too".to_owned());
+                let suggestion = Self::ap_asks(&subject, mode, now, reason.clone(), Some(reason));
+                return self.ap_wait(&subject, &suggestion);
+            }
+        }
         if mode == AutopilotMode::Bypass {
             // Before anything that could fail or wait (the profile, the connection list): nothing a bypass covers is
             // left waiting.

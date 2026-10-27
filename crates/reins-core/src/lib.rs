@@ -19,6 +19,7 @@ pub mod authorization_trace;
 pub mod autopilot;
 pub mod avatar;
 pub mod blob;
+pub mod circles;
 pub mod command_presentation;
 pub mod connector;
 pub mod crypto;
@@ -63,6 +64,11 @@ pub use autopilot::{
     ConnectionAutopilot, DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus,
     ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset, ProfileView, RiskLevel, RiskView,
     SuggestionView, ThresholdReplay, Verdict,
+};
+pub use circles::{
+    CircleDraft, CircleEvent, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleJoinStage,
+    CircleLinkState, CircleNoticeView, CirclePerson, CircleProgress, CircleReviewState, CircleReviewView, CircleRole,
+    CircleScopePreset,
 };
 pub use connector::LoginProgress;
 pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceEvent, SmsMessage, SmsThread};
