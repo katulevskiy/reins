@@ -173,6 +173,7 @@ pub fn notification(push: &PushMessage) -> Notification {
         PushKind::Blob => "blob",
         PushKind::Join => "join",
         PushKind::Handover => "handover",
+        PushKind::OrgReview => "org_review",
         PushKind::Replaced => return silent(),
         PushKind::Sync => {
             if push.sync_head().is_none_or(|(_, alert)| !alert) {

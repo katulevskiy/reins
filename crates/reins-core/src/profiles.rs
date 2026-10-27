@@ -354,6 +354,23 @@ pub fn org_enrollment_message(challenge: String) -> Vec<u8> {
     reins_proto::org::enrollment_message(&challenge)
 }
 
+/// The bytes the enrolled device key signs to answer an org review (`reins_proto::managed::review_message`):
+/// approve or deny, and `Propose` to confirm your own admin change. `org_id` is the work account's org.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value, reason = "UniFFI passes owned values")]
+pub fn org_review_message(org_id: String, review: crate::org::OrgReviewView, approve: bool, at: i64) -> Vec<u8> {
+    crate::org::review_message_for(&org_id, &review, approve, at)
+}
+
+/// The bytes the enrolled device key signs to set the member's own policy
+/// (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
+/// replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value, reason = "UniFFI passes owned values")]
+pub fn org_member_policy_message(org_id: String, member: String, version: u64, at: i64, body: String) -> Vec<u8> {
+    reins_proto::managed::member_policy_message(&org_id, &member, version, at, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +525,9 @@ mod tests {
     #[test]
     fn the_enrollment_message_is_the_protocols() {
         assert_eq!(org_enrollment_message("abc".into()), reins_proto::org::enrollment_message("abc"));
+        assert_eq!(
+            org_member_policy_message("o".into(), "u".into(), 2, 9, "{}".into()),
+            reins_proto::managed::member_policy_message("o", "u", 2, 9, "{}")
+        );
     }
 }

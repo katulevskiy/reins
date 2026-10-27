@@ -1294,6 +1294,9 @@ final class AppModel {
             open(.connections)
         case .home:
             home()
+        case .orgReviews:
+            // Only a work profile has them; the Personal one opens Settings.
+            if WorkProfiles.active.managed { show(.orgReviews, in: .settings) } else { open(.settings) }
         case .pair:
             break
         }

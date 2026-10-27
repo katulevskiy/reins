@@ -29,6 +29,8 @@ enum NotificationCategory: String, CaseIterable {
     case grant
     /// This phone's role, Autopilot pausing itself.
     case status
+    /// An org review waits for this member's signature (a work profile's, O2): a tap opens its reviews.
+    case orgReview = "org_review"
 
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
@@ -38,6 +40,7 @@ enum NotificationCategory: String, CaseIterable {
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
         case .status: "Open Reins to see more"
+        case .orgReview: "A review waits for you"
         }
     }
 
@@ -48,6 +51,7 @@ enum NotificationCategory: String, CaseIterable {
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
+        case .orgReview: "reviews"
         }
         return WorkProfiles.thread(base)
     }

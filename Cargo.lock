@@ -8285,6 +8285,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reins-audit"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "reins-proto",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "reins-core"
 version = "0.1.0"
 dependencies = [
@@ -8411,8 +8423,10 @@ dependencies = [
  "hyper 1.11.1",
  "hyper-util",
  "log",
+ "reins-audit",
  "reins-core",
  "reins-desktop",
+ "reins-executor",
  "reins-proto",
  "reqwest",
  "ring",
@@ -8423,6 +8437,30 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "reins-executor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "data-encoding",
+ "log",
+ "reins-audit",
+ "reins-policy",
+ "reins-proto",
+ "reqwest",
+ "ring",
+ "rustls 0.23.44",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.8.23",
+ "webpki-roots",
  "wiremock",
  "zeroize",
 ]
@@ -11380,6 +11418,8 @@ dependencies = [
  "psl",
  "rand 0.10.2",
  "regex",
+ "reins-audit",
+ "reins-policy",
  "reins-proto",
  "reqsign-aws-v4",
  "reqsign-core",
@@ -11407,7 +11447,9 @@ dependencies = [
  "webauthn-rs-core",
  "webauthn-rs-proto",
  "which 8.0.6",
+ "x509-parser",
  "yubico_ng",
+ "zeroize",
 ]
 
 [[package]]

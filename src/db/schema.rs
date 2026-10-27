@@ -499,6 +499,7 @@ table! {
         created_by -> Text,
         created_at -> BigInt,
         updated_at -> BigInt,
+        body_retention_days -> Integer,
     }
 }
 
@@ -570,6 +571,8 @@ table! {
         posture_at -> BigInt,
         enrolled_at -> BigInt,
         revoked_at -> Nullable<BigInt>,
+        attestation_state -> Text,
+        attestation_detail -> Nullable<Text>,
     }
 }
 
@@ -642,6 +645,140 @@ table! {
         connection_uuid -> Text,
         url -> Text,
         verified_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_keys (org_uuid, key_id) {
+        org_uuid -> Text,
+        key_id -> Text,
+        purpose -> Text,
+        public_key -> Text,
+        sealed -> Text,
+        created_at -> BigInt,
+        retired_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_policies (org_uuid, revision) {
+        org_uuid -> Text,
+        revision -> BigInt,
+        hash -> Text,
+        body -> Text,
+        envelope -> Nullable<Text>,
+        state -> Text,
+        created_by -> Text,
+        created_at -> BigInt,
+        activated_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_member_policies (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        body -> Text,
+        hash -> Text,
+        device_uuid -> Text,
+        version -> BigInt,
+        at -> BigInt,
+        sig -> Text,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_requests (uuid) {
+        uuid -> Text,
+        org_uuid -> Text,
+        user_uuid -> Text,
+        connection_uuid -> Text,
+        tool -> Text,
+        digest -> Text,
+        kind -> Text,
+        state -> Text,
+        outcome -> Text,
+        snapshot -> Text,
+        member_policy -> Nullable<Text>,
+        trace -> Text,
+        obligations -> Text,
+        decision -> Nullable<Text>,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        decided_at -> Nullable<BigInt>,
+        valid_until -> Nullable<BigInt>,
+        claimed_by -> Nullable<Text>,
+        claimed_at -> Nullable<BigInt>,
+        finished_at -> Nullable<BigInt>,
+        receipt -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_org_bodies (request_uuid, part) {
+        request_uuid -> Text,
+        part -> Text,
+        org_uuid -> Text,
+        key_id -> Text,
+        sealed -> Text,
+        created_at -> BigInt,
+        purge_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_approvals (subject_uuid, user_uuid, decision) {
+        subject_uuid -> Text,
+        user_uuid -> Text,
+        decision -> Text,
+        org_uuid -> Text,
+        device_uuid -> Text,
+        at -> BigInt,
+        sig -> Text,
+        obligation -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_org_executors (org_uuid, executor_id) {
+        org_uuid -> Text,
+        executor_id -> Text,
+        mode -> Text,
+        public_key -> Text,
+        created_at -> BigInt,
+        last_seen -> Nullable<BigInt>,
+        revoked_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_leases (uuid) {
+        uuid -> Text,
+        org_uuid -> Text,
+        user_uuid -> Text,
+        connection_uuid -> Text,
+        request_uuid -> Text,
+        repo -> Text,
+        access -> Text,
+        box_key -> Text,
+        state -> Text,
+        sealed -> Nullable<Text>,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        issued_at -> Nullable<BigInt>,
+        revoked_at -> Nullable<BigInt>,
+        revoke_done_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_checkpoints (org_uuid, seq) {
+        org_uuid -> Text,
+        seq -> BigInt,
+        hash -> Text,
+        at -> BigInt,
+        envelope -> Text,
     }
 }
 

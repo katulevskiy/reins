@@ -348,6 +348,30 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::PUT, "/org/posture").json(posture)).await.map(drop)
     }
 
+    /// O2 `GET /org/reviews`: what waits for this member's review; none for an account that isn't an org's member
+    /// (404).
+    pub async fn org_reviews(&self) -> Result<Vec<reins_proto::managed::ReviewItem>, ApiFailure> {
+        match Self::json(self.request(Method::GET, "/org/reviews")).await {
+            Ok(items) => Ok(items),
+            Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// O2 `POST /org/reviews/{id}`: this device's signed answer.
+    pub async fn org_answer(&self, id: &str, answer: &reins_proto::managed::ReviewAnswer) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::POST, &format!("/org/reviews/{id}")).json(answer)).await.map(drop)
+    }
+
+    /// O2 `PUT /org/member-policy`: the member's own stricter policy, signed by this device.
+    pub async fn org_member_policy(&self, policy: &reins_proto::managed::SignedMemberPolicy) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::PUT, "/org/member-policy").json(policy)).await.map(drop)
+    }
+
     /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
     pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
         check_id(id)?;

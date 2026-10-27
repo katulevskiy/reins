@@ -16,6 +16,7 @@ pub mod enroll;
 pub mod gmail;
 pub mod ids;
 pub mod join;
+pub mod managed;
 pub mod oplog;
 pub mod org;
 pub mod pairing;

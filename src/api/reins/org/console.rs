@@ -94,7 +94,7 @@ fn sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
     SESSIONS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn base() -> String {
+pub(super) fn base() -> String {
     format!("{}/reins/org/", CONFIG.domain_path())
 }
 
@@ -150,13 +150,13 @@ fn s_eq(a: &str, b: &str) -> bool {
 }
 
 /// The signed-in session of this browser: `(sid, user, email, csrf)`.
-struct Signed {
-    sid: String,
-    user: String,
-    email: String,
-    csrf: String,
+pub(super) struct Signed {
+    pub(super) sid: String,
+    pub(super) user: String,
+    pub(super) email: String,
+    pub(super) csrf: String,
     github_token: Option<String>,
-    flash: Option<(String, bool)>,
+    pub(super) flash: Option<(String, bool)>,
 }
 
 fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
@@ -179,7 +179,7 @@ fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
     })
 }
 
-fn flash(sid: &str, text: &str, bad: bool) {
+pub(super) fn flash(sid: &str, text: &str, bad: bool) {
     if let Some(s) = sessions().get_mut(sid) {
         s.flash = Some((text.to_owned(), bad));
     }
@@ -202,23 +202,23 @@ impl<'r> Responder<'r, 'static> for Page {
 
 type Answer = Result<Page, Redirect>;
 
-fn to_home() -> Redirect {
+pub(super) fn to_home() -> Redirect {
     Redirect::to(base().trim_end_matches('/').to_owned())
 }
 
-fn to_org(org: &str, tail: &str) -> Redirect {
+pub(super) fn to_org(org: &str, tail: &str) -> Redirect {
     Redirect::to(format!("{}{}{}", base(), org, tail))
 }
 
-fn check_csrf(s: &Signed, given: &str) -> bool {
+pub(super) fn check_csrf(s: &Signed, given: &str) -> bool {
     crate::crypto::ct_eq(&s.csrf, given)
 }
 
-fn not_found() -> Page {
+pub(super) fn not_found() -> Page {
     Page(pages::page("Not found", None, "<section><h1>Not found</h1></section>", &base()))
 }
 
-async fn run<T: Send + 'static>(
+pub(super) async fn run<T: Send + 'static>(
     conn: &DbConn,
     f: impl FnOnce(&mut DbConnInner) -> Result<T, OrgError> + Send + 'static,
 ) -> Result<T, OrgError> {
@@ -226,15 +226,15 @@ async fn run<T: Send + 'static>(
 }
 
 /// Flash text for an outcome.
-fn outcome_text(r: &Result<admin::Proposed, OrgError>, done: &str) -> (String, bool) {
+pub(super) fn outcome_text(r: &Result<admin::Proposed, OrgError>, done: &str) -> (String, bool) {
     match r {
         Ok(admin::Proposed::Applied) => (done.to_owned(), false),
-        Ok(admin::Proposed::Pending(_)) => ("Waiting for a second admin to approve.".to_owned(), false),
+        Ok(admin::Proposed::Pending(_)) => ("Waiting for approval on an admin's phone.".to_owned(), false),
         Err(e) => (e.message().to_owned(), true),
     }
 }
 
-async fn propose(
+pub(super) async fn propose(
     conn: &DbConn,
     pool: &DbPool,
     org: &str,
@@ -494,7 +494,12 @@ async fn create(form: Form<NewOrg>, cookies: &CookieJar<'_>, conn: DbConn) -> Re
 }
 
 /// The signed-in admin's way into `org`: refused (as not found) unless an active member holding one of `caps`.
-async fn admin_of(cookies: &CookieJar<'_>, conn: &DbConn, org: &str, caps: &'static [Capability]) -> Option<Signed> {
+pub(super) async fn admin_of(
+    cookies: &CookieJar<'_>,
+    conn: &DbConn,
+    org: &str,
+    caps: &'static [Capability],
+) -> Option<Signed> {
     if !enabled() {
         return None;
     }
@@ -519,7 +524,7 @@ async fn admin_of(cookies: &CookieJar<'_>, conn: &DbConn, org: &str, caps: &'sta
 const ADMIN: &[Capability] =
     &[Capability::SetUpOrg, Capability::AssignRoles, Capability::ViewMembers, Capability::ViewAdminEvents];
 
-fn email_of(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
+pub(super) fn email_of(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
     use diesel::prelude::*;
     Ok(users::table
         .filter(users::uuid.eq(user))
@@ -962,7 +967,7 @@ async fn members(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
     Page(pages::members(&frame, &view))
 }
 
-async fn org_name(conn: &DbConn, org: &str) -> Result<String, OrgError> {
+pub(super) async fn org_name(conn: &DbConn, org: &str) -> Result<String, OrgError> {
     let o = org.to_owned();
     run(conn, move |c| Ok(reins_org::q_org_name(c, &o)?.unwrap_or_default())).await
 }
@@ -1071,7 +1076,7 @@ async fn approve_change(
         Ok(action) => match binding_for(&conn, org, &action, s.github_token.as_deref()).await {
             Ok(binding) => {
                 let (o, ch, u, now) = (org.to_owned(), form.change.clone(), s.user.clone(), now_unix());
-                match run(&conn, move |c| admin::approve(c, &o, &ch, &u, binding.as_ref(), now)).await {
+                match run(&conn, move |c| admin::approve_from_console(c, &o, &ch, &u, binding.as_ref(), now)).await {
                     Ok(followups) => {
                         for removal in followups {
                             deprovision::finish(removal, Some(pool)).await;
@@ -1088,6 +1093,11 @@ async fn approve_change(
     };
     match result {
         Ok(()) => flash(&s.sid, "Approved and applied.", false),
+        Err(OrgError::Invalid("Approve it on your phone first.")) => {
+            // The approval is the phone's: wake it.
+            super::reviews::notify(pool.inner(), std::slice::from_ref(&s.user), &form.change);
+            flash(&s.sid, "Approve it on your phone first. We sent it there.", true);
+        }
         Err(e) => flash(&s.sid, e.message(), true),
     }
     to_org(org, "")

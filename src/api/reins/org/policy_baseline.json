@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "org": "",
+  "matrix": {
+    "mine":    ["auto", "auto", "auto", "ask"],
+    "friends": ["auto", "ask_first", "auto", "ask"],
+    "work":    ["auto", "auto", "auto", "ask"],
+    "outside": ["ask", "ask", "ask", "ask"]
+  },
+  "rules": [],
+  "cell_review": {"reviewers": "requester", "exclude_requester": false, "class": "instant", "window_secs": 120},
+  "posture": {"screen_lock": true, "no_root": true, "attested": false, "min_os": {}, "max_age_days": 30},
+  "explain": "Developer baseline"
+}

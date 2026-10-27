@@ -31,6 +31,9 @@ sealed interface Route {
     /** Settings > Profiles > Add work account: sign in a work account and enroll this phone to its org. */
     data object AddWorkAccount : Route
 
+    /** Settings > Profiles > Reviews (a work profile's): the org reviews waiting for this member. */
+    data object OrgReviews : Route
+
     /** Trust > Ended: the grants that ran out, to resume or delete. */
     data object EndedGrants : Route
 

@@ -246,6 +246,55 @@ impl ReinsCore {
         .await
     }
 
+    /// The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+    /// Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+    pub async fn org_reviews(&self) -> Result<Vec<crate::org::OrgReviewView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_reviews().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+    pub async fn org_decide(&self, id: String, approve: bool, at: i64, signature: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_decide(&id, approve, at, signature).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+    /// `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+    /// app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+    pub async fn org_set_member_policy(
+        &self,
+        body: String,
+        version: u64,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.org_set_member_policy(body, version, at, signature).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
     /// can wake each phone app. Unknown values are `None`; an unreachable server is no error.
     pub async fn server_info(&self, server_url: String) -> Result<ServerInfo, CoreError> {

@@ -3053,11 +3053,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String) async throws  -> [VaultPasskeyView]
     
     /**
-     * Answers a question with a zone (anything but Outside asks `owner` first).
-     */
-    func answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck) async throws 
-    
-    /**
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
     func answerBlob(id: String, approve: Bool) async throws 
@@ -3079,47 +3074,15 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approve(requestId: String, choice: ApprovalChoice) async throws 
     
     /**
-     * "Approve all" for one agent's parked requests under one task (`task_id` = `None`: under none). Only what is
-     * soft and below L3 is approved; the rest stays for the owner one by one. Returns how many were approved.
-     */
-    func approveAll(connectionId: String, taskId: String?) async throws  -> UInt32
-    
-    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
     func approveQuick(requestId: String) async throws 
     
     /**
-     * Approves an agent's task proposal (`request_id`) as the owner narrowed it (`draft`: every list a subset, the
-     * ceiling, length and budget no higher). Asks `owner` first: a task loosens.
-     */
-    func approveTask(requestId: String, draft: TaskView, owner: OwnerCheck) async throws 
-    
-    /**
-     * "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
-     */
-    func askMeNextTime(requestId: String) async throws 
-    
-    /**
-     * "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
-     */
-    func askWhy(requestId: String, question: String) async throws 
-    
-    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
     func assignProfile(connectionId: String, profileId: String?) async throws 
-    
-    /**
-     * The open "Auto needs information" questions, newest first. They are listed, never notified.
-     */
-    func autoQuestions() async throws  -> [AutoQuestion]
-    
-    /**
-     * Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
-     */
-    func autoSetup() async throws  -> AutoSetup
     
     /**
      * The "Try it" playground: how a profile judges a situation typed in the §4 format (nothing is kept).
@@ -3173,12 +3136,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func createProfile(name: String, icon: String?) async throws  -> ProfileView
     
     /**
-     * Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
-     * "Waiting for you" until its deadline.
-     */
-    func decideLater(requestId: String) async throws 
-    
-    /**
      * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
      * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
      * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
@@ -3209,11 +3166,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deny(requestId: String) async throws 
     
     /**
-     * The user refused, with an optional note the agent receives ("Use the staging bucket").
-     */
-    func denyWithNote(requestId: String, note: String?) async throws 
-    
-    /**
      * The devices signed in to the account (Settings > Devices).
      */
     func devices() async throws  -> [DeviceView]
@@ -3224,19 +3176,9 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func dismissAccountSyncNotice() async throws 
     
     /**
-     * Dismisses a question: the thing stays Outside and isn't asked about again.
-     */
-    func dismissAutoQuestion(id: String) async throws 
-    
-    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
-    
-    /**
-     * Stop: ends a task now. It only takes away, so nothing is asked.
-     */
-    func endTask(id: String) async throws 
     
     /**
      * On a phone that should view the account: asks its primary to enroll it. Then call `enroll_poll` every few
@@ -3272,11 +3214,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Opens one email listed in the activity: fetched from Gmail now, `account` being the entry's account.
      */
     func fetchEmail(account: String?, messageId: String) async throws  -> EmailContent
-    
-    /**
-     * Finishes Auto's setup and turns Auto on, after `owner` confirms.
-     */
-    func finishAutoSetup(owner: OwnerCheck) async throws 
     
     /**
      * Asks the token provider for a token and reports whether Gmail is usable.
@@ -3397,6 +3334,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func orgChallenge() async throws  -> String
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+    func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws 
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -3413,15 +3355,22 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func orgReportPosture(posture: PostureInput) async throws 
     
     /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+    func orgReviews() async throws  -> [OrgReviewView]
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws 
+    
+    /**
      * Whether `server_url` offers organizations ("Add work account" is shown only then).
      */
     func orgsOffered(serverUrl: String) async throws  -> Bool
-    
-    /**
-     * The morning digest of what Overnight parked and still waits, grouped by agent and task (`None`: nothing waits).
-     * The app shows it as one notification at `at`, and on Activity when opened.
-     */
-    func overnightDigest() async throws  -> OvernightDigest?
     
     /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
@@ -3673,25 +3622,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setDefaultProfile(profileId: String) async throws 
     
     /**
-     * Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
-     */
-    func setMatrixCell(zone: ZoneChoice, level: UInt8, cell: CellChoice, owner: OwnerCheck) async throws 
-    
-    /**
-     * Lets the matrix decide (asks `owner`), or returns it to shadow.
-     */
-    func setMatrixDecides(on: Bool, owner: OwnerCheck) async throws 
-    
-    /**
      * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
     func setModelRuntime(runtime: ModelRuntime) 
     
     /**
-     * How long what Overnight parks waits past the morning before it expires, not approved (1 to 48 hours).
+     * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     * A change either way asks `owner` first.
      */
-    func setOvernightExpiry(hours: UInt32) async throws 
+    func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck) async throws 
     
     func setPreset(profileId: String, preset: Preset) async throws 
     
@@ -3712,11 +3652,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws 
     
     /**
-     * Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
-     */
-    func setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck) async throws 
-    
-    /**
      * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
      */
     func shuffleConnectionBlobatar(connectionId: String) async throws  -> Blobatar
@@ -3726,12 +3661,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * typed now: it can no longer sync or answer for the account.
      */
     func signOutDevice(deviceId: String, codeOrPassword: String) async throws 
-    
-    /**
-     * The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
-     * check the events and webhooks this phone signs. Shown under a connection's More.
-     */
-    func signingKeyFingerprint() async throws  -> String
     
     /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
@@ -3763,20 +3692,14 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     /**
      * Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
      * minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
-     * `i64::MAX`). It is Auto while the owner is away (Decisions v2, 01 §11): what Auto would ask is parked for the
-     * morning (a ticket; the agent carries on), Work and Outside people always wait, the owner's own L1 work runs, and
-     * nothing is ever denied but by an explicit rule; what already waits is judged too. Its end is the morning of the
-     * digest (`overnight_digest`); then it returns to the mode it interrupted; stop it earlier with
-     * `set_autopilot_mode`. Until Auto's setup is done it decides as before, minus any deny. Every start, restart or change of its length asks `owner` first (the core asks
+     * `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
+     * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
+     * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
+     * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
+     * rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
      * it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
      */
     func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck) async throws 
-    
-    /**
-     * The owner starts a task for one AI (`draft.connection_id`), from Activity or with Overnight
-     * (`draft.started_by` = "overnight"); its length is `ends_at - started_at`. Asks `owner` first: a task loosens.
-     */
-    func startTask(draft: TaskView, owner: OwnerCheck) async throws  -> TaskView
     
     /**
      * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
@@ -3787,11 +3710,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Foreground long-poll, then everything received is processed like a push.
      */
     func sync(waitSecs: UInt32) async throws  -> [PendingItem]
-    
-    /**
-     * Live tasks, then those that ended in the last day (with what ran under them).
-     */
-    func tasks() async throws  -> [TaskView]
     
     /**
      * What the profile's last 30 days would have been at these thresholds: decided, asked, and decided otherwise
@@ -4343,25 +4261,6 @@ open func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String)asyn
 }
     
     /**
-     * Answers a question with a zone (anything but Outside asks `owner` first).
-     */
-open func answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_answer_auto_question(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterTypeZoneChoice_lower(zone),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
 open func answerBlob(id: String, approve: Bool)async throws   {
@@ -4453,26 +4352,6 @@ open func approve(requestId: String, choice: ApprovalChoice)async throws   {
 }
     
     /**
-     * "Approve all" for one agent's parked requests under one task (`task_id` = `None`: under none). Only what is
-     * soft and below L3 is approved; the rest stays for the owner one by one. Returns how many were approved.
-     */
-open func approveAll(connectionId: String, taskId: String?)async throws  -> UInt32  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_approve_all(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(taskId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_u32,
-            completeFunc: ffi_reins_core_rust_future_complete_u32,
-            freeFunc: ffi_reins_core_rust_future_free_u32,
-            liftFunc: FfiConverterUInt32.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
@@ -4482,64 +4361,6 @@ open func approveQuick(requestId: String)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_approve_quick(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Approves an agent's task proposal (`request_id`) as the owner narrowed it (`draft`: every list a subset, the
-     * ceiling, length and budget no higher). Asks `owner` first: a task loosens.
-     */
-open func approveTask(requestId: String, draft: TaskView, owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_approve_task(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterTypeTaskView_lower(draft),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
-     */
-open func askMeNextTime(requestId: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_ask_me_next_time(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
-     */
-open func askWhy(requestId: String, question: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_ask_why(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterString.lower(question)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -4565,44 +4386,6 @@ open func assignProfile(connectionId: String, profileId: String?)async throws   
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The open "Auto needs information" questions, newest first. They are listed, never notified.
-     */
-open func autoQuestions()async throws  -> [AutoQuestion]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_auto_questions(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeAutoQuestion.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
-     */
-open func autoSetup()async throws  -> AutoSetup  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_auto_setup(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeAutoSetup_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4813,26 +4596,6 @@ open func createProfile(name: String, icon: String?)async throws  -> ProfileView
 }
     
     /**
-     * Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
-     * "Waiting for you" until its deadline.
-     */
-open func decideLater(requestId: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_decide_later(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
      * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
      * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
@@ -4947,25 +4710,6 @@ open func deny(requestId: String)async throws   {
 }
     
     /**
-     * The user refused, with an optional note the agent receives ("Use the staging bucket").
-     */
-open func denyWithNote(requestId: String, note: String?)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_deny_with_note(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterOptionString.lower(note)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * The devices signed in to the account (Settings > Devices).
      */
 open func devices()async throws  -> [DeviceView]  {
@@ -5004,25 +4748,6 @@ open func dismissAccountSyncNotice()async throws   {
 }
     
     /**
-     * Dismisses a question: the thing stays Outside and isn't asked about again.
-     */
-open func dismissAutoQuestion(id: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_dismiss_auto_question(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
 open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus  {
@@ -5037,25 +4762,6 @@ open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus 
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeModelStatus_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Stop: ends a task now. It only takes away, so nothing is asked.
-     */
-open func endTask(id: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_end_task(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5189,25 +4895,6 @@ open func fetchEmail(account: String?, messageId: String)async throws  -> EmailC
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeEmailContent_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Finishes Auto's setup and turns Auto on, after `owner` confirms.
-     */
-open func finishAutoSetup(owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_finish_auto_setup(
-                        self.uniffiCloneHandle(),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5684,6 +5371,25 @@ open func orgChallenge()async throws  -> String  {
 }
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+open func orgDecide(id: String, approve: Bool, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_decide(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -5742,6 +5448,47 @@ open func orgReportPosture(posture: PostureInput)async throws   {
 }
     
     /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+open func orgReviews()async throws  -> [OrgReviewView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_reviews(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeOrgReviewView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+open func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_set_member_policy(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterUInt64.lower(version),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Whether `server_url` offers organizations ("Add work account" is shown only then).
      */
 open func orgsOffered(serverUrl: String)async throws  -> Bool  {
@@ -5756,26 +5503,6 @@ open func orgsOffered(serverUrl: String)async throws  -> Bool  {
             completeFunc: ffi_reins_core_rust_future_complete_i8,
             freeFunc: ffi_reins_core_rust_future_free_i8,
             liftFunc: FfiConverterBool.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The morning digest of what Overnight parked and still waits, grouped by agent and task (`None`: nothing waits).
-     * The app shows it as one notification at `at`, and on Activity when opened.
-     */
-open func overnightDigest()async throws  -> OvernightDigest?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_overnight_digest(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeOvernightDigest.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6669,44 +6396,6 @@ open func setDefaultProfile(profileId: String)async throws   {
 }
     
     /**
-     * Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
-     */
-open func setMatrixCell(zone: ZoneChoice, level: UInt8, cell: CellChoice, owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_set_matrix_cell(
-                        self.uniffiCloneHandle(),FfiConverterTypeZoneChoice_lower(zone),FfiConverterUInt8.lower(level),FfiConverterTypeCellChoice_lower(cell),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Lets the matrix decide (asks `owner`), or returns it to shadow.
-     */
-open func setMatrixDecides(on: Bool, owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_set_matrix_decides(
-                        self.uniffiCloneHandle(),FfiConverterBool.lower(on),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
@@ -6720,14 +6409,15 @@ open func setModelRuntime(runtime: ModelRuntime)  {try! rustCall() {
 }
     
     /**
-     * How long what Overnight parks waits past the morning before it expires, not approved (1 to 48 hours).
+     * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     * A change either way asks `owner` first.
      */
-open func setOvernightExpiry(hours: UInt32)async throws   {
+open func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_set_overnight_expiry(
-                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(hours)
+                uniffi_reins_core_fn_method_reinscore_set_overnight_when_risky(
+                        self.uniffiCloneHandle(),FfiConverterTypeOvernightRisky_lower(risky),FfiConverterTypeOwnerCheck_lower(owner)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -6813,25 +6503,6 @@ open func setThresholds(profileId: String, approveAt: Float, denyAt: Float)async
 }
     
     /**
-     * Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
-     */
-open func setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_set_world_zone(
-                        self.uniffiCloneHandle(),FfiConverterTypeFactChoice_lower(kind),FfiConverterString.lower(key),FfiConverterTypeZoneChoice_lower(zone),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
      */
 open func shuffleConnectionBlobatar(connectionId: String)async throws  -> Blobatar  {
@@ -6866,26 +6537,6 @@ open func signOutDevice(deviceId: String, codeOrPassword: String)async throws   
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
-     * check the events and webhooks this phone signs. Shown under a connection's More.
-     */
-open func signingKeyFingerprint()async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_signing_key_fingerprint(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6976,11 +6627,11 @@ open func startBypass(connectionId: String?, minutes: UInt32?)async throws   {
     /**
      * Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
      * minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
-     * `i64::MAX`). It is Auto while the owner is away (Decisions v2, 01 §11): what Auto would ask is parked for the
-     * morning (a ticket; the agent carries on), Work and Outside people always wait, the owner's own L1 work runs, and
-     * nothing is ever denied but by an explicit rule; what already waits is judged too. Its end is the morning of the
-     * digest (`overnight_digest`); then it returns to the mode it interrupted; stop it earlier with
-     * `set_autopilot_mode`. Until Auto's setup is done it decides as before, minus any deny. Every start, restart or change of its length asks `owner` first (the core asks
+     * `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
+     * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
+     * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
+     * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
+     * rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
      * it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
      */
 open func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck)async throws   {
@@ -6995,26 +6646,6 @@ open func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCh
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The owner starts a task for one AI (`draft.connection_id`), from Activity or with Overnight
-     * (`draft.started_by` = "overnight"); its length is `ends_at - started_at`. Asks `owner` first: a task loosens.
-     */
-open func startTask(draft: TaskView, owner: OwnerCheck)async throws  -> TaskView  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_start_task(
-                        self.uniffiCloneHandle(),FfiConverterTypeTaskView_lower(draft),FfiConverterTypeOwnerCheck_lower(owner)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeTaskView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -7053,25 +6684,6 @@ open func sync(waitSecs: UInt32)async throws  -> [PendingItem]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Live tasks, then those that ended in the last day (with what ran under them).
-     */
-open func tasks()async throws  -> [TaskView]  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_tasks(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceTypeTaskView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -10801,200 +10413,6 @@ public func FfiConverterTypeAutoDecisionView_lower(_ value: AutoDecisionView) ->
 
 
 /**
- * "Auto needs information": a party a request named that Auto doesn't know (01 §3, later questions).
- */
-public struct AutoQuestion: Equatable, Hashable {
-    public var id: String
-    public var kind: FactChoice
-    /**
-     * What it is about ("octo", "bob@acme.io").
-     */
-    public var key: String
-    /**
-     * "github" | "email" | "messages" | "computers".
-     */
-    public var service: String
-    /**
-     * The AI connection whose request named it.
-     */
-    public var connectionLabel: String
-    public var requestId: String?
-    public var at: Int64
-    /**
-     * The answer the card preselects (Outside unless a fact suggests otherwise).
-     */
-    public var proposed: ZoneChoice
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, kind: FactChoice, 
-        /**
-         * What it is about ("octo", "bob@acme.io").
-         */key: String, 
-        /**
-         * "github" | "email" | "messages" | "computers".
-         */service: String, 
-        /**
-         * The AI connection whose request named it.
-         */connectionLabel: String, requestId: String?, at: Int64, 
-        /**
-         * The answer the card preselects (Outside unless a fact suggests otherwise).
-         */proposed: ZoneChoice) {
-        self.id = id
-        self.kind = kind
-        self.key = key
-        self.service = service
-        self.connectionLabel = connectionLabel
-        self.requestId = requestId
-        self.at = at
-        self.proposed = proposed
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AutoQuestion: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAutoQuestion: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AutoQuestion {
-        return
-            try AutoQuestion(
-                id: FfiConverterString.read(from: &buf), 
-                kind: FfiConverterTypeFactChoice.read(from: &buf), 
-                key: FfiConverterString.read(from: &buf), 
-                service: FfiConverterString.read(from: &buf), 
-                connectionLabel: FfiConverterString.read(from: &buf), 
-                requestId: FfiConverterOptionString.read(from: &buf), 
-                at: FfiConverterInt64.read(from: &buf), 
-                proposed: FfiConverterTypeZoneChoice.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AutoQuestion, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterTypeFactChoice.write(value.kind, into: &buf)
-        FfiConverterString.write(value.key, into: &buf)
-        FfiConverterString.write(value.service, into: &buf)
-        FfiConverterString.write(value.connectionLabel, into: &buf)
-        FfiConverterOptionString.write(value.requestId, into: &buf)
-        FfiConverterInt64.write(value.at, into: &buf)
-        FfiConverterTypeZoneChoice.write(value.proposed, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAutoQuestion_lift(_ buf: RustBuffer) throws -> AutoQuestion {
-    return try FfiConverterTypeAutoQuestion.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAutoQuestion_lower(_ value: AutoQuestion) -> RustBuffer {
-    return FfiConverterTypeAutoQuestion.lower(value)
-}
-
-
-/**
- * Auto's setup (01 §9.1) and where it stands.
- */
-public struct AutoSetup: Equatable, Hashable {
-    /**
-     * The owner finished the setup: turning on Auto no longer guides first.
-     */
-    public var done: Bool
-    /**
-     * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
-     * decide is recorded on each entry).
-     */
-    public var matrixDecides: Bool
-    public var world: [WorldItem]
-    public var matrix: [MatrixRowView]
-    /**
-     * Open "Auto needs information" questions.
-     */
-    public var questions: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The owner finished the setup: turning on Auto no longer guides first.
-         */done: Bool, 
-        /**
-         * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
-         * decide is recorded on each entry).
-         */matrixDecides: Bool, world: [WorldItem], matrix: [MatrixRowView], 
-        /**
-         * Open "Auto needs information" questions.
-         */questions: UInt32) {
-        self.done = done
-        self.matrixDecides = matrixDecides
-        self.world = world
-        self.matrix = matrix
-        self.questions = questions
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AutoSetup: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAutoSetup: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AutoSetup {
-        return
-            try AutoSetup(
-                done: FfiConverterBool.read(from: &buf), 
-                matrixDecides: FfiConverterBool.read(from: &buf), 
-                world: FfiConverterSequenceTypeWorldItem.read(from: &buf), 
-                matrix: FfiConverterSequenceTypeMatrixRowView.read(from: &buf), 
-                questions: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AutoSetup, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.done, into: &buf)
-        FfiConverterBool.write(value.matrixDecides, into: &buf)
-        FfiConverterSequenceTypeWorldItem.write(value.world, into: &buf)
-        FfiConverterSequenceTypeMatrixRowView.write(value.matrix, into: &buf)
-        FfiConverterUInt32.write(value.questions, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAutoSetup_lift(_ buf: RustBuffer) throws -> AutoSetup {
-    return try FfiConverterTypeAutoSetup.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAutoSetup_lower(_ value: AutoSetup) -> RustBuffer {
-    return FfiConverterTypeAutoSetup.lower(value)
-}
-
-
-/**
  * What Autopilot knew about an activity entry (spec §8).
  */
 public struct AutopilotNote: Equatable, Hashable {
@@ -11024,14 +10442,6 @@ public struct AutopilotNote: Equatable, Hashable {
      * The risk, when the model rated it.
      */
     public var risk: RiskView?
-    /**
-     * What the matrix decided, or would have decided in shadow (Decisions v2).
-     */
-    public var matrix: MatrixView?
-    /**
-     * The request it was about ("Ask me next time" takes it).
-     */
-    public var requestId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11050,13 +10460,7 @@ public struct AutopilotNote: Equatable, Hashable {
          */correctable: Bool, 
         /**
          * The risk, when the model rated it.
-         */risk: RiskView? = nil, 
-        /**
-         * What the matrix decided, or would have decided in shadow (Decisions v2).
-         */matrix: MatrixView? = nil, 
-        /**
-         * The request it was about ("Ask me next time" takes it).
-         */requestId: String = "") {
+         */risk: RiskView? = nil) {
         self.mode = mode
         self.suggested = suggested
         self.pApprove = pApprove
@@ -11068,8 +10472,6 @@ public struct AutopilotNote: Equatable, Hashable {
         self.reason = reason
         self.correctable = correctable
         self.risk = risk
-        self.matrix = matrix
-        self.requestId = requestId
     }
 
     
@@ -11098,9 +10500,7 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
                 neighbours: FfiConverterSequenceString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
                 correctable: FfiConverterBool.read(from: &buf), 
-                risk: FfiConverterOptionTypeRiskView.read(from: &buf), 
-                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf), 
-                requestId: FfiConverterString.read(from: &buf)
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
         )
     }
 
@@ -11116,8 +10516,6 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
         FfiConverterString.write(value.reason, into: &buf)
         FfiConverterBool.write(value.correctable, into: &buf)
         FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
-        FfiConverterOptionTypeMatrixView.write(value.matrix, into: &buf)
-        FfiConverterString.write(value.requestId, into: &buf)
     }
 }
 
@@ -11167,9 +10565,9 @@ public struct AutopilotSettings: Equatable, Hashable {
      */
     public var overnightSince: Int64?
     /**
-     * How long a parked request waits after the morning before it expires, not approved (1 to 48 h; 12 by default).
+     * What Overnight does with what its risk model rates catastrophic.
      */
-    public var overnightExpiryHours: UInt32
+    public var overnightWhenRisky: OvernightRisky
     /**
      * The profile of every connection that has none of its own.
      */
@@ -11211,8 +10609,8 @@ public struct AutopilotSettings: Equatable, Hashable {
          * When the global Overnight started.
          */overnightSince: Int64? = nil, 
         /**
-         * How long a parked request waits after the morning before it expires, not approved (1 to 48 h; 12 by default).
-         */overnightExpiryHours: UInt32 = UInt32(12), 
+         * What Overnight does with what its risk model rates catastrophic.
+         */overnightWhenRisky: OvernightRisky, 
         /**
          * The profile of every connection that has none of its own.
          */defaultProfileId: String, 
@@ -11231,7 +10629,7 @@ public struct AutopilotSettings: Equatable, Hashable {
         self.bypassSince = bypassSince
         self.overnightUntil = overnightUntil
         self.overnightSince = overnightSince
-        self.overnightExpiryHours = overnightExpiryHours
+        self.overnightWhenRisky = overnightWhenRisky
         self.defaultProfileId = defaultProfileId
         self.wifiOnly = wifiOnly
         self.autoUpdate = autoUpdate
@@ -11261,7 +10659,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
                 bypassSince: FfiConverterOptionInt64.read(from: &buf), 
                 overnightUntil: FfiConverterOptionInt64.read(from: &buf), 
                 overnightSince: FfiConverterOptionInt64.read(from: &buf), 
-                overnightExpiryHours: FfiConverterUInt32.read(from: &buf), 
+                overnightWhenRisky: FfiConverterTypeOvernightRisky.read(from: &buf), 
                 defaultProfileId: FfiConverterString.read(from: &buf), 
                 wifiOnly: FfiConverterBool.read(from: &buf), 
                 autoUpdate: FfiConverterBool.read(from: &buf), 
@@ -11277,7 +10675,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.bypassSince, into: &buf)
         FfiConverterOptionInt64.write(value.overnightUntil, into: &buf)
         FfiConverterOptionInt64.write(value.overnightSince, into: &buf)
-        FfiConverterUInt32.write(value.overnightExpiryHours, into: &buf)
+        FfiConverterTypeOvernightRisky.write(value.overnightWhenRisky, into: &buf)
         FfiConverterString.write(value.defaultProfileId, into: &buf)
         FfiConverterBool.write(value.wifiOnly, into: &buf)
         FfiConverterBool.write(value.autoUpdate, into: &buf)
@@ -13056,91 +12454,6 @@ public func FfiConverterTypeDiffLineView_lift(_ buf: RustBuffer) throws -> DiffL
 #endif
 public func FfiConverterTypeDiffLineView_lower(_ value: DiffLineView) -> RustBuffer {
     return FfiConverterTypeDiffLineView.lower(value)
-}
-
-
-/**
- * What one agent parked under one task (or none).
- */
-public struct DigestGroup: Equatable, Hashable {
-    public var connectionId: String
-    public var connectionLabel: String
-    public var taskId: String?
-    public var taskTitle: String?
-    /**
-     * Oldest first.
-     */
-    public var requestIds: [String]
-    /**
-     * How many of them "Approve all" covers (not hard, not L3); the rest are decided one by one.
-     */
-    public var batchable: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(connectionId: String, connectionLabel: String, taskId: String?, taskTitle: String?, 
-        /**
-         * Oldest first.
-         */requestIds: [String], 
-        /**
-         * How many of them "Approve all" covers (not hard, not L3); the rest are decided one by one.
-         */batchable: UInt32) {
-        self.connectionId = connectionId
-        self.connectionLabel = connectionLabel
-        self.taskId = taskId
-        self.taskTitle = taskTitle
-        self.requestIds = requestIds
-        self.batchable = batchable
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension DigestGroup: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeDigestGroup: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DigestGroup {
-        return
-            try DigestGroup(
-                connectionId: FfiConverterString.read(from: &buf), 
-                connectionLabel: FfiConverterString.read(from: &buf), 
-                taskId: FfiConverterOptionString.read(from: &buf), 
-                taskTitle: FfiConverterOptionString.read(from: &buf), 
-                requestIds: FfiConverterSequenceString.read(from: &buf), 
-                batchable: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: DigestGroup, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.connectionId, into: &buf)
-        FfiConverterString.write(value.connectionLabel, into: &buf)
-        FfiConverterOptionString.write(value.taskId, into: &buf)
-        FfiConverterOptionString.write(value.taskTitle, into: &buf)
-        FfiConverterSequenceString.write(value.requestIds, into: &buf)
-        FfiConverterUInt32.write(value.batchable, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDigestGroup_lift(_ buf: RustBuffer) throws -> DigestGroup {
-    return try FfiConverterTypeDigestGroup.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeDigestGroup_lower(_ value: DigestGroup) -> RustBuffer {
-    return FfiConverterTypeDigestGroup.lower(value)
 }
 
 
@@ -15117,182 +14430,6 @@ public func FfiConverterTypeLiveSyncState_lower(_ value: LiveSyncState) -> RustB
 
 
 /**
- * One row of the matrix, with real names from the owner's world.
- */
-public struct MatrixRowView: Equatable, Hashable {
-    public var zone: ZoneChoice
-    /**
-     * L0 (undoable), L1 (recoverable), L2 (reaches people), L3 (can't be undone).
-     */
-    public var cells: [CellChoice]
-    /**
-     * Up to three names in this zone ("dkat", "acme").
-     */
-    public var names: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(zone: ZoneChoice, 
-        /**
-         * L0 (undoable), L1 (recoverable), L2 (reaches people), L3 (can't be undone).
-         */cells: [CellChoice], 
-        /**
-         * Up to three names in this zone ("dkat", "acme").
-         */names: [String]) {
-        self.zone = zone
-        self.cells = cells
-        self.names = names
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension MatrixRowView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMatrixRowView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MatrixRowView {
-        return
-            try MatrixRowView(
-                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
-                cells: FfiConverterSequenceTypeCellChoice.read(from: &buf), 
-                names: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: MatrixRowView, into buf: inout [UInt8]) {
-        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
-        FfiConverterSequenceTypeCellChoice.write(value.cells, into: &buf)
-        FfiConverterSequenceString.write(value.names, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMatrixRowView_lift(_ buf: RustBuffer) throws -> MatrixRowView {
-    return try FfiConverterTypeMatrixRowView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMatrixRowView_lower(_ value: MatrixRowView) -> RustBuffer {
-    return FfiConverterTypeMatrixRowView.lower(value)
-}
-
-
-/**
- * What the matrix decided, or would have decided in shadow, for a request.
- */
-public struct MatrixView: Equatable, Hashable {
-    /**
-     * `Approve` = Auto, `Ask`, or `Deny` (an explicit rule).
-     */
-    public var outcome: Verdict
-    /**
-     * Asked because of a hard obligation (no permit could cover it).
-     */
-    public var hard: Bool
-    public var zone: ZoneChoice
-    /**
-     * 0..=3.
-     */
-    public var level: UInt8
-    /**
-     * "Auto · Mine · Undoable".
-     */
-    public var line: String
-    /**
-     * Recorded only: something else decided.
-     */
-    public var shadow: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `Approve` = Auto, `Ask`, or `Deny` (an explicit rule).
-         */outcome: Verdict, 
-        /**
-         * Asked because of a hard obligation (no permit could cover it).
-         */hard: Bool, zone: ZoneChoice, 
-        /**
-         * 0..=3.
-         */level: UInt8, 
-        /**
-         * "Auto · Mine · Undoable".
-         */line: String, 
-        /**
-         * Recorded only: something else decided.
-         */shadow: Bool) {
-        self.outcome = outcome
-        self.hard = hard
-        self.zone = zone
-        self.level = level
-        self.line = line
-        self.shadow = shadow
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension MatrixView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMatrixView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MatrixView {
-        return
-            try MatrixView(
-                outcome: FfiConverterTypeVerdict.read(from: &buf), 
-                hard: FfiConverterBool.read(from: &buf), 
-                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
-                level: FfiConverterUInt8.read(from: &buf), 
-                line: FfiConverterString.read(from: &buf), 
-                shadow: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: MatrixView, into buf: inout [UInt8]) {
-        FfiConverterTypeVerdict.write(value.outcome, into: &buf)
-        FfiConverterBool.write(value.hard, into: &buf)
-        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
-        FfiConverterUInt8.write(value.level, into: &buf)
-        FfiConverterString.write(value.line, into: &buf)
-        FfiConverterBool.write(value.shadow, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMatrixView_lift(_ buf: RustBuffer) throws -> MatrixView {
-    return try FfiConverterTypeMatrixView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMatrixView_lower(_ value: MatrixView) -> RustBuffer {
-    return FfiConverterTypeMatrixView.lower(value)
-}
-
-
-/**
  * A call to a tool of an added MCP server, spelled out for the approval.
  */
 public struct McpCallView: Equatable, Hashable {
@@ -16155,6 +15292,154 @@ public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> Rus
 
 
 /**
+ * One review waiting for this member, as the phone shows and signs it. `lines` are built on the phone from what
+ * the digest covers, never taken from the server.
+ */
+public struct OrgReviewView: Equatable, Hashable {
+    public var id: String
+    public var kind: OrgReviewKind
+    public var orgName: String
+    /**
+     * The requester's or proposer's email.
+     */
+    public var requester: String
+    /**
+     * The agent connection's label (requests).
+     */
+    public var connection: String
+    /**
+     * The server's short title.
+     */
+    public var title: String
+    public var lines: [String]
+    /**
+     * Who must approve ("Security", "You").
+     */
+    public var requires: String
+    public var level: String
+    public var zone: String
+    /**
+     * The request or change digest the phone recomputed.
+     */
+    public var digest: String
+    /**
+     * The policy snapshot hash (requests); empty for changes.
+     */
+    public var snapshot: String
+    public var expiresAt: Int64
+    /**
+     * Your own: your request, or your change to confirm.
+     */
+    public var own: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: OrgReviewKind, orgName: String, 
+        /**
+         * The requester's or proposer's email.
+         */requester: String, 
+        /**
+         * The agent connection's label (requests).
+         */connection: String, 
+        /**
+         * The server's short title.
+         */title: String, lines: [String], 
+        /**
+         * Who must approve ("Security", "You").
+         */requires: String, level: String, zone: String, 
+        /**
+         * The request or change digest the phone recomputed.
+         */digest: String, 
+        /**
+         * The policy snapshot hash (requests); empty for changes.
+         */snapshot: String, expiresAt: Int64, 
+        /**
+         * Your own: your request, or your change to confirm.
+         */own: Bool) {
+        self.id = id
+        self.kind = kind
+        self.orgName = orgName
+        self.requester = requester
+        self.connection = connection
+        self.title = title
+        self.lines = lines
+        self.requires = requires
+        self.level = level
+        self.zone = zone
+        self.digest = digest
+        self.snapshot = snapshot
+        self.expiresAt = expiresAt
+        self.own = own
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrgReviewView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewView {
+        return
+            try OrgReviewView(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeOrgReviewKind.read(from: &buf), 
+                orgName: FfiConverterString.read(from: &buf), 
+                requester: FfiConverterString.read(from: &buf), 
+                connection: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                requires: FfiConverterString.read(from: &buf), 
+                level: FfiConverterString.read(from: &buf), 
+                zone: FfiConverterString.read(from: &buf), 
+                digest: FfiConverterString.read(from: &buf), 
+                snapshot: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                own: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrgReviewView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeOrgReviewKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.orgName, into: &buf)
+        FfiConverterString.write(value.requester, into: &buf)
+        FfiConverterString.write(value.connection, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.requires, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
+        FfiConverterString.write(value.zone, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterString.write(value.snapshot, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterBool.write(value.own, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lift(_ buf: RustBuffer) throws -> OrgReviewView {
+    return try FfiConverterTypeOrgReviewView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lower(_ value: OrgReviewView) -> RustBuffer {
+    return FfiConverterTypeOrgReviewView.lower(value)
+}
+
+
+/**
  * The work account's organization, as the app shows it.
  */
 public struct OrgView: Equatable, Hashable {
@@ -16242,95 +15527,6 @@ public func FfiConverterTypeOrgView_lift(_ buf: RustBuffer) throws -> OrgView {
 #endif
 public func FfiConverterTypeOrgView_lower(_ value: OrgView) -> RustBuffer {
     return FfiConverterTypeOrgView.lower(value)
-}
-
-
-/**
- * The morning digest of what Overnight parked (01 §11): one notification at `at`, grouped by agent and task.
- */
-public struct OvernightDigest: Equatable, Hashable {
-    /**
-     * When to show it: the earliest morning of what waits that is still to come; `None` once it came (the app shows
-     * the digest when opened instead of notifying).
-     */
-    public var at: Int64?
-    public var total: UInt32
-    /**
-     * "3 waiting".
-     */
-    public var title: String
-    /**
-     * "1 from Claude Code (Fix CI), 2 from ChatGPT".
-     */
-    public var body: String
-    public var groups: [DigestGroup]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * When to show it: the earliest morning of what waits that is still to come; `None` once it came (the app shows
-         * the digest when opened instead of notifying).
-         */at: Int64?, total: UInt32, 
-        /**
-         * "3 waiting".
-         */title: String, 
-        /**
-         * "1 from Claude Code (Fix CI), 2 from ChatGPT".
-         */body: String, groups: [DigestGroup]) {
-        self.at = at
-        self.total = total
-        self.title = title
-        self.body = body
-        self.groups = groups
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension OvernightDigest: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOvernightDigest: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OvernightDigest {
-        return
-            try OvernightDigest(
-                at: FfiConverterOptionInt64.read(from: &buf), 
-                total: FfiConverterUInt32.read(from: &buf), 
-                title: FfiConverterString.read(from: &buf), 
-                body: FfiConverterString.read(from: &buf), 
-                groups: FfiConverterSequenceTypeDigestGroup.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: OvernightDigest, into buf: inout [UInt8]) {
-        FfiConverterOptionInt64.write(value.at, into: &buf)
-        FfiConverterUInt32.write(value.total, into: &buf)
-        FfiConverterString.write(value.title, into: &buf)
-        FfiConverterString.write(value.body, into: &buf)
-        FfiConverterSequenceTypeDigestGroup.write(value.groups, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOvernightDigest_lift(_ buf: RustBuffer) throws -> OvernightDigest {
-    return try FfiConverterTypeOvernightDigest.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOvernightDigest_lower(_ value: OvernightDigest) -> RustBuffer {
-    return FfiConverterTypeOvernightDigest.lower(value)
 }
 
 
@@ -16728,32 +15924,6 @@ public struct PendingItem: Equatable, Hashable {
      * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
      */
     public var label: RequestLabel?
-    /**
-     * The request became a ticket (the agent does not wait for it): its window, and a "Why?" and the agent's answer.
-     */
-    public var ticket: TicketView?
-    /**
-     * An Instant request the reviewer can move to later (`decide_later`).
-     */
-    public var canDefer: Bool
-    /**
-     * Parked by Overnight for the morning (Decisions v2, 01 §11): no notification and no reminder before then; the
-     * morning digest (`overnight_digest`) covers it.
-     */
-    public var parkedUntil: Int64?
-    /**
-     * The task its agent was working on when it was parked or asked (the digest and the inbox group by it).
-     */
-    public var taskId: String?
-    public var taskTitle: String?
-    /**
-     * "Approve all" may cover it: what the matrix asked is soft and below L3 (03 §5.2: batch never crosses L3).
-     */
-    public var batchable: Bool
-    /**
-     * An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
-     */
-    public var taskProposal: TaskView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -16792,26 +15962,7 @@ public struct PendingItem: Equatable, Hashable {
          */quick: Bool = false, 
         /**
          * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
-         */label: RequestLabel? = nil, 
-        /**
-         * The request became a ticket (the agent does not wait for it): its window, and a "Why?" and the agent's answer.
-         */ticket: TicketView? = nil, 
-        /**
-         * An Instant request the reviewer can move to later (`decide_later`).
-         */canDefer: Bool = false, 
-        /**
-         * Parked by Overnight for the morning (Decisions v2, 01 §11): no notification and no reminder before then; the
-         * morning digest (`overnight_digest`) covers it.
-         */parkedUntil: Int64? = nil, 
-        /**
-         * The task its agent was working on when it was parked or asked (the digest and the inbox group by it).
-         */taskId: String? = nil, taskTitle: String? = nil, 
-        /**
-         * "Approve all" may cover it: what the matrix asked is soft and below L3 (03 §5.2: batch never crosses L3).
-         */batchable: Bool = false, 
-        /**
-         * An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
-         */taskProposal: TaskView? = nil) {
+         */label: RequestLabel? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -16830,13 +15981,6 @@ public struct PendingItem: Equatable, Hashable {
         self.headline = headline
         self.quick = quick
         self.label = label
-        self.ticket = ticket
-        self.canDefer = canDefer
-        self.parkedUntil = parkedUntil
-        self.taskId = taskId
-        self.taskTitle = taskTitle
-        self.batchable = batchable
-        self.taskProposal = taskProposal
     }
 
     
@@ -16872,14 +16016,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 suggestion: FfiConverterOptionString.read(from: &buf), 
                 headline: FfiConverterString.read(from: &buf), 
                 quick: FfiConverterBool.read(from: &buf), 
-                label: FfiConverterOptionTypeRequestLabel.read(from: &buf), 
-                ticket: FfiConverterOptionTypeTicketView.read(from: &buf), 
-                canDefer: FfiConverterBool.read(from: &buf), 
-                parkedUntil: FfiConverterOptionInt64.read(from: &buf), 
-                taskId: FfiConverterOptionString.read(from: &buf), 
-                taskTitle: FfiConverterOptionString.read(from: &buf), 
-                batchable: FfiConverterBool.read(from: &buf), 
-                taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf)
+                label: FfiConverterOptionTypeRequestLabel.read(from: &buf)
         )
     }
 
@@ -16902,13 +16039,6 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterString.write(value.headline, into: &buf)
         FfiConverterBool.write(value.quick, into: &buf)
         FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
-        FfiConverterOptionTypeTicketView.write(value.ticket, into: &buf)
-        FfiConverterBool.write(value.canDefer, into: &buf)
-        FfiConverterOptionInt64.write(value.parkedUntil, into: &buf)
-        FfiConverterOptionString.write(value.taskId, into: &buf)
-        FfiConverterOptionString.write(value.taskTitle, into: &buf)
-        FfiConverterBool.write(value.batchable, into: &buf)
-        FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
     }
 }
 
@@ -20502,10 +19632,6 @@ public struct SuggestionView: Equatable, Hashable {
      * The risk, when the model rates it.
      */
     public var risk: RiskView?
-    /**
-     * What the matrix decided, or would have decided in shadow (Decisions v2).
-     */
-    public var matrix: MatrixView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -20533,10 +19659,7 @@ public struct SuggestionView: Equatable, Hashable {
          */judged: Bool, 
         /**
          * The risk, when the model rates it.
-         */risk: RiskView? = nil, 
-        /**
-         * What the matrix decided, or would have decided in shadow (Decisions v2).
-         */matrix: MatrixView? = nil) {
+         */risk: RiskView? = nil) {
         self.requestId = requestId
         self.verdict = verdict
         self.mode = mode
@@ -20552,7 +19675,6 @@ public struct SuggestionView: Equatable, Hashable {
         self.floor = floor
         self.judged = judged
         self.risk = risk
-        self.matrix = matrix
     }
 
     
@@ -20585,8 +19707,7 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
                 novel: FfiConverterBool.read(from: &buf), 
                 floor: FfiConverterBool.read(from: &buf), 
                 judged: FfiConverterBool.read(from: &buf), 
-                risk: FfiConverterOptionTypeRiskView.read(from: &buf), 
-                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf)
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
         )
     }
 
@@ -20606,7 +19727,6 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.floor, into: &buf)
         FfiConverterBool.write(value.judged, into: &buf)
         FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
-        FfiConverterOptionTypeMatrixView.write(value.matrix, into: &buf)
     }
 }
 
@@ -20623,209 +19743,6 @@ public func FfiConverterTypeSuggestionView_lift(_ buf: RustBuffer) throws -> Sug
 #endif
 public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> RustBuffer {
     return FfiConverterTypeSuggestionView.lower(value)
-}
-
-
-/**
- * A task (01 §12): an envelope inside which Auto may do more for one agent, up to a ceiling, for a while. Also the
- * draft the owner starts or narrows. Lists name what is inside; an empty list bounds nothing, except `people`: empty
- * means nobody.
- */
-public struct TaskView: Equatable, Hashable {
-    /**
-     * Empty in a draft.
-     */
-    public var id: String
-    public var connectionId: String
-    public var connectionLabel: String
-    public var title: String
-    /**
-     * The agent's words (a proposal): shown as the agent's, never read for policy.
-     */
-    public var reason: String?
-    /**
-     * `owner/name`, or an owner followed by a slash and a star (all its repositories).
-     */
-    public var repos: [String]
-    /**
-     * Branch names, or prefixes ending in a star.
-     */
-    public var branches: [String]
-    /**
-     * Absolute folders.
-     */
-    public var paths: [String]
-    /**
-     * Addresses, ids or `@domain`.
-     */
-    public var people: [String]
-    /**
-     * Kinds of effect ("git_push", "git_ref_delete", "file_write", "message", ...); empty: any.
-     */
-    public var operations: [String]
-    /**
-     * The highest level it makes Auto: 0 undoable, 1 recoverable, 2 reaches people.
-     */
-    public var ceiling: UInt8
-    /**
-     * Uses it may make Auto; `None`: no limit.
-     */
-    public var budget: UInt32?
-    public var usesLeft: UInt32?
-    public var startedAt: Int64
-    /**
-     * When it ends (in a draft: `started_at` + its length).
-     */
-    public var endsAt: Int64
-    public var endedAt: Int64?
-    /**
-     * "agent" | "you" | "overnight"
-     */
-    public var startedBy: String
-    /**
-     * What ran under it: decided Auto by it, asked, parked.
-     */
-    public var auto: UInt32
-    public var asked: UInt32
-    public var parked: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Empty in a draft.
-         */id: String, connectionId: String, connectionLabel: String, title: String, 
-        /**
-         * The agent's words (a proposal): shown as the agent's, never read for policy.
-         */reason: String?, 
-        /**
-         * `owner/name`, or an owner followed by a slash and a star (all its repositories).
-         */repos: [String], 
-        /**
-         * Branch names, or prefixes ending in a star.
-         */branches: [String], 
-        /**
-         * Absolute folders.
-         */paths: [String], 
-        /**
-         * Addresses, ids or `@domain`.
-         */people: [String], 
-        /**
-         * Kinds of effect ("git_push", "git_ref_delete", "file_write", "message", ...); empty: any.
-         */operations: [String], 
-        /**
-         * The highest level it makes Auto: 0 undoable, 1 recoverable, 2 reaches people.
-         */ceiling: UInt8, 
-        /**
-         * Uses it may make Auto; `None`: no limit.
-         */budget: UInt32?, usesLeft: UInt32?, startedAt: Int64, 
-        /**
-         * When it ends (in a draft: `started_at` + its length).
-         */endsAt: Int64, endedAt: Int64?, 
-        /**
-         * "agent" | "you" | "overnight"
-         */startedBy: String, 
-        /**
-         * What ran under it: decided Auto by it, asked, parked.
-         */auto: UInt32, asked: UInt32, parked: UInt32) {
-        self.id = id
-        self.connectionId = connectionId
-        self.connectionLabel = connectionLabel
-        self.title = title
-        self.reason = reason
-        self.repos = repos
-        self.branches = branches
-        self.paths = paths
-        self.people = people
-        self.operations = operations
-        self.ceiling = ceiling
-        self.budget = budget
-        self.usesLeft = usesLeft
-        self.startedAt = startedAt
-        self.endsAt = endsAt
-        self.endedAt = endedAt
-        self.startedBy = startedBy
-        self.auto = auto
-        self.asked = asked
-        self.parked = parked
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension TaskView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeTaskView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TaskView {
-        return
-            try TaskView(
-                id: FfiConverterString.read(from: &buf), 
-                connectionId: FfiConverterString.read(from: &buf), 
-                connectionLabel: FfiConverterString.read(from: &buf), 
-                title: FfiConverterString.read(from: &buf), 
-                reason: FfiConverterOptionString.read(from: &buf), 
-                repos: FfiConverterSequenceString.read(from: &buf), 
-                branches: FfiConverterSequenceString.read(from: &buf), 
-                paths: FfiConverterSequenceString.read(from: &buf), 
-                people: FfiConverterSequenceString.read(from: &buf), 
-                operations: FfiConverterSequenceString.read(from: &buf), 
-                ceiling: FfiConverterUInt8.read(from: &buf), 
-                budget: FfiConverterOptionUInt32.read(from: &buf), 
-                usesLeft: FfiConverterOptionUInt32.read(from: &buf), 
-                startedAt: FfiConverterInt64.read(from: &buf), 
-                endsAt: FfiConverterInt64.read(from: &buf), 
-                endedAt: FfiConverterOptionInt64.read(from: &buf), 
-                startedBy: FfiConverterString.read(from: &buf), 
-                auto: FfiConverterUInt32.read(from: &buf), 
-                asked: FfiConverterUInt32.read(from: &buf), 
-                parked: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: TaskView, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterString.write(value.connectionId, into: &buf)
-        FfiConverterString.write(value.connectionLabel, into: &buf)
-        FfiConverterString.write(value.title, into: &buf)
-        FfiConverterOptionString.write(value.reason, into: &buf)
-        FfiConverterSequenceString.write(value.repos, into: &buf)
-        FfiConverterSequenceString.write(value.branches, into: &buf)
-        FfiConverterSequenceString.write(value.paths, into: &buf)
-        FfiConverterSequenceString.write(value.people, into: &buf)
-        FfiConverterSequenceString.write(value.operations, into: &buf)
-        FfiConverterUInt8.write(value.ceiling, into: &buf)
-        FfiConverterOptionUInt32.write(value.budget, into: &buf)
-        FfiConverterOptionUInt32.write(value.usesLeft, into: &buf)
-        FfiConverterInt64.write(value.startedAt, into: &buf)
-        FfiConverterInt64.write(value.endsAt, into: &buf)
-        FfiConverterOptionInt64.write(value.endedAt, into: &buf)
-        FfiConverterString.write(value.startedBy, into: &buf)
-        FfiConverterUInt32.write(value.auto, into: &buf)
-        FfiConverterUInt32.write(value.asked, into: &buf)
-        FfiConverterUInt32.write(value.parked, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTaskView_lift(_ buf: RustBuffer) throws -> TaskView {
-    return try FfiConverterTypeTaskView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTaskView_lower(_ value: TaskView) -> RustBuffer {
-    return FfiConverterTypeTaskView.lower(value)
 }
 
 
@@ -20909,119 +19826,6 @@ public func FfiConverterTypeThresholdReplay_lift(_ buf: RustBuffer) throws -> Th
 #endif
 public func FfiConverterTypeThresholdReplay_lower(_ value: ThresholdReplay) -> RustBuffer {
     return FfiConverterTypeThresholdReplay.lower(value)
-}
-
-
-/**
- * A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.
- */
-public struct TicketView: Equatable, Hashable {
-    /**
-     * `rt_…`, as the agent knows it.
-     */
-    public var ticket: String
-    /**
-     * "deferred", "needs_info", "escalated", "stale", "approved", ...
-     */
-    public var state: String
-    /**
-     * The window: from when it became a ticket to its deadline (Unix seconds). Reminders fall at 50% and 90% of it.
-     */
-    public var deferredAt: Int64
-    public var deadline: Int64
-    /**
-     * The reviewer's "Why?", while it waits for the agent.
-     */
-    public var question: String?
-    /**
-     * The agent's answer to it: the agent's words, shown as the agent's, never a fact.
-     */
-    public var agentReply: String?
-    /**
-     * What changed since it was approved ("main moved from 1a2b3c4 to 5d6e7f8").
-     */
-    public var stale: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * `rt_…`, as the agent knows it.
-         */ticket: String, 
-        /**
-         * "deferred", "needs_info", "escalated", "stale", "approved", ...
-         */state: String, 
-        /**
-         * The window: from when it became a ticket to its deadline (Unix seconds). Reminders fall at 50% and 90% of it.
-         */deferredAt: Int64, deadline: Int64, 
-        /**
-         * The reviewer's "Why?", while it waits for the agent.
-         */question: String?, 
-        /**
-         * The agent's answer to it: the agent's words, shown as the agent's, never a fact.
-         */agentReply: String?, 
-        /**
-         * What changed since it was approved ("main moved from 1a2b3c4 to 5d6e7f8").
-         */stale: String?) {
-        self.ticket = ticket
-        self.state = state
-        self.deferredAt = deferredAt
-        self.deadline = deadline
-        self.question = question
-        self.agentReply = agentReply
-        self.stale = stale
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension TicketView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeTicketView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TicketView {
-        return
-            try TicketView(
-                ticket: FfiConverterString.read(from: &buf), 
-                state: FfiConverterString.read(from: &buf), 
-                deferredAt: FfiConverterInt64.read(from: &buf), 
-                deadline: FfiConverterInt64.read(from: &buf), 
-                question: FfiConverterOptionString.read(from: &buf), 
-                agentReply: FfiConverterOptionString.read(from: &buf), 
-                stale: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: TicketView, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.ticket, into: &buf)
-        FfiConverterString.write(value.state, into: &buf)
-        FfiConverterInt64.write(value.deferredAt, into: &buf)
-        FfiConverterInt64.write(value.deadline, into: &buf)
-        FfiConverterOptionString.write(value.question, into: &buf)
-        FfiConverterOptionString.write(value.agentReply, into: &buf)
-        FfiConverterOptionString.write(value.stale, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTicketView_lift(_ buf: RustBuffer) throws -> TicketView {
-    return try FfiConverterTypeTicketView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTicketView_lower(_ value: TicketView) -> RustBuffer {
-    return FfiConverterTypeTicketView.lower(value)
 }
 
 
@@ -21787,107 +20591,6 @@ public func FfiConverterTypeVaultUse_lift(_ buf: RustBuffer) throws -> VaultUse 
 #endif
 public func FfiConverterTypeVaultUse_lower(_ value: VaultUse) -> RustBuffer {
     return FfiConverterTypeVaultUse.lower(value)
-}
-
-
-/**
- * One thing on the "Your world" screen.
- */
-public struct WorldItem: Equatable, Hashable {
-    public var kind: FactChoice
-    public var key: String
-    /**
-     * What the screen shows ("acme", "ann@example.com").
-     */
-    public var label: String
-    /**
-     * "github" | "email" | "messages" | "computers": the section it is listed in.
-     */
-    public var service: String
-    public var zone: ZoneChoice
-    /**
-     * The owner confirmed it (else it is a proposal, which decides nothing until confirmed).
-     */
-    public var confirmed: Bool
-    /**
-     * Requests that touched it in the last 30 days.
-     */
-    public var count: UInt32
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(kind: FactChoice, key: String, 
-        /**
-         * What the screen shows ("acme", "ann@example.com").
-         */label: String, 
-        /**
-         * "github" | "email" | "messages" | "computers": the section it is listed in.
-         */service: String, zone: ZoneChoice, 
-        /**
-         * The owner confirmed it (else it is a proposal, which decides nothing until confirmed).
-         */confirmed: Bool, 
-        /**
-         * Requests that touched it in the last 30 days.
-         */count: UInt32) {
-        self.kind = kind
-        self.key = key
-        self.label = label
-        self.service = service
-        self.zone = zone
-        self.confirmed = confirmed
-        self.count = count
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension WorldItem: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeWorldItem: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WorldItem {
-        return
-            try WorldItem(
-                kind: FfiConverterTypeFactChoice.read(from: &buf), 
-                key: FfiConverterString.read(from: &buf), 
-                label: FfiConverterString.read(from: &buf), 
-                service: FfiConverterString.read(from: &buf), 
-                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
-                confirmed: FfiConverterBool.read(from: &buf), 
-                count: FfiConverterUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: WorldItem, into buf: inout [UInt8]) {
-        FfiConverterTypeFactChoice.write(value.kind, into: &buf)
-        FfiConverterString.write(value.key, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
-        FfiConverterString.write(value.service, into: &buf)
-        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
-        FfiConverterBool.write(value.confirmed, into: &buf)
-        FfiConverterUInt32.write(value.count, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWorldItem_lift(_ buf: RustBuffer) throws -> WorldItem {
-    return try FfiConverterTypeWorldItem.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWorldItem_lower(_ value: WorldItem) -> RustBuffer {
-    return FfiConverterTypeWorldItem.lower(value)
 }
 
 
@@ -22787,9 +21490,11 @@ public enum AutopilotMode: Equatable, Hashable {
      */
     case auto
     /**
-     * "Auto while you're away" (Decisions v2, 01 §11): what Auto would ask is parked for the morning (a ticket: the
-     * agent carries on), people are stricter and the owner's own L1 work is looser. It never denies (only explicit
-     * rules do). Runs until turned off or until `overnight_until`, then returns to the mode it interrupted.
+     * For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
+     * always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
+     * waits for the user (catastrophic ones are denied instead with `OvernightRisky::Deny`). Needs a model with the risk
+     * output; without one it decides like Auto. Runs until turned off or until `overnight_until`, then returns to the
+     * mode it interrupted.
      */
     case overnight
     /**
@@ -22876,85 +21581,6 @@ public func FfiConverterTypeAutopilotMode_lift(_ buf: RustBuffer) throws -> Auto
 #endif
 public func FfiConverterTypeAutopilotMode_lower(_ value: AutopilotMode) -> RustBuffer {
     return FfiConverterTypeAutopilotMode.lower(value)
-}
-
-
-
-/**
- * A matrix cell (01 §4).
- */
-
-public enum CellChoice: Equatable, Hashable {
-    
-    case auto
-    case ask
-    /**
-     * Ask the first time per resource, then Auto.
-     */
-    case askFirst
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CellChoice: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCellChoice: FfiConverterRustBuffer {
-    typealias SwiftType = CellChoice
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CellChoice {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .auto
-        
-        case 2: return .ask
-        
-        case 3: return .askFirst
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: CellChoice, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .auto:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .ask:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .askFirst:
-            writeInt(&buf, Int32(3))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCellChoice_lift(_ buf: RustBuffer) throws -> CellChoice {
-    return try FfiConverterTypeCellChoice.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCellChoice_lower(_ value: CellChoice) -> RustBuffer {
-    return FfiConverterTypeCellChoice.lower(value)
 }
 
 
@@ -23628,121 +22254,6 @@ public func FfiConverterTypeEnrollProgress_lift(_ buf: RustBuffer) throws -> Enr
 #endif
 public func FfiConverterTypeEnrollProgress_lower(_ value: EnrollProgress) -> RustBuffer {
     return FfiConverterTypeEnrollProgress.lower(value)
-}
-
-
-
-/**
- * What a fact is about.
- */
-
-public enum FactChoice: Equatable, Hashable {
-    
-    /**
-     * A GitHub user or organization.
-     */
-    case owner
-    /**
-     * One repository (`owner/name`).
-     */
-    case repo
-    /**
-     * An email domain.
-     */
-    case domain
-    /**
-     * A person (an address, a number, a handle).
-     */
-    case person
-    /**
-     * A computer or server.
-     */
-    case host
-    /**
-     * A chat or group.
-     */
-    case chat
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FactChoice: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFactChoice: FfiConverterRustBuffer {
-    typealias SwiftType = FactChoice
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FactChoice {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .owner
-        
-        case 2: return .repo
-        
-        case 3: return .domain
-        
-        case 4: return .person
-        
-        case 5: return .host
-        
-        case 6: return .chat
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: FactChoice, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .owner:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .repo:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .domain:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .person:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .host:
-            writeInt(&buf, Int32(5))
-        
-        
-        case .chat:
-            writeInt(&buf, Int32(6))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFactChoice_lift(_ buf: RustBuffer) throws -> FactChoice {
-    return try FfiConverterTypeFactChoice.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFactChoice_lower(_ value: FactChoice) -> RustBuffer {
-    return FfiConverterTypeFactChoice.lower(value)
 }
 
 
@@ -24507,6 +23018,156 @@ public func FfiConverterTypeModelUpdateOutcome_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeModelUpdateOutcome_lower(_ value: ModelUpdateOutcome) -> RustBuffer {
     return FfiConverterTypeModelUpdateOutcome.lower(value)
+}
+
+
+
+/**
+ * What an org review is about.
+ */
+
+public enum OrgReviewKind: Equatable, Hashable {
+    
+    /**
+     * An agent's request.
+     */
+    case request
+    /**
+     * A pending admin change.
+     */
+    case change
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OrgReviewKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewKind: FfiConverterRustBuffer {
+    typealias SwiftType = OrgReviewKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .request
+        
+        case 2: return .change
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OrgReviewKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .request:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .change:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lift(_ buf: RustBuffer) throws -> OrgReviewKind {
+    return try FfiConverterTypeOrgReviewKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lower(_ value: OrgReviewKind) -> RustBuffer {
+    return FfiConverterTypeOrgReviewKind.lower(value)
+}
+
+
+
+/**
+ * What Overnight does with a request its risk model rates catastrophic.
+ */
+
+public enum OvernightRisky: Equatable, Hashable {
+    
+    /**
+     * It waits for the user (the default).
+     */
+    case wait
+    /**
+     * It is denied at once.
+     */
+    case deny
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OvernightRisky: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOvernightRisky: FfiConverterRustBuffer {
+    typealias SwiftType = OvernightRisky
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OvernightRisky {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .wait
+        
+        case 2: return .deny
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OvernightRisky, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .wait:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .deny:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOvernightRisky_lift(_ buf: RustBuffer) throws -> OvernightRisky {
+    return try FfiConverterTypeOvernightRisky.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOvernightRisky_lower(_ value: OvernightRisky) -> RustBuffer {
+    return FfiConverterTypeOvernightRisky.lower(value)
 }
 
 
@@ -25708,89 +24369,6 @@ public func FfiConverterTypeVerdict_lower(_ value: Verdict) -> RustBuffer {
 }
 
 
-
-/**
- * Whose a thing is (01 §3), least trusted last.
- */
-
-public enum ZoneChoice: Equatable, Hashable {
-    
-    case mine
-    case friends
-    case work
-    case outside
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ZoneChoice: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeZoneChoice: FfiConverterRustBuffer {
-    typealias SwiftType = ZoneChoice
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ZoneChoice {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .mine
-        
-        case 2: return .friends
-        
-        case 3: return .work
-        
-        case 4: return .outside
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: ZoneChoice, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .mine:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .friends:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .work:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .outside:
-            writeInt(&buf, Int32(4))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeZoneChoice_lift(_ buf: RustBuffer) throws -> ZoneChoice {
-    return try FfiConverterTypeZoneChoice.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeZoneChoice_lower(_ value: ZoneChoice) -> RustBuffer {
-    return FfiConverterTypeZoneChoice.lower(value)
-}
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -26466,30 +25044,6 @@ fileprivate struct FfiConverterOptionTypeGrantScopeChoice: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeMatrixView: FfiConverterRustBuffer {
-    typealias SwiftType = MatrixView?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeMatrixView.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeMatrixView.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
     typealias SwiftType = McpCallView?
 
@@ -26530,30 +25084,6 @@ fileprivate struct FfiConverterOptionTypeOrgView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeOrgView.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeOvernightDigest: FfiConverterRustBuffer {
-    typealias SwiftType = OvernightDigest?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeOvernightDigest.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeOvernightDigest.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -26866,54 +25396,6 @@ fileprivate struct FfiConverterOptionTypeSuggestionView: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSuggestionView.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeTaskView: FfiConverterRustBuffer {
-    typealias SwiftType = TaskView?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeTaskView.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeTaskView.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeTicketView: FfiConverterRustBuffer {
-    typealias SwiftType = TicketView?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeTicketView.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeTicketView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -27393,31 +25875,6 @@ fileprivate struct FfiConverterSequenceTypeAttestationInput: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeAutoQuestion: FfiConverterRustBuffer {
-    typealias SwiftType = [AutoQuestion]
-
-    public static func write(_ value: [AutoQuestion], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeAutoQuestion.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AutoQuestion] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [AutoQuestion]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeAutoQuestion.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeBudgetView: FfiConverterRustBuffer {
     typealias SwiftType = [BudgetView]
 
@@ -27718,31 +26175,6 @@ fileprivate struct FfiConverterSequenceTypeDiffLineView: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeDigestGroup: FfiConverterRustBuffer {
-    typealias SwiftType = [DigestGroup]
-
-    public static func write(_ value: [DigestGroup], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeDigestGroup.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DigestGroup] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [DigestGroup]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeDigestGroup.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeEnvStoreView: FfiConverterRustBuffer {
     typealias SwiftType = [EnvStoreView]
 
@@ -27893,31 +26325,6 @@ fileprivate struct FfiConverterSequenceTypeHandoverView: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeMatrixRowView: FfiConverterRustBuffer {
-    typealias SwiftType = [MatrixRowView]
-
-    public static func write(_ value: [MatrixRowView], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeMatrixRowView.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MatrixRowView] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [MatrixRowView]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeMatrixRowView.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeMcpServerView: FfiConverterRustBuffer {
     typealias SwiftType = [McpServerView]
 
@@ -28010,6 +26417,31 @@ fileprivate struct FfiConverterSequenceTypeNeighbourView: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeNeighbourView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeOrgReviewView: FfiConverterRustBuffer {
+    typealias SwiftType = [OrgReviewView]
+
+    public static func write(_ value: [OrgReviewView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeOrgReviewView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [OrgReviewView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [OrgReviewView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeOrgReviewView.read(from: &buf))
         }
         return seq
     }
@@ -28518,31 +26950,6 @@ fileprivate struct FfiConverterSequenceTypeSshStoreView: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeTaskView: FfiConverterRustBuffer {
-    typealias SwiftType = [TaskView]
-
-    public static func write(_ value: [TaskView], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeTaskView.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TaskView] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [TaskView]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeTaskView.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeTokenStoreView: FfiConverterRustBuffer {
     typealias SwiftType = [TokenStoreView]
 
@@ -28693,31 +27100,6 @@ fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeWorldItem: FfiConverterRustBuffer {
-    typealias SwiftType = [WorldItem]
-
-    public static func write(_ value: [WorldItem], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeWorldItem.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [WorldItem] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [WorldItem]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeWorldItem.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeAccountPermissionPreset: FfiConverterRustBuffer {
     typealias SwiftType = [AccountPermissionPreset]
 
@@ -28785,31 +27167,6 @@ fileprivate struct FfiConverterSequenceTypeActivityOutcome: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeActivityOutcome.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeCellChoice: FfiConverterRustBuffer {
-    typealias SwiftType = [CellChoice]
-
-    public static func write(_ value: [CellChoice], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCellChoice.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CellChoice] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CellChoice]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCellChoice.read(from: &buf))
         }
         return seq
     }
@@ -29050,6 +27407,38 @@ public func orgEnrollmentMessage(challenge: String) -> Data  {
     )
 })
 }
+/**
+ * The bytes the enrolled device key signs to set the member's own policy
+ * (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
+ * replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.
+ */
+public func orgMemberPolicyMessage(orgId: String, member: String, version: UInt64, at: Int64, body: String) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_member_policy_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(member),
+        FfiConverterUInt64.lower(version),
+        FfiConverterInt64.lower(at),
+        FfiConverterString.lower(body),uniffiCallStatus
+    )
+})
+}
+/**
+ * The bytes the enrolled device key signs to answer an org review (`reins_proto::managed::review_message`):
+ * approve or deny, and `Propose` to confirm your own admin change. `org_id` is the work account's org.
+ */
+public func orgReviewMessage(orgId: String, review: OrgReviewView, approve: Bool, at: Int64) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_review_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterTypeOrgReviewView_lower(review),
+        FfiConverterBool.lower(approve),
+        FfiConverterInt64.lower(at),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -29076,6 +27465,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_member_policy_message() != 56035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_review_message() != 16415) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
@@ -29126,9 +27521,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_add_vault_passkey() != 42076) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_answer_auto_question() != 20247) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_answer_blob() != 10725) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -29144,28 +27536,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_approve() != 62035) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_approve_all() != 40812) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_approve_task() != 59020) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_ask_me_next_time() != 14829) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_ask_why() != 23348) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_assign_profile() != 6030) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_auto_questions() != 22152) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_auto_setup() != 44664) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_autopilot_evaluate() != 55479) {
@@ -29201,9 +27575,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_create_profile() != 4955) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_decide_later() != 50374) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_deciding() != 19882) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -29222,22 +27593,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_deny_with_note() != 61995) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_dismiss_account_sync_notice() != 25355) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_dismiss_auto_question() != 20301) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_end_task() != 11817) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_enroll_begin() != 4151) {
@@ -29259,9 +27621,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_fetch_email() != 21111) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_finish_auto_setup() != 11391) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_gmail_status() != 55396) {
@@ -29339,6 +27698,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_org_decide() != 11544) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_org_enroll() != 20244) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -29348,10 +27710,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {
+    if (uniffi_reins_core_checksum_method_reinscore_org_reviews() != 62660) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_overnight_digest() != 43957) {
+    if (uniffi_reins_core_checksum_method_reinscore_org_set_member_policy() != 64873) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_by_code() != 29957) {
@@ -29492,16 +27857,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_default_profile() != 2528) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_matrix_cell() != 19935) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_set_matrix_decides() != 7476) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 3100) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_overnight_expiry() != 27356) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_overnight_when_risky() != 35605) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
@@ -29516,16 +27875,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_thresholds() != 38198) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_world_zone() != 41970) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_shuffle_connection_blobatar() != 1265) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_signing_key_fingerprint() != 25325) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
@@ -29540,19 +27893,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 23286) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_start_overnight() != 21783) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_start_task() != 22965) {
+    if (uniffi_reins_core_checksum_method_reinscore_start_overnight() != 51582) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sync() != 42469) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_tasks() != 45505) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_threshold_replay() != 51589) {

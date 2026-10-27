@@ -24,9 +24,15 @@ class PushHandler(
     private val ownerOf: suspend (String?) -> PushOwner = { PushOwner.Here },
     /** A push for another profile: a plain "Open Reins" on that profile, nothing else. */
     private val onElsewhere: (WorkProfiles.Active) -> Unit = {},
+    /** An org review waits: notify it for the profile it is for (null: this one), opening that profile's reviews. */
+    private val onOrgReview: (WorkProfiles.Active?, String) -> Unit = { _, _ -> },
 ) {
     suspend fun handle(payload: PushPayload): PushOutcome {
         val owner = ownerOf(payload.profileTag)
+        if (payload.kind == PushPayload.ORG_REVIEW) {
+            onOrgReview((owner as? PushOwner.Elsewhere)?.profile, payload.id)
+            return PushOutcome.DONE
+        }
         if (owner is PushOwner.Elsewhere) {
             // Not this profile's: no fetch, no "replaced", nothing on this core.
             onElsewhere(owner.profile)
@@ -58,6 +64,7 @@ class PushHandler(
             },
             ownerOf = { tag -> PushRouting.ownerOf(container, tag) },
             onElsewhere = container.notifier::otherProfile,
+            onOrgReview = { target, id -> container.notifier.orgReview(target ?: container.profile, id) },
         )
     }
 }

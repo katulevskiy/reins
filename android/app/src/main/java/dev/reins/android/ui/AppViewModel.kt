@@ -170,6 +170,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** An org review notification: Settings > Reviews of this (work) profile. */
+    fun openOrgReviews() {
+        home()
+        selectTab(Tab.Settings)
+        open(Route.OrgReviews)
+    }
+
     /** The bypass notification or the download's: the Trust tab, where Autopilot lives. */
     fun openAutopilot() {
         home()

@@ -22,12 +22,21 @@ struct ProfilesSection: View {
     @State private var profiles: [AccountProfile] = []
     @State private var offered = false
     @State private var adding = false
+    /// A work profile's org reviews waiting (nil: not known, or the Personal profile).
+    @State private var reviews: Int?
 
     var body: some View {
         Group {
             if offered || profiles.contains(where: { $0.kind == .managed }) {
                 SectionHeader("Profiles", glyph: .person)
                 RaisedGroup {
+                    if WorkProfiles.active.managed {
+                        Button { model.show(.orgReviews) } label: {
+                            TileRow("Reviews", glyph: .shieldCheck, value: reviews.flatMap { $0 > 0 ? String($0) : nil })
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("orgReviewsRow")
+                    }
                     ForEach(profiles, id: \.id) { p in
                         let current = p.id == WorkProfiles.active.id
                         Button {
@@ -50,6 +59,7 @@ struct ProfilesSection: View {
         .task {
             profiles = WorkProfiles.registry().list()
             offered = (try? await model.core.orgsOffered(serverUrl: server)) ?? false
+            if WorkProfiles.active.managed { reviews = try? await model.core.orgReviews().count }
         }
         .sheet(isPresented: $adding) {
             NavigationStack {
@@ -61,9 +71,22 @@ struct ProfilesSection: View {
 
 /// Switching profiles opens the other profile's core: the app moves to it in place, never by quitting.
 enum ProfileSwitch {
+    /// What to open once switched (a notification of that profile's: its reviews); taken by the relaunch.
+    nonisolated(unsafe) static var then: DeepLink?
+
     /// Rebuilds the app on the newly active profile (`AppHost.switchProfile`). Tests replace it.
     nonisolated(unsafe) static var relaunch: @MainActor () -> Void = {
-        Task { @MainActor in await AppHost.current?.switchProfile() }
+        Task { @MainActor in
+            await AppHost.current?.switchProfile()
+            guard let link = ProfileSwitch.then else { return }
+            ProfileSwitch.then = nil
+            guard let model = await AppHost.current?.ready() else { return }
+            for _ in 0..<100 {
+                guard case .loading = model.session else { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            await model.handle(link)
+        }
     }
 
     @MainActor static func switchTo(_ id: String, registry: ProfileRegistryProtocol = WorkProfiles.registry()) {

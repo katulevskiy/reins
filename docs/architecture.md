@@ -82,6 +82,10 @@ flowchart TB
 | `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
 | `POST /reins/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS syncs (users, directories) |
 | `GET /reins/api/org`, `POST /reins/api/org/enroll/challenge`, `POST /reins/api/org/devices`, `PUT /reins/api/org/posture` | a work profile's phone | Vaultwarden login token of an org's active member (404 for anyone else); enrollment proves the device key with a signature over a single-use challenge |
+| `GET /reins/api/org/reviews`, `POST /reins/api/org/reviews/<id>`, `PUT /reins/api/org/member-policy` | a work profile's phone | as above; answers and member policies are signed by the enrolled device key, which must pass the org's posture rule |
+| `POST /reins/api/org/leases`, `GET /reins/api/org/leases/<id>` | a work account's desktop daemon | its connection's bearer token; the credential comes back sealed to the daemon's X25519 key |
+| `/reins/org-exec/…` (`claim`, `keys`, `policy/<hash>`, `roster`, `receipt`, `revocations`, `revoked/<id>`) | an org executor | every call signed with the executor's registered Ed25519 key over (org, executor, method, path, time, body hash), ±120 s; one tenant per executor |
+| `/mcp` of a work account | its agents | as for any account; the call goes to the org's decision service instead of the relay |
 | `/reins/org`, `/reins/org/<org>/…` | org admins, in a browser | the admin console: SSO through `/identity/connect/authorize` (`client_id=reins-console`), an in-memory session and a CSRF token per form; every page re-reads the admin's roles |
 
 Persistent tables: `reins_devices` (the approval device and its push token), `reins_clients` (registered OAuth
@@ -94,9 +98,12 @@ acknowledged `seq` and, for the primary, its latest heartbeat), `reins_ops` (sig
 Vaultwarden's `organizations`, `users_organizations` and `groups` and add `reins_orgs` (tier, sign-in binding),
 `reins_org_domains` and `reins_org_verified_domains`, `reins_org_members` (each member's state in its org: the
 org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin changes), `reins_org_devices`
-(enrolled devices, attestations, posture) and `reins_org_events` (the hash-linked admin events), and for deferred
-decisions `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and `reins_callbacks`. Everything else is in
-memory with a time limit, so
+(enrolled devices, attestations, posture) and `reins_org_events` (the org's hash-chained audit log). O2 adds
+`reins_org_keys` (per-tenant keys, sealed), `reins_org_policies` and `reins_org_member_policies`, `reins_org_requests`
+(decisions, their trace and countersigned record), `reins_org_bodies` (sealed bodies, results and receipts, with
+retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`, `reins_org_leases` and
+`reins_org_checkpoints`. Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
+`reins_callbacks`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows

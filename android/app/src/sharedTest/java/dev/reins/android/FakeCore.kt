@@ -722,6 +722,10 @@ class FakeCore : ReinsCoreInterface {
         org = null
         orgsOffered = false
         pushTag = null
+        orgReviews = emptyList()
+        orgDecisions.clear()
+        orgDecideError = null
+        memberPolicies.clear()
         ssoBeginWorks.clear()
         enrollments.clear()
         postures.clear()
@@ -786,6 +790,28 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) {
         postures += posture
+    }
+
+    /** The org reviews waiting for this member (`orgReviews`); a Personal account (no [org]) has none. */
+    @Volatile var orgReviews: List<dev.reins.core.OrgReviewView> = emptyList()
+
+    /** `orgDecide` calls: (id, approve, at, signature). */
+    val orgDecisions = CopyOnWriteArrayList<List<Any>>()
+    @Volatile var orgDecideError: CoreException? = null
+    /** `orgSetMemberPolicy` calls: (body, version, at, signature). */
+    val memberPolicies = CopyOnWriteArrayList<List<Any>>()
+
+    override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = if (org == null) emptyList() else orgReviews
+
+    override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) {
+        orgDecideError?.let { throw it }
+        if (orgReviews.none { it.id == id }) throw CoreException.NotFound()
+        orgDecisions += listOf(id, approve, at, signature)
+        orgReviews = orgReviews.filterNot { it.id == id }
+    }
+
+    override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) {
+        memberPolicies += listOf(body, version, at, signature)
     }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {

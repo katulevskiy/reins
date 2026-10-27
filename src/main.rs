@@ -613,6 +613,10 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         if api::reins::enabled() {
             api::reins::tickets::spawn_sweeper(pool.clone());
         }
+        // Organizations: the decision service's sweeper (expiries, leases, retention, audit checkpoints).
+        api::reins::org::sweeper::spawn(pool.clone());
+        // Organizations: verify the attestations of devices enrolled before they were verified.
+        tokio::spawn(api::reins::org::attest::backfill(pool.clone()));
     }
 
     // The first push of the day should not wait for Google's token endpoint.

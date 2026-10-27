@@ -639,6 +639,12 @@ make_config! {
         reins_orgs_enabled:          bool,   false,  def,    false;
         /// WorkOS directory sync interval (seconds) |> With organizations on and WorkOS as the SSO provider: how often the server reads the WorkOS Directory Sync events (SCIM users and groups) when no webhook wakes it. Keep it under 60 so that a removed member loses access within a minute even without webhooks. 0 disables the directory sync.
         reins_workos_dsync_secs:     u64,    false,  def,    20;
+        /// Org key file |> With organizations on: the 32-byte master key (created on first use, mode 0600) that seals every org's issuer, decision service and data keys. Keep it out of database backups; BYOK KMS adapters replace it later.
+        reins_org_kms_key_file:      String, false,  auto,   |c| storage::join_path(&c.data_folder, "reins_org_kms.key");
+        /// Android attestation roots |> A PEM file of the root certificates Android key attestation chains must end in. Empty: Google's hardware attestation roots.
+        reins_attest_android_roots:  String, false,  def,    String::new();
+        /// App Attest app id |> The iOS app's App ID (TEAMID.bundle id) App Attest attestations must name. Empty: App Attest is recorded but not verified.
+        reins_app_attest_app_id:     String, false,  def,    String::new();
     },
     jobs {
         /// Job scheduler poll interval |> How often the job scheduler thread checks for jobs to run.

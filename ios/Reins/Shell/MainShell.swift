@@ -242,6 +242,7 @@ struct RouteView: View {
         case .appearance: AppearanceScreen()
         case .wallpaper: WallpaperScreen()
         case .devices: DevicesScreen()
+        case .orgReviews: OrgReviewsScreen()
         case .vault: VaultScreen()
         case .vaultAdd: VaultAddScreen()
         case let .vaultItem(id): VaultItemScreen(id: id)
