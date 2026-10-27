@@ -42,6 +42,7 @@ pub mod invariants;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod kms;
 pub mod leases;
+pub mod managed_mcp;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod policy;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]

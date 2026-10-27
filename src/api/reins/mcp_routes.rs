@@ -426,6 +426,12 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
             );
         }
     };
+    // A Managed account's calls go to its org's decision service, never to a phone (Decisions v2 · O2).
+    if let Some(org) = super::org::managed_mcp::org_of(&connection, &conn).await {
+        let (status, body) =
+            super::org::managed_mcp::post(&org, &request.headers, &body, &connection, conn, pool.inner()).await;
+        return McpResponse::json(status, body);
+    }
     let user = connection.user_uuid.to_string();
     let services = HUB.services_of(&user);
     let mcp_servers = HUB.mcp_servers_of(&user);

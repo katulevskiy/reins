@@ -1,0 +1,209 @@
+//! A Managed account's MCP calls go to its org's decision service, never to a phone (`docs/design/decisions-v2/05` §5:
+//! "Phones in Managed mode are approval devices only"; `08` R6: requests carry their connection's profile).
+//!
+//! Which account a connection belongs to decides it: a connection of an active member of an org is Managed, every
+//! other connection is Personal and takes the relay as before. The tools offered are the ones the org's executors
+//! run through its managed connections.
+
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
+use super::{OrgError, decisions, enabled, leases::managed_org};
+use crate::{
+    CONFIG,
+    api::reins::{
+        mcp::{self, Action, McpHeaders},
+        mcp_routes::check_connection_rate,
+        now_unix,
+        tools::{self, ToolArgError, ToolInvocation},
+    },
+    db::{DbConn, DbPool, models::ReinsConnection},
+};
+
+/// The tools an org executor runs (its GitHub App and Google Workspace connections), and the result tool.
+pub const MANAGED_TOOLS: &[&str] = &[
+    "github_api_read",
+    "github_api_write",
+    "github_create_issue",
+    "github_comment",
+    "gmail_send",
+    "calendar_list_events",
+    "calendar_create_event",
+    "reins_get_result",
+];
+
+/// The org of a Managed connection, if it is one (organizations on, its account an active member).
+pub async fn org_of(connection: &ReinsConnection, conn: &DbConn) -> Option<String> {
+    if !enabled() {
+        return None;
+    }
+    let user = connection.user_uuid.to_string();
+    conn.run(move |c| managed_org(c, &user)).await.ok().flatten()
+}
+
+fn only_managed(mut body: Value) -> Value {
+    let tools = body.pointer_mut("/result/tools").and_then(Value::as_array_mut);
+    if let Some(tools) = tools {
+        tools.retain(|t| t["name"].as_str().is_some_and(|n| MANAGED_TOOLS.contains(&n)));
+    }
+    body
+}
+
+fn tool_error(message: &str) -> Value {
+    tools::failure(message)
+}
+
+/// What the agent is told for a request's status.
+fn render(status: &Value) -> Value {
+    match status["status"].as_str() {
+        Some("done") => match &status["result"] {
+            r @ Value::Object(_) => tools::success(r),
+            other => tools::success(&json!({"result": other})),
+        },
+        Some("pending_review" | "approved") => tools::success(status),
+        _ => tool_error(status["reason"].as_str().unwrap_or("Not done.")),
+    }
+}
+
+/// Answers one `/mcp` POST of a Managed connection: `(HTTP status, body)`.
+pub async fn post(
+    org: &str,
+    headers: &McpHeaders,
+    body: &[u8],
+    connection: &ReinsConnection,
+    conn: DbConn,
+    pool: &DbPool,
+) -> (u16, Option<Value>) {
+    let services = ["github".to_owned(), "gmail".to_owned(), "calendar".to_owned()];
+    let action = mcp::handle(headers, body, Some(&services), &[]);
+    let (id, name, arguments, modern) = match action {
+        Action::Reply {
+            status,
+            body,
+        } => return (status, body.map(only_managed)),
+        Action::CallTool {
+            id,
+            name,
+            arguments,
+            modern,
+        } => (id, name, arguments, modern),
+    };
+    if let Err(wait) = check_connection_rate(connection) {
+        return (
+            200,
+            Some(mcp::tool_reply(
+                &id,
+                modern,
+                tool_error(&format!("Too many requests. Try again in {}s.", wait.as_secs().max(1))),
+            )),
+        );
+    }
+    let reply = |result: Value| (200, Some(mcp::tool_reply(&id, modern, result)));
+    if !MANAGED_TOOLS.contains(&name.as_str()) {
+        return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {name}"), None)));
+    }
+    let (org, connection_id, user) = (org.to_owned(), connection.uuid.clone(), connection.user_uuid.to_string());
+    let request_id = match tools::parse_invocation_with(&name, &arguments, &[]) {
+        Err(ToolArgError::UnknownTool(t)) => {
+            return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {t}"), None)));
+        }
+        Err(ToolArgError::Invalid(m)) => return reply(tool_error(&m)),
+        Ok(ToolInvocation::GetResult(r)) => r.0,
+        Ok(ToolInvocation::Relay(..)) => {
+            let (o, u, cid, label, n, args, now) = (
+                org.clone(),
+                user.clone(),
+                connection_id.clone(),
+                connection.label.clone(),
+                name.clone(),
+                arguments.clone(),
+                now_unix(),
+            );
+            let submitted = conn.run(move |c| decisions::submit(c, &o, &u, &cid, &label, &n, &args, None, now)).await;
+            match submitted {
+                Ok(s) => {
+                    super::reviews::notify(pool, &s.notify, &s.id);
+                    if s.outcome == reins_policy::org::ManagedOutcome::Review && !s.instant {
+                        // Deferred: the agent carries on with its ticket (03 §4.1).
+                        let (o, cid, rid) = (org.clone(), connection_id.clone(), s.id.clone());
+                        return match conn.run(move |c| decisions::status(c, &o, &cid, &rid, now_unix())).await {
+                            Ok(st) => reply(render(&st)),
+                            Err(e) => reply(tool_error(e.message())),
+                        };
+                    }
+                    s.id
+                }
+                Err(OrgError::Invalid(m)) => return reply(tool_error(m)),
+                Err(e) => {
+                    warn!("Org decision for {org}: {e:?}");
+                    return reply(tool_error("Your organization couldn't decide this now. Try again."));
+                }
+            }
+        }
+    };
+    // Wait for the answer up to the relay's wait, like a Personal call waits for the phone.
+    let deadline = Instant::now() + Duration::from_secs(CONFIG.reins_relay_wait_secs());
+    loop {
+        let (o, cid, rid) = (org.clone(), connection_id.clone(), request_id.clone());
+        let status = match conn.run(move |c| decisions::status(c, &o, &cid, &rid, now_unix())).await {
+            Ok(s) => s,
+            Err(OrgError::NotFound) => return reply(tool_error("No such request on this connection.")),
+            Err(e) => return reply(tool_error(e.message())),
+        };
+        if decisions::is_final(&status) || Instant::now() >= deadline {
+            return reply(render(&status));
+        }
+        decisions::wait_change(&request_id, deadline.saturating_duration_since(Instant::now())).await;
+    }
+}
+
+#[cfg(all(test, sqlite))]
+mod tests {
+    use super::*;
+    use crate::api::reins::org::{decisions::tests::pilot, testing::db};
+
+    #[test]
+    fn only_managed_accounts_are_routed_to_the_org() {
+        let mut c = db();
+        pilot(&mut c);
+        assert_eq!(managed_org(&mut c, "lee").unwrap().as_deref(), Some("o1"));
+        // A Personal account (no org), and a suspended member.
+        crate::api::reins::org::testing::add_user(&mut c, "bob", "bob@example.com");
+        assert_eq!(managed_org(&mut c, "bob").unwrap(), None);
+        crate::api::reins::org::testing::set_state(
+            &mut c,
+            "o1",
+            "lee",
+            crate::db::models::reins_org::state::SUSPENDED_BY_DIRECTORY,
+        );
+        assert_eq!(managed_org(&mut c, "lee").unwrap(), None);
+    }
+
+    #[test]
+    fn tools_list_offers_only_managed_tools() {
+        let body = json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools::tool_definitions()}});
+        let names: Vec<String> = only_managed(body)["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(names.iter().all(|n| MANAGED_TOOLS.contains(&n.as_str())), "{names:?}");
+        assert!(names.contains(&"github_create_issue".to_owned()) && names.contains(&"gmail_send".to_owned()));
+        assert!(!names.iter().any(|n| n.starts_with("vault_") || n.starts_with("telegram_")));
+    }
+
+    #[test]
+    fn a_deferred_review_renders_the_ticket_object() {
+        let mut c = db();
+        pilot(&mut c);
+        let s = decisions::tests::ask(&mut c, &decisions::tests::issue("acme/prod-db"), 100);
+        let status = decisions::status(&mut c, "o1", "conn-lee", &s.id, 101).unwrap();
+        let rendered = render(&status);
+        assert_ne!(rendered["isError"], json!(true));
+        let structured = &rendered["structuredContent"];
+        assert_eq!(structured["status"], "pending_review");
+        assert_eq!(structured["ticket"], s.id);
+    }
+}
