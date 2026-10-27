@@ -57,6 +57,10 @@ enum IntentBridge {
     /// Autopilot's mode for every AI ("Set Reins to Manual").
     static func setMode(_ option: AutopilotModeOption) async throws {
         let model = try await signedIn()
+        // Auto starts with its setup, in the app (01 §9.1).
+        if option.mode == .auto, let setup = try? await model.core.autoSetup(), !setup.done {
+            throw ReinsIntentError.failed("Open Reins to set up Auto first.")
+        }
         do {
             try await model.core.setAutopilotMode(connectionId: nil, mode: option.mode, minutes: nil)
         } catch {

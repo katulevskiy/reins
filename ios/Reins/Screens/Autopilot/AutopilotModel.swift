@@ -145,12 +145,24 @@ final class AutopilotModel {
             await startOvernight(connectionId: connectionId, minutes: minutes)
             return
         }
+        if mode == .auto, connectionId == nil, await guidesToAutoSetup() { return }
         // Leaving a lockdown loosens what runs: only the phone's owner may (Face ID, Touch ID or the passcode), from
         // whichever control asks (the mode sheet, the chip, Trust's card, a widget or an intent).
         if leavesLockdown(mode, connectionId: connectionId) {
             guard let app, await OwnerPrompt.confirm(app, reason: "End lockdown") == .confirmed else { return }
         }
         await applyMode(mode, connectionId: connectionId)
+    }
+
+    /// Auto for every AI, picked before its setup was done (01 §9.1): the setup opens instead, and its end turns Auto
+    /// on. True when it opened. A setup that cannot be read lets the pick through, as before.
+    func guidesToAutoSetup() async -> Bool {
+        guard let app, let setup = try? await app.core.autoSetup(), !setup.done else { return false }
+        // The Mode sheet that picked it closes first: one presentation at a time.
+        try? await Task.sleep(for: .milliseconds(350))
+        app.feedback.play(.open)
+        app.autoSetupOpen = true
+        return true
     }
 
     /// Whether `mode` would end the lockdown in force for that scope (every AI, or one).

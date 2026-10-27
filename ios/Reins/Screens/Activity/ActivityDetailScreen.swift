@@ -109,6 +109,10 @@ struct ActivityDetailScreen: View {
                 if let note = entry.autopilot {
                     if entry.grantId != nil { Hairline(inset: 48) }
                     AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
+                    if let matrix = note.matrix {
+                        Hairline(inset: 48)
+                        MatrixLine(matrix: matrix)
+                    }
                 }
             }
             .padding(.top, 14)
@@ -147,6 +151,10 @@ struct ActivityDetailScreen: View {
                     if let note = entry.autopilot {
                         if when || account != nil || service || entry.grantId != nil { Hairline(inset: 48) }
                         AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
+                        if let matrix = note.matrix {
+                            Hairline(inset: 48)
+                            MatrixLine(matrix: matrix)
+                        }
                     }
                 }
                 .padding(.top, 20)
