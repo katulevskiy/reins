@@ -212,7 +212,7 @@ private struct PairingContent: View {
                     if !host.isEmpty { PairFact(glyph: .globe, value: host, mono: true, valueId: "pairHost") }
                     // Agents pair with one profile: the one this sign-in reached (switch in Settings for the other).
                     if WorkProfiles.hasWork {
-                        PairFact(glyph: .briefcase, value: WorkProfiles.active.label, valueId: "pairProfile")
+                        PairFact(glyph: WorkProfiles.active.managed ? .briefcase : .person, value: WorkProfiles.active.label, valueId: "pairProfile")
                     }
                 }
                 .padding(.top, 14)

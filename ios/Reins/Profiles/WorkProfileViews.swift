@@ -97,8 +97,12 @@ struct AddWorkAccountScreen: View {
                         .disabled(flow.step == .working || domain.isEmpty)
                         .accessibilityIdentifier("addWorkContinue")
                 case let .added(label, id, enrolled):
-                    QuietBanner(text: enrolled ? "\(label) added. This phone is enrolled." : "\(label) added.", kind: .info)
-                    Button("Switch to \(label)") { ProfileSwitch.switchTo(id, registry: flow.registry) }
+                    // The org's name is shown with the briefcase only, never on its own.
+                    Pill(label, tone: .neutral, glyph: .briefcase).accessibilityIdentifier("addedProfile")
+                    QuietBanner(text: enrolled ? "Added. This phone is enrolled." : "Added.", kind: .info)
+                    Button { ProfileSwitch.switchTo(id, registry: flow.registry) } label: {
+                        Label { Text("Switch to \(label)") } icon: { GlyphIcon(.briefcase, size: 16) }
+                    }
                         .buttonStyle(SignalButtonStyle(.violet))
                         .accessibilityIdentifier("switchToWork")
                 }

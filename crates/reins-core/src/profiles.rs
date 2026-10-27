@@ -82,25 +82,49 @@ pub struct ProfileRegistry {
 /// The longest profile label.
 pub const MAX_LABEL: usize = 40;
 
-/// Characters that change how text reads without being seen: bidi controls and isolates, zero-width and other
-/// invisible format characters, tag characters.
+/// Characters that change how text reads without being seen: Unicode's default-ignorable code points (bidi controls
+/// and isolates, zero-width and other format characters, Hangul fillers, variation selectors, tags…).
 fn invisible(c: char) -> bool {
     matches!(
         c,
-        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}'
-            | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}'
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
 }
 
-/// An org's name as a work profile's label (the badge on cards, the switcher, pairing): what the org typed, without
-/// control, bidi or invisible characters, single-spaced, at most [`MAX_LABEL`] characters, and never anything that
-/// reads as the Personal profile (then `Work`).
+/// What a label looks like, for comparing: NFKC, lowercase, the UTS #39 confusable skeleton, letters and digits only.
+fn looks_like(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let folded: String = text.nfkc().flat_map(char::to_lowercase).collect();
+    unicode_security::confusable_detection::skeleton(&folded).filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// An org's name as a work profile's label (the badge on cards, the switcher, pairing): what the org typed, NFKC,
+/// without control or default-ignorable characters, single-spaced, at most [`MAX_LABEL`] characters, and never
+/// anything that looks like the Personal profile, confusables included (then `Work`). The apps also always show it
+/// with the briefcase, which is what tells a work profile apart; this check is a second line.
 #[must_use]
 pub fn profile_label(raw: &str) -> String {
-    let visible: String = raw.chars().filter(|c| !c.is_control() && !invisible(*c)).collect();
+    use unicode_normalization::UnicodeNormalization;
+    let visible: String = raw.nfkc().filter(|c| !c.is_control() && !invisible(*c)).collect();
     let label: String = visible.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_LABEL).collect();
-    let letters: String = label.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
-    if letters.is_empty() || letters == "personal" {
+    let look = looks_like(&label);
+    if look.is_empty() || look == looks_like("personal") {
         "Work".to_owned()
     } else {
         label
@@ -387,9 +411,28 @@ mod tests {
     fn org_names_are_shown_clean() {
         assert_eq!(profile_label("  Acme \n Corp  "), "Acme Corp");
         assert_eq!(profile_label("Ac\u{202E}me\u{200B}"), "Acme");
+        assert_eq!(profile_label("Personal Finance"), "Personal Finance", "only the profile's own name is taken");
+        assert_eq!(profile_label("\u{FF21}cme"), "Acme", "NFKC");
         assert_eq!(profile_label("\u{2066}Acme\u{2069}"), "Acme");
         assert_eq!(profile_label(&"a".repeat(64)).chars().count(), MAX_LABEL);
-        for personal in ["Personal", "personal", " PERSONAL ", "Per\u{200B}sonal", "per-sonal", "", "\u{202E}"] {
+        for personal in [
+            "Personal",
+            "personal",
+            " PERSONAL ",
+            "Per\u{200B}sonal",
+            "per-sonal",
+            "",
+            "\u{202E}",
+            // Cyrillic Р and е, Greek ο.
+            "\u{0420}\u{0435}rs\u{03BF}nal",
+            // Hangul fillers and the combining grapheme joiner, which render as nothing.
+            "Pers\u{3164}onal",
+            "P\u{115F}ersonal\u{1160}",
+            "Per\u{034F}sonal\u{FFA0}",
+            // Fullwidth letters (NFKC), and a one that reads as an l.
+            "\u{FF30}\u{FF45}\u{FF52}\u{FF53}\u{FF4F}\u{FF4E}\u{FF41}\u{FF4C}",
+            "Persona1",
+        ] {
             assert_eq!(profile_label(personal), "Work", "{personal:?}");
         }
         let dir = tempfile::tempdir().unwrap();

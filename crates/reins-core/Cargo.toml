@@ -57,6 +57,8 @@ signature = "2.2.0"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2"] }
 # Payments: a store's registrable domain (the public suffix list, compiled in), to compare stores and checkouts.
 psl = "2.1.241"
+unicode-normalization = "0.1.26"
+unicode-security = "0.1.2"
 
 [dev-dependencies]
 tempfile = "3.27.0"

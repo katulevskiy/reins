@@ -204,7 +204,9 @@ fun AddWorkAccountScreen(viewModel: AddWorkAccountViewModel, onBack: () -> Unit)
                 }
                 is AddWorkStep.Added -> {
                     val label = WorkProfiles.label(step.profile)
-                    Banner(if (step.enrolled) "$label added. This phone is enrolled." else "$label added.")
+                    // The org's name is shown with the briefcase only (the badge), never on its own.
+                    dev.reins.android.design.ProfileBadge(active = WorkProfiles.of(step.profile))
+                    Banner(if (step.enrolled) "Added. This phone is enrolled." else "Added.")
                     SignalButton("Switch to $label", Modifier.fillMaxWidth().testTag("switchToWork"), glyph = Glyph.Briefcase) {
                         (context as? Activity)?.let { ProfileSwitch.switchTo(it, viewModel.registry, step.profile.id) }
                     }
