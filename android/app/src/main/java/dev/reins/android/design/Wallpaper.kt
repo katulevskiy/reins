@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
@@ -195,7 +197,10 @@ object Wallpapers {
     /**
      * The picture as a pane sees it through the glass: a small copy, box-blurred, saturated 1.9× and brightened 1.06
      * (light) or darkened to 0.82 (dark): the boards' `backdrop-filter: blur(40px) saturate(1.9) brightness(…)`.
-     * Drawn back at full size it is soft; the fine detail that fights text is gone. [src] is the picture for [choice].
+     * Drawn back at full size it is soft; the fine detail that fights text is gone, the shapes stay. Two box passes of
+     * radius 2 on the 1/12 copy are σ ≈ 2 px of it, 3.14 % of the art's width (about 13 dp); iOS blurs by the same
+     * share (`Backdrop.blurShare`, where the derivation is). The panes fade it into the paper at the art's foot
+     * ([drawFrostedArt]). [src] is the picture for [choice].
      */
     fun frosted(choice: WallpaperChoice, dark: Boolean, src: Bitmap): Bitmap {
         val k = key(choice, dark)
@@ -275,9 +280,12 @@ fun rememberWallpaper(choice: WallpaperChoice?, dark: Boolean): WallpaperArt? {
     return if (choice == null) null else now ?: last ?: plain
 }
 
-/** Where the art is drawn on screen, for panes to look through. Null when the page has no art. */
+/**
+ * Where the art is drawn on screen, for panes to look through. Null when the page has no art. [scrim]: the shade at
+ * the art's top (under the status bar and title), drawn over the panes' copy too, as on iOS.
+ */
 @Stable
-class Backdrop(val image: ImageBitmap, val frosted: ImageBitmap?) {
+class Backdrop(val image: ImageBitmap, val frosted: ImageBitmap?, val scrim: Color = Color.Transparent) {
     /** The art's bounds in the root, updated as the page lays out. */
     var bounds by mutableStateOf(Rect.Zero)
 }
@@ -296,7 +304,10 @@ val WALLPAPER_HEIGHT: Dp = 500.dp
 fun WallpaperPage(wallpaper: WallpaperChoice?, modifier: Modifier = Modifier, artHeight: Dp? = WALLPAPER_HEIGHT, content: @Composable () -> Unit) {
     val c = LocalColors.current
     val art = rememberWallpaper(wallpaper, c.dark)
-    val backdrop = remember(art) { art?.let { Backdrop(it.bitmap.asImageBitmap(), Wallpapers.frosted(it.choice, it.dark, it.bitmap).asImageBitmap()) } }
+    val scrim = if (c.dark) Color.Black.copy(alpha = 0.55f) else c.paper.copy(alpha = 0.75f)
+    val backdrop = remember(art, artHeight != null) {
+        art?.let { Backdrop(it.bitmap.asImageBitmap(), Wallpapers.frosted(it.choice, it.dark, it.bitmap).asImageBitmap(), if (artHeight != null) scrim else Color.Transparent) }
+    }
     Box(modifier.background(c.paper)) {
         if (backdrop != null) {
             // [artHeight] null: the art fills the page (the welcome).
@@ -314,16 +325,63 @@ fun WallpaperPage(wallpaper: WallpaperChoice?, modifier: Modifier = Modifier, ar
                 if (artHeight != null) Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
+                        .height(SCRIM_HEIGHT)
                         .background(
-                            Brush.verticalGradient(
-                                listOf(if (c.dark) Color.Black.copy(alpha = 0.55f) else c.paper.copy(alpha = 0.75f), Color.Transparent),
-                            ),
+                            Brush.verticalGradient(listOf(scrim, Color.Transparent)),
                         ),
                 )
             }
         }
         CompositionLocalProvider(LocalBackdrop provides backdrop) { content() }
+    }
+}
+
+/** The scrim's height at the art's top. */
+private val SCRIM_HEIGHT: Dp = 150.dp
+
+/**
+ * The share of the art's height, at its foot, over which the panes' copy fades into the paper: eased, exactly paper at
+ * the art's last row, so a pane running past the art has no edge where the art ends. The art itself fades over about
+ * its lower 40 %; iOS fades its copy over the same share (`Backdrop.fadeShare`).
+ */
+internal const val GLASS_FADE = 0.3f
+
+/**
+ * The glass under one pane, or one piece of a pane: the page's paper, the frosted copy over [art] (the art's bounds in
+ * this piece's coordinates, cropped as the art is: its full width, from the top), faded into the paper over its foot
+ * ([GLASS_FADE]), and the [scrim] over its top [scrimHeight]. Everything is placed by [art] alone, so the pieces of a
+ * pane (the rows of a lazy list) line up exactly.
+ */
+internal fun DrawScope.drawFrostedArt(image: ImageBitmap, art: Rect, paper: Color, scrim: Color, scrimHeight: Float) {
+    drawRect(paper)
+    if (art.width <= 0f || art.height <= 0f) return
+    val w = art.width.toInt()
+    val h = art.height.toInt()
+    translate(art.left, art.top) {
+        val scale = maxOf(art.width / image.width, art.height / image.height)
+        val srcW = (art.width / scale).toInt().coerceIn(1, image.width)
+        val srcH = (art.height / scale).toInt().coerceIn(1, image.height)
+        drawImage(
+            image,
+            srcOffset = IntOffset((image.width - srcW) / 2, 0),
+            srcSize = IntSize(srcW, srcH),
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(w, h),
+            filterQuality = FilterQuality.High,
+        )
+        // Paper laid over the copy, from clear to opaque, is the copy faded out over the paper beneath it.
+        val fade = h * GLASS_FADE
+        val steps = 12
+        val stops = Array(steps + 1) { i ->
+            val t = i.toFloat() / steps
+            t to paper.copy(alpha = t * t * (3 - 2 * t))
+        }
+        drawRect(Brush.verticalGradient(*stops, startY = h - fade, endY = h.toFloat()), topLeft = Offset(0f, h - fade), size = Size(w.toFloat(), fade))
+        // Below the copy's last whole pixel: paper.
+        drawRect(paper, topLeft = Offset(0f, h.toFloat()), size = Size(w.toFloat(), art.height - h + 1f))
+        if (scrim.alpha > 0f) {
+            drawRect(Brush.verticalGradient(listOf(scrim, Color.Transparent), startY = 0f, endY = scrimHeight), size = Size(w.toFloat(), scrimHeight))
+        }
     }
 }
 
@@ -370,25 +428,8 @@ fun Modifier.pane(radius: Dp = 20.dp, top: Boolean = true, bottom: Boolean = tru
                     is androidx.compose.ui.graphics.Outline.Generic -> outline.path
                 }
                 clipPath(path) {
-                    drawRect(c.paper)
                     val b = backdrop.bounds
-                    if (b.width > 0f) {
-                        translate(b.left - at.x, b.top - at.y) {
-                            // The frosted copy is the art scaled down: drawn back over the art's own bounds, cropped
-                            // as the art is (its full width, from the top).
-                            val scale = maxOf(b.width / image.width, b.height / image.height)
-                            val srcW = (b.width / scale).toInt().coerceIn(1, image.width)
-                            val srcH = (b.height / scale).toInt().coerceIn(1, image.height)
-                            drawImage(
-                                image,
-                                srcOffset = IntOffset((image.width - srcW) / 2, 0),
-                                srcSize = IntSize(srcW, srcH),
-                                dstOffset = IntOffset.Zero,
-                                dstSize = IntSize(b.width.toInt(), b.height.toInt()),
-                                filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
-                            )
-                        }
-                    }
+                    drawFrostedArt(image, Rect(b.left - at.x, b.top - at.y, b.right - at.x, b.bottom - at.y), c.paper, backdrop.scrim, SCRIM_HEIGHT.toPx())
                     drawRect(fill)
                     if (top) drawLine(lit, Offset(radius.toPx() * 0.6f, 0.5.dp.toPx()), Offset(size.width - radius.toPx() * 0.6f, 0.5.dp.toPx()), strokeWidth = 1.dp.toPx())
                 }

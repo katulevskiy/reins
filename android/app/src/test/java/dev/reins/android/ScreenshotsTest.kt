@@ -375,6 +375,28 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("1-activity")
     }
 
+    /** The frosted panes over Halo in both themes: a day's pane runs past the art's foot, then under the title. */
+    @Test
+    fun activityGlassHalo() {
+        history()
+        core.activity = (20 downTo 7).map { id ->
+            TestData.entry(id.toLong(), if (id % 2 == 0) "read" else "search", "released", 1u, at = now - 60L * (21 - id))
+        } + core.activity
+        val halo = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Halo)
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = halo, wallpaperLight = halo))
+        try {
+            launch()
+            // The river opens at the new entries, so a day's pane runs across the art's foot and under the title.
+            repeat(20) { settle(); Thread.sleep(100) }
+            shoot("glass-halo-scrolled")
+            rule.onNodeWithText("Latest").performClick()
+            repeat(20) { settle(); Thread.sleep(100) }
+            shoot("glass-halo")
+        } finally {
+            dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice())
+        }
+    }
+
     // ---- the approval screen, as designed (reins-designs/approval.html) ------------------------------------------
 
     private fun designApproval(
