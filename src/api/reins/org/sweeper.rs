@@ -18,6 +18,7 @@ pub fn sweep_once(c: &mut DbConnInner, now: i64) -> Result<(), OrgError> {
     reins_org_request::q_expire_leases(c, now)?;
     reins_org_request::q_purge_bodies(c, now)?;
     audit::checkpoint_due(c, now)?;
+    super::family_connect::sweep(c, now)?;
     Ok(())
 }
 

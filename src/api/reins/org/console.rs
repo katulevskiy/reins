@@ -159,7 +159,7 @@ pub(super) struct Signed {
     pub(super) flash: Option<(String, bool)>,
 }
 
-fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
+pub(super) fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
     let sid = cookies.get(COOKIE)?.value().to_owned();
     let mut map = sessions();
     let s = map.get_mut(&sid)?;

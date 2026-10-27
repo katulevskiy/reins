@@ -143,6 +143,8 @@ pub fn q_deprovision(
     // review answers go.
     let leases = super::leases::q_revoke_for_deprovision(c, org, user, now)?;
     let requests = super::decisions::on_member_removed(c, org, user, now)?;
+    // P7: what a family's guardian connected for them is revoked upstream by the family's executor.
+    let family_connections = super::family_connect::q_revoke_all(c, org, user, now)?;
     let clear_external = reason == Reason::AdminRemoval;
     reins_org::q_end_membership(c, org, user, &membership, new_state, keep_owner, clear_external, actor, now)?;
     if keep_owner && member.is_active() {
@@ -170,6 +172,7 @@ pub fn q_deprovision(
             "connections": cut.connections,
             "leases": leases,
             "requests_cancelled": requests,
+            "family_connections": family_connections,
             "sso_sessions": cut.sso_sessions.len(),
             "db_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),

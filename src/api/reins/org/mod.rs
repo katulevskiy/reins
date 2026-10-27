@@ -39,6 +39,7 @@ pub mod deprovision;
 pub mod dns;
 pub mod executor_api;
 pub mod family;
+pub mod family_connect;
 pub mod gate;
 pub mod github;
 pub mod invariants;
@@ -80,6 +81,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console_managed::routes());
     routes.extend(executor_api::routes());
     routes.extend(family::routes());
+    routes.extend(family_connect::routes());
     routes.extend(leases::routes());
     routes
 }

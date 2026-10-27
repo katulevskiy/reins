@@ -880,6 +880,38 @@ table! {
     }
 }
 
+table! {
+    reins_family_connections (org_uuid, user_uuid, provider) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        provider -> Text,
+        account -> Nullable<Text>,
+        state -> Text,
+        connected_at -> Nullable<BigInt>,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_family_connect_jobs (id) {
+        id -> Text,
+        org_uuid -> Text,
+        user_uuid -> Text,
+        provider -> Text,
+        phase -> Text,
+        oauth_state -> Nullable<Text>,
+        code_key_id -> Nullable<Text>,
+        sealed_code -> Nullable<Text>,
+        auth_url -> Nullable<Text>,
+        state -> Text,
+        claimed_by -> Nullable<Text>,
+        requested_by -> Text,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        done_at -> Nullable<BigInt>,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

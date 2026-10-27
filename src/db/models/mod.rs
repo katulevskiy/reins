@@ -16,6 +16,7 @@ mod reins_client;
 mod reins_connection;
 mod reins_device;
 pub mod reins_family;
+pub mod reins_family_conn;
 pub mod reins_org;
 pub mod reins_org_event;
 pub mod reins_org_exec;

@@ -19,6 +19,7 @@ pub mod connectors;
 pub mod leases;
 pub mod run;
 pub mod seal;
+pub mod user_tokens;
 pub mod verify;
 
 pub use client::Client;

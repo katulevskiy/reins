@@ -91,7 +91,12 @@ pub fn check_signature(
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(&msg, &sig).is_ok()
 }
 
-async fn authenticate(h: &ExecHeaders, method: &str, body: &[u8], conn: &DbConn) -> Result<Executor, Status> {
+pub(super) async fn authenticate(
+    h: &ExecHeaders,
+    method: &str,
+    body: &[u8],
+    conn: &DbConn,
+) -> Result<Executor, Status> {
     if !enabled() {
         return Err(Status::NotFound);
     }

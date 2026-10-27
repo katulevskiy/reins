@@ -8,7 +8,10 @@
     reason = "small server-rendered pages: building them as readable format strings beats saving allocations"
 )]
 
-use reins_proto::org::{Capability, FamilyLeaveView, family_role_label};
+use reins_proto::{
+    managed::OAuthProvider,
+    org::{Capability, FamilyLeaveView, family_role_label},
+};
 use rocket::{
     Route,
     form::{Form, FromForm},
@@ -18,21 +21,21 @@ use rocket::{
 
 use super::{
     OrgError, can,
-    console::{Page, Signed, admin_of, base, check_csrf, email_of, flash, run, to_home, to_org},
+    console::{Page, Signed, admin_of, base, check_csrf, email_of, flash, run, signed, to_home, to_org},
     console_pages::{self as pages, Frame, Tab, hidden_csrf},
-    family,
+    family, family_connect,
 };
 use crate::{
     CONFIG,
     api::reins::{now_unix, pages::escape_html as e},
     db::{
         DbConn, DbPool,
-        models::{reins_family, reins_org},
+        models::{reins_family, reins_family_conn, reins_org},
     },
 };
 
 pub fn routes() -> Vec<Route> {
-    routes![invite, cancel_invite, consent, notice, minor]
+    routes![invite, cancel_invite, consent, notice, minor, connect, connect_wait, oauth_callback, revoke]
 }
 
 /// One member as the family page lists them.
@@ -44,6 +47,8 @@ pub struct MemberRow {
     pub minor: bool,
     pub minor_proposed: bool,
     pub leave: Option<FamilyLeaveView>,
+    /// `(provider, state, account)` of each account a guardian connected for them.
+    pub connections: Vec<(OAuthProvider, String, Option<String>)>,
 }
 
 #[allow(clippy::struct_excessive_bools, reason = "independent facts the page shows")]
@@ -61,6 +66,7 @@ pub struct FamilyView {
     pub invites: Vec<InviteRow>,
     pub notice_days: i32,
     pub can_manage: bool,
+    pub can_connect: bool,
 }
 
 /// The link a new member opens on their phone: `reins-family://<server host>/<secret>`.
@@ -86,7 +92,12 @@ fn load(c: &mut crate::db::DbConnInner, org: &str, viewer: &str, now: i64) -> Re
             effective_at: l.effective_at,
             needs_consent: l.effective_at.is_none(),
         });
+        let connections = reins_family_conn::q_connections(c, org, Some(&user))?
+            .into_iter()
+            .filter_map(|r| OAuthProvider::parse(&r.provider).map(|p| (p, r.state, r.account)))
+            .collect();
         members.push(MemberRow {
+            connections,
             email: email_of(c, &user)?,
             label: family_role_label(if guardian {
                 reins_proto::org::Role::OrgOwner
@@ -118,6 +129,7 @@ fn load(c: &mut crate::db::DbConnInner, org: &str, viewer: &str, now: i64) -> Re
         invites,
         notice_days: reins_family::q_family(c, org)?.map_or(family::DEFAULT_NOTICE_DAYS, |f| f.notice_days),
         can_manage: can(c, org, viewer, Capability::ManageMembers)?,
+        can_connect: can(c, org, viewer, Capability::ManageConnections)?,
     })
 }
 
@@ -186,8 +198,34 @@ value=\"{}\"><input type=\"hidden\" name=\"on\" value=\"true\"><button class=\"q
             } else {
                 String::new()
             };
+            let accounts: String = OAuthProvider::ALL
+                .iter()
+                .filter(|_| v.can_connect && !m.guardian)
+                .map(|p| {
+                    let now = m.connections.iter().find(|(q, ..)| q == p);
+                    match now {
+                        Some((_, state, account)) if state == "connected" => format!(
+                            "<form method=\"post\" action=\"{at}/revoke\">{csrf}<input type=\"hidden\" name=\"member\" \
+value=\"{u}\"><input type=\"hidden\" name=\"provider\" value=\"{pv}\"><span class=\"pill v\">{label} · {acct}</span>\
+<button class=\"quiet\" type=\"submit\">Disconnect</button></form>",
+                            u = e(&m.user),
+                            pv = p.as_str(),
+                            label = p.label(),
+                            acct = e(account.as_deref().unwrap_or_default()),
+                        ),
+                        _ => format!(
+                            "<form method=\"post\" action=\"{at}/connect\">{csrf}<input type=\"hidden\" name=\"member\" \
+value=\"{u}\"><input type=\"hidden\" name=\"provider\" value=\"{pv}\"><button class=\"quiet\" type=\"submit\">\
+Connect {label}</button></form>",
+                            u = e(&m.user),
+                            pv = p.as_str(),
+                            label = p.label(),
+                        ),
+                    }
+                })
+                .collect();
             format!(
-                "<tr><td>{} {pills}</td><td>{}</td><td>{leave}{mark}</td></tr>",
+                "<tr><td>{} {pills}</td><td>{}</td><td>{leave}{mark}{accounts}</td></tr>",
                 e(&m.email),
                 m.label
             )
@@ -395,6 +433,101 @@ async fn notice(org: &str, form: Form<NoticeForm>, cookies: &CookieJar<'_>, conn
     if check_csrf(&s, &form.csrf) {
         let (o, u, d, now) = (org.to_owned(), s.user.clone(), form.days, now_unix());
         if let Err(e) = run(&conn, move |c| family::set_notice(c, &o, &u, d, now)).await {
+            flash(&s.sid, e.message(), true);
+        }
+    }
+    to_org(org, "")
+}
+
+const CONNECT: &[Capability] = &[Capability::ManageConnections];
+
+#[derive(FromForm)]
+struct ProviderForm {
+    csrf: String,
+    member: String,
+    provider: String,
+}
+
+/// A guardian connects a member's account: the family's executor prepares the sign-in, then the browser goes there.
+#[post("/reins/org/<org>/family/connect", data = "<form>")]
+async fn connect(org: &str, form: Form<ProviderForm>, cookies: &CookieJar<'_>, conn: DbConn) -> Redirect {
+    let Some(s) = admin_of(cookies, &conn, org, CONNECT).await else {
+        return to_home();
+    };
+    let Some(provider) = OAuthProvider::parse(&form.provider) else {
+        return to_org(org, "");
+    };
+    if !check_csrf(&s, &form.csrf) {
+        return to_org(org, "");
+    }
+    let (org_id, user, member, now) = (org.to_owned(), s.user.clone(), form.member.clone(), now_unix());
+    match run(&conn, move |c| family_connect::begin(c, &org_id, &user, &member, provider, now)).await {
+        Ok(job) => to_org(org, &format!("/family/connect/{job}")),
+        Err(e) => {
+            flash(&s.sid, e.message(), true);
+            to_org(org, "")
+        }
+    }
+}
+
+/// Waits (refreshing) until the executor has the provider's sign-in ready, then sends the browser there.
+#[get("/reins/org/<org>/family/connect/<job>")]
+async fn connect_wait(org: &str, job: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Result<Redirect, Page> {
+    let Some(s) = admin_of(cookies, &conn, org, CONNECT).await else {
+        return Err(super::console::not_found());
+    };
+    let (org_id, user, job_id) = (org.to_owned(), s.user.clone(), job.to_owned());
+    match run(&conn, move |c| family_connect::auth_url(c, &org_id, &user, &job_id)).await {
+        Ok(Some(url)) => Ok(Redirect::to(url)),
+        Ok(None) => {
+            let body = "<meta http-equiv=\"refresh\" content=\"2\"><section><h1>Connecting</h1>\
+<p class=\"meta\">Waiting for the family's executor.</p></section>";
+            Err(Page(pages::page("Connecting", None, body, &base())))
+        }
+        Err(e) => {
+            flash(&s.sid, e.message(), true);
+            Ok(to_org(org, ""))
+        }
+    }
+}
+
+/// The provider sends the guardian back here. Only the guardian who started it, in this browser, finishes it.
+#[get("/reins/org/family/oauth/callback?<code>&<state>&<error>")]
+async fn oauth_callback(
+    code: Option<&str>,
+    state: Option<&str>,
+    error: Option<&str>,
+    cookies: &CookieJar<'_>,
+    conn: DbConn,
+) -> Redirect {
+    let Some(s) = signed(cookies, now_unix()) else {
+        return to_home();
+    };
+    let (Some(code), Some(state), None) = (code, state, error) else {
+        flash(&s.sid, "The sign-in was cancelled.", true);
+        return to_home();
+    };
+    let (user, code, state, now) = (s.user.clone(), code.to_owned(), state.to_owned(), now_unix());
+    match run(&conn, move |c| family_connect::callback(c, &user, &state, &code, now)).await {
+        Ok(org) => {
+            flash(&s.sid, "Connecting. It shows here in a moment.", false);
+            to_org(&org, "")
+        }
+        Err(e) => {
+            flash(&s.sid, e.message(), true);
+            to_home()
+        }
+    }
+}
+
+#[post("/reins/org/<org>/family/revoke", data = "<form>")]
+async fn revoke(org: &str, form: Form<ProviderForm>, cookies: &CookieJar<'_>, conn: DbConn) -> Redirect {
+    let Some(s) = admin_of(cookies, &conn, org, CONNECT).await else {
+        return to_home();
+    };
+    if let (true, Some(provider)) = (check_csrf(&s, &form.csrf), OAuthProvider::parse(&form.provider)) {
+        let (org_id, user, member, now) = (org.to_owned(), s.user.clone(), form.member.clone(), now_unix());
+        if let Err(e) = run(&conn, move |c| family_connect::revoke(c, &org_id, &user, &member, provider, now)).await {
             flash(&s.sid, e.message(), true);
         }
     }
