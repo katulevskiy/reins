@@ -393,6 +393,51 @@ The request did reach the server over TLS, as every request does.
   nonce, the digest of the raw command and its expiry. A one-time pass is refused for any call whose shown text isn't
   exactly the raw call, or which contains invisible or bidi characters.
 
+## Circles (shared control)
+
+Circles let another Reins account share control of this one (Decisions v2, 04): a **delegate** (either decides), a
+**co-signer** (both decide), a **guardian** (must approve; cooperative in Personal mode, 08 R7) or a **watcher** (is
+told). Both accounts need phone roles: each side is known by its roster's **owner key**.
+
+**What the server learns** (08 R8 accepts it): who is in an arrangement with whom, its kind and state, packet deadlines
+and states, and when an answer was given. Sealed-sender routing is a later option.
+
+**Never stored in clear:**
+- the arrangement (its scope, windows, the two keys): each side's copy is sealed to that side's roster credential key;
+- a review packet: the card the helper decides from (never the raw request), signed by the owner's approval phone and
+  sealed to the helper's approval phone;
+- an answer: signed by the helper's approval phone and sealed to the owner's;
+- an invitation's link secret (only its SHA-256) and its proposed terms (sealed to the helper's approval phone).
+
+**Why a compromised server can't add, widen or answer for anyone:**
+- **Pinning:** an invitation is a commit-then-reveal over both accounts' owner keys and fresh nonces, and both phones
+  show the same six digits. A server that swaps a key must do so before it sees the other side's nonce, so its digits
+  are random; the owner's phone reveals for the first answer only.
+- **Membership:** an arrangement counts only with both owner-key signatures (the helper's, then the owner's over it and
+  the helper's signature), and a phone accepts a copy only when its own side names this account's current owner key.
+  A planted link, a wider scope or a swapped helper doesn't verify.
+- **Answers:** each one is bound to the arrangement, the packet, the request digest, the packet's nonce and its own
+  nonce, and names the signer's roster entry. The owner's phone verifies the helper's roster from the entry the code
+  pinned (each step signed by the owner key; never an older head than one it saw), requires the signer to be its
+  current primary (a viewer or a replaced phone never counts), and counts each packet once. Paused or ended (here, on
+  the owner's phone) means no answer counts, whatever time it claims.
+- **Changes** (pause, resume, end) are signed by the changer's owner key, name the arrangement and carry a sequence
+  that only moves forward; an unsigned end from the server only suspends.
+- **A new owner key** (a recovery, a reset) suspends the arrangement until the two compare a new code; a handover
+  verifies through the chain.
+- **Obligations are hard:** a co-signer's or guardian's slot is filled only by that person's verified answer; Auto,
+  Bypass and Overnight fill no slot of a Circle request; one person never fills two slots (a delegate who is also a
+  co-signer doesn't fill the owner's), and nobody shares control with themself. Either deny wins.
+- **Nothing runs on the server's word:** the owner's approval phone settles the votes and runs the request through
+  its own approval path, after its usual revalidation; an offline phone does so when it next syncs.
+- **Unknown widens review, never authority:** a request whose effects can't be read is inside every co-signer's,
+  guardian's and watcher's scope, and inside no delegate's.
+
+**Known limits:** the peer's latest roster entries come from the server; withholding a newer entry can only delay a
+handover's effect (the old primary's answers still count until the owner's phone sees it). Guardianship in Personal
+mode is cooperative: a ward can reset the account (the guardian is told) or use credentials directly; enforceable
+guardianship is the Family tenant (P7).
+
 ## The desktop app
 
 - It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which
