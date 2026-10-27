@@ -300,6 +300,33 @@ impl<'a> PhoneApi<'a> {
         Self::json(self.request(Method::GET, "/devices")).await
     }
 
+    /// O1 `GET /org`: the work account's organization; `None` for any account that isn't an org's member (404).
+    pub async fn org_me(&self) -> Result<Option<reins_proto::org::OrgMe>, ApiFailure> {
+        match Self::json(self.request(Method::GET, "/org")).await {
+            Ok(me) => Ok(Some(me)),
+            Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// O1 `POST /org/enroll/challenge`.
+    pub async fn org_challenge(&self) -> Result<reins_proto::org::EnrollmentChallenge, ApiFailure> {
+        Self::json(self.request(Method::POST, "/org/enroll/challenge")).await
+    }
+
+    /// O1 `POST /org/devices`.
+    pub async fn org_enroll(&self, request: &reins_proto::org::EnrollmentRequest) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::POST, "/org/devices").json(request)).await.map(drop)
+    }
+
+    /// O1 `PUT /org/posture`.
+    pub async fn org_posture(&self, posture: &reins_proto::org::Posture) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::PUT, "/org/posture").json(posture)).await.map(drop)
+    }
+
     /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
     pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
         check_id(id)?;

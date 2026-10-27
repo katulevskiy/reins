@@ -157,6 +157,72 @@ impl ReinsCore {
         .await
     }
 
+    /// "Add work account": like `sso_begin`, sent straight to the organization that verified `domain` (`acme.com`)
+    /// through its SSO or Team provider. Run it on the work profile's own core (`ProfileRegistry`), then `sso_finish`.
+    pub async fn sso_begin_work(&self, server_url: String, domain: String) -> Result<SsoStart, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.sso_begin_work(&server_url, &domain)
+        })
+        .await
+    }
+
+    /// The signed-in account's organization (a work profile's); `None` for a Personal account.
+    pub async fn org_membership(&self) -> Result<Option<crate::org::OrgView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_membership().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// A fresh challenge for enrolling this device to the work account's org: sign
+    /// `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
+    pub async fn org_challenge(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_challenge().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
+    /// over the challenge, the platform's attestations and the posture.
+    pub async fn org_enroll(&self, challenge: String, input: crate::org::EnrollInput) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_enroll(challenge, input).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Reports the enrolled device's posture now (at start-up and when it changes).
+    pub async fn org_report_posture(&self, posture: crate::org::PostureInput) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_report_posture(posture).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
     /// can wake each phone app. Unknown values are `None`; an unreachable server is no error.
     pub async fn server_info(&self, server_url: String) -> Result<ServerInfo, CoreError> {

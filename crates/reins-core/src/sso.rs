@@ -64,6 +64,18 @@ impl fmt::Debug for Start {
 
 /// The authorize URL for a sign-in at `server`, with a fresh state and PKCE verifier.
 pub fn begin(server: &ServerUrl) -> Result<Start, CoreError> {
+    begin_with(server, None)
+}
+
+/// "Add work account": the sign-in goes straight to the organization that verified `domain` (its SSO or Team
+/// provider), through the server's `domain_hint`.
+pub fn begin_work(server: &ServerUrl, domain: &str) -> Result<Start, CoreError> {
+    let domain = reins_proto::org::normalize_domain(domain)
+        .ok_or_else(|| CoreError::invalid("Enter your work domain, like acme.com"))?;
+    begin_with(server, Some(&domain))
+}
+
+fn begin_with(server: &ServerUrl, domain_hint: Option<&str>) -> Result<Start, CoreError> {
     let state = BASE64URL_NOPAD.encode(&random_bytes::<16>()?);
     let verifier = Zeroizing::new(BASE64URL_NOPAD.encode(&random_bytes::<32>()?));
     let challenge = BASE64URL_NOPAD.encode(digest::digest(&digest::SHA256, verifier.as_bytes()).as_ref());
@@ -78,6 +90,9 @@ pub fn begin(server: &ServerUrl) -> Result<Start, CoreError> {
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256");
+    if let Some(domain) = domain_hint {
+        url.query_pairs_mut().append_pair("domain_hint", domain);
+    }
     Ok(Start {
         url: url.into(),
         state,
@@ -374,6 +389,7 @@ mod tests {
         let start = begin(&server).unwrap();
         let url = Url::parse(&start.url).unwrap();
         assert_eq!(url.path(), "/identity/connect/authorize");
+        assert!(!url.query_pairs().any(|(k, _)| k == "domain_hint"));
         let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "mobile");
         assert_eq!(q["redirect_uri"], REDIRECT_URI);
