@@ -148,13 +148,39 @@ pub fn shadow(
         (Some(c), Some(cmd)) => graph::repo_at(cmd, c, git_top(c).as_deref(), &home),
         _ => graph::RepoAt::Cwd,
     };
-    // The configuration of the repository the command acts in: the worktree's, a leading `cd`'s target, or none.
-    let head = match at {
-        graph::RepoAt::Cwd => cwd.and_then(|c| crate::hooks::git_head(Path::new(c))),
-        graph::RepoAt::Dir(d) => crate::hooks::git_head(Path::new(&d)),
+    // The repository the command acts in: the worktree's, a leading `cd`'s target, or none.
+    let dir = match at {
+        graph::RepoAt::Cwd => cwd.map(str::to_owned),
+        graph::RepoAt::Dir(d) => Some(d),
         graph::RepoAt::Unknown => None,
     };
+    // The agent's environment can point git elsewhere, or set its configuration: then nothing is known.
+    let env_redirects = std::env::vars_os().any(|(k, _)| {
+        let k = k.to_string_lossy();
+        k == "GIT_DIR" || k == "GIT_WORK_TREE" || k.starts_with("GIT_CONFIG")
+    });
+    let head = dir.filter(|_| !env_redirects).and_then(|d| {
+        let head = crate::hooks::git_head(Path::new(&d))?;
+        // `origin` as the strict reader read it must be where git itself would push (its push URL, after
+        // `pushurl` and `insteadOf`); any difference or error and it isn't known.
+        let read = head.remotes.get("origin");
+        (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
+    });
     shadow_with(config, a, head.as_ref(), connection, now)
+}
+
+/// `git remote get-url --push origin` in `dir`: where git would push `origin` (no hooks or programs run for it).
+fn git_push_url(dir: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["-c", "core.fsmonitor=false", "-C", dir, "remote", "get-url", "--push", "origin"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let url = String::from_utf8(out.stdout).ok()?;
+    let url = url.trim();
+    (out.status.success() && !url.is_empty() && !url.contains('\n')).then(|| url.to_owned())
 }
 
 /// The folder holding the repository `cwd` is in (as `git_head` finds it).
@@ -410,6 +436,40 @@ mod tests {
         ] {
             assert_eq!(origin(odd), None, "{odd}");
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn origin_must_be_where_git_pushes() {
+        let dir = std::env::temp_dir().join(format!("reins-pushurl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = std::process::Command::new("git").args(["init", "-q"]).arg(&dir).status().is_ok_and(|s| s.success());
+        if !ok {
+            return;
+        }
+        std::fs::write(dir.join(".git/config"), "[remote \"origin\"]\n\turl = git@github.com:dkat/app.git\n").unwrap();
+        let d = dir.to_string_lossy().into_owned();
+        assert_eq!(git_push_url(&d).as_deref(), Some("git@github.com:dkat/app.git"));
+        let mut config = Config::default();
+        config.auto.facts.set(FactKind::Owner, "dkat", Zone::Mine);
+        let env = |_: &str| None;
+        let ctx = context(&config, Some(&d), &env, None);
+        let a = effects::analyze_command("git push origin HEAD:refs/heads/feat", &ctx);
+        let zone =
+            || shadow(&config, &a, Some(&d), Some("git push origin HEAD:refs/heads/feat"), "Claude Code", 0).zone;
+        // As long as the user's own git configuration doesn't rewrite it, it's the owner's.
+        if git_push_url(&d).as_deref() == Some("git@github.com:dkat/app.git") && crate::hooks::git_head(&dir).is_some()
+        {
+            assert_eq!(zone(), Zone::Mine);
+        }
+        // A push URL elsewhere (the strict reader refuses it, and git would push there): Outside.
+        std::fs::write(
+            dir.join(".git/config"),
+            "[remote \"origin\"]\n\turl = git@github.com:dkat/app.git\n\tpushurl = https://evil.example/x/y\n",
+        )
+        .unwrap();
+        assert_eq!(git_push_url(&d).as_deref(), Some("https://evil.example/x/y"));
+        assert_eq!(zone(), Zone::Outside);
         std::fs::remove_dir_all(&dir).ok();
     }
 

