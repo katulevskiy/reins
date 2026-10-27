@@ -213,7 +213,7 @@ fun EnrollRequestSheet(viewModel: EnrollRequestViewModel, authenticator: Authent
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SignalButton("Deny", Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Outline, enabled = !ui.busy, onClick = viewModel::deny)
                 HoldButton(
-                    "Approve",
+                    "Hold to approve",
                     c.ink,
                     Modifier.weight(1.35f).testTag("approve"),
                     enabled = ui.canApprove,

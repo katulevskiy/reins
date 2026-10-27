@@ -205,7 +205,7 @@ private struct EnrollRequestContent: View {
                     .buttonStyle(SignalButtonLook(kind: .outline))
                     .disabled(vm.busy)
                     .accessibilityIdentifier("deny")
-                HoldButton(title: "Approve", tint: Palette.ink, enabled: vm.canApprove, busy: vm.busy) {
+                HoldButton(title: "Hold to approve", tint: Palette.ink, enabled: vm.canApprove, busy: vm.busy) {
                     Task { await vm.approve(model) }
                 }
                 .accessibilityIdentifier("approve")

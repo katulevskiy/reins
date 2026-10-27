@@ -126,6 +126,16 @@ struct ConnectionsScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(addingService)
+        #if DEBUG
+        // `-openViewerJoin [start]` (screenshots): the join sheet open, optionally already asking.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            guard let i = args.firstIndex(of: "-openViewerJoin") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            joining = true
+            if i + 1 < args.count, args[i + 1] == "start" { viewerJoin.start(model) }
+        }
+        #endif
         .sheet(isPresented: $joining, onDismiss: { viewerJoin.cancel(model) }) {
             ViewerJoinSheet(vm: viewerJoin) { joining = false }
                 .environment(model)

@@ -525,13 +525,27 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             return result
         }
     }
+    /// `-demoPhoneRoles` (screenshots): the account has phone roles. This phone can ask to join as a second phone
+    /// (the approving phone's code comes back at once), and a waiting `-demoJoin` request is an enrollment.
+    private var phoneRoles: Bool { ProcessInfo.processInfo.arguments.contains("-demoPhoneRoles") }
+
     func enrollBegin(deviceName: String) async throws -> EnrollStart {
-        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+        guard phoneRoles else { throw CoreError.Invalid(reason: "Phone roles are not in the demo.") }
+        return EnrollStart(id: "enroll-demo", expiresAt: Int64(Date().timeIntervalSince1970) + 600)
     }
-    func enrollPoll() async throws -> EnrollProgress { throw CoreError.NotFound }
+    func enrollPoll() async throws -> EnrollProgress {
+        guard phoneRoles else { throw CoreError.NotFound }
+        try await latency(0.4)
+        return .compare(code: "482 193")
+    }
     func enrollCancel() async throws {}
-    func enrollView(id: String) async throws -> EnrollView { throw CoreError.NotFound }
-    func enrollConfirm(id: String, approve: Bool) async throws { throw CoreError.NotFound }
+    func enrollView(id: String) async throws -> EnrollView {
+        guard phoneRoles else { throw CoreError.NotFound }
+        return EnrollView(id: id, deviceName: "Pixel 9", code: "482 193", proven: true, createdAt: Int64(Date().timeIntervalSince1970) - 30)
+    }
+    func enrollConfirm(id: String, approve: Bool) async throws {
+        guard phoneRoles else { throw CoreError.NotFound }
+    }
     func handoverRequest() async throws -> String {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
@@ -551,7 +565,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     /// The demo has no phone roles: every waiting phone asks for the account's keys.
-    func joinIsEnrollment(id: String) async throws -> Bool { false }
+    func joinIsEnrollment(id: String) async throws -> Bool { phoneRoles }
 
     func joinView(id: String) async throws -> JoinView {
         try locked { s in
