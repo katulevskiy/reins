@@ -574,6 +574,59 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == requestId }
     }
 
+    // ---- tickets (Decisions v2): Later, a denial's note, Why? ------------------------------------------------------
+
+    /** `decideLater` calls, by request id. */
+    val laterCalls = CopyOnWriteArrayList<String>()
+    /** `denyWithNote` calls: (request id, note). */
+    val notedDenials = CopyOnWriteArrayList<Pair<String, String?>>()
+    /** `askWhy` calls: (request id, question). */
+    val whyQuestions = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** The window Later gives (the server's default Deferred window). */
+    @Volatile var deferredWindowSecs: Long = 14_400
+
+    override suspend fun decideLater(requestId: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        if (!item.canDefer || item.ticket != null) throw CoreException.Invalid("This request can't wait.")
+        laterCalls += requestId
+        val at = now()
+        val ticket = dev.reins.core.TicketView("rt_$requestId", "deferred", at, at + deferredWindowSecs, null, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) {
+        notedDenials += requestId to note
+        pending = pending.filterNot { it.id == requestId }
+    }
+
+    override suspend fun askWhy(requestId: String, question: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        whyQuestions += requestId to question
+        val at = now()
+        val ticket = item.ticket?.copy(state = "needs_info", question = question, agentReply = null)
+            ?: dev.reins.core.TicketView("rt_$requestId", "needs_info", at, at + deferredWindowSecs, question, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    /** This phone's signing key, as agents and the desktop app pin it; [signingKeyCalls] counts the reads. */
+    @Volatile var signingKey: String = "4821 9930 1274"
+    val signingKeyCalls = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun signingKeyFingerprint(): String {
+        signingKeyCalls.incrementAndGet()
+        return signingKey
+    }
+
+    fun resetTickets() {
+        laterCalls.clear()
+        notedDenials.clear()
+        whyQuestions.clear()
+        deferredWindowSecs = 14_400
+        signingKey = "4821 9930 1274"
+        signingKeyCalls.set(0)
+    }
+
     override suspend fun gmailStatus() = gmail
 
     override suspend fun grants() = grants

@@ -12,6 +12,7 @@ import android.media.AudioAttributes
 import android.net.Uri
 import dev.reins.android.ui.activity.field
 import dev.reins.android.ui.activity.pendingTone
+import dev.reins.android.ui.activity.pressing
 import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
 import dev.reins.android.BuildConfig
@@ -83,6 +84,14 @@ class AppNotifier(
             "approvals", "Approvals", "Requests from your AI clients that wait for your approval", NotificationManager.IMPORTANCE_HIGH,
             "fx_chime_request", CueCategory.Requests, longArrayOf(0, 18, 90, 18), private = true,
         ),
+        /**
+         * A request that can wait (a ticket, Decisions v2): it arrives quietly, under Waiting for you, and its
+         * reminders come here too while more than an hour is left (then they use [Approvals]).
+         */
+        Waiting(
+            "waiting", "Waiting for you", "Requests that can wait for you, and reminders before they are due", NotificationManager.IMPORTANCE_DEFAULT,
+            null, CueCategory.Requests, null, private = true,
+        ),
         Grants(
             "grants", "Grants ending", "A reminder shortly before a grant runs out", NotificationManager.IMPORTANCE_DEFAULT,
             "fx_chime_attention", CueCategory.Alerts, longArrayOf(0, 35, 55, 45), private = true,
@@ -122,14 +131,16 @@ class AppNotifier(
 
     override fun itemPending(item: PendingItem) {
         onChanged()
+        // A ticket can wait: it arrives quietly unless less than an hour is left (Decisions v2, 03 §5.2).
+        val quiet = item.ticket?.let { !it.pressing((dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000) } ?: false
         // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
         // chime still sounds, on the notification stream, for a phone left open on the desk.
         if (Foreground.focused) {
-            feedback().requestArrived(item.id)
+            feedback().requestArrived(item.id, needsUser = !quiet)
             return
         }
         if (!manager.areNotificationsEnabled()) return
-        val channel = channel(Kind.Approvals)
+        val channel = channel(if (quiet) Kind.Waiting else Kind.Approvals)
         // The ask in the one formatter's words (ASK-TEXT.md): the sentence with its italic target as the title, who
         // asks beside the app's name, the machine part in mono under it, and the request's icon as the large icon.
         val ask = askSentence(item)
@@ -197,8 +208,11 @@ class AppNotifier(
     }
 
     /** How long an item's notification may stay: until the server lets it go ([ITEM_LIFETIME_SECS] after it was made). */
-    private fun lifetimeMillis(item: PendingItem, nowMillis: Long = System.currentTimeMillis()): Long =
-        ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
+    private fun lifetimeMillis(item: PendingItem, nowMillis: Long = System.currentTimeMillis()): Long {
+        // A ticket waits until its deadline.
+        item.ticket?.let { return (it.deadline * 1000 - nowMillis).coerceAtLeast(MIN_LIFETIME_MS) }
+        return ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
+    }
 
     override fun autoDecided(decision: AutoDecisionView) {
         // Decided without the owner, so nothing about it needs them: no notification (a notification means something
@@ -474,7 +488,7 @@ class AppNotifier(
         manager.activeNotifications.filter { it.tag == tag }.forEach { manager.cancel(it.tag, it.id) }
     }
 
-    private fun notificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
+    private fun notificationId(id: String): Int = itemNotificationId(id)
 
     /** The request's icon (the integration with the action on its corner), ringed in the notification's colour. */
     private fun largeIcon(ask: AskSentence, ring: Int): android.graphics.drawable.Icon? = try {
@@ -486,6 +500,45 @@ class AppNotifier(
     }
 
     companion object {
+        /** The notification id of a waiting item: its arrival, a failed answer and a ticket's reminders share it. */
+        fun itemNotificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
+
+        /** Approve or Deny from a notification ([ApprovalActionReceiver]). */
+        private fun answer(context: Context, id: String, approve: Boolean, profile: WorkProfiles.Active): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                itemNotificationId(id) xor if (approve) 0x1 else 0x2,
+                WorkProfiles.stamp(
+                    context,
+                    Intent(context, ApprovalActionReceiver::class.java)
+                        .setAction(if (approve) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY)
+                        .putExtra(EXTRA_ID, id),
+                    profile.id,
+                ),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+
+        /** Deny [profile]'s request from a notification (a ticket's reminder). */
+        fun denyRequest(context: Context, id: String, profile: WorkProfiles.Active = WorkProfiles.PERSONAL): PendingIntent =
+            answer(context, id, approve = false, profile = profile)
+
+        /** Opens [profile]'s waiting request's approval screen. */
+        fun openRequest(context: Context, id: String, profile: WorkProfiles.Active = WorkProfiles.PERSONAL): PendingIntent =
+            PendingIntent.getActivity(
+                context,
+                itemNotificationId(id),
+                WorkProfiles.stamp(
+                    context,
+                    Intent(context, MainActivity::class.java)
+                        .setAction(ACTION_OPEN_ITEM)
+                        .putExtra(EXTRA_KIND, KIND_REQUEST)
+                        .putExtra(EXTRA_ID, id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                    profile.id,
+                ),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+
         /** The large icon's size: what a notification shows at its side. */
         private const val LARGE_ICON_DP = 64
 

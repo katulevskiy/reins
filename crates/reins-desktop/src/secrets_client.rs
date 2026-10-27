@@ -308,6 +308,7 @@ pub async fn list(
 fn store_error(r: &Refusal) -> StoreError {
     match r {
         Refusal::Waiting(m) => StoreError::Waiting(m.clone()),
+        Refusal::Parked(p) => StoreError::Waiting(p.message.clone()),
         Refusal::Unavailable(m) if m.starts_with(PHONE_KEY_CHANGED) => StoreError::PhoneChanged,
         Refusal::Denied(_) => StoreError::Denied(crate::vault_cli::relayed(r)),
         Refusal::Unavailable(_) => StoreError::Failed(crate::vault_cli::relayed(r)),

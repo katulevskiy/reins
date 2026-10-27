@@ -476,6 +476,13 @@ pub struct AskAnswer {
     pub v: u32,
     pub nonce: String,
     pub approved: bool,
+    /// For a deferred ask: the digest of the command it approves; the desktop app lets exactly that command through
+    /// once ([`crate::ticket::AGENT_RUN_VALIDITY_SECS`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    /// Unix seconds after which the approval no longer lets the command through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 /// What the phone seals to the desktop app for `vault_secret_release` (each requested `item/field` and its value) and

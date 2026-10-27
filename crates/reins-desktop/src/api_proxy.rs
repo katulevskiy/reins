@@ -152,7 +152,7 @@ fn safe_rest(rest: &str) -> bool {
 fn refusal(r: &Refusal) -> Response<Body> {
     let (status, prefix) = match r {
         Refusal::Denied(_) => (StatusCode::FORBIDDEN, "Denied"),
-        Refusal::Waiting(_) => (StatusCode::SERVICE_UNAVAILABLE, "Waiting"),
+        Refusal::Waiting(_) | Refusal::Parked(_) => (StatusCode::SERVICE_UNAVAILABLE, "Waiting"),
         Refusal::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable"),
     };
     let mut resp = text(status, &format!("Reins: {prefix}: {}", r.message()));
@@ -349,7 +349,7 @@ impl ApiProxy {
 fn kind(r: &Refusal) -> &'static str {
     match r {
         Refusal::Denied(_) => "denied",
-        Refusal::Waiting(_) => "waiting",
+        Refusal::Waiting(_) | Refusal::Parked(_) => "waiting",
         Refusal::Unavailable(_) => "unavailable",
     }
 }

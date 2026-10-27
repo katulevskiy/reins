@@ -3,7 +3,7 @@
 //!
 //! | harness     | MCP server                                   | hook                                                    |
 //! |-------------|----------------------------------------------|---------------------------------------------------------|
-//! | Claude Code | `~/.claude.json` `mcpServers`                | `~/.claude/settings.json` `hooks.PreToolUse`            |
+//! | Claude Code | `~/.claude.json` `mcpServers`                | `~/.claude/settings.json` `hooks.PreToolUse`, `UserPromptSubmit`, `Stop` |
 //! | Codex       | `~/.codex/config.toml` `[mcp_servers.…]`     | `~/.codex/hooks.json` `hooks.PreToolUse`                |
 //! | Gemini CLI  | `~/.gemini/settings.json` `mcpServers`       | `~/.gemini/settings.json` `hooks.BeforeTool`            |
 //! | Cursor      | `~/.cursor/mcp.json` `mcpServers`            | `~/.cursor/hooks.json` `beforeShellExecution`, `beforeReadFile`, `preToolUse` |
@@ -76,6 +76,10 @@ impl std::str::FromStr for Harness {
         }
     }
 }
+
+/// The harness's limit for the hooks that only tell a session's ticket news (they look at the tickets for at most
+/// [`crate::tickets::HOOK_REFRESH`]).
+const NEWS_HOOK_TIMEOUT_SECS: u64 = 15;
 
 /// Where the harnesses keep their settings and what to register.
 #[derive(Clone, Debug)]
@@ -199,6 +203,25 @@ fn targets(h: Harness, s: &Setup) -> Vec<(Role, Target)> {
                         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read",
                         "hooks": [{"type": "command", "command": hook, "timeout": secs}],
                     }),
+                    marker: hook.clone(),
+                },
+            ),
+            // What changed for the session's parked questions, told when the user writes and before it stops.
+            (
+                Role::Hook,
+                Target::JsonItem {
+                    file: home.join(".claude").join("settings.json"),
+                    path: path(&["hooks", "UserPromptSubmit"]),
+                    value: json!({"hooks": [{"type": "command", "command": hook, "timeout": NEWS_HOOK_TIMEOUT_SECS}]}),
+                    marker: hook.clone(),
+                },
+            ),
+            (
+                Role::Hook,
+                Target::JsonItem {
+                    file: home.join(".claude").join("settings.json"),
+                    path: path(&["hooks", "Stop"]),
+                    value: json!({"hooks": [{"type": "command", "command": hook, "timeout": NEWS_HOOK_TIMEOUT_SECS}]}),
                     marker: hook,
                 },
             ),

@@ -553,6 +553,10 @@ make_config! {
         reins_relay_wait_secs:       u64,    false,  def,    45;
         /// Offline threshold (seconds) |> A request not fetched by the phone within this time is reported as "device offline".
         reins_offline_secs:          u64,    false,  def,    10;
+        /// Instant window (seconds) |> How long a request waits for the user before it becomes a ticket the AI collects later (Decisions v2). 60 to 600.
+        reins_instant_window_secs:   u64,    false,  def,    120;
+        /// Deferred window (seconds) |> How long a ticket waits for the user's decision by default. 60 to 604800 (7 days).
+        reins_deferred_window_secs:  u64,    false,  def,    14_400;
         /// Purge schedule |> Cron schedule of the job deleting expired Reins refresh tokens and in-memory entries. Blank disables it.
         reins_purge_schedule:        String, false,  def,    "0 25 * * * *".to_owned();
         /// File purge schedule |> Cron schedule of the job deleting expired Reins files (blobs) from disk. Blank disables it (expired files are then deleted at the next upload or phone poll).

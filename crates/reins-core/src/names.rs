@@ -242,6 +242,8 @@ mod tests {
     fn a_waiting_item_is_renamed_in_its_title_and_headline() {
         let names = Names::new(HashMap::from([("c1".to_owned(), "Claude (work)".to_owned())]), HashMap::new());
         let mut item = PendingItem {
+            ticket: None,
+            can_defer: false,
             kind: crate::types::PendingKind::Request,
             id: "r1".to_owned(),
             title: "Claude wants to read 2 emails".to_owned(),

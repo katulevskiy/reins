@@ -118,6 +118,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- "Still waiting" reminders for requests that can wait (tickets), and their alarms after a reboot. -->
+        <receiver
+            android:name=".platform.TicketReminders$Receiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Approve and Deny on a request's notification. -->
         <receiver
             android:name=".platform.ApprovalActionReceiver"

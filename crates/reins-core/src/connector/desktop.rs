@@ -691,6 +691,14 @@ impl Connector for Desktop {
             v: 1,
             nonce: nonce_arg(call)?,
             approved: true,
+            // A command's digest, when the desktop app sent one: a deferred yes lets exactly it through, once, for an
+            // hour (03 §4.2). The phone only echoes it; the app checks it against what it asked.
+            digest: call.str_arg("digest").map(str::to_owned),
+            // An hour from the approval: a collect later than the approval cannot stretch it.
+            expires_at: call.str_arg("digest").map(|_| {
+                let hour = crate::store::unix_now().saturating_add(reins_proto::ticket::AGENT_RUN_VALIDITY_SECS);
+                nonce_arg(call).ok().and_then(|n| ask_limit(&n)).map_or(hour, |limit| hour.min(limit))
+            }),
         };
         Ok(json!({ SEALED_FIELD: seal(client_key(call)?, &answer)? }))
     }
@@ -700,8 +708,33 @@ impl Connector for Desktop {
     }
 }
 
+/// Per desktop question (by its nonce): when an approval collected later stops letting its command through.
+static ASK_LIMITS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(std::sync::Mutex::default);
+
+/// A collected ticket's approval ends at `until` (its approval time plus an hour): the answer minted for question
+/// `nonce` expires then at the latest.
+pub(crate) fn limit_ask(nonce: &str, until: i64) {
+    let mut limits = ASK_LIMITS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = crate::store::unix_now();
+    limits.retain(|_, until| *until > now);
+    limits.insert(nonce.to_owned(), until);
+}
+
+fn ask_limit(nonce: &str) -> Option<i64> {
+    ASK_LIMITS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(nonce).copied()
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_collected_ask_expires_an_hour_after_its_approval() {
+        let now = crate::store::unix_now();
+        limit_ask("nonce-limited", now + 60);
+        assert_eq!(ask_limit("nonce-limited"), Some(now + 60));
+        assert_eq!(ask_limit("nonce-other"), None, "an ordinary ask keeps its hour");
+    }
     use super::*;
 
     fn call(args: &Value) -> ConnectorCall {

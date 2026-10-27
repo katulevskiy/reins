@@ -16,4 +16,5 @@ mod phone_api;
 mod remote_mcp;
 mod roles;
 mod takeover;
+mod tickets;
 mod vault_passkeys;

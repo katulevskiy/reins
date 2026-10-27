@@ -247,6 +247,27 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::POST, &format!("/requests/{id}/response")).json(response)).await.map(drop)
     }
 
+    /// `GET /tickets`: every open or approved ticket of the account, sealed as stored.
+    pub async fn tickets(&self) -> Result<Vec<reins_proto::ticket::TicketItem>, ApiFailure> {
+        #[derive(serde::Deserialize)]
+        struct Tickets {
+            tickets: Vec<reins_proto::ticket::TicketItem>,
+        }
+        let all: Tickets = Self::json(self.request(Method::GET, "/tickets")).await?;
+        Ok(all.tickets)
+    }
+
+    /// `POST /tickets/{id}/events`: this phone's signed transitions of a ticket (Later, "Why?", an approval to
+    /// collect later, an expiry it confirms).
+    pub async fn post_ticket_events(
+        &self,
+        id: &str,
+        events: &reins_proto::ticket::TicketEvents,
+    ) -> Result<reins_proto::ticket::TicketStatus, ApiFailure> {
+        check_id(id)?;
+        Self::json(self.request(Method::POST, &format!("/tickets/{id}/events")).json(events)).await
+    }
+
     /// A5 `GET /pairings/{id}`.
     pub async fn get_pairing(&self, id: &str) -> Result<PairingRequest, ApiFailure> {
         check_id(id)?;
@@ -385,6 +406,8 @@ mod tests {
         let reg = DeviceRegistration {
             fcm_token: Some("fcm-1".to_owned()),
             master_password_hash: None,
+            sign_pub: None,
+            box_pub: None,
         };
         assert!(api.register_device(&reg).await.unwrap().replaced_previous);
         assert_eq!(api.connections().await.unwrap().connections[0].client_host, "chatgpt.com");
@@ -497,6 +520,7 @@ mod tests {
                 reason: None,
             },
             decided: None,
+            events: vec![],
         };
         Mock::given(method("POST"))
             .and(path("/reins/api/requests/r1/response"))

@@ -196,6 +196,18 @@ enum SettingsText {
     }
 
     /// "Sep 28": the day a connection was made, as its page shows it.
+    /// What the signing key's (?) says.
+    static let signingKeyHelp = "Agents and your computer use this to check what this phone signs."
+
+    /// This phone's signing key as the core names it ("4821 9930 1274"): twelve digits, shown in three groups of four
+    /// whatever spacing came with them; nil for anything else, so a malformed value is never shown as a key.
+    static func signingKey(_ raw: String) -> String? {
+        let digits = raw.filter { !$0.isWhitespace }
+        guard digits.count == 12, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        let d = Array(digits)
+        return [String(d[0..<4]), String(d[4..<8]), String(d[8..<12])].joined(separator: " ")
+    }
+
     static func shortDate(_ epochSeconds: Int64) -> String {
         Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(.dateTime.month(.abbreviated).day())
     }

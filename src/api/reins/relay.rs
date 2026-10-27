@@ -86,6 +86,12 @@ struct RequestState {
     decided: Option<Decided>,
     /// Where Autopilot leans while it waits for the user (shown on the desktop app only).
     suggestion: Option<Suggestion>,
+    /// Unix seconds when, still unanswered, it becomes a ticket ([`RelayHub::due_for_deferral`]).
+    instant_until: i64,
+    /// It became this ticket (`rt_…`): the waits end with [`WaitResult::Deferred`], and the entry is gone.
+    deferred: Option<String>,
+    /// Being turned into a ticket ([`RelayHub::hold_for_deferral`]): never handed to the phone meanwhile.
+    holding: bool,
 }
 
 /// What the phone said about a request beside its answer: for the desktop app that asked, never for an AI.
@@ -112,6 +118,19 @@ pub enum WaitResult {
     Pending,
     /// Unknown, expired, or created by another connection.
     NotFound,
+    /// Nobody answered within the Instant window (or the reviewer chose Later, or the agent asked): it is this
+    /// ticket now, and its outcome comes later.
+    Deferred(String),
+}
+
+/// What `reins_cancel` did to an Instant request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Cancel {
+    Cancelled,
+    /// The phone has it (it may be running it): not withdrawn.
+    PhoneHasIt,
+    Answered,
+    NotFound,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -123,6 +142,8 @@ pub enum AnswerError {
 
 pub struct RelayHub {
     timing: Timing,
+    /// How long an unanswered request stays Instant before it becomes a ticket (03 §1).
+    instant_window: std::time::Duration,
     signal: Arc<ItemSignal>,
     /// Unanswered requests per account; `0`: no limit but the relay's own.
     max_queued: usize,
@@ -163,6 +184,7 @@ impl RelayHub {
     pub fn with_capacity(timing: Timing, signal: Arc<ItemSignal>, capacity: usize) -> Self {
         Self {
             timing,
+            instant_window: std::time::Duration::from_secs(reins_proto::ticket::INSTANT_DEFAULT_SECS),
             signal,
             max_queued: DEFAULT_MAX_QUEUED,
             requests: Mutex::new(TtlMap::new(ITEM_TTL, capacity)),
@@ -174,6 +196,15 @@ impl RelayHub {
     pub fn with_max_queued(self, max_queued: usize) -> Self {
         Self {
             max_queued,
+            ..self
+        }
+    }
+
+    /// The same relay, with unanswered requests becoming tickets after `window` (never past the request's lifetime).
+    #[must_use]
+    pub fn with_instant_window(self, window: std::time::Duration) -> Self {
+        Self {
+            instant_window: window.min(ITEM_TTL),
             ..self
         }
     }
@@ -226,10 +257,14 @@ impl RelayHub {
             account,
             call,
         };
+        let instant = i64::try_from(self.instant_window.max(self.timing.relay_wait).as_secs()).unwrap_or(0);
         let entry = RequestEntry {
             user: user.to_owned(),
             request: request.clone(),
-            state: watch::Sender::new(RequestState::default()),
+            state: watch::Sender::new(RequestState {
+                instant_until: now_unix.saturating_add(instant),
+                ..RequestState::default()
+            }),
         };
         {
             let mut map = self.lock();
@@ -267,7 +302,7 @@ impl RelayHub {
         let map = self.lock();
         let mut out = Vec::new();
         for entry in map.values() {
-            if entry.user == user && entry.state.send_if_modified(mark_delivered) {
+            if entry.user == user && !entry.state.borrow().holding && entry.state.send_if_modified(mark_delivered) {
                 out.push(entry.request.clone());
             }
         }
@@ -278,7 +313,7 @@ impl RelayHub {
     /// One request of `user` (answered or not); marks it delivered.
     pub fn fetch(&self, user: &str, id: &RequestId) -> Option<RelayRequest> {
         let map = self.lock();
-        let entry = map.get(id).filter(|e| e.user == user)?;
+        let entry = map.get(id).filter(|e| e.user == user && !e.state.borrow().holding)?;
         entry.state.send_if_modified(mark_delivered);
         Some(entry.request.clone())
     }
@@ -344,6 +379,9 @@ impl RelayHub {
             return WaitResult::NotFound;
         };
         let state = entry.state.borrow();
+        if let Some(ticket) = &state.deferred {
+            return WaitResult::Deferred(ticket.clone());
+        }
         match (&state.outcome, state.delivered) {
             (Some(outcome), _) => WaitResult::Answered(outcome.clone()),
             (None, true) => WaitResult::Pending,
@@ -413,10 +451,19 @@ impl RelayHub {
         let pending_at = start + self.timing.relay_wait;
         let leaned = rx.borrow().suggestion.clone();
         loop {
-            let (delivered, outcome, unreachable, suggestion) = {
+            let (delivered, outcome, unreachable, suggestion, deferred) = {
                 let state = rx.borrow_and_update();
-                (state.delivered, state.outcome.clone(), state.unreachable, state.suggestion.clone())
+                (
+                    state.delivered,
+                    state.outcome.clone(),
+                    state.unreachable,
+                    state.suggestion.clone(),
+                    state.deferred.clone(),
+                )
             };
+            if let Some(ticket) = deferred {
+                return WaitResult::Deferred(ticket);
+            }
             if let Some(outcome) = outcome {
                 return WaitResult::Answered(outcome);
             }
@@ -444,6 +491,112 @@ impl RelayHub {
 
     pub fn purge(&self) {
         self.lock().purge();
+    }
+
+    /// Unanswered requests whose Instant window ended at `now_unix` or before, oldest first, with their account:
+    /// what becomes a ticket ([`RelayHub::mark_deferred`]) or stays Instant ([`RelayHub::keep_instant`]).
+    pub fn due_for_deferral(&self, now_unix: i64) -> Vec<(String, RelayRequest)> {
+        let mut out: Vec<(String, RelayRequest)> = self
+            .lock()
+            .values()
+            .filter(|e| {
+                let s = e.state.borrow();
+                // Only what the phone never got: a request the phone holds becomes a ticket by the phone's own word
+                // (Later), never behind its back, so its answer always lands where it expects.
+                s.outcome.is_none() && s.deferred.is_none() && !s.delivered && !s.holding && s.instant_until <= now_unix
+            })
+            .map(|e| (e.user.clone(), e.request.clone()))
+            .collect();
+        out.sort_by(|a, b| (a.1.created_at, &a.1.id).cmp(&(b.1.created_at, &b.1.id)));
+        out
+    }
+
+    /// `user`'s unanswered request `id`, without marking it delivered (the reviewer chose Later on it).
+    pub fn unanswered(&self, user: &str, id: &RequestId) -> Option<RelayRequest> {
+        let map = self.lock();
+        let entry = map.get(id).filter(|e| e.user == user)?;
+        let s = entry.state.borrow();
+        (s.outcome.is_none() && s.deferred.is_none()).then(|| entry.request.clone())
+    }
+
+    /// `id` became `ticket`: the calls waiting on it end with [`WaitResult::Deferred`], and the relay forgets it (its
+    /// body is no longer kept in clear). `false` when it was answered (or gone) first.
+    pub fn mark_deferred(&self, id: &RequestId, ticket: &str) -> bool {
+        let mut map = self.lock();
+        let Some(entry) = map.get(id) else {
+            return false;
+        };
+        let deferred = entry.state.send_if_modified(|s| {
+            let open = s.outcome.is_none() && s.deferred.is_none();
+            if open {
+                s.deferred = Some(ticket.to_owned());
+            }
+            open
+        });
+        if deferred {
+            map.remove(id);
+        }
+        drop(map);
+        if deferred {
+            self.signal.notify();
+        }
+        deferred
+    }
+
+    /// Reserves unanswered request `id` for becoming a ticket, atomically with the phone's fetches: refused when it was
+    /// answered, or when the phone already has it and the reviewer did not choose Later (`later`). While held, the
+    /// phone is not handed it; [`RelayHub::mark_deferred`] completes it, [`RelayHub::release_hold`] gives it back.
+    pub fn hold_for_deferral(&self, id: &RequestId, later: bool) -> bool {
+        let map = self.lock();
+        map.get(id).is_some_and(|entry| {
+            let mut held = false;
+            entry.state.send_if_modified(|s| {
+                held = s.outcome.is_none() && s.deferred.is_none() && !s.holding && (later || !s.delivered);
+                if held {
+                    s.holding = true;
+                }
+                false
+            });
+            held
+        })
+    }
+
+    /// Ends a hold that did not become a ticket.
+    pub fn release_hold(&self, id: &RequestId) {
+        if let Some(entry) = self.lock().get(id) {
+            entry.state.send_if_modified(|s| {
+                s.holding = false;
+                false
+            });
+        }
+    }
+
+    /// `id` cannot become a ticket (no key to seal it to, too many open): it stays Instant until it expires.
+    pub fn keep_instant(&self, id: &RequestId) {
+        if let Some(entry) = self.lock().get(id) {
+            entry.state.send_if_modified(|s| {
+                s.instant_until = i64::MAX;
+                false
+            });
+        }
+    }
+
+    /// The agent withdraws `id` (`reins_cancel`). Only while the phone has not got it: once it has, it may be running
+    /// it, and only its answer says what happened.
+    pub fn cancel(&self, id: &RequestId, connection_id: &ConnectionId) -> Cancel {
+        let mut map = self.lock();
+        let Some(entry) = map.get(id).filter(|e| e.request.connection_id == *connection_id) else {
+            return Cancel::NotFound;
+        };
+        let state = entry.state.borrow().clone();
+        if state.outcome.is_some() {
+            return Cancel::Answered;
+        }
+        if state.delivered || state.holding {
+            return Cancel::PhoneHasIt;
+        }
+        map.remove(id);
+        Cancel::Cancelled
     }
 
     /// Drops `user`'s requests (a deleted account); calls still waiting on one see it gone.
@@ -899,5 +1052,80 @@ mod tests {
         let victim = h.submit("victim", &conn(), "Claude", search(), None, 2).unwrap();
         assert!(h.fetch("attacker", &hog.id).is_none());
         assert!(h.fetch("victim", &victim.id).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unanswered_requests_are_due_for_deferral_after_the_instant_window() {
+        let h = hub().with_instant_window(secs(120));
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 1_000).unwrap();
+        let answered = h.submit(USER, &conn(), "ChatGPT", search(), None, 1_000).unwrap();
+        h.answer(USER, &answered.id, found()).unwrap();
+        assert!(h.due_for_deferral(1_119).is_empty(), "still Instant");
+        let due = h.due_for_deferral(1_120);
+        assert_eq!(due.len(), 1, "an answered request never becomes a ticket");
+        assert_eq!((due[0].0.as_str(), &due[0].1.id), (USER, &req.id));
+        h.keep_instant(&req.id);
+        assert!(h.due_for_deferral(9_999).is_empty(), "kept Instant: it expires as before");
+        // The window is never shorter than one relay wait.
+        let short = hub().with_instant_window(secs(5));
+        short.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        assert!(short.due_for_deferral(44).is_empty());
+        assert_eq!(short.due_for_deferral(45).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deferred_request_ends_its_waits_with_the_ticket_and_is_forgotten() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.fetch(USER, &req.id).unwrap();
+        let cid = conn();
+        let start = Instant::now();
+        let (res, ()) = tokio::join!(h.wait(&req.id, &cid), async {
+            sleep(secs(3)).await;
+            assert!(h.mark_deferred(&req.id, "rt_x"));
+        });
+        assert_eq!((res, start.elapsed()), (WaitResult::Deferred("rt_x".to_owned()), secs(3)));
+        assert!(h.fetch(USER, &req.id).is_none(), "the body is no longer held");
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::NotFound);
+        assert!(!h.mark_deferred(&req.id, "rt_x"), "once");
+        let answered = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.answer(USER, &answered.id, found()).unwrap();
+        assert!(!h.mark_deferred(&answered.id, "rt_y"), "an answer came first");
+        assert!(h.unanswered(USER, &answered.id).is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_the_phone_has_is_parked_only_on_its_word() {
+        let h = hub().with_instant_window(secs(60));
+        let fetched = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        let offline = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.fetch(USER, &fetched.id).unwrap();
+        let due: Vec<RequestId> = h.due_for_deferral(60).into_iter().map(|(_, r)| r.id).collect();
+        assert_eq!(due, [offline.id.clone()], "the phone has the other one: it may be answering it right now");
+        assert!(!h.hold_for_deferral(&fetched.id, false), "never behind the phone's back");
+        assert!(h.hold_for_deferral(&fetched.id, true), "the reviewer chose Later");
+        // While held, the phone is not handed it; an answer that still comes wins over the deferral.
+        assert!(h.hold_for_deferral(&offline.id, false));
+        assert!(h.take_undelivered(USER).is_empty());
+        assert!(h.fetch(USER, &offline.id).is_none());
+        h.answer(USER, &fetched.id, found()).unwrap();
+        assert!(!h.mark_deferred(&fetched.id, "rt_x"), "answered first: no ticket");
+        h.release_hold(&offline.id);
+        assert_eq!(h.take_undelivered(USER).len(), 1, "released: the phone gets it");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_the_connection_that_asked_can_cancel_an_unanswered_request() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        assert_eq!(h.cancel(&req.id, &"conn-2".into()), Cancel::NotFound);
+        assert!(h.unanswered(USER, &req.id).is_some());
+        assert_eq!(h.cancel(&req.id, &conn()), Cancel::Cancelled);
+        assert!(h.fetch(USER, &req.id).is_none());
+        // Once the phone has it, it may be running it: never withdrawn behind its back.
+        let fetched = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.fetch(USER, &fetched.id).unwrap();
+        assert_eq!(h.cancel(&fetched.id, &conn()), Cancel::PhoneHasIt);
+        assert!(h.unanswered(USER, &fetched.id).is_some());
     }
 }

@@ -73,6 +73,8 @@ pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
         (format!("Add {} to your account?", j.device_name), "Another phone asks for this account's keys")
     };
     PendingItem {
+        ticket: None,
+        can_defer: false,
         kind: PendingKind::Join,
         id: j.id.clone(),
         title,

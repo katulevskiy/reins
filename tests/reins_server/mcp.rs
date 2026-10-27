@@ -141,6 +141,10 @@ async fn both_protocol_eras_are_served() {
             "reins_request_access",
             "reins_list_accounts",
             "reins_get_result",
+            "reins_wait",
+            "reins_tickets",
+            "reins_cancel",
+            "reins_reply",
             "reins_upload"
         ]
         .into_iter()
@@ -168,7 +172,7 @@ async fn both_protocol_eras_are_served() {
     // Errors are 400/404 JSON-RPC, never 422.
     let (status, _, body) = mcp(&server, token, &[("Mcp-Method", "ping")], &rpc(5, "tools/list", json!({}))).await;
     assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32020)));
-    let (status, _, body) = mcp(&server, token, &[], &rpc(6, "resources/list", json!({}))).await;
+    let (status, _, body) = mcp(&server, token, &[], &rpc(6, "prompts/list", json!({}))).await;
     assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::NOT_FOUND, Some(-32601)));
     let unsupported = rpc(7, "tools/list", json!({"_meta": {"io.modelcontextprotocol/protocolVersion": "2099-01-01"}}));
     let (status, _, body) = mcp(&server, token, &[], &unsupported).await;

@@ -100,6 +100,14 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
     let pre = &settings["hooks"]["PreToolUse"][0];
     assert_eq!(pre["matcher"], "Bash|Edit|Write|MultiEdit|NotebookEdit|Read");
     assert_eq!(pre["hooks"], json!([{"type": "command", "command": hook_cmd("claude-code"), "timeout": 150}]));
+    // A session hears what changed for its parked questions when the user writes and before Claude Code stops.
+    for event in ["UserPromptSubmit", "Stop"] {
+        assert_eq!(
+            settings["hooks"][event],
+            json!([{"hooks": [{"type": "command", "command": hook_cmd("claude-code"), "timeout": 15}]}]),
+            "{event}"
+        );
+    }
 
     let codex: toml::Table = toml::from_str(&std::fs::read_to_string(env.file(".codex/config.toml")).unwrap()).unwrap();
     assert_eq!(codex["mcp_servers"]["reins"]["command"].as_str(), Some(EXE));

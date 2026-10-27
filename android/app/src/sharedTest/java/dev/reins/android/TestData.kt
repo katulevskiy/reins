@@ -80,10 +80,25 @@ object TestData {
         suggestion: String? = null,
         headline: String = "",
         quick: Boolean = false,
+        ticket: dev.reins.core.TicketView? = null,
+        canDefer: Boolean = false,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
-        service, account, waitUntil, op, opTitle, suggestion, headline, quick,
+        service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
+        ticket = ticket, canDefer = canDefer,
     )
+
+    /** A request that became a ticket [age] seconds before [now], due [left] seconds after it. */
+    fun ticket(
+        id: String,
+        left: Long = 3 * 3_600,
+        age: Long = 3_600,
+        now: Long = 1_700_000_100,
+        state: String = "deferred",
+        question: String? = null,
+        agentReply: String? = null,
+        stale: String? = null,
+    ) = dev.reins.core.TicketView("rt_$id", state, now - age, now + left, question, agentReply, stale)
 
     fun pairingItem(id: String = "pair1") = PendingItem(
         PendingKind.PAIRING, id, "Connect Claude to Reins?", "claude.ai", 1_700_000_200, "", "Claude", "pair", 1u, "", null, null, "", "", null,

@@ -1,6 +1,8 @@
-//! A mock Reins server for the D1 tests (`ask`, hooks, `mcp`): the token endpoint (refresh with rotation), the
-//! desktop calls API whose "phone" answers `desktop_ask` from a script with a sealed `AskAnswer`, and a Streamable HTTP
-//! `/mcp` endpoint. An app is "logged in" by writing its session file directly.
+//! A mock Reins server for the D1 tests (`ask`, hooks, `mcp`) and the ticket tests: the token endpoint (refresh with
+//! rotation), the desktop calls API whose "phone" answers `desktop_ask` from a script with a sealed `AskAnswer` (and
+//! git fetches and pushes with a sealed `CredentialGrant`), tickets (deferred calls, collected when approved, the ticket
+//! list, stale reports), and a Streamable HTTP `/mcp` endpoint. An app is "logged in" by writing its session file
+//! directly.
 
 #![allow(dead_code, reason = "each test binary uses a different part of the mock")]
 
@@ -12,8 +14,11 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
 use reins_desktop::config::{Paths, write_private};
 use reins_desktop::identity::{Identity, seal_to};
-use reins_proto::desktop::AskAnswer;
+use reins_proto::desktop::{AskAnswer, CredentialGrant, GIT_FETCH_OP};
 use serde_json::{Value, json};
+
+/// When a deferred call is expected to be decided: the server's default Deferred window.
+pub const DEFERRED_SECS: i64 = 14_400;
 
 /// What the phone does with one question: the first step answers the call, each poll the next (the last repeats).
 #[derive(Clone, Copy, Debug)]
@@ -31,6 +36,15 @@ pub enum Step {
     Offline,
     Denied(Option<&'static str>),
     Error(&'static str),
+    /// Parked for a later review: `deferred`, with the ticket `rt_<request id>`.
+    Deferred,
+    /// Approved later, collected now: an `AskAnswer` echoing the question's digest and valid for an hour, or for a
+    /// push a fresh `CredentialGrant`.
+    Collect,
+    /// The ticket ended without an answer (`expired`, `cancelled`...).
+    Closed(&'static str),
+    /// Like `Collect`, but the approval names another command's digest.
+    CollectOtherDigest,
 }
 
 /// One request to `/mcp` as the server saw it.
@@ -58,11 +72,36 @@ pub struct State {
     pub plans: VecDeque<Vec<Step>>,
     pub mcp: Vec<Seen>,
     pub deleted_sessions: Vec<String>,
+    /// The tool of each call, in order.
+    pub tools: Vec<String>,
+    /// Whether each call asked to be deferred (`X-Reins-Defer: 1`).
+    pub defers: Vec<bool>,
+    /// `(ticket, diff)` of each stale report.
+    pub stale: Vec<(String, String)>,
+    /// How often the ticket list was asked for.
+    pub listed: u32,
+    /// The token a git credential carries.
+    pub git_token: String,
+    /// Each `pushed` report, in order.
+    pub pushed: Vec<String>,
+    /// The next N `pushed` reports fail (the server was unreachable).
+    pub pushed_fail: u32,
+    /// The approval phone's signing key the ticket list names.
+    pub signing_key: Option<String>,
     access: HashSet<String>,
     refresh: HashSet<String>,
     sessions: HashSet<String>,
-    requests: HashMap<String, (Value, Vec<Step>, usize)>,
+    requests: HashMap<String, MockRequest>,
     counter: u32,
+}
+
+struct MockRequest {
+    tool: String,
+    args: Value,
+    steps: Vec<Step>,
+    next: usize,
+    /// Answered `deferred` once: a ticket, listed from then on.
+    expected_by: Option<i64>,
 }
 
 impl State {
@@ -118,6 +157,16 @@ impl Mock {
         self.with(|s| s.plans.push_back(steps.to_vec()));
     }
 
+    /// Replaces what the phone does next with the ticket `rt_<id>` (its remaining steps).
+    pub fn decide(&self, ticket: &str, steps: &[Step]) {
+        let id = ticket.trim_start_matches("rt_").to_owned();
+        self.with(|s| {
+            let r = s.requests.get_mut(&id).expect("a known ticket");
+            r.steps = steps.to_vec();
+            r.next = 0;
+        });
+    }
+
     /// Issues a token pair (as a login would).
     fn issue(&self) -> (String, String) {
         self.with(|s| {
@@ -161,6 +210,24 @@ pub fn logged_in(mock: &Mock, expires_in: i64) -> App {
     }
 }
 
+/// Logs the app at `paths` in to `mock` (a session file) and pins its key, as a pairing would.
+pub fn log_in(mock: &Mock, paths: &Paths) -> Identity {
+    paths.ensure().unwrap();
+    let identity = Identity::load_or_create(&paths.identity_file()).unwrap();
+    let (access, refresh) = mock.issue();
+    let session = json!({
+        "server": mock.base,
+        "client_id": "client-1",
+        "token_endpoint": format!("{}/reins/oauth/token", mock.base),
+        "access_token": access,
+        "access_expires_at": reins_desktop::now_unix() + 3600,
+        "refresh_token": refresh,
+    });
+    write_private(&paths.session_file(), session.to_string().as_bytes()).unwrap();
+    mock.with(|s| s.pinned_key = Some(identity.public_key()));
+    identity
+}
+
 /// An app that never logged in.
 pub fn logged_out() -> App {
     let dir = tempfile::tempdir().unwrap();
@@ -201,6 +268,7 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
     let path = req.uri().path().to_owned();
     let auth = header(&req, "authorization");
     let via = header(&req, "x-reins-via");
+    let defer = header(&req, "x-reins-defer").as_deref() == Some("1");
     let session = header(&req, "mcp-session-id");
     let protocol = header(&req, "mcp-protocol-version");
     let accept = header(&req, "accept");
@@ -218,15 +286,35 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
         return unauthorized();
     }
     match (method.as_str(), path.as_str()) {
-        ("POST", "/reins/desktop/calls") => submit(&mut s, &body),
+        ("POST", "/reins/desktop/calls") => submit(&mut s, &body, defer),
         ("GET", p) if p.starts_with("/reins/desktop/calls/") => {
-            let id = p["/reins/desktop/calls/".len()..].to_owned();
-            s.polls.push(id.clone());
+            let polled = p["/reins/desktop/calls/".len()..].to_owned();
+            s.polls.push(polled.clone());
+            let id = polled.trim_start_matches("rt_").to_owned();
             if s.requests.contains_key(&id) {
                 answer(&mut s, &id)
             } else {
                 json_resp(404, &json!({"error": "not_found"}))
             }
+        }
+        ("GET", "/reins/desktop/tickets") => {
+            s.listed += 1;
+            tickets(&s)
+        }
+        ("POST", p) if p.starts_with("/reins/desktop/tickets/") && p.ends_with("/pushed") => {
+            if s.pushed_fail > 0 {
+                s.pushed_fail -= 1;
+                return json_resp(503, &json!({"error": "unavailable"}));
+            }
+            let ticket = p["/reins/desktop/tickets/".len()..p.len() - "/pushed".len()].to_owned();
+            s.pushed.push(ticket);
+            respond(204, "text/plain", "")
+        }
+        ("POST", p) if p.starts_with("/reins/desktop/tickets/") && p.ends_with("/stale") => {
+            let ticket = p["/reins/desktop/tickets/".len()..p.len() - "/stale".len()].to_owned();
+            let doc: Value = serde_json::from_slice(&body).unwrap_or_default();
+            s.stale.push((ticket, doc["diff"].as_str().unwrap_or_default().to_owned()));
+            respond(204, "text/plain", "")
         }
         ("POST", "/mcp") => {
             let doc: Value = serde_json::from_slice(&body).unwrap_or_default();
@@ -270,44 +358,149 @@ fn token(s: &mut State, body: &[u8]) -> Resp {
     json_resp(200, &json!({"access_token": a, "token_type": "Bearer", "expires_in": 3600, "refresh_token": r}))
 }
 
-fn submit(s: &mut State, body: &[u8]) -> Resp {
+fn submit(s: &mut State, body: &[u8], defer: bool) -> Resp {
     let doc: Value = serde_json::from_slice(body).unwrap_or_default();
-    let tool = doc["tool"].as_str().unwrap_or_default();
-    let Some(spec) = reins_proto::connector::spec_for_tool(tool).filter(|s| s.desktop_only) else {
+    let tool = doc["tool"].as_str().unwrap_or_default().to_owned();
+    let Some(spec) = reins_proto::connector::spec_for_tool(&tool).filter(|s| s.desktop_only) else {
         return json_resp(400, &json!({"error": "unknown_tool"}));
     };
-    if tool != "desktop_ask" {
+    let git = tool.contains("_git_");
+    if tool != "desktop_ask" && !git {
         return json_resp(400, &json!({"error": "unexpected_tool"}));
     }
     if let Err(message) = spec.parse(&doc["arguments"]) {
         return json_resp(400, &json!({"error": "invalid_arguments", "message": message}));
     }
     s.calls.push(doc["arguments"].clone());
+    s.tools.push(tool.clone());
+    s.defers.push(defer);
     s.counter += 1;
     let id = format!("req-{}", s.counter);
-    let steps = s.plans.pop_front().unwrap_or_else(|| vec![Step::Approve]);
-    s.requests.insert(id.clone(), (doc["arguments"].clone(), steps, 0));
+    let fetch = tool.ends_with(&format!("_{GIT_FETCH_OP}"));
+    // Reads are always approved; the plans are for questions and pushes.
+    let mut steps = if fetch {
+        vec![Step::Approve]
+    } else {
+        s.plans.pop_front().unwrap_or_else(|| vec![Step::Approve])
+    };
+    if defer && !matches!(steps.first(), Some(Step::Deferred)) {
+        steps.insert(0, Step::Deferred);
+    }
+    s.requests.insert(
+        id.clone(),
+        MockRequest {
+            tool,
+            args: doc["arguments"].clone(),
+            steps,
+            next: 0,
+            expected_by: None,
+        },
+    );
     answer(s, &id)
+}
+
+/// The ticket list: every call answered `deferred` once, in the state its next step would give.
+fn tickets(s: &State) -> Resp {
+    let mut list: Vec<(&String, &MockRequest)> = s.requests.iter().filter(|(_, r)| r.expected_by.is_some()).collect();
+    list.sort_by_key(|(id, _)| (*id).clone());
+    let tickets: Vec<Value> = list
+        .into_iter()
+        .map(|(id, r)| {
+            let step = r.steps[r.next.min(r.steps.len() - 1)];
+            let (state, note) = match step {
+                Step::Collect | Step::CollectOtherDigest | Step::Approve => ("approved", None),
+                Step::Denied(reason) => ("denied", reason),
+                Step::Closed(state) => (state, None),
+                _ => ("deferred", None),
+            };
+            let mut t = json!({"ticket": format!("rt_{id}"), "state": state, "deadline": r.expected_by});
+            if let Some(n) = note {
+                t["note"] = json!(n);
+            }
+            t
+        })
+        .collect();
+    let mut list = json!({"tickets": tickets});
+    if let Some(k) = &s.signing_key {
+        list["signing_key"] = json!(k);
+    }
+    json_resp(200, &list)
 }
 
 fn answer(s: &mut State, id: &str) -> Resp {
     let pinned = s.pinned_key.clone();
-    let (args, steps, next) = s.requests.get_mut(id).unwrap();
-    let step = steps[(*next).min(steps.len() - 1)];
-    *next += 1;
+    let git_token = if s.git_token.is_empty() {
+        format!("ghs-{id}")
+    } else {
+        s.git_token.clone()
+    };
+    let r = s.requests.get_mut(id).unwrap();
+    let step = r.steps[r.next.min(r.steps.len() - 1)];
+    r.next += 1;
+    let ticket = format!("rt_{id}");
     let status = |st: &str| json_resp(200, &json!({"request_id": id, "status": st}));
     let answered =
         |outcome: Value| json_resp(200, &json!({"request_id": id, "status": "answered", "outcome": outcome}));
+    let args = &r.args;
     let key = args["client_key"].as_str().unwrap_or_default().to_owned();
     if pinned.as_deref() != Some(key.as_str()) {
         return answered(json!({"outcome": "error", "message": "This must come from the paired desktop app."}));
     }
     let nonce = args["nonce"].as_str().unwrap_or_default().to_owned();
+    let now = reins_desktop::now_unix();
+    if r.tool.contains("_git_") {
+        let fetch = r.tool.ends_with(&format!("_{GIT_FETCH_OP}"));
+        let grant = CredentialGrant {
+            v: 1,
+            nonce,
+            digest: args["digest"].as_str().map(str::to_owned),
+            repo: args["repo"].as_str().unwrap_or_default().to_owned(),
+            access: if fetch {
+                "read"
+            } else {
+                "write"
+            }
+            .to_owned(),
+            username: "x-access-token".to_owned(),
+            token: git_token,
+            expires_at: now + 600,
+        };
+        match step {
+            Step::Approve | Step::Collect | Step::CollectOtherDigest => {}
+            Step::Deferred => {
+                let by = *r.expected_by.get_or_insert(now + DEFERRED_SECS);
+                return json_resp(
+                    200,
+                    &json!({"request_id": id, "status": "deferred", "ticket": ticket, "expected_by": by, "state": "deferred"}),
+                );
+            }
+            Step::Closed(state) => {
+                return json_resp(
+                    200,
+                    &json!({"request_id": id, "status": "closed", "ticket": ticket, "state": state}),
+                );
+            }
+            Step::Denied(reason) => return answered(json!({"outcome": "denied", "reason": reason})),
+            Step::Error(message) => return answered(json!({"outcome": "error", "message": message})),
+            Step::Pending => return status("pending"),
+            _ => return status("offline"),
+        }
+        let sealed = seal_to(&key, &serde_json::to_vec(&grant).unwrap()).unwrap();
+        let data = if fetch {
+            json!({"items": [{"sealed": sealed}]})
+        } else {
+            json!({"sealed": sealed})
+        };
+        return answered(json!({"outcome": "result", "result": {"kind": "connector", "data": data}}));
+    }
+    let digest = args["digest"].as_str().map(str::to_owned);
     let sealed_for = |key: &str, nonce: String, approved: bool| {
         let a = AskAnswer {
             v: 1,
             nonce,
             approved,
+            digest: None,
+            expires_at: None,
         };
         seal_to(key, &serde_json::to_vec(&a).unwrap()).unwrap()
     };
@@ -316,6 +509,30 @@ fn answer(s: &mut State, id: &str) -> Resp {
         Step::Offline => return status("offline"),
         Step::Denied(reason) => return answered(json!({"outcome": "denied", "reason": reason})),
         Step::Error(message) => return answered(json!({"outcome": "error", "message": message})),
+        Step::Deferred => {
+            let by = *r.expected_by.get_or_insert(now + DEFERRED_SECS);
+            return json_resp(
+                200,
+                &json!({"request_id": id, "status": "deferred", "ticket": ticket, "expected_by": by, "state": "deferred"}),
+            );
+        }
+        Step::Closed(state) => {
+            return json_resp(200, &json!({"request_id": id, "status": "closed", "ticket": ticket, "state": state}));
+        }
+        Step::Collect | Step::CollectOtherDigest => {
+            let a = AskAnswer {
+                v: 1,
+                nonce,
+                approved: true,
+                digest: if matches!(step, Step::Collect) {
+                    digest
+                } else {
+                    Some("0".repeat(64))
+                },
+                expires_at: Some(now + 3600),
+            };
+            seal_to(&key, &serde_json::to_vec(&a).unwrap()).unwrap()
+        }
         Step::Garbage => "%% not sealed %%".to_owned(),
         Step::Approve => sealed_for(&key, nonce, true),
         Step::Refuse => sealed_for(&key, nonce, false),

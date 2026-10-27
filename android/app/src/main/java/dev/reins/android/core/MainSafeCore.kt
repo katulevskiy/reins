@@ -198,6 +198,14 @@ class MainSafeCore(
 
     override suspend fun deny(requestId: String) = io { deny(requestId) }
 
+    override suspend fun decideLater(requestId: String) = io { decideLater(requestId) }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) = io { denyWithNote(requestId, note) }
+
+    override suspend fun askWhy(requestId: String, question: String) = io { askWhy(requestId, question) }
+
+    override suspend fun signingKeyFingerprint(): String = io { signingKeyFingerprint() }
+
     override suspend fun gmailStatus(): GmailStatus = io { gmailStatus() }
 
     override suspend fun grants(): List<GrantView> = io { grants() }

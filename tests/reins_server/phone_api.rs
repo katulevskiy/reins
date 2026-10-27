@@ -26,7 +26,7 @@ async fn only_the_registered_device_may_use_the_api() {
     let (status, body) = a.put("/device", &json!({"fcm_token": "tok-a2"})).await;
     assert_eq!((status, body), (StatusCode::OK, json!({"replaced_previous": false})), "same device re-registers");
     let (status, body) = a.get("/pending?wait=0").await;
-    assert_eq!((status, body), (StatusCode::OK, json!({"requests": [], "pairings": []})));
+    assert_eq!((status, body), (StatusCode::OK, json!({"requests": [], "pairings": [], "instant_window_secs": 120})));
 
     // Another device takes the role with a proof (see `takeover.rs` for the rest of the rule).
     let b = server.second_device("alice@example.com").await;
@@ -46,7 +46,7 @@ async fn pending_long_polls_for_the_requested_time() {
     let start = Instant::now();
     let (status, body) = phone.get("/pending?wait=1").await;
     let elapsed = start.elapsed();
-    assert_eq!((status, body), (StatusCode::OK, json!({"requests": [], "pairings": []})));
+    assert_eq!((status, body), (StatusCode::OK, json!({"requests": [], "pairings": [], "instant_window_secs": 120})));
     assert!(elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(5), "{elapsed:?}");
     let start = Instant::now();
     assert_eq!(phone.get("/pending?wait=abc").await.0, StatusCode::OK);

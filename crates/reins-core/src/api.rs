@@ -1068,6 +1068,60 @@ impl ReinsCore {
         .await
     }
 
+    /// Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
+    /// "Waiting for you" until its deadline.
+    pub async fn decide_later(&self, request_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.decide_later(&request_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
+    /// check the events and webhooks this phone signs. Shown under a connection's More.
+    pub async fn signing_key_fingerprint(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.signing_key_fingerprint() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The user refused, with an optional note the agent receives ("Use the staging bucket").
+    pub async fn deny_with_note(&self, request_id: String, note: Option<String>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.deny_with_note(&request_id, note).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
+    pub async fn ask_why(&self, request_id: String, question: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.ask_why(&request_id, &question).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
     /// all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
     pub async fn approve_quick(&self, request_id: String) -> Result<(), CoreError> {

@@ -31,9 +31,12 @@ pub mod push;
 pub mod relay;
 pub mod roles;
 pub mod sniff;
+pub mod ticket_routes;
+pub mod tickets;
 pub mod tools;
 pub mod ttl;
 pub mod vault_passkeys;
+pub mod webhooks;
 pub mod workos_sync;
 
 use std::{
@@ -111,6 +114,8 @@ pub struct Hub {
     pub handovers: roles::HandoverHub,
     /// Per account with phone roles: what wakes the members' long-polls, and the op log's head.
     pub live: live::LiveHub,
+    /// Tickets (deferred decisions): what wakes their waits and the phone, and results passing through.
+    pub tickets: tickets::TicketHub,
 }
 
 /// Sealed lease revocations for desktop apps (Reins Secrets): the phone posts one per paired computer, the computer's
@@ -299,6 +304,7 @@ impl Hub {
             joins: JoinHub::new(Arc::clone(&signal)),
             handovers: roles::HandoverHub::new(Arc::clone(&signal)),
             live: live::LiveHub::default(),
+            tickets: tickets::TicketHub::default(),
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
@@ -379,9 +385,13 @@ impl Hub {
                 joins: self.joins.take_undelivered(user, now_unix()),
                 handovers: self.handovers.take_undelivered(user, now_unix()),
                 log_head: log_after.and(self.live.head(user)),
+                tickets: vec![],
+                instant_window_secs: None,
             };
             let log_moved = pending.log_head.zip(log_after).is_some_and(|(head, after)| head > after);
-            if !pending.is_empty() || log_moved || tokio::time::Instant::now() >= deadline {
+            // Ticket news is fetched by the caller (it needs the database); it ends the wait.
+            let ticket_news = self.tickets.take_news(user);
+            if !pending.is_empty() || log_moved || ticket_news || tokio::time::Instant::now() >= deadline {
                 return pending;
             }
             let log_changed = async {
@@ -405,6 +415,7 @@ impl Hub {
         self.mcp_servers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.relay.forget_user(user);
+        self.tickets.forget_user(user);
         self.presence.forget(user);
         self.pairings.forget_user(user);
         self.joins.forget_user(user);
@@ -427,7 +438,9 @@ impl Hub {
 /// The process-wide hub (spec §2: one server instance per deployment).
 pub static HUB: LazyLock<Hub> = LazyLock::new(|| {
     let max_queued = usize::try_from(CONFIG.reins_account_max_queued()).unwrap_or(usize::MAX);
-    Hub::with_limits(Timing::from_config(), max_queued, BlobLimits::from_config())
+    let mut hub = Hub::with_limits(Timing::from_config(), max_queued, BlobLimits::from_config());
+    hub.relay = hub.relay.with_instant_window(tickets::instant_window());
+    hub
 });
 
 pub fn enabled() -> bool {
@@ -479,6 +492,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(oauth_routes::routes());
     routes.extend(mcp_routes::routes());
     routes.extend(desktop_routes::routes());
+    routes.extend(ticket_routes::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
     routes.extend(pages::routes());

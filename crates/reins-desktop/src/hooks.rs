@@ -20,6 +20,12 @@
 //! - Gemini CLI `BeforeTool` (<https://geminicli.com/docs/hooks/reference/>): `run_shell_command`
 //!   (`tool_input.command`), `write_file`/`replace`/`read_file` (`tool_input.file_path`); answer `{"decision":
 //!   "allow"|"deny", "reason": …}`, no output for no decision.
+//!
+//! Deferred decisions ([`crate::tickets`]): a question the reviewer will decide later is denied with its ticket and
+//! the advice to re-run the exact command once approved; once approved, that command goes through once (a pass).
+//! Claude Code also calls the hook on `UserPromptSubmit` and `Stop`: then, and on `PreToolUse`, the session hears what
+//! changed for its tickets (`hookSpecificOutput.additionalContext`; on `Stop`, `{"decision": "block", "reason": …}`,
+//! only when there is news).
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -59,6 +65,10 @@ pub enum Event {
     /// Cursor's `preToolUse`: allow or deny only.
     CursorTool,
     GeminiBeforeTool,
+    /// Claude Code `UserPromptSubmit`: news of the session's tickets only.
+    UserPromptSubmit,
+    /// Claude Code `Stop`: news of the session's tickets only, as a reason to go on.
+    Stop,
     /// An event this app does not handle (answered with no decision).
     Unknown,
 }
@@ -132,10 +142,11 @@ pub fn parse(harness: Harness, input: &[u8]) -> Result<HookCall, String> {
     };
     let (event, action) = match harness {
         Harness::ClaudeCode | Harness::Codex => {
-            let event = if event_name.is_empty() || event_name == "PreToolUse" {
-                Event::PreToolUse
-            } else {
-                Event::Unknown
+            let event = match event_name {
+                "" | "PreToolUse" => Event::PreToolUse,
+                "UserPromptSubmit" if harness == Harness::ClaudeCode => Event::UserPromptSubmit,
+                "Stop" if harness == Harness::ClaudeCode => Event::Stop,
+                _ => Event::Unknown,
             };
             let action = match tool {
                 "Bash" | "shell" | "local_shell" | "exec_command" => command(),
@@ -200,13 +211,22 @@ pub fn parse(harness: Harness, input: &[u8]) -> Result<HookCall, String> {
     Ok(HookCall {
         harness,
         event,
-        action: if event == Event::Unknown {
+        action: if matches!(event, Event::Unknown | Event::UserPromptSubmit | Event::Stop) {
             Action::Other
         } else {
             action
         },
         cwd: str_at(&v, "/cwd").map(str::to_owned),
     })
+}
+
+/// The harness session a hook call belongs to (`session_id`; Cursor's `conversation_id`), when it names one that fits
+/// on a line.
+#[must_use]
+pub fn session_of(input: &[u8]) -> Option<String> {
+    let v: Value = serde_json::from_slice(input).ok()?;
+    let id = str_at(&v, "/session_id").or_else(|| str_at(&v, "/conversation_id"))?;
+    (!id.is_empty() && id.len() <= 200 && id.chars().all(|c| c.is_ascii_graphic())).then(|| id.to_owned())
 }
 
 /// The rule the call matches and the question to ask about it.
@@ -524,11 +544,20 @@ fn push_targets_origin(command: &str, configured: Option<&str>) -> bool {
 /// the command, so that a command cannot write them.
 #[must_use]
 pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>) -> Option<(Match, Question)> {
+    let (m, question, detail) = question_text(call, guard, head)?;
+    let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
+    Some((m, q))
+}
+
+/// The rule, the question's line and its whole detail as built from the raw call, before anything is cut or cleaned
+/// to reach the phone.
+fn question_text(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>) -> Option<(Match, String, String)> {
     let who = call.harness.label();
     let (m, question, mut detail) = match &call.action {
         Action::Command(c) => {
             let m = guard.check_command(c)?;
-            let one_line = c.split_whitespace().collect::<Vec<_>>().join(" ");
+            // A line separator is written out, never folded away.
+            let one_line = crate::ask::one_line(c);
             (m, format!("{who} wants to run: {one_line}"), format!("Command:\n{c}"))
         }
         Action::Files {
@@ -566,8 +595,7 @@ pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>)
         }
     }
     let detail = format!("{}{head_lines}\n{detail}", rule_lines(&m));
-    let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
-    Some((m, q))
+    Some((m, question, detail))
 }
 
 /// The first lines of a question's detail: the rule that matched and what matched it, which the phone shows (and
@@ -632,7 +660,7 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
         // Cursor never asks before a read, so allowing one takes no decision away from the user; an empty answer
         // would only show up as a failed hook in Cursor's log.
         (Event::CursorRead, Verdict::Unmatched) => out(json!({"permission": "allow"})),
-        (Event::Unknown, _) | (_, Verdict::Unmatched) => (None, 0),
+        (Event::Unknown | Event::UserPromptSubmit | Event::Stop, _) | (_, Verdict::Unmatched) => (None, 0),
         (Event::PreToolUse, v) => {
             let (decision, reason) = match v {
                 Verdict::Allow(r) => ("allow", r),
@@ -669,6 +697,150 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
     }
 }
 
+/// [`render`], with `news` of the session's tickets for Claude Code: added to a `PreToolUse` answer and said on
+/// `UserPromptSubmit` as `additionalContext`, and on `Stop` as the reason to go on (`decision: block`). No news: as
+/// [`render`].
+#[must_use]
+pub fn render_with(call: &HookCall, verdict: &Verdict, news: &[String]) -> (Option<String>, u8) {
+    let out = |v: Value| (Some(v.to_string()), 0);
+    let news = (call.harness == Harness::ClaudeCode && !news.is_empty()).then(|| news.join("\n"));
+    match (call.event, news) {
+        (Event::Stop, Some(n)) => out(json!({"decision": "block", "reason": n})),
+        (Event::UserPromptSubmit, Some(n)) => {
+            out(json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": n}}))
+        }
+        (Event::PreToolUse, Some(n)) => {
+            let mut answer = render(call, verdict)
+                .0
+                .and_then(|o| serde_json::from_str::<Value>(&o).ok())
+                .unwrap_or_else(|| json!({"hookSpecificOutput": {"hookEventName": "PreToolUse"}}));
+            answer["hookSpecificOutput"]["additionalContext"] = json!(n);
+            out(answer)
+        }
+        _ => render(call, verdict),
+    }
+}
+
+/// The digest a pass for this call is bound to, over the call as the harness sent it, never as shown: the harness, the
+/// hook event and tool, the folder, the whole command (or each path, and whether it is read or changed) and what was
+/// read of the repository. Two calls that look alike on the phone but differ anywhere get different digests.
+#[must_use]
+pub fn pass_digest(call: &HookCall, tool: &str, head: Option<&GitHead>) -> String {
+    use crate::tickets::optional;
+    let event = format!("{:?}", call.event);
+    let mut parts: Vec<Vec<u8>> =
+        vec![call.harness.id().into(), event.into_bytes(), tool.as_bytes().to_vec(), optional(call.cwd.as_deref())];
+    match &call.action {
+        Action::Command(c) => parts.extend([b"command".to_vec(), c.as_bytes().to_vec()]),
+        Action::Files {
+            write,
+            paths,
+        } => {
+            let how: &[u8] = if *write {
+                b"write"
+            } else {
+                b"read"
+            };
+            parts.extend([b"files".to_vec(), how.to_vec(), paths.len().to_string().into_bytes()]);
+            parts.extend(paths.iter().map(|p| p.as_bytes().to_vec()));
+        }
+        Action::Other => parts.push(b"other".to_vec()),
+    }
+    match head {
+        Some(h) => parts.extend([
+            b"head".to_vec(),
+            optional(h.branch.as_deref()),
+            optional(h.default.as_deref()),
+            optional(h.remote.as_deref()),
+        ]),
+        None => parts.push(b"no head".to_vec()),
+    }
+    let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    crate::tickets::pass_digest("hook", &parts)
+}
+
+/// Whether a pass may be bound to this call, which is asked about with `q`: the command, every path and the folder are
+/// printable text and spaces only (no [`crate::ask::invisible`] character: no control character, so no newline that
+/// could forge a line of the detail, no bidi override, zero width or separator), and `q`'s detail exactly the detail
+/// built from this raw call, nothing cut, cleaned or written out. Anything else
+/// is asked as an ordinary Instant question: no digest is sent, no ticket kept, no pass honoured.
+#[must_use]
+pub fn passable(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>, q: &Question) -> bool {
+    let plain = |s: &str| !s.is_empty() && !s.chars().any(crate::ask::invisible);
+    let raw = match &call.action {
+        Action::Command(c) => plain(c),
+        Action::Files {
+            paths,
+            ..
+        } => !paths.is_empty() && paths.iter().all(|p| plain(p)),
+        Action::Other => false,
+    };
+    raw && call.cwd.as_deref().is_none_or(plain)
+        && question_text(call, guard, head).is_some_and(|(_, _, detail)| q.detail.as_deref() == Some(detail.as_str()))
+}
+
+/// One line saying what a guarded action is, for a ticket (`git push --force origin fix/ci`, `read .env`).
+fn summary(action: &Action) -> String {
+    match action {
+        Action::Command(c) => crate::tickets::summary_of(c),
+        Action::Files {
+            write,
+            paths,
+        } => {
+            let verb = if *write {
+                "change"
+            } else {
+                "read"
+            };
+            crate::tickets::summary_of(&format!("{verb} {}", paths.join(", ")))
+        }
+        Action::Other => String::new(),
+    }
+}
+
+/// Before a hook decides: when tickets wait and the daemon (which looks every 30 s) does not run, one quick look
+/// ([`crate::tickets::HOOK_REFRESH`]).
+async fn look_at_tickets(paths: &Paths, config: &Config) {
+    use crate::tickets::{HOOK_REFRESH, TicketStore};
+    if !TicketStore::load(paths).any_waiting() || crate::tickets::daemon_running(paths, config).await {
+        return;
+    }
+    let Ok(client) = crate::server::client::DesktopClient::new(paths) else {
+        return;
+    };
+    match tokio::time::timeout(HOOK_REFRESH, crate::tickets::refresh(paths, &client, false)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => log::info!("tickets: {e}"),
+        Err(_) => log::info!("tickets: no answer within {} s", HOOK_REFRESH.as_secs()),
+    }
+}
+
+/// What `session` has not been told yet (marked told).
+fn news(paths: &Paths, session: &str) -> Vec<String> {
+    use crate::tickets::TicketStore;
+    // Most calls have none: only then is the file written.
+    if TicketStore::load(paths).news_for(session).is_empty() {
+        return Vec::new();
+    }
+    TicketStore::update(paths, |s| s.news_for(session)).unwrap_or_else(|e| {
+        log::warn!("tickets: {e}");
+        Vec::new()
+    })
+}
+
+/// Uses the pass for `digest`, if there is one.
+/// Uses the pass for `digest` in `session`, if there is one.
+fn take_pass(paths: &Paths, digest: &str, session: &str) -> Option<crate::tickets::Pass> {
+    use crate::tickets::TicketStore;
+    let now = crate::now_unix();
+    let mine =
+        |p: &crate::tickets::Pass| p.digest == digest && p.session.as_deref() == Some(session) && p.expires_at > now;
+    if !TicketStore::load(paths).passes().iter().any(mine) {
+        return None;
+    }
+    TicketStore::update(paths, |s| s.take_pass(digest, Some(session), now)).ok().flatten()
+}
+
 /// Runs one hook: parse, match, ask (up to `guard.timeout_secs`), answer. Unreadable input is refused (exit 2, the
 /// reason on stderr, which every harness takes as "blocked").
 pub async fn run(
@@ -681,6 +853,15 @@ pub async fn run(
     let call = match parse(harness, input) {
         Ok(c) => c,
         Err(e) => return (None, 2, Some(format!("reins hook: {e}; not allowed."))),
+    };
+    let session = session_of(input);
+    let phone = matches!(crate::ask::decider(paths, config), Ok(crate::ask::Decider::Phone));
+    if phone && call.event != Event::Unknown {
+        look_at_tickets(paths, config).await;
+    }
+    let news = match (&session, harness, call.event) {
+        (Some(s), Harness::ClaudeCode, Event::PreToolUse | Event::UserPromptSubmit | Event::Stop) => news(paths, s),
+        _ => Vec::new(),
     };
     // For a push, what the repository says of its branch (read from its files, never by running git).
     let head = match (&call.action, &call.cwd) {
@@ -718,28 +899,79 @@ pub async fn run(
         let asks = matches!(shadow.outcome, reins_policy::matrix::Outcome::Ask { .. });
         let question = guarded.or_else(|| asks.then(|| matrix_question(&call, &shadow.line)).flatten());
         let Some((m, q)) = question else {
-            let (out, code) = render(&call, &Verdict::Unmatched);
+            let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
             return (out, code, None);
         };
         (m, q, Some((summary, shadow)))
     } else {
         let Some((m, q)) = guarded else {
-            let (out, code) = render(&call, &Verdict::Unmatched);
+            let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
             return (out, code, None);
         };
         (m, q, None)
     };
-    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
-    let timeout = Duration::from_secs(config.guard.timeout_secs);
     let entry =
         Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
+    let tool = serde_json::from_slice::<Value>(input)
+        .ok()
+        .and_then(|v| str_at(&v, "/tool_name").map(str::to_owned))
+        .unwrap_or_default();
+    // A pass is bound to the session as well: a call that names none is never parked, and never passed.
+    let digest = (session.is_some() && passable(&call, &config.guard, head.as_ref(), &q))
+        .then(|| pass_digest(&call, &tool, head.as_ref()));
+    let pass = match (&digest, &session) {
+        (Some(d), Some(s)) => take_pass(paths, d, s),
+        _ => None,
+    };
+    if let Some(pass) = pass {
+        log::info!("hook {}: `{}` approved earlier ({})", harness.id(), m.pattern, pass.ticket);
+        let reason = format!("Approved earlier (ticket {})", pass.ticket);
+        let mut entry = entry.decider(crate::journal::Decider::Phone);
+        entry.end(crate::journal::Outcome::Approved, Some(&reason));
+        crate::journal::Journal::new(paths).record(&entry);
+        let (out, code) = render_with(&call, &Verdict::Allow(reason), &news);
+        return (out, code, None);
+    }
+    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
+    let timeout = Duration::from_secs(config.guard.timeout_secs);
     // stderr: the harness's log, and its transcript where it shows hook output.
     let tell = |line: &str| eprintln!("{line}");
+    let ticketing = digest.as_deref().map(|digest| crate::ask::Ticketing {
+        digest,
+        defer: false,
+    });
     let (answer, timed_out, entry) =
-        crate::ask::ask_logged_entry(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
-    let v = verdict(answer, timed_out, config.guard.on_no_answer);
-    let (out, code) = render(&call, &v);
-    // What it does and what the matrix says of it, for Activity: read only once the verdict is fixed (in shadow), on
+        crate::ask::ask_logged_ticketed(paths, config, &q, timeout, false, prompter, entry, Some(&tell), ticketing)
+            .await;
+    let v = match answer {
+        Ok(answer) => verdict(answer, timed_out, config.guard.on_no_answer),
+        Err(parked) => {
+            let now = crate::now_unix();
+            let ticket = crate::tickets::LocalTicket {
+                ticket: parked.ticket.clone(),
+                kind: crate::tickets::TicketKind::Hook,
+                session,
+                summary: summary(&call.action),
+                digest: digest.unwrap_or_default(),
+                nonce: parked.nonce,
+                created_at: now,
+                expected_by: parked.expected_by,
+                state: reins_proto::ticket::TicketState::Deferred.as_str().to_owned(),
+                told: None,
+                repo: None,
+                refs: Vec::new(),
+                note: None,
+                stale: None,
+                push: None,
+            };
+            if let Err(e) = crate::tickets::TicketStore::update(paths, |s| s.add(ticket)) {
+                log::warn!("tickets: {e}");
+            }
+            Verdict::Deny(crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now))
+        }
+    };
+    let (out, code) = render_with(&call, &v, &news);
+    // What it does, for Activity (Decisions v2 P1: shown, never deciding): read only once the verdict is fixed, on
     // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
     let reading = reading.or_else(|| {
         crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
@@ -808,6 +1040,154 @@ fn matrix_question(call: &HookCall, line: &str) -> Option<(Match, Question)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bash(command: &str) -> HookCall {
+        HookCall {
+            harness: Harness::ClaudeCode,
+            event: Event::PreToolUse,
+            action: Action::Command(command.to_owned()),
+            cwd: Some("/home/me/app".to_owned()),
+        }
+    }
+
+    #[test]
+    fn commands_equal_up_to_the_display_limit_get_different_digests() {
+        let guard = GuardConfig::default();
+        let shared = format!("rm -rf ./build {}", "x".repeat(400));
+        let (a, b) = (bash(&format!("{shared} && echo done")), bash(&format!("{shared} && rm -rf ~")));
+        let (qa, qb) = (question(&a, &guard).unwrap().1, question(&b, &guard).unwrap().1);
+        assert_eq!(qa.question, qb.question, "the phone's one line is the same");
+        assert!(passable(&a, &guard, None, &qa) && passable(&b, &guard, None, &qb), "the detail shows each whole");
+        assert_ne!(pass_digest(&a, "Bash", None), pass_digest(&b, "Bash", None));
+        // Past what the detail carries, a command is not shown whole: never a ticket or a pass.
+        let long = bash(&format!("rm -rf ./build {} && rm -rf ~", "x".repeat(9_000)));
+        let ql = question(&long, &guard).unwrap().1;
+        assert!(!passable(&long, &guard, None, &ql));
+        // Everything else that is hashed counts too.
+        let elsewhere = HookCall {
+            cwd: Some("/home/me/other".to_owned()),
+            ..a.clone()
+        };
+        assert_ne!(pass_digest(&a, "Bash", None), pass_digest(&elsewhere, "Bash", None));
+        assert_ne!(pass_digest(&a, "Bash", None), pass_digest(&a, "shell", None));
+        let head = GitHead {
+            branch: Some("main".into()),
+            ..GitHead::default()
+        };
+        assert_ne!(pass_digest(&a, "Bash", None), pass_digest(&a, "Bash", Some(&head)));
+        assert_eq!(pass_digest(&a, "Bash", Some(&head)), pass_digest(&a.clone(), "Bash", Some(&head.clone())));
+    }
+
+    #[test]
+    fn control_characters_are_hashed_raw() {
+        let guard = GuardConfig::default();
+        let (plain, bell) = (bash("rm -rf build"), bash("rm -rf build\u{7}"));
+        let (qp, qb) = (question(&plain, &guard).unwrap().1, question(&bell, &guard).unwrap().1);
+        assert_eq!(qp, qb, "the phone shows the two alike");
+        assert_ne!(pass_digest(&plain, "Bash", None), pass_digest(&bell, "Bash", None));
+        // So the one the phone cannot show is never parked or passed.
+        assert!(passable(&plain, &guard, None, &qp));
+        assert!(!passable(&bell, &guard, None, &qb));
+    }
+
+    fn files(paths: &[&str]) -> HookCall {
+        HookCall {
+            harness: Harness::ClaudeCode,
+            event: Event::PreToolUse,
+            action: Action::Files {
+                write: false,
+                paths: paths.iter().map(|p| (*p).to_owned()).collect(),
+            },
+            cwd: Some("/home/me/app".to_owned()),
+        }
+    }
+
+    /// `call` asked about with the question of `shown`: never a pass unless they are the same call.
+    fn passes_as(call: &HookCall, shown: &HookCall) -> bool {
+        let guard = GuardConfig::default();
+        let (_, q) = question(shown, &guard).expect("asked about");
+        passable(call, &guard, None, &q)
+    }
+
+    #[test]
+    fn a_shown_path_that_only_contains_the_real_one_gets_no_pass() {
+        let real = files(&["/home/me/.env"]);
+        assert!(passes_as(&real, &real));
+        assert!(!passes_as(&real, &files(&["/home/me/.env.local"])));
+        assert!(!passes_as(&real, &files(&["/home/me/.env/x/.env"])));
+        // One path of several shown: the list must be the same, element for element and in order.
+        assert!(!passes_as(&real, &files(&["/home/me/.env", "/home/me/.ssh/id_ed25519"])));
+        let two = files(&["/home/me/.env", "/home/me/.ssh/id_ed25519"]);
+        assert!(!passes_as(&two, &files(&["/home/me/.ssh/id_ed25519", "/home/me/.env"])));
+    }
+
+    #[test]
+    fn a_path_suffix_trick_gets_no_pass() {
+        assert!(!passes_as(&files(&[".env"]), &files(&["/home/me/app/.env"])));
+        assert!(!passes_as(&files(&["app/.env"]), &files(&["/home/me/app/.env"])));
+    }
+
+    #[test]
+    fn a_newline_in_a_path_gets_no_pass() {
+        // Each still ends as a secret file, so it is asked about; none may be passed.
+        for path in ["/home/me/safe\nIn: /home/me/app/.env", "/home/me/x\r/home/me/app/.env", "/home/me/x\t/app/.env"] {
+            let call = files(&[path]);
+            assert!(!passes_as(&call, &call), "{path:?}");
+        }
+        let mut cwd = files(&["/home/me/app/.env"]);
+        cwd.cwd = Some("/home/me/app\nRule: none".to_owned());
+        assert!(!passes_as(&cwd, &cwd));
+        // A command with a newline (a heredoc too) is asked about every time.
+        let heredoc = bash("rm -rf build\nrm -rf dist");
+        assert!(!passes_as(&heredoc, &heredoc));
+    }
+
+    /// `call` is asked about, never passable, and the phone is shown `code` written out in its question's detail.
+    fn shown_never_passed(call: &HookCall, code: &str) {
+        let guard = GuardConfig::default();
+        let (_, q) = question(call, &guard).expect("asked about");
+        assert!(!passable(call, &guard, None, &q), "{call:?}");
+        let sent = q.sent();
+        assert!(sent.detail.as_deref().unwrap().contains(code), "the phone is shown it: {:?}", sent.detail);
+    }
+
+    #[test]
+    fn an_rtl_override_command_is_not_passable() {
+        let call = bash("rm -rf build \u{202e}txt.exe");
+        shown_never_passed(&call, "⟨U+202E⟩");
+        let (_, q) = question(&call, &GuardConfig::default()).unwrap();
+        assert!(q.sent().question.contains("⟨U+202E⟩"), "{}", q.sent().question);
+    }
+
+    #[test]
+    fn a_zero_width_space_in_a_path_is_not_passable() {
+        shown_never_passed(&files(&["/home/me/a\u{200b}pp/.env"]), "⟨U+200B⟩");
+        let mut cwd = files(&["/home/me/app/.env"]);
+        cwd.cwd = Some("/home/me/app\u{feff}".to_owned());
+        shown_never_passed(&cwd, "⟨U+FEFF⟩");
+    }
+
+    #[test]
+    fn a_line_separator_in_a_command_is_not_passable() {
+        let call = bash("rm -rf build\u{2028}rm -rf ~");
+        shown_never_passed(&call, "⟨U+2028⟩");
+        let (_, q) = question(&call, &GuardConfig::default()).unwrap();
+        assert!(q.question.contains("⟨U+2028⟩"), "the one line keeps it too: {}", q.question);
+        shown_never_passed(&bash("rm -rf build\u{2029}"), "⟨U+2029⟩");
+    }
+
+    #[test]
+    fn a_command_shown_as_a_substring_of_the_real_one_gets_no_pass() {
+        let (short, long) = (bash("rm -rf build"), bash("rm -rf build && rm -rf ~"));
+        assert!(passes_as(&short, &short) && passes_as(&long, &long));
+        assert!(!passes_as(&long, &short), "the real one is longer than what was shown");
+        assert!(!passes_as(&short, &long), "what was shown is longer than the real one");
+        let elsewhere = HookCall {
+            cwd: Some("/home/me".to_owned()),
+            ..short.clone()
+        };
+        assert!(!passes_as(&elsewhere, &short));
+    }
 
     #[test]
     fn apply_patch_names_its_files() {
