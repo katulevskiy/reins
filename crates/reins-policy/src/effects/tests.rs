@@ -239,6 +239,10 @@ fn listing_reads_no_secret() {
         "cat /home/me/Downloads/*",
         "du --files0-from=/home/me/.ssh/id_ed25519",
         "du --files0-from /home/me/.ssh/id_ed25519",
+        "du --files0=/home/me/.ssh/id_ed25519",
+        "du --f /home/me/.ssh/id_ed25519",
+        "du --fil=/home/me/.ssh/id_ed25519 -s",
+        "wc --files0 /home/me/.ssh/id_ed25519",
         "du -X ~/.ssh/id_rsa .",
         "wc -l --files0-from=list.txt",
         "sort --files0-from=list.txt",
@@ -449,6 +453,8 @@ fn security_review_findings() {
         "hyprctl dispatch 'hl.dsp.window.float({ x = os.execute(\"rm -rf ~\") })'",
         "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }) or os.execute(\"rm -rf ~\")'",
         "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }); os.execute(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }); clients = os.execute(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 });clients -j'",
         "hyprctl dispatch 'hl.dsp.window.float({ w = \"a\" .. x })'",
         "hyprctl dispatch 'hl.dsp.window.float({ w = [[a]] })'",
         "hyprctl dispatch 'hl.dsp.window.close({ window = \"pid:1\" })'",
@@ -825,4 +831,21 @@ proptest::proptest! {
         });
         proptest::prop_assert!(a.level >= Level::L0);
     }
+}
+
+/// A `cd` in a pipeline or in a list sent to the background runs in a shell of its own: what follows stays where it
+/// was.
+#[test]
+fn a_cd_in_a_pipeline_or_the_background_moves_no_one() {
+    for cmd in [
+        "cd /home/me/Pictures | true; rm -rf build",
+        "cd /home/me/Pictures & rm -rf build",
+        "cd /home/me/Pictures && sleep 1 & rm -rf build",
+    ] {
+        let d = deletes(&run(cmd));
+        assert_eq!(d.first().map(|x| x.0.as_str()), Some("/home/me/Documents/dev/app/build"), "{cmd}: {d:?}");
+    }
+    // In the foreground it does move.
+    let d = deletes(&run("cd /home/me/Pictures; rm -rf build"));
+    assert_eq!(d.first().map(|x| x.0.as_str()), Some("/home/me/Pictures/build"), "{d:?}");
 }

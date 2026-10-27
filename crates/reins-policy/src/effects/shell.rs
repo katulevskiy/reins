@@ -345,19 +345,28 @@ impl<'a> Walk<'a> {
 
     pub fn script(&mut self, s: &Script) {
         for and_or in &s.0 {
-            // Each pipeline after `&&` or `||` runs where the one before left off; the list may end after any of them,
-            // so what follows it sees what they agree on.
-            let mut ends = Vec::new();
-            for (i, p) in and_or.pipelines.iter().enumerate() {
-                if i > 0 {
-                    ends.push(self.state());
-                }
-                self.pipeline(p);
+            // A list sent to the background with `&` runs in a shell of its own: its folder and variables stay there.
+            if and_or.background {
+                self.subshell(|w| w.and_or(and_or));
+            } else {
+                self.and_or(and_or);
             }
-            if !ends.is_empty() {
+        }
+    }
+
+    fn and_or(&mut self, and_or: &ast::AndOr) {
+        // Each pipeline after `&&` or `||` runs where the one before left off; the list may end after any of them,
+        // so what follows it sees what they agree on.
+        let mut ends = Vec::new();
+        for (i, p) in and_or.pipelines.iter().enumerate() {
+            if i > 0 {
                 ends.push(self.state());
-                self.join(&ends);
             }
+            self.pipeline(p);
+        }
+        if !ends.is_empty() {
+            ends.push(self.state());
+            self.join(&ends);
         }
     }
 
@@ -365,9 +374,31 @@ impl<'a> Walk<'a> {
         let mut input = Input::None;
         let n = p.commands.len();
         for (k, c) in p.commands.iter().enumerate() {
-            let out = self.command(c, input, k + 1 < n);
+            // Each command of a pipeline runs in a shell of its own (`cd x | …` moves no one after it).
+            let out = if n > 1 {
+                self.subshell(|w| w.command(c, input, k + 1 < n))
+            } else {
+                self.command(c, input, k + 1 < n)
+            };
             input = out;
         }
+    }
+
+    /// Runs `f` as in a subshell: its variables and folder are its own; the files it wrote stay written, and a checkout
+    /// in it moved HEAD for everyone.
+    fn subshell<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = self.state();
+        let out = f(self);
+        let files = std::mem::take(&mut self.files);
+        let maybe_unwritten = std::mem::take(&mut self.maybe_unwritten);
+        let head_moved = self.head_moved || saved.head_moved;
+        self.restore(State {
+            files,
+            maybe_unwritten,
+            head_moved,
+            ..saved
+        });
+        out
     }
 
     /// Walks one command with `input` on its standard input; returns what it writes to a pipe (when `piped`).

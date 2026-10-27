@@ -1813,20 +1813,25 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
         }
         p if READERS.contains(&p) => {
             let values = reader_values(p);
-            // `--files0-from F`: the names come from F, which is read (`du` prints its text back in errors).
+            // `--files0-from F` (or any prefix of it GNU takes, `--f F`, `--files0=F`): the names come from F, which is
+            // read (`du` prints its text back in errors).
+            let files0 = |t: &str| {
+                t.strip_prefix("--").is_some_and(|o| !o.is_empty() && !o.contains('=') && "files0-from".starts_with(o))
+            };
             let mut lists: Vec<Exp> = Vec::new();
             for (k, a) in args.iter().enumerate() {
-                if a.text == "--files0-from" {
+                if files0(&a.text) {
                     lists.extend(args.get(k + 1).cloned());
-                } else if let Some(f) = a.text.strip_prefix("--files0-from=") {
+                } else if let Some((o, f)) = a.text.split_once('=')
+                    && files0(o)
+                {
                     lists.push(Exp {
                         text: f.to_owned(),
                         ..a.clone()
                     });
                 }
             }
-            let list_words: Vec<&Exp> =
-                args.windows(2).filter(|ab| ab[0].text == "--files0-from").map(|ab| &ab[1]).collect();
+            let list_words: Vec<&Exp> = args.windows(2).filter(|ab| files0(&ab[0].text)).map(|ab| &ab[1]).collect();
             let read: Vec<&Exp> = positional(args, values)
                 .into_iter()
                 .filter(|r| !list_words.iter().any(|l| std::ptr::eq(*l, *r)))
@@ -2110,6 +2115,17 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
         }
         // The window manager: queries are nothing; `exec` (anywhere, also in `--batch` and after `;`) runs a program;
         // anything else is not read.
+        // Without `--batch`, a Lua dispatch is one chunk: Hyprland runs all of it, `;` included.
+        "hyprctl"
+            if !has(args, "--batch")
+                && words.first().is_some_and(|x| *x == "dispatch")
+                && words.get(1).is_some_and(|x| x.trim_start().starts_with("hl.")) =>
+        {
+            let chunk = words[1..].join(" ");
+            if !(args.iter().all(Exp::known) && lua_window_action(&chunk)) {
+                unmodelled(w, program, &format!("dispatch {chunk}"));
+            }
+        }
         "hyprctl" | "swaymsg" => {
             let raw = args.iter().map(|a| a.text.as_str()).collect::<Vec<_>>().join(" ");
             let commands: Vec<Vec<&str>> = raw.split(';').map(|c| c.split_whitespace().collect()).collect();
