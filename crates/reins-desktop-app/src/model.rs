@@ -208,6 +208,8 @@ pub struct Model {
     pub show_phone_qr: bool,
     /// The tray's "Until I resume…": the window opens its pause sheet there, to be held.
     pub pause_hold_asked: bool,
+    /// The tray's Auto before this computer's Auto setup: the window opens the setup.
+    pub auto_setup_asked: bool,
     /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
@@ -381,6 +383,7 @@ impl Model {
                 note: None,
                 show_phone_qr: false,
                 pause_hold_asked: false,
+                auto_setup_asked: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
@@ -514,7 +517,15 @@ impl Model {
                     ModeAct::Lockdown => ModeChoice::Lockdown,
                     ModeAct::Stop => ModeChoice::Stop,
                 };
-                self.change_mode(choice, cx);
+                // Auto the first time: this computer's setup comes first, in the window.
+                if choice == ModeChoice::Auto && self.needs_auto_setup() && self.screen == Screen::Status {
+                    self.auto_setup_asked = true;
+                    self.show_phone_qr = false;
+                    cx.notify();
+                    cx.defer(Self::show_window);
+                } else {
+                    self.change_mode(choice, cx);
+                }
             }
             Action::Pause(length) => self.pause_for(length, cx),
             Action::Resume => self.resume(cx),
@@ -1736,6 +1747,63 @@ impl Model {
             });
         })
         .detach();
+    }
+
+    /// Auto has not been set up on this computer yet (`[auto] setup_done`): choosing it opens the setup first. `false`
+    /// when the settings cannot be read (the mode change is asked as before).
+    #[must_use]
+    pub fn needs_auto_setup(&self) -> bool {
+        self.snapshot.as_ref().and_then(|s| s.config.as_ref().ok()).is_some_and(|c| !c.auto.setup_done)
+    }
+
+    /// The Auto setup's Done: writes `[auto]` (the setup done, the zones as they are to be), then asks the phone for
+    /// Auto. Nothing is asked when the settings could not be written. `--demo` writes only a stand-in home's.
+    pub fn finish_auto_setup(&mut self, facts: reins_policy::context::Facts, cx: &mut Context<'_, Self>) {
+        use reins_desktop::autopilot::ModeChoice;
+        if self.mode_asked.is_some() || !self.paired() {
+            return;
+        }
+        self.notice = None;
+        self.note = None;
+        if self.args.demo && std::env::var_os("REINS_HOME").is_none_or(|h| h.is_empty()) {
+            self.mark_auto_set_up(facts);
+            self.change_mode(ModeChoice::Auto, cx);
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        let paused = self.pause().on();
+        cx.spawn(async move |this, cx| {
+            let written = facts.clone();
+            let result =
+                Tokio::spawn(
+                    cx,
+                    async move { backend.change(Setting::AutoSetup(Box::new(written)), paused, false).await },
+                )
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            let _gone = this.update(cx, |m, cx| match result {
+                Ok(_) => {
+                    m.mark_auto_set_up(facts);
+                    m.change_mode(ModeChoice::Auto, cx);
+                }
+                Err(e) => {
+                    m.notice = Some(format!("Auto not set up: {e}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The setup as written, on the snapshot shown until the next read.
+    fn mark_auto_set_up(&mut self, facts: reins_policy::context::Facts) {
+        if let Some(s) = self.snapshot.as_mut()
+            && let Ok(c) = Arc::make_mut(s).config.as_mut()
+        {
+            let c = Arc::make_mut(c);
+            c.auto.setup_done = true;
+            c.auto.facts = facts;
+        }
     }
 
     /// "This was wrong": tells the phone's Autopilot what it should have done with `request_id` (`approve`: it should

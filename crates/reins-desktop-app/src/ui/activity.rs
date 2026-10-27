@@ -469,6 +469,22 @@ impl Root {
                         .child(wrapped(&text)),
                 )
             })
+            // What the matrix decided here, or would have (Decisions v2): one quiet line.
+            .when_some(e.matrix.as_ref().map(matrix_text), |c, text| {
+                c.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .mt(px(4.0))
+                        .min_w(px(0.0))
+                        .text_size(px(13.0))
+                        .line_height(px(19.0))
+                        .text_color(pal.ink_meta())
+                        .child(glyph(Glyph::Autopilot, 13.0, pal.ink_faint()))
+                        .child(div().flex_1().min_w(px(0.0)).truncate().child(text)),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -803,7 +819,6 @@ impl Root {
     }
 }
 
-/// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
 /// What a request does, as the consequence engine read it on this computer: the level, then one line per effect, and
 /// what could not be read. Decides nothing yet (Decisions v2 P1).
 fn effects_text(s: &reins_policy::effects::Summary) -> String {
@@ -825,6 +840,17 @@ fn effects_text(s: &reins_policy::effects::Summary) -> String {
     out.join("\n")
 }
 
+/// What the matrix said of a request on this computer: "Matrix · Auto · Mine · Undoable" when it decided, "Would be:
+/// Auto · Mine · Undoable" in shadow.
+fn matrix_text(m: &reins_desktop::consequences::Shadow) -> String {
+    if m.decided {
+        format!("Matrix · {}", m.line)
+    } else {
+        format!("Would be: {}", m.line)
+    }
+}
+
+/// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
 fn is_push(e: &Entry) -> bool {
     e.kind == Kind::Git && e.what.starts_with("push to ")
 }
@@ -993,6 +1019,26 @@ mod tests {
         let mut e = Entry::new(kind, "x");
         e.outcome = outcome;
         e
+    }
+
+    #[test]
+    fn activity_shows_the_matrix_line() {
+        let mut m = reins_desktop::consequences::Shadow {
+            outcome: reins_policy::matrix::Outcome::Auto,
+            zone: reins_policy::context::Zone::Mine,
+            level: reins_policy::effects::Level::L0,
+            line: "Auto · Mine · Undoable".to_owned(),
+            snapshot: "ab".repeat(32),
+            decided: false,
+        };
+        assert_eq!(matrix_text(&m), "Would be: Auto · Mine · Undoable");
+        m.decided = true;
+        assert_eq!(matrix_text(&m), "Matrix · Auto · Mine · Undoable");
+        assert!(!matrix_text(&m).contains('\n'), "one line");
+        // The demo shows both.
+        let demo = crate::demo::Demo::new(0).activity();
+        let shown: Vec<bool> = demo.iter().filter_map(|e| e.matrix.as_ref().map(|m| m.decided)).collect();
+        assert!(shown.contains(&true) && shown.contains(&false), "{shown:?}");
     }
 
     #[test]

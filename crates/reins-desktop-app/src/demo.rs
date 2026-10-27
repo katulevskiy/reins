@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use reins_desktop::api_proxy::ApiConfig;
+use reins_desktop::consequences::Shadow;
 use reins_desktop::control::{ApiInfo, SshKeyInfo};
 use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Attribution, Decider, Entry, Kind, Lean, Outcome};
@@ -388,10 +389,49 @@ impl Demo {
                         confidence: 71,
                     }),
                     effects: None,
-                    matrix: None,
+                    matrix: Self::matrix(i),
                 }
             })
             .collect()
+    }
+
+    /// What the matrix said of a sample: the recursive delete in shadow, the force push waiting decided by it.
+    fn matrix(i: usize) -> Option<Shadow> {
+        use reins_policy::context::Zone;
+        use reins_policy::effects::Level;
+        use reins_policy::matrix::Outcome as Said;
+        let (outcome, zone, level, decided) = match i {
+            0 => (
+                Said::Ask {
+                    hard: false,
+                },
+                Zone::Work,
+                Level::L3,
+                true,
+            ),
+            AUTO_SAMPLE => (Said::Auto, Zone::Mine, Level::L0, false),
+            _ => return None,
+        };
+        let word = if outcome == Said::Auto {
+            "Auto"
+        } else {
+            "Ask"
+        };
+        Some(Shadow {
+            outcome,
+            zone,
+            level,
+            line: format!("{word} · {} · {}", zone.label(), level.label()),
+            snapshot: "d3".repeat(32),
+            decided,
+        })
+    }
+
+    /// `--demo`: the GitHub owners the Auto setup proposes (made up: the demo reads no repository).
+    #[must_use]
+    pub fn auto_proposals() -> Vec<(reins_policy::context::FactKind, String)> {
+        use reins_policy::context::FactKind;
+        vec![(FactKind::Owner, "acme".to_owned()), (FactKind::Owner, "dana".to_owned())]
     }
 
     #[must_use]

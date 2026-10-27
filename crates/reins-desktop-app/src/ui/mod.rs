@@ -6,6 +6,7 @@
 //! `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
+mod auto_setup;
 mod autopilot;
 mod connections;
 mod diff;
@@ -107,6 +108,10 @@ pub struct Root {
     files_open: BTreeSet<(usize, usize)>,
     /// The sidebar's "For a while" menu is open.
     while_open: bool,
+    /// This computer's Auto setup, open, as it is being filled in.
+    auto_setup: Option<auto_setup::Setup>,
+    /// Its "Add a host" field.
+    auto_host_field: FocusHandle,
     /// The "Pause git" sheet is open, and the length picked in it.
     pause_sheet: bool,
     pause_choice: PauseFor,
@@ -332,6 +337,8 @@ impl Root {
                 .into_iter()
                 .collect(),
             while_open: demo_var("REINS_DEMO_WHILE").is_some(),
+            auto_setup: None,
+            auto_host_field: cx.focus_handle(),
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
                 PauseFor::Manual
@@ -368,6 +375,10 @@ impl Root {
             gallery_held: false,
             _subscriptions: subscriptions,
         };
+        // `REINS_DEMO_AUTO_SETUP=1`: the Auto setup open (`phone`: at its second step).
+        if demo_var("REINS_DEMO_AUTO_SETUP").is_some() {
+            root.model.update(cx, |m, _| m.auto_setup_asked = true);
+        }
         // `REINS_DEMO_PAUSE=hold`: "Until I resume", held from the start (it pauses when the hold ends).
         if pause_demo.as_deref() == Some("hold") {
             root.pause_choice = PauseFor::Manual;
@@ -409,6 +420,7 @@ impl Root {
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
                 let open = self.pause_sheet
+                    || self.auto_setup.is_some()
                     || self.while_open
                     || self.filter_open
                     || self.appearance_open
@@ -423,6 +435,7 @@ impl Root {
                     });
                 }
                 self.pause_sheet = false;
+                self.auto_setup = None;
                 self.while_open = false;
                 self.filter_open = false;
                 self.appearance_open = false;
@@ -523,6 +536,9 @@ impl Root {
         if self.pause_sheet && d.paired {
             root = root.child(self.pause_sheet(pal, cx));
         }
+        if let Some(setup) = self.auto_setup.as_ref().filter(|_| d.paired) {
+            root = root.child(self.auto_setup_sheet(setup, d, pal, window, cx));
+        }
         root.into_any_element()
     }
 }
@@ -546,6 +562,12 @@ impl Render for Root {
             self.pause_sheet = true;
             self.pause_choice = PauseFor::Manual;
             self.hold = None;
+        }
+        // The tray's Auto before this computer's setup (or `REINS_DEMO_AUTO_SETUP`): the setup, here, once the settings
+        // are read.
+        if self.model.read(cx).auto_setup_asked && self.open_auto_setup(cx) {
+            self.model.update(cx, |m, _| m.auto_setup_asked = false);
+            self.pause_sheet = false;
         }
         let mut d = Data::of(self.model.read(cx));
         d.help = self.help;
