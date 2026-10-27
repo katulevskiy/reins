@@ -11,6 +11,7 @@ mod folder;
 mod group;
 mod org_policy;
 mod organization;
+pub mod reins_circle;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
@@ -43,6 +44,7 @@ pub use self::organization::{
     Membership, MembershipId, MembershipStatus, MembershipType, OrgApiKeyId, Organization, OrganizationApiKey,
     OrganizationId,
 };
+pub use self::reins_circle::{ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket};
 pub use self::reins_client::{ReinsClient, ReinsJwtClient};
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;

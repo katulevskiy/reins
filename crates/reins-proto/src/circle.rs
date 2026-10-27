@@ -1307,13 +1307,17 @@ impl NewAnswer {
     }
 }
 
-/// `GET /reins/api/circles/answers`: an answer waiting for the owner's phone.
+/// `GET /reins/api/circles/answers`: news of one of the owner's packets its phone hasn't taken: an answer (sealed), or
+/// the packet ended without one (expired, withdrawn).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerItem {
     pub packet: String,
     pub link: String,
-    pub sealed: String,
-    pub answered_at: i64,
+    pub state: PacketState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<i64>,
 }
 
 /// `POST /reins/api/circles/answers/seen`.
