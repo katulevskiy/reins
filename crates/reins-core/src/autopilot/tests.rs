@@ -4747,6 +4747,13 @@ mod decisions_v2_p5 {
         assert_eq!(card.people, vec!["ann@acme.io", "bob@acme.io"]);
         assert_eq!(card.ceiling, 2);
         assert_eq!(card.reason.as_deref(), Some("ceiling L3 please"));
+        // The plain approval (a notification, the generic card) can't start it: only the card's, after the owner check.
+        let once = ApprovalChoice {
+            selected_message_ids: vec![],
+            standing: None,
+        };
+        assert!(env.core.approve("p1".to_owned(), once).await.is_err());
+        assert!(env.core.tasks().await.unwrap().is_empty());
         // Widening is refused; narrowing is applied, after the owner check.
         let mut wider = card.clone();
         wider.people.push("eve@evil.io".to_owned());

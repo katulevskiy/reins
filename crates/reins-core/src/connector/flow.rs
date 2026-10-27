@@ -664,6 +664,13 @@ impl Engine {
         {
             return Err(CoreError::invalid("Only you approve a task."));
         }
+        // ... and only from its card (`approve_task`), which asks the owner check first (02 §5: loosening is confirmed).
+        if call.service == reins_proto::connector::TASKS
+            && reins_proto::connector::tasks::proposes(&call.op)
+            && !self.ap_task_checked(request_id)?
+        {
+            return Err(CoreError::invalid("Approve a task from its card: it asks for your confirmation first."));
+        }
 
         if effect == Effect::Write && held.purchase.is_some() {
             if choice.standing.is_some() {

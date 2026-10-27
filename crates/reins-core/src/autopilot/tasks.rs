@@ -506,6 +506,11 @@ impl Engine {
         approved
     }
 
+    /// Whether the owner approved proposal `request_id` through its card (`approve_task`, after the owner check).
+    pub(crate) fn ap_task_checked(&self, request_id: &str) -> Result<bool, CoreError> {
+        Ok(self.ap_task_edits()?.contains_key(request_id))
+    }
+
     fn ap_task_edits(&self) -> Result<std::collections::BTreeMap<String, TaskViewStored>, CoreError> {
         match self.store.meta_get_sealed(EDITS_KEY)? {
             Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| CoreError::storage("corrupt task edits")),
