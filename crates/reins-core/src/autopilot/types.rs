@@ -707,9 +707,9 @@ pub struct TaskView {
     pub title: String,
     /// The agent's words (a proposal): shown as the agent's, never read for policy.
     pub reason: Option<String>,
-    /// `owner/name` or `owner/*`.
+    /// `owner/name`, or an owner followed by a slash and a star (all its repositories).
     pub repos: Vec<String>,
-    /// Branch globs: `fix/*`.
+    /// Branch names, or prefixes ending in a star.
     pub branches: Vec<String>,
     /// Absolute folders.
     pub paths: Vec<String>,

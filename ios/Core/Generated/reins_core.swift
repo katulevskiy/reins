@@ -20644,11 +20644,11 @@ public struct TaskView: Equatable, Hashable {
      */
     public var reason: String?
     /**
-     * `owner/name` or `owner/*`.
+     * `owner/name`, or an owner followed by a slash and a star (all its repositories).
      */
     public var repos: [String]
     /**
-     * Branch globs: `fix/*`.
+     * Branch names, or prefixes ending in a star.
      */
     public var branches: [String]
     /**
@@ -20699,10 +20699,10 @@ public struct TaskView: Equatable, Hashable {
          * The agent's words (a proposal): shown as the agent's, never read for policy.
          */reason: String?, 
         /**
-         * `owner/name` or `owner/*`.
+         * `owner/name`, or an owner followed by a slash and a star (all its repositories).
          */repos: [String], 
         /**
-         * Branch globs: `fix/*`.
+         * Branch names, or prefixes ending in a star.
          */branches: [String], 
         /**
          * Absolute folders.
