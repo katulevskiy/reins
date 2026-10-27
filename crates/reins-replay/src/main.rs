@@ -49,6 +49,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             asks: r.asks,
             ask_rate: r.ask_rate,
             developer_ask_rate: Some(r.developer_ask_rate),
+            overnight_decisions_mean: r.overnight.as_ref().map(|o| o.decisions_mean),
         };
         let text = serde_json::to_string_pretty(&b).map_err(|e| e.to_string())?;
         std::fs::write(&baseline_path, format!("{text}\n")).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
