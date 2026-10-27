@@ -100,15 +100,14 @@ object ProfilesProvider {
     }
 }
 
-/** Switching profiles reopens the app on the other profile's core, in this process (the process never exits). */
+/** Switching profiles starts the app again on the other profile's core (one core per process). */
 object ProfileSwitch {
     /** Tests replace the restart. */
     @Volatile var restart: (Activity) -> Unit = { activity ->
-        (activity.application as dev.reins.android.ReinsApp).switchProfile()
-        // A new task: new view models, bound to the new container.
         activity.startActivity(
             Intent(activity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
+        Runtime.getRuntime().exit(0)
     }
 
     fun switchTo(activity: Activity, registry: ProfileRegistryInterface, id: String) {
