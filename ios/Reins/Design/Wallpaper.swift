@@ -58,11 +58,10 @@ enum OwnWallpaper {
     }
 }
 
-/// The wallpaper layer at the top of a page: the image across the full width (its 780 × 1000 art is 390 × 500 at the
+/// The wallpaper layer at the top of a page, fixed behind everything (it never scrolls; the page and its panes scroll
+/// over it, as on Android): the image across the full width (its 780 × 1000 art is 390 × 500 at the
 /// boards' size), already faded into the page at its bottom, and a shade under the status bar so the title reads.
 struct WallpaperLayer: View {
-    /// The page's scroll, when the art scrolls away with it.
-    var scroll: ScrollTracker? = nil
     @Environment(\.colorScheme) private var scheme
     @AppStorage(Wallpaper.key(.dark), store: AppGroup.defaults) private var dark = Wallpaper.halo.rawValue
     @AppStorage(Wallpaper.key(.light), store: AppGroup.defaults) private var light = Wallpaper.toriiDither.rawValue
@@ -86,7 +85,6 @@ struct WallpaperLayer: View {
                     .frame(height: 150)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .offset(y: -max(scroll?.y ?? 0, 0))
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
