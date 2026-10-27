@@ -275,7 +275,7 @@ struct AccountTag: View {
             .padding(.vertical, 4)
             .background(Palette.paperSunken, in: Capsule())
             .lineLimit(1)
-            .truncationMode(.middle)
+            .truncationMode(.tail)
             .environment(\.layoutDirection, .leftToRight)
     }
 }

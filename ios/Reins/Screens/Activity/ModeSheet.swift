@@ -18,10 +18,10 @@ extension ModeChip.Mode {
         }
     }
 
-    /// "47:12" left, "∞" for one without an end, nothing when the end is unknown.
+    /// "47:12" left, "23:39" from an hour up (no seconds), "∞" for one without an end, nothing when the end is unknown.
     static func left(_ until: Int64?, now: Int64) -> String {
         guard let until else { return "" }
-        return AutopilotText.isUntilOff(until) ? "∞" : ModeLook.clock(until: until, now: now)
+        return AutopilotText.chipClock(until: until, now: now)
     }
 }
 

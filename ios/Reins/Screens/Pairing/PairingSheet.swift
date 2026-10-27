@@ -345,7 +345,7 @@ struct PairFact: View {
                 .font(mono ? RFont.mono(14) : RFont.sans(15.5, .medium))
                 .foregroundStyle(Palette.ink)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(mono ? .middle : .tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityIdentifier(valueId ?? "")

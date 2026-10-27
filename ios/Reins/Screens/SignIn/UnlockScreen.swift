@@ -75,7 +75,7 @@ struct UnlockScreen: View {
                         .font(RFont.mono(14))
                         .foregroundStyle(.white.opacity(0.88))
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                         .environment(\.layoutDirection, .leftToRight)
                         .padding(.top, 8)
                 }
