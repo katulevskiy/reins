@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Reins
 
@@ -125,6 +126,25 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNotEqual(bypass.startedAt, state.startedAt)
         XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on · every AI")
         XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).fill, Palette.fieldDelete, "a bypass is a red field")
+    }
+
+    /// The Lock Screen draws a Live Activity at most 160 pt tall and cuts the rest off at the top: a bypass of a day with
+    /// many approvals, an Overnight and one until turned off all fit, at the narrowest phone's width.
+    func testABypassFitsTheLockScreen() throws {
+        let until = Date(timeIntervalSince1970: TimeInterval(now + 22 * 3_600 + 25 * 60 + 22))
+        let day = BypassActivityAttributes.ContentState(until: until, startedAt: until.addingTimeInterval(-86_400), scope: "every AI", approvedCount: 87)
+        var night = day
+        night.overnight = true
+        let off = try XCTUnwrap(Glance.bypassState(global: AutopilotText.untilOff, connections: [], previous: nil, approvedSince: { _ in 41 }, now: now))
+        for state in [day, night, off] {
+            let card = UIHostingController(rootView: BypassLiveViews(state: state, stale: false).lockScreen)
+            let height = card.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
+            XCTAssertLessThanOrEqual(height, 140, "\(state.overnight == true ? "Overnight" : "Bypass") is \(height) pt tall")
+        }
+        // The compact island's timer has room for hours when it runs an hour or more.
+        XCTAssertEqual(BypassLiveViews.compactTimerWidth(day), 64)
+        let short = BypassActivityAttributes.ContentState(until: until, startedAt: until.addingTimeInterval(-15 * 60), scope: "every AI", approvedCount: 0)
+        XCTAssertEqual(BypassLiveViews.compactTimerWidth(short), 46)
     }
 
     func testAssistedFromAnOlderSnapshotShowsAsManual() {
