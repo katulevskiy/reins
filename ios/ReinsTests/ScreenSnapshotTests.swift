@@ -105,11 +105,23 @@ final class ScreenSnapshotTests: XCTestCase {
     }
 
     #if DEBUG
-    /// Next-System: the kit, at its full height.
+    /// Next-System: the kit, one board-sized page after another (`system-1`, `system-2`, ...). One tall image would pass
+    /// the renderer's texture limit and come out blank.
     func testSystem() async throws {
         try await start()
-        let page = ScrollView { SystemGalleryPage() }.pageBackground()
-        try await shoot("system", page, height: 5200)
+        let visible = Board.size.height - Board.insets.top - Board.insets.bottom
+        let fit = UIHostingController(rootView: SystemGalleryPage().environment(model))
+            .sizeThatFits(in: CGSize(width: Board.size.width, height: 100_000))
+        let pages = min(max(Int((fit.height / visible).rounded(.up)), 1), 12)
+        for page in 0..<pages {
+            let view = SystemGalleryPage()
+                .fixedSize(horizontal: false, vertical: true)
+                .offset(y: -CGFloat(page) * visible)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .clipped()
+                .pageBackground()
+            try await shoot("system-\(page + 1)", view)
+        }
     }
     #endif
 
@@ -131,22 +143,23 @@ final class ScreenSnapshotTests: XCTestCase {
     }
 
     /// Light and dark PNGs of `view`: `<name>-light.png`, `<name>-dark.png`.
-    private func shoot(_ name: String, _ view: some View, height: CGFloat = Board.size.height) async throws {
+    private func shoot(_ name: String, _ view: some View) async throws {
         for style in [UIUserInterfaceStyle.light, .dark] {
-            let image = try await render(view.environment(model).environment(\.feedback, model.feedback), style: style, height: height)
+            let image = try await render(view.environment(model).environment(\.feedback, model.feedback), style: style)
             let file = directory.appendingPathComponent("\(name)-\(style == .dark ? "dark" : "light").png")
+            XCTAssertFalse(Self.isBlank(image), "\(name) rendered as one flat colour: nothing was drawn")
             let data = try XCTUnwrap(image.pngData(), "\(name) did not encode")
             try data.write(to: file)
             print("snapshot \(file.path)")
         }
     }
 
-    private func render(_ view: some View, style: UIUserInterfaceStyle, height: CGFloat) async throws -> UIImage {
+    private func render(_ view: some View, style: UIUserInterfaceStyle) async throws -> UIImage {
         let scene = try XCTUnwrap(
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
             "the test host has no window scene"
         )
-        let size = CGSize(width: Board.size.width, height: height)
+        let size = Board.size
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
@@ -176,6 +189,19 @@ final class ScreenSnapshotTests: XCTestCase {
             _ = window.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
         }
         return image
+    }
+
+    /// Every sampled pixel the same: the window drew nothing (a texture too large, a view that never appeared).
+    private static func isBlank(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage, let data = cg.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return true }
+        let pixel = max(cg.bitsPerPixel / 8, 1)
+        let length = CFDataGetLength(data)
+        var offset = pixel * 97
+        while offset + pixel <= length {
+            for byte in 0..<pixel where bytes[offset + byte] != bytes[byte] { return false }
+            offset += pixel * 97
+        }
+        return true
     }
 
     private enum Board {
