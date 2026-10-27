@@ -176,7 +176,7 @@ level 3 with LTO disabled to avoid long GPUI links and large bitcode caches. Ins
 under one profile to share dependencies; Windows CLI downloads reuse the installer binary. Both macOS GUI architectures
 compile in one cargo run on an Apple silicon runner (x86_64 cross-compiled) before universal bundling and signing.
 Standalone macOS CLI builds (both architectures) remain a separate cargo run to preserve macOS 11 support (the GUI
-requires macOS 12), in the background while the app is notarized. All of that is one job, `macos`: the account runs
+requires macOS 12), before any signing secret is fetched. All of that is one job, `macos`: the account runs
 five GitHub-hosted macOS jobs at once, shared with CI, so a release takes one macOS runner before publication (and one
 after it, for TestFlight). CI's macOS jobs wait while a release still waits for its runner
 (`.github/workflows/macos-gate.yml`, at most an hour). The iOS core's uniffi-bindgen is a host tool built with the unoptimized `host-tool` profile. Android builds each ABI and the Kotlin bindings on separate workers; native

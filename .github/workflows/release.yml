@@ -454,11 +454,12 @@ jobs:
   #
   # 1. The app and the CLI bundled in it, both architectures in one cargo run (x86_64 cross-compiled on Apple silicon:
   #    the Intel runner took about six minutes, this one under two for the same build), with one cache for both.
-  # 2. The standalone command-line program (macOS 11; the app needs macOS 12), in the background while 3 signs and
-  #    notarizes, which is mostly waiting for Apple. It has no Rust cache (about six minutes cold for both targets; its
-  #    1.6 GB would push the caches that shorten the release out of the repository's 10 GB) and its own target folder,
-  #    outside the cached one.
+  # 2. The standalone command-line program (macOS 11; the app needs macOS 12). It has no Rust cache (about six minutes
+  #    cold for both targets; its 1.6 GB would push the caches that shorten the release out of the repository's 10 GB)
+  #    and its own target folder, outside the cached one.
   # 3. Reins-macOS.dmg (universal): bundled, signed and notarized (scripts/package/macos.sh).
+  # Every build ends before the first secret is fetched (a step checks that no build process is left), and the last
+  # steps delete the keychain and the key files whatever happened. id-token: write is for the Infisical OIDC login only.
   #
   # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once), read
   # from Infisical reins-release prod /signing/apple, else from the repository secrets of the same names:
@@ -526,21 +527,54 @@ jobs:
           else
             echo "::notice::No Rosetta on this runner: the x86_64 CLI was not run"
           fi
-      # Started here, collected by "Wait for the command-line program": it compiles while the app is signed and
-      # notarized. Its exit status goes to a file; the build's output to a log printed when it is collected.
-      - name: Start the command-line program (macOS 11, in the background)
+      # The standalone command-line program: macOS 11 (the app needs 12), its own target folder outside the cached one.
+      - name: Build the command-line program (macOS 11)
+        timeout-minutes: 45
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cli/target
         run: |
-          cli="$RUNNER_TEMP/cli"
-          mkdir -p "$cli"
-          (
-            export MACOSX_DEPLOYMENT_TARGET=11.0 CARGO_TARGET_DIR="$cli/target"
-            status=0
-            cargo build --release --locked -p reins-desktop --bin reins \
-              --target aarch64-apple-darwin --target x86_64-apple-darwin || status=$?
-            echo "$status" > "$cli/status"
-          ) < /dev/null > "$cli/build.log" 2>&1 &
-          echo "$!" > "$cli/pid"
-          echo "Building the command-line program in the background (pid $!)"
+          cargo build --release --locked -p reins-desktop --bin reins \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+      # Apple silicon natively, x86_64 under Rosetta when the runner has it (otherwise only its architecture is
+      # checked).
+      - name: Smoke test the command-line program
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            exe="$RUNNER_TEMP/cli/target/$target/release/reins"
+            run=("$exe")
+            if [[ "$target" == x86_64-apple-darwin ]]; then
+              [[ "$(lipo -archs "$exe")" == x86_64 ]] || { echo "::error::$exe is not x86_64"; exit 1; }
+              if ! arch -x86_64 /usr/bin/true 2> /dev/null; then
+                echo "::notice::No Rosetta on this runner: $target not run"
+                continue
+              fi
+              run=(arch -x86_64 "$exe")
+            fi
+            out="$("${run[@]}" --version)"
+            echo "$target: $out"
+            [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+          done
+      # A tar.gz with reins, the layout scripts/install.sh unpacks.
+      - name: Package the command-line program
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            CARGO_TARGET_DIR="$RUNNER_TEMP/cli/target" scripts/package-cli.sh "$target" "$VERSION"
+          done
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-desktop-apple-darwin
+          compression-level: 0
+          path: dist/*.tar.gz
+          retention-days: 7
+      # Signing starts only once nothing built from the repository or its dependencies runs: every build above ran in the
+      # foreground and has ended, and no cargo, rustc, build script or xcodebuild process is left. The secrets below
+      # never share the runner with build code.
+      - name: No build is running
+        run: |
+          left="$(pgrep -fl '(^|/)(cargo|rustc|xcodebuild|swift-frontend)( |$)|build-script-' || true)"
+          [[ -z "$left" ]] || { echo "::error::build processes still run before signing: $left"; exit 1; }
+          echo "No build process is running"
       # Written to a file (not exported to later steps), read by the next step only, and removed afterwards.
       - name: Fetch the Apple signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
@@ -613,55 +647,15 @@ jobs:
           done
       - name: Remove signing material
         if: always()
-        run: rm -f "$RUNNER_TEMP/notary.p8" "$GITHUB_WORKSPACE/.apple-signing.env"
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          if [[ -f "$keychain" ]]; then security delete-keychain "$keychain" || true; fi
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.p12" "$GITHUB_WORKSPACE/.apple-signing.env"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-app-macOS
           compression-level: 0
           path: target/package/Reins-*.dmg
-          retention-days: 7
-      # Collected after the app's upload, so a failure here never holds that artifact back.
-      - name: Wait for the command-line program
-        timeout-minutes: 45
-        run: |
-          cli="$RUNNER_TEMP/cli"
-          while [[ ! -f "$cli/status" ]]; do
-            kill -0 "$(cat "$cli/pid")" 2> /dev/null || [[ -f "$cli/status" ]] ||
-              { cat "$cli/build.log"; echo "::error::the command-line build stopped without a status"; exit 1; }
-            sleep 10
-          done
-          cat "$cli/build.log"
-          [[ "$(cat "$cli/status")" == 0 ]] || { echo "::error::the command-line build failed"; exit 1; }
-      # Apple silicon natively, x86_64 under Rosetta when the runner has it (otherwise only its architecture is
-      # checked).
-      - name: Smoke test the command-line program
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            exe="$RUNNER_TEMP/cli/target/$target/release/reins"
-            run=("$exe")
-            if [[ "$target" == x86_64-apple-darwin ]]; then
-              [[ "$(lipo -archs "$exe")" == x86_64 ]] || { echo "::error::$exe is not x86_64"; exit 1; }
-              if ! arch -x86_64 /usr/bin/true 2> /dev/null; then
-                echo "::notice::No Rosetta on this runner: $target not run"
-                continue
-              fi
-              run=(arch -x86_64 "$exe")
-            fi
-            out="$("${run[@]}" --version)"
-            echo "$target: $out"
-            [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
-          done
-      # A tar.gz with reins, the layout scripts/install.sh unpacks.
-      - name: Package the command-line program
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            CARGO_TARGET_DIR="$RUNNER_TEMP/cli/target" scripts/package-cli.sh "$target" "$VERSION"
-          done
-      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
-        with:
-          name: dist-desktop-apple-darwin
-          compression-level: 0
-          path: dist/*.tar.gz
           retention-days: 7
 
   server:
@@ -1650,6 +1644,12 @@ jobs:
   # keychain, the profiles and the settings (a step checks), and written again for the upload. The keychain is locked
   # after the upload and deleted at the end. The export runs no build phases and resolves no packages.
   #
+  # The archive is the one build that runs with signing material in the job, and it has to: its xcconfig carries the
+  # build number App Store Connect gives and the Telegram and Google settings compiled into the app, and Xcode signs
+  # each target with its profile's entitlements as it builds. An unsigned archive re-signed at export would lose those
+  # entitlements (app group, push, keychain sharing). What the archive's build phases can reach is only the keychain,
+  # whose key is non-extractable and usable by codesign alone, the public profiles and those settings.
+  #
   # The runner is `xcode-27`, the GitHub image with Xcode 27 (macos-26 stops at Xcode 26.6), with its Xcode 27.0
   # selected: App Store uploads need a released Xcode, and with the 27.0 SDK the app builds without the iPhone Duo's
   # hinge (REINS_HINGE_CONDITION, ios/Config/Reins.xcconfig). Move XCODE_VERSION on once 27.1 is released.
@@ -1820,6 +1820,12 @@ jobs:
           python3 scripts/testflight.py packages \
             --resolved ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
             --checkouts "$RUNNER_TEMP/spm/checkouts"
+      # The core and the packages are built and resolved, in the foreground: nothing of theirs runs any more.
+      - name: No build is running
+        run: |
+          left="$(pgrep -fl '(^|/)(cargo|rustc|xcodebuild|swift-frontend)( |$)|build-script-' || true)"
+          [[ -z "$left" ]] || { echo "::error::build processes still run before the first secret: $left"; exit 1; }
+          echo "No build process is running"
       # The API key, written for this step only and removed at its end: it does not exist while the archive runs.
       - name: Build number
         id: number

@@ -128,6 +128,17 @@ assert "    name: macOS builds\n" in macos and "    needs: plan\n" in macos and 
 assert "name: dist-desktop-apple-darwin" in macos and "name: dist-app-macOS" in macos
 assert "download-artifact" not in macos and "\n    environment:" not in macos
 assert "timeout-minutes: 75 #" in macos and "timeout-minutes: 160" in macos
+# Every build ends before the first secret: nothing runs in the background, a step checks that no build process is
+# left, and the keychain and key files are removed whatever happened.
+macos_steps = macos.split("\n    steps:\n", 1)[1]
+assert " &\n" not in macos_steps and "nohup" not in macos_steps
+first_secret = min(macos_steps.index(marker) for marker in ("secrets.", "release-secrets"))
+assert macos_steps.index("name: No build is running") < first_secret
+assert macos_steps.rindex("cargo build") < macos_steps.index("name: No build is running")
+assert "pgrep -fl" in macos_steps
+removal = macos_steps.split("      - name: Remove signing material\n", 1)[1].split("\n      - ", 1)[0]
+assert removal.startswith("        if: always()") and "delete-keychain" in removal and "notary.p8" in removal
+assert ".apple-signing.env" in removal and "cert.p12" in removal
 jobs = re.split(r"\n  ([a-z0-9-]+):\n", workflow.split("\njobs:\n", 1)[1])
 macos_jobs = [name for name, body in zip(jobs[1::2], jobs[2::2])
               if re.search(r"^    runs-on: .*(macos|xcode)", body.split("\n    steps:", 1)[0], re.M)]
