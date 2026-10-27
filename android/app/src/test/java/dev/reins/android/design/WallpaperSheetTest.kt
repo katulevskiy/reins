@@ -14,8 +14,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * For design review, not a check: `-Dreins.wallpaperSheet=/dir` draws every shipped image with every effect it takes,
- * in both themes, at full size, into `/dir/android/<image>-<effect>-<theme>.png`, and keeps each image's decoded
+ * For design review, not a check: `-Dreins.wallpaperSheet=/dir` draws every shipped image with every effect, in both
+ * themes, at full size, into `/dir/android/<image>-<effect>-<theme>.png`, and keeps each image's decoded shipped
  * pixels in `/dir/input/<image>.rgba` (RGBA, 780 × 1000) so the iPhone's pixel code can draw the same.
  */
 @RunWith(AndroidJUnit4::class)
@@ -36,9 +36,12 @@ class WallpaperSheetTest {
             for (c in px) bytes.put(((c shr 16) and 0xFF).toByte()).put(((c shr 8) and 0xFF).toByte()).put((c and 0xFF).toByte()).put(0xFF.toByte())
             File(input, "${image.name}.rgba").writeBytes(bytes.array())
             for (effect in PhotoEffect.entries) {
-                if (!image.takesEffects && effect != PhotoEffect.Original) continue
                 for (dark in listOf(true, false)) {
-                    val made = PhotoEffects.apply(src, effect, 0f, dark, image.foot)
+                    // As the app draws it: a treated image's own effect is its shipped file, any other is drawn on
+                    // its untreated original.
+                    val choice = WallpaperChoice(image, effect)
+                    val base = Wallpapers.base(context, choice, dark)!!.copy(Bitmap.Config.ARGB_8888, false)
+                    val made = PhotoEffects.apply(base, choice.applied, 0f, dark, image.foot)
                     File(out, "${image.name}-${effect.name}-${if (dark) "dark" else "light"}.png").outputStream().use { made.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 }
             }

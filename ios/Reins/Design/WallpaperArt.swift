@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// A theme's wallpaper as it is drawn: the chosen image with its effect and fade (no effect on an image that ships
-/// treated). A shipped image with no effect and no added fade is its asset, as it ships; anything else is rendered off
-/// the main actor (`WallpaperRender`) from the asset or your kept photo, and kept in Caches under a name made of
-/// everything that changes it (`key`), so each one is drawn once.
+/// A theme's wallpaper as it is drawn: the chosen image with its effect and fade. A file as it ships with nothing drawn
+/// on it and no added fade (a shipped image with Original, or a treated image with its own effect) is that asset;
+/// anything else is rendered off the main actor (`WallpaperRender`) from the asset or your kept photo, and kept in
+/// Caches under a name made of everything that changes it (`key`), so each one is drawn once.
 struct WallpaperArt: Hashable {
     var choice: WallpaperChoice
     var dark: Bool
@@ -13,7 +13,7 @@ struct WallpaperArt: Hashable {
     var photo: Int
 
     init(choice: WallpaperChoice, dark: Bool, photo: Int = 0) {
-        self.choice = choice.drawn
+        self.choice = choice
         self.dark = dark
         self.photo = choice.image == .own ? photo : 0
     }
@@ -40,12 +40,18 @@ struct WallpaperArt: Hashable {
         return parts.joined(separator: "_")
     }
 
-    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (3: colour effects
-    /// with a foot; an effect on your photo fades into the paper).
-    static let renderVersion = 3
+    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (4: every image takes
+    /// every effect, a treated image's from its untreated original). Android's `Wallpapers.RENDER_VERSION`.
+    static let renderVersion = 4
 
-    /// A shipped image as it ships: drawn from its asset, nothing rendered.
-    var isAsset: Bool { choice.image != .own && choice.effect == .original && choice.hundredths == 0 }
+    /// A file as it ships: drawn from its asset, nothing rendered.
+    var isAsset: Bool { choice.image != .own && choice.applied == .original && choice.hundredths == 0 }
+
+    /// The asset the art is drawn from: a treated image's shipped file for its own effect, else its untreated original.
+    var assetName: String { choice.fromShipped ? choice.image.assetName : choice.image.originalAssetName }
+
+    /// The picture this art is drawn on, as it is: shown while the art renders.
+    var base: WallpaperArt { WallpaperArt(choice: choice.base, dark: dark, photo: photo) }
 
     // MARK: Drawing
 
@@ -58,7 +64,7 @@ struct WallpaperArt: Hashable {
     /// Ready now, without waiting: the asset, art drawn earlier in this run, or art drawn before and kept on disk (so
     /// the page opens with it, as it did when your photo was one baked file).
     @MainActor func ready() -> Drawn? {
-        if isAsset { return UIImage(named: choice.image.assetName).map { Drawn(art: self, image: $0) } }
+        if isAsset { return UIImage(named: assetName).map { Drawn(art: self, image: $0) } }
         if let image = Self.memory[key] { return Drawn(art: self, image: image) }
         guard let cached = UIImage(contentsOfFile: Self.cacheDirectory.appendingPathComponent(key + ".jpg").path)?.cgImage else { return nil }
         let image = UIImage(cgImage: cached, scale: 2, orientation: .up)
@@ -100,8 +106,8 @@ struct WallpaperArt: Hashable {
     func make(cache: URL = WallpaperArt.cacheDirectory) -> CGImage? {
         let file = cache.appendingPathComponent(key + ".jpg")
         if let cached = UIImage(contentsOfFile: file.path)?.preparingForDisplay()?.cgImage { return cached }
-        guard let source = Self.source(choice.image, dark: dark),
-              let art = WallpaperRender.render(source, effect: choice.effect, fade: choice.fade, dark: dark, foot: choice.image.foot) else { return nil }
+        guard let source = Self.source(self),
+              let art = WallpaperRender.render(source, effect: choice.applied, fade: choice.fade, dark: dark, foot: choice.image.foot) else { return nil }
         if let data = UIImage(cgImage: art).jpegData(compressionQuality: 0.9) {
             try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
             if (try? data.write(to: file, options: .atomic)) != nil { Self.prune(cache, dark: dark, keeping: file) }
@@ -119,9 +125,10 @@ struct WallpaperArt: Hashable {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
     }
 
-    /// The image an effect is drawn on: the shipped asset, or your photo as it was picked (an older baked one as it is).
-    static func source(_ image: Wallpaper, dark: Bool) -> CGImage? {
-        image == .own ? OwnWallpaper.load(dark ? .dark : .light)?.cgImage : UIImage(named: image.assetName)?.cgImage
+    /// The picture `art`'s effect is drawn on (`WallpaperChoice.applied`): its asset (`assetName`), or your photo as it
+    /// was picked (an older baked one as it is).
+    static func source(_ art: WallpaperArt) -> CGImage? {
+        art.choice.image == .own ? OwnWallpaper.load(art.dark ? .dark : .light)?.cgImage : UIImage(named: art.assetName)?.cgImage
     }
 
     /// Keeps the theme's newest `count` files in the cache (`keeping` among them), so a dragged slider leaves no trail.
@@ -136,26 +143,37 @@ struct WallpaperArt: Hashable {
         for (url, _) in others.dropFirst(max(0, count - 1)) { try? files.removeItem(at: url) }
     }
 
-    /// The shipped images as picking them gives them (each with its own effect), small: the Image row's tiles. Off the
-    /// main actor.
-    static func imageThumbs(dark: Bool) -> [Wallpaper: CGImage] {
+    /// The size of a tile's picture (Android's `WallpaperThumb`, 156 × 200, the art's shape).
+    static let thumbSize = CGSize(width: 156, height: 200)
+
+    /// The images as picking them gives them (each with its own effect, no fade), small: the Image row's tiles, your
+    /// photo's among them when there is one. Off the main actor.
+    static func imageThumbs(dark: Bool, photo: Int) -> [Wallpaper: CGImage] {
         var out: [Wallpaper: CGImage] = [:]
-        for image in Wallpaper.shipped {
-            guard let source = source(image, dark: dark) else { continue }
-            out[image] = image.defaultEffect == .original
-                ? source
-                : WallpaperRender.render(source, effect: image.defaultEffect, fade: 0, dark: dark, size: CGSize(width: 208, height: 267), foot: image.foot)
+        for image in Wallpaper.allCases {
+            let art = WallpaperArt(choice: .of(image), dark: dark, photo: photo)
+            guard let source = source(art) else { continue }
+            out[image] = WallpaperRender.render(source, effect: art.choice.applied, fade: 0, dark: dark, size: thumbSize, foot: image.foot)
         }
         return out
     }
 
-    /// The image with each effect, small and with no added fade: the Effect row's thumbnails. Off the main actor.
-    static func thumbs(_ image: Wallpaper, dark: Bool) -> [WallpaperEffect: CGImage] {
-        guard let source = source(image, dark: dark) else { return [:] }
+    /// The image with each effect, small and with no added fade: the Effect row's thumbnails (Android's are 120 wide).
+    /// Each is drawn on its own picture: a treated image's own effect is its shipped file. Off the main actor.
+    static func thumbs(_ image: Wallpaper, dark: Bool, photo: Int) -> [WallpaperEffect: CGImage] {
         var out: [WallpaperEffect: CGImage] = [:]
         for effect in WallpaperEffect.allCases {
-            out[effect] = WallpaperRender.render(source, effect: effect, fade: 0, dark: dark, size: CGSize(width: 156, height: 200), foot: image.foot)
+            let art = WallpaperArt(choice: WallpaperChoice(image: image, effect: effect), dark: dark, photo: photo)
+            guard let source = source(art) else { continue }
+            out[effect] = WallpaperRender.render(source, effect: art.choice.applied, fade: 0, dark: dark, size: CGSize(width: 120, height: 154), foot: image.foot)
         }
         return out
+    }
+
+    /// The art small, for the Wallpaper screen's preview (Android's is 390 wide): drawn at once from the picture, not
+    /// kept, so the fade follows a dragged slider. Off the main actor.
+    static func preview(_ art: WallpaperArt) -> CGImage? {
+        guard let source = source(art) else { return nil }
+        return WallpaperRender.render(source, effect: art.choice.applied, fade: art.choice.fade, dark: art.dark, size: CGSize(width: 390, height: 500), foot: art.choice.image.foot)
     }
 }
