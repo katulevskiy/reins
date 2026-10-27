@@ -447,8 +447,11 @@ async fn the_exact_same_command_rerun_passes_once() {
     // With P3's nets the passed push also gets its backup refs: "… Reins keeps a copy of what it deletes."
     assert!(d == "allow" && r.starts_with(&format!("Approved earlier (ticket {ticket})")), "{out}");
     assert_eq!(mock.with(|m| m.calls.len()), before, "not asked");
-    let netted = out["hookSpecificOutput"]["updatedInput"]["command"].as_str().unwrap_or_default();
-    assert!(netted.contains("net run"), "the pass runs the push with its net: {out}");
+    // Nets exist on Unix only (`nets::hook::plan`); elsewhere the pass runs the push as it is.
+    if cfg!(unix) {
+        let netted = out["hookSpecificOutput"]["updatedInput"]["command"].as_str().unwrap_or_default();
+        assert!(netted.contains("net run"), "the pass runs the push with its net: {out}");
+    }
     mock.plan(&[Step::Denied(None)]);
     let out = hook(&app, &input("s-one", "PreToolUse", Some(FORCE_PUSH))).await.unwrap();
     assert_eq!(decision(&out).0, "deny");
