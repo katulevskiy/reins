@@ -305,6 +305,28 @@ fn change_lines(text: &str) -> Vec<String> {
     vec![line]
 }
 
+/// The member policy as the org receives it, once `body` checks out ([`checked_member_policy`]) and `version` is a
+/// version (from 1).
+pub fn signed_member_policy(
+    body: String,
+    version: u64,
+    at: i64,
+    device: String,
+    sig: String,
+) -> Result<SignedMemberPolicy, CoreError> {
+    checked_member_policy(&body)?;
+    if version == 0 {
+        return Err(CoreError::invalid("A policy version starts at 1"));
+    }
+    Ok(SignedMemberPolicy {
+        body,
+        version,
+        at,
+        device,
+        sig,
+    })
+}
+
 /// `body` if it is a member policy written as its canonical JSON (what the device signs is what the org stores).
 pub fn checked_member_policy(body: &str) -> Result<reins_policy::org::MemberPolicy, CoreError> {
     let invalid = || CoreError::invalid("That policy can't be read");
@@ -389,15 +411,16 @@ impl Engine {
         api_call!(&session, |api| api.org_answer(id, &answer)).map_err(org_error)
     }
 
-    /// Sets the member's own stricter policy: `body` is its canonical JSON, `signature` the enrolled key's over
-    /// [`reins_proto::managed::member_policy_message`].
-    pub async fn org_set_member_policy(&self, body: String, signature: String) -> Result<(), CoreError> {
-        checked_member_policy(&body)?;
-        let policy = SignedMemberPolicy {
-            body,
-            device: self.store.device_id()?,
-            sig: signature,
-        };
+    /// Sets the member's own stricter policy: `body` is its canonical JSON, `version` greater than the one it replaces,
+    /// `at` when it was signed, `signature` the enrolled key's over [`reins_proto::managed::member_policy_message`].
+    pub async fn org_set_member_policy(
+        &self,
+        body: String,
+        version: u64,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        let policy = signed_member_policy(body, version, at, self.store.device_id()?, signature)?;
         let session = self.session()?;
         api_call!(&session, |api| api.org_member_policy(&policy)).map_err(org_error)
     }
@@ -651,6 +674,24 @@ mod tests {
             signature: "MEUC".into(),
         };
         PhoneApi::new(&http, &url, "TOKEN").org_answer("or_1", &answer).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_member_policy_goes_out_versioned_and_timed() {
+        let body = r#"{"matrix":null,"rules":[]}"#;
+        let policy = signed_member_policy(body.into(), 4, 1_700_000_000, "dev-1".into(), "MEUC".into()).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/reins/api/org/member-policy"))
+            .and(body_json(json!({"body": body, "version": 4, "at": 1_700_000_000, "device": "dev-1", "sig": "MEUC"})))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (http, url) = (client().unwrap(), ServerUrl::parse(&server.uri()).unwrap());
+        PhoneApi::new(&http, &url, "TOKEN").org_member_policy(&policy).await.unwrap();
+        assert!(signed_member_policy("[]".into(), 1, 1, "d".into(), "s".into()).is_err());
+        assert!(signed_member_policy(body.into(), 0, 1, "d".into(), "s".into()).is_err(), "versions start at 1");
     }
 
     #[test]

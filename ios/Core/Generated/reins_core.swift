@@ -3362,9 +3362,10 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
-     * `org_member_policy_message(org, member, body)`.
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
      */
-    func orgSetMemberPolicy(body: String, signature: String) async throws 
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws 
     
     /**
      * Whether `server_url` offers organizations ("Add work account" is shown only then).
@@ -5468,14 +5469,15 @@ open func orgReviews()async throws  -> [OrgReviewView]  {
     
     /**
      * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
-     * `org_member_policy_message(org, member, body)`.
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
      */
-open func orgSetMemberPolicy(body: String, signature: String)async throws   {
+open func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_org_set_member_policy(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterString.lower(signature)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterUInt64.lower(version),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -27407,14 +27409,17 @@ public func orgEnrollmentMessage(challenge: String) -> Data  {
 }
 /**
  * The bytes the enrolled device key signs to set the member's own policy
- * (`reins_proto::managed::member_policy_message`); `member` is the user id, `body` the policy's canonical JSON.
+ * (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
+ * replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.
  */
-public func orgMemberPolicyMessage(orgId: String, member: String, body: String) -> Data  {
+public func orgMemberPolicyMessage(orgId: String, member: String, version: UInt64, at: Int64, body: String) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_reins_core_fn_func_org_member_policy_message(
         FfiConverterString.lower(orgId),
         FfiConverterString.lower(member),
+        FfiConverterUInt64.lower(version),
+        FfiConverterInt64.lower(at),
         FfiConverterString.lower(body),uniffiCallStatus
     )
 })
@@ -27462,7 +27467,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_func_org_member_policy_message() != 31318) {
+    if (uniffi_reins_core_checksum_func_org_member_policy_message() != 56035) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_review_message() != 16415) {
@@ -27708,7 +27713,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_reviews() != 62660) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_org_set_member_policy() != 18642) {
+    if (uniffi_reins_core_checksum_method_reinscore_org_set_member_policy() != 64873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {

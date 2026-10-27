@@ -273,14 +273,22 @@ impl ReinsCore {
     }
 
     /// Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
-    /// `org_member_policy_message(org, member, body)`.
-    pub async fn org_set_member_policy(&self, body: String, signature: String) -> Result<(), CoreError> {
+    /// `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+    /// app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+    pub async fn org_set_member_policy(
+        &self,
+        body: String,
+        version: u64,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.org_set_member_policy(body, signature).await }).await;
+            let result =
+                engine.run_account(async { engine.org_set_member_policy(body, version, at, signature).await }).await;
             runtime.finish(&engine, result)
         })
         .await

@@ -745,7 +745,8 @@ class FakeCore : ReinsCoreInterface {
     /** `orgDecide` calls: (id, approve, at, signature). */
     val orgDecisions = CopyOnWriteArrayList<List<Any>>()
     @Volatile var orgDecideError: CoreException? = null
-    val memberPolicies = CopyOnWriteArrayList<Pair<String, String>>()
+    /** `orgSetMemberPolicy` calls: (body, version, at, signature). */
+    val memberPolicies = CopyOnWriteArrayList<List<Any>>()
 
     override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = if (org == null) emptyList() else orgReviews
 
@@ -756,8 +757,8 @@ class FakeCore : ReinsCoreInterface {
         orgReviews = orgReviews.filterNot { it.id == id }
     }
 
-    override suspend fun orgSetMemberPolicy(body: String, signature: String) {
-        memberPolicies += body to signature
+    override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) {
+        memberPolicies += listOf(body, version, at, signature)
     }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {

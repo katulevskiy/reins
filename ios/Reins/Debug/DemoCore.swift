@@ -325,7 +325,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
-    func orgSetMemberPolicy(body: String, signature: String) async throws { throw CoreError.NotFound }
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
         guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
