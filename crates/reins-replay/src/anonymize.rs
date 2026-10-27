@@ -211,7 +211,7 @@ pub fn repair(command: &str) -> Option<String> {
             let trimmed = text.trim_end();
             let cut_at = ["\n", "; ", " && ", " || ", " | "].iter().filter_map(|sep| trimmed.rfind(sep)).max();
             match cut_at {
-                Some(at) if at > 0 => text = trimmed[..at].to_owned(),
+                Some(at) if at > 0 => text.truncate(at),
                 _ => return Some(String::new()),
             }
         }
@@ -227,12 +227,11 @@ fn synthetic_args(names: &[&str], owner: &str) -> Value {
             "repo" => json!(format!("{owner}/reins")),
             "owner" => json!(owner),
             "head" | "branch" => json!("feat/change"),
-            "base" => json!("main"),
+            "base" | "ref" => json!("main"),
             "number" | "pull_number" | "issue_number" | "run_id" | "job_id" => json!(1),
             "title" => json!("A change"),
             "body" => json!("What it does."),
             "workflow" | "workflow_id" => json!("ci.yml"),
-            "ref" => json!("main"),
             "request_id" => json!("r1"),
             "merge_method" => json!("squash"),
             "state" => json!("open"),
@@ -299,7 +298,7 @@ fn push_summary(what: &str, detail: &str) -> PushSummary {
     }
     for u in updates.iter_mut().rev().take(deleted) {
         u.change = RefChange::Delete;
-        u.new = ZERO_OID.to_owned();
+        ZERO_OID.clone_into(&mut u.new);
     }
     PushSummary {
         updates,
@@ -464,7 +463,7 @@ mod tests {
         let labels = Labels {
             owner: "katname".to_owned(),
             owner_alias: "dkat".to_owned(),
-            private_terms: [("secrethost".to_owned(), "host-1".to_owned())].into_iter().collect(),
+            private_terms: std::iter::once(("secrethost".to_owned(), "host-1".to_owned())).collect(),
             ..Labels::default()
         };
         let s = Scrubber::new(&labels);

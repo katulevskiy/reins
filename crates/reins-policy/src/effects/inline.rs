@@ -54,17 +54,13 @@ pub fn lang_of_script(path: &str, text: &str) -> Lang {
             return l;
         }
     }
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".py") {
-        Lang::Python
-    } else if lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs") || lower.ends_with(".ts") {
-        Lang::Node
-    } else if lower.ends_with(".rb") {
-        Lang::Ruby
-    } else if lower.ends_with(".pl") {
-        Lang::Perl
-    } else {
-        Lang::Shell
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "py" => Lang::Python,
+        "js" | "mjs" | "cjs" | "ts" => Lang::Node,
+        "rb" => Lang::Ruby,
+        "pl" => Lang::Perl,
+        _ => Lang::Shell,
     }
 }
 
@@ -211,11 +207,7 @@ fn lex(lang: Lang, code: &str) -> Vec<Tok> {
                 k += 1;
             }
             i = k;
-            if ch == '`' && lang == Lang::Node {
-                out.push(Tok::Str(value));
-            } else {
-                out.push(Tok::Str(value));
-            }
+            out.push(Tok::Str(value));
             continue;
         }
         if ch == '`' && matches!(lang, Lang::Ruby | Lang::Perl) {
@@ -327,6 +319,7 @@ struct Reader<'w, 'a> {
 }
 
 /// Records what `code` in `lang` does.
+#[allow(clippy::similar_names, reason = "the shell's `args` and the script's own `argv`")]
 pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str, args: &[Exp]) {
     if lang == Lang::Shell {
         w.run_script(code, args.to_vec());
@@ -427,6 +420,7 @@ impl Reader<'_, '_> {
 
     /// The value of the expression in tokens `s..e`.
     #[allow(clippy::too_many_lines, reason = "one case per expression shape")]
+    #[allow(clippy::many_single_char_names, reason = "token indexes: s(tart), e(nd), k")]
     fn eval(&self, s: usize, e: usize) -> Val {
         if s >= e {
             return Val::Unknown;
@@ -606,7 +600,6 @@ impl Reader<'_, '_> {
                         ),
                         other => other,
                     },
-                    "format" | "encode" | "decode" | "strip" | "lower" | "upper" => Val::Unknown,
                     _ => Val::Unknown,
                 }
             }
@@ -770,6 +763,7 @@ impl Reader<'_, '_> {
 
     /// Walks the tokens in order: assignments update variables, calls make effects.
     #[allow(clippy::too_many_lines, reason = "one case per kind of call")]
+    #[allow(clippy::many_single_char_names, reason = "token indexes: s(tart), e(nd), k, n")]
     fn read(&mut self) {
         let n = self.toks.len();
         let mut k = 0;
@@ -854,16 +848,14 @@ impl Reader<'_, '_> {
                                         | "let"
                                         | "var"
                                         | "my"
-                                ) =>
-                        {
+                                )
                             // A new statement starts (the newline before it is not a token).
-                            if !punct(self.toks.get(e - 1), '.')
+                            && !punct(self.toks.get(e - 1), '.')
                                 && !punct(self.toks.get(e - 1), '(')
                                 && !punct(self.toks.get(e - 1), ',')
-                                && !punct(self.toks.get(e - 1), '=')
-                            {
-                                break;
-                            }
+                                && !punct(self.toks.get(e - 1), '=') =>
+                        {
+                            break;
                         }
                         _ => {}
                     }
@@ -1009,6 +1001,7 @@ impl Reader<'_, '_> {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per library call")]
+    #[allow(clippy::similar_names, reason = "a call's `args` and the code's `argv`")]
     fn call(&mut self, callee: &str, open: usize) {
         let args = self.args(open);
         let last = callee.rsplit('.').next().unwrap_or(callee);
@@ -1019,18 +1012,18 @@ impl Reader<'_, '_> {
         match self.lang {
             Lang::Python => match callee {
                 "open" | "io.open" | "codecs.open" | "builtins.open" | "os.open" => {
-                    let mode = second.clone();
+                    let mode = second;
                     let writes =
                         matches!(&mode, Some(Val::Strs(m)) if m.iter().any(|m| m.contains(['w', 'a', 'x', '+'])));
                     let path = first.unwrap_or(Val::Unknown);
                     if writes {
-                        self.write(&path)
+                        self.write(&path);
                     } else {
-                        self.read_path(&path)
+                        self.read_path(&path);
                     }
                 }
                 "os.remove" | "os.unlink" | "os.rmdir" | "os.removedirs" | "send2trash" | "send2trash.send2trash" => {
-                    self.delete(&first.unwrap_or(Val::Unknown), false)
+                    self.delete(&first.unwrap_or(Val::Unknown), false);
                 }
                 "shutil.rmtree" => self.delete(&first.unwrap_or(Val::Unknown), true),
                 "os.rename" | "os.replace" | "shutil.move" | "os.renames" => {
@@ -1174,9 +1167,9 @@ impl Reader<'_, '_> {
                         if !matches!(v, Val::Unknown) {
                             let writes = matches!(&first, Some(Val::Strs(m)) if m.iter().any(|m| m.contains(['w', 'a', 'x', '+'])));
                             if writes {
-                                self.write(&v)
+                                self.write(&v);
                             } else {
-                                self.read_path(&v)
+                                self.read_path(&v);
                             }
                         }
                     }
@@ -1186,7 +1179,7 @@ impl Reader<'_, '_> {
             Lang::Node => match last {
                 "writeFileSync" | "writeFile" | "appendFileSync" | "appendFile" | "createWriteStream"
                 | "truncateSync" | "truncate" | "chmodSync" | "chmod" | "symlinkSync" | "symlink" | "utimesSync" => {
-                    self.write(&first.unwrap_or(Val::Unknown))
+                    self.write(&first.unwrap_or(Val::Unknown));
                 }
                 "rmSync" | "rm" | "rmdirSync" | "rmdir" | "unlinkSync" | "unlink"
                     if callee.contains('.') || last.ends_with("Sync") =>
@@ -1241,33 +1234,33 @@ impl Reader<'_, '_> {
                     self.network(first.as_ref(), write);
                 }
                 "connect" | "createConnection" if callee.starts_with("net.") || callee.starts_with("tls.") => {
-                    self.network(None, true)
+                    self.network(None, true);
                 }
-                "eval" | "Function" | "runInThisContext" | "runInNewContext" | "runInContext" => {
-                    if !matches!(first, Some(Val::Strs(_))) {
-                        self.w.lower(Certainty::None, "code the JavaScript builds and runs");
-                    }
+                "eval" | "Function" | "runInThisContext" | "runInNewContext" | "runInContext"
+                    if !matches!(first, Some(Val::Strs(_))) =>
+                {
+                    self.w.lower(Certainty::None, "code the JavaScript builds and runs");
                 }
                 _ => {}
             },
             Lang::Ruby => match callee {
                 "File.write" | "File.binwrite" | "IO.write" | "FileUtils.touch" | "FileUtils.chmod" | "File.chmod" => {
-                    self.write(&first.unwrap_or(Val::Unknown))
+                    self.write(&first.unwrap_or(Val::Unknown));
                 }
                 "File.open" | "open" => {
                     let writes = matches!(&second, Some(Val::Strs(m)) if m.iter().any(|m| m.contains(['w', 'a', '+'])));
                     let path = first.unwrap_or(Val::Unknown);
                     if writes {
-                        self.write(&path)
+                        self.write(&path);
                     } else {
-                        self.read_path(&path)
+                        self.read_path(&path);
                     }
                 }
                 "File.delete" | "File.unlink" | "FileUtils.rm" | "FileUtils.rm_f" | "Dir.rmdir" | "Dir.delete" => {
-                    self.delete(&first.unwrap_or(Val::Unknown), false)
+                    self.delete(&first.unwrap_or(Val::Unknown), false);
                 }
                 "FileUtils.rm_rf" | "FileUtils.rm_r" | "FileUtils.remove_dir" | "FileUtils.remove_entry" => {
-                    self.delete(&first.unwrap_or(Val::Unknown), true)
+                    self.delete(&first.unwrap_or(Val::Unknown), true);
                 }
                 "FileUtils.mv" | "File.rename" | "FileUtils.cp" | "FileUtils.cp_r" => {
                     self.write(&second.unwrap_or(Val::Unknown));
@@ -1293,10 +1286,10 @@ impl Reader<'_, '_> {
                 }
                 "Net.HTTP.get" | "Net.HTTP.get_response" | "URI.open" => self.network(first.as_ref(), false),
                 "Net.HTTP.post" | "Net.HTTP.post_form" | "Net.HTTP.start" | "Net.HTTP.new" | "TCPSocket.new" => {
-                    self.network(first.as_ref(), true)
+                    self.network(first.as_ref(), true);
                 }
                 "eval" | "instance_eval" | "class_eval" => {
-                    self.w.lower(Certainty::Partial, "code the Ruby code builds and runs")
+                    self.w.lower(Certainty::Partial, "code the Ruby code builds and runs");
                 }
                 _ => {}
             },
@@ -1307,7 +1300,7 @@ impl Reader<'_, '_> {
                     let path = self.arg_val(&args, 2, &[]);
                     match (mode, path) {
                         (Some(Val::Strs(m)), Some(p)) if m.iter().any(|m| m.contains('>') || m.contains('+')) => {
-                            self.write(&p)
+                            self.write(&p);
                         }
                         (Some(Val::Strs(m)), None) if m.iter().any(|m| m.starts_with('>')) => {
                             let p: Vec<String> =
@@ -1325,7 +1318,7 @@ impl Reader<'_, '_> {
                 }
                 "unlink" | "rmdir" => self.delete(&first.unwrap_or(Val::Unknown), false),
                 "rmtree" | "remove_tree" | "File.Path.rmtree" | "File.Path.remove_tree" => {
-                    self.delete(&first.unwrap_or(Val::Unknown), true)
+                    self.delete(&first.unwrap_or(Val::Unknown), true);
                 }
                 "system" | "exec" => self.shell(&first.unwrap_or(Val::Unknown)),
                 "eval" => self.w.lower(Certainty::Partial, "code the Perl code builds and runs"),

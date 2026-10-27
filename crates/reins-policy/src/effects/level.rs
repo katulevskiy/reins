@@ -28,9 +28,8 @@ pub fn level_of(e: &Effect) -> Level {
             path,
             kind,
         } => match kind {
-            FileKind::Secret(_) => Level::L3,
             FileKind::Env if path.area.in_workspace() || path.area == Area::Unknown => Level::L1,
-            FileKind::Env => Level::L3,
+            FileKind::Secret(_) | FileKind::Env => Level::L3,
             FileKind::Other => Level::L0,
         },
         Effect::FileWrite {

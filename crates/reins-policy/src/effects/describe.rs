@@ -9,7 +9,7 @@ fn area_words(area: &Area) -> String {
         Area::Source => "your projects".to_owned(),
         Area::Home => "your home folder, outside your projects".to_owned(),
         Area::System => "system folders".to_owned(),
-        Area::Remote(host) => format!("{host}"),
+        Area::Remote(host) => host.clone(),
         Area::Unknown => "a place that couldn't be worked out".to_owned(),
     }
 }

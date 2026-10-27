@@ -157,16 +157,16 @@ fn tally(r: &mut Report, case: &Case, d: &Decision) {
         note: case.note.clone(),
     };
     // Rates and certainty are the recorded history's; adversarial cases count toward recall and labels only.
-    if !case.tagged("adversarial") {
+    if case.tagged("adversarial") {
+        r.adversarial += 1;
+        r.adversarial_asks += usize::from(d.ask);
+    } else {
         r.history += 1;
         r.asks += usize::from(d.ask);
         if case.kind.developer() {
             r.developer_cases += 1;
             r.developer_asks += usize::from(d.ask);
         }
-    } else {
-        r.adversarial += 1;
-        r.adversarial_asks += usize::from(d.ask);
     }
     if case.real_risk() {
         r.real_risk += 1;

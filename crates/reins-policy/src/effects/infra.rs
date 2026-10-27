@@ -102,7 +102,7 @@ pub fn sql_change(sql: &str) -> Option<InfraChange> {
 }
 
 /// `psql`, `mysql`, `sqlite3`, `redis-cli`, …: the statements they run, against which database.
-pub(super) fn database(w: &mut Walk<'_>, program: &str, args: &[Exp], input: Input) -> Input {
+pub(super) fn database(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Input {
     let sqlite = matches!(program, "sqlite3" | "sqlite" | "duckdb");
     let positional: Vec<&Exp> = {
         let values = [
@@ -176,15 +176,14 @@ pub(super) fn database(w: &mut Walk<'_>, program: &str, args: &[Exp], input: Inp
     }
     if let Some(f) = value_of(args, &["-f", "--file"]) {
         let path = w.path(&Exp::lit(&f));
-        match w.files.get(&path.path).cloned().flatten() {
-            Some(text) => sql.push(text),
-            None => {
-                w.lower(Certainty::Partial, format!("the statements in {f}"));
-                sql.push("UPDATE".to_owned());
-            }
+        if let Some(text) = w.files.get(&path.path).cloned().flatten() {
+            sql.push(text)
+        } else {
+            w.lower(Certainty::Partial, format!("the statements in {f}"));
+            sql.push("UPDATE".to_owned());
         }
     }
-    match &input {
+    match input {
         Input::Text(t) => sql.push(t.clone()),
         Input::None => {}
         _ => {
@@ -210,7 +209,7 @@ pub(super) fn database(w: &mut Walk<'_>, program: &str, args: &[Exp], input: Inp
         _ => {
             if sql.is_empty() {
                 w.effect(Effect::Network {
-                    host: host.clone().unwrap_or_else(|| "localhost".to_owned()),
+                    host: host.unwrap_or_else(|| "localhost".to_owned()),
                     method: NetMethod::Connect,
                 });
                 w.lower(Certainty::Partial, format!("what an interactive {program} session does"));

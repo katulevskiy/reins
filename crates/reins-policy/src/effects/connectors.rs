@@ -31,9 +31,8 @@ pub fn tool_repo(args: &Value) -> Option<String> {
     match (str_arg(args, "owner"), str_arg(args, "repo")) {
         (Some(o), Some(r)) => match r.split_once('/') {
             Some((ro, name)) if ro.eq_ignore_ascii_case(o) && valid(ro) && valid(name) => Some(format!("{ro}/{name}")),
-            Some(_) => None,
             None if valid(o) && valid(r) => Some(format!("{o}/{r}")),
-            None => None,
+            _ => None,
         },
         (None, Some(r)) => match r.split_once('/') {
             Some((o, name)) if valid(o) && valid(name) => Some(r.to_owned()),
@@ -311,19 +310,19 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
     match spec.effect {
         Access::List | Access::Read | Access::Search => read(&format!("{} ({})", spec.title, spec.service)),
         Access::Write => {
-            let mut a = full(vec![Effect::DataWrite {
-                service: spec.service.to_owned(),
-                what: spec.title.to_owned(),
-                lost: true,
-            }]);
             if spec.once_only {
-                a = full(vec![Effect::Infra {
+                full(vec![Effect::Infra {
                     target: spec.title.to_owned(),
                     change: InfraChange::Destroy,
                     local: false,
-                }]);
+                }])
+            } else {
+                full(vec![Effect::DataWrite {
+                    service: spec.service.to_owned(),
+                    what: spec.title.to_owned(),
+                    lost: true,
+                }])
             }
-            a
         }
     }
 }
@@ -578,7 +577,7 @@ mod tests {
         assert_eq!(level("gmail_send", json!({"to": "a@example.com", "body": "x"})), Level::L2);
         let many: Vec<String> = (0..12).map(|i| format!("p{i}@example.com")).collect();
         let mass = analyze_tool("gmail_send", &json!({"to": many}));
-        assert_eq!((mass.level, mass.floor.clone()), (Level::L3, vec![Floor::MassMessage]));
+        assert_eq!((mass.level, mass.floor), (Level::L3, vec![Floor::MassMessage]));
         assert_eq!(level("gmail_create_draft", json!({})), Level::L0);
         assert_eq!(level("gmail_trash", json!({})), Level::L1);
         assert_eq!(level("calendar_create_event", json!({"title": "x"})), Level::L0);

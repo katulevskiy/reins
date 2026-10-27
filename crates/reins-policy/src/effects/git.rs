@@ -184,15 +184,14 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                     method: NetMethod::Read,
                 });
             }
-            if sub == "format-patch" || sub == "archive" || sub == "bundle" {
-                if let Some(o) = rest
+            if (sub == "format-patch" || sub == "archive" || sub == "bundle")
+                && let Some(o) = rest
                     .iter()
                     .position(|a| a.text == "-o" || a.text == "--output" || a.text == "--output-directory")
                     .and_then(|p| rest.get(p + 1))
-                {
-                    let p = w.path(o);
-                    w.write(p);
-                }
+            {
+                let p = w.path(o);
+                w.write(p);
             }
         }
         "fetch" | "pull" | "clone" | "remote" | "submodule" | "lfs" | "maintenance" | "gc" | "prune" | "repack"
@@ -416,14 +415,12 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 });
             }
         }
-        "reflog" => {
-            if ops.first().is_some_and(|o| matches!(o.text.as_str(), "expire" | "delete")) {
-                let p = w.path(&Exp::lit(&format!("{worktree}/.git")));
-                w.effect(Effect::FileDelete {
-                    paths: vec![p],
-                    recursive: true,
-                });
-            }
+        "reflog" if ops.first().is_some_and(|o| matches!(o.text.as_str(), "expire" | "delete")) => {
+            let p = w.path(&Exp::lit(&format!("{worktree}/.git")));
+            w.effect(Effect::FileDelete {
+                paths: vec![p],
+                recursive: true,
+            });
         }
         _ => {}
     }
@@ -469,7 +466,7 @@ fn push(w: &mut Walk<'_>, rest: &[Exp]) {
         });
         if rest.iter().any(|a| a.text == "--mirror" || a.text == "--prune") {
             w.effect(Effect::GitRefDelete {
-                repo: repo.clone(),
+                repo,
                 refname: "branches missing here".to_owned(),
                 default_branch: None,
             });
@@ -642,7 +639,7 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 target: format!("{} of {repo}", words.first().copied().unwrap_or("something")),
                 change: InfraChange::Destroy,
                 local: false,
-            })
+            });
         }
         ["repo", "create" | "fork", ..] => {
             if words.contains(&"--public") {
@@ -747,7 +744,7 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                     continue;
                 }
                 if !t.starts_with('-') {
-                    path = t.to_owned();
+                    t.clone_into(&mut path);
                     break;
                 }
                 k += 1;

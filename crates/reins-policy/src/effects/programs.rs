@@ -494,6 +494,7 @@ pub fn url_host(text: &str) -> Option<String> {
 
 /// Walks one program with its words (the program first, wrappers included).
 #[allow(clippy::too_many_lines, reason = "one arm per program family")]
+#[allow(clippy::similar_names, reason = "the program's `args` and inline code's `argv`")]
 pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) -> Input {
     let program = program_name(&words[0].text);
     let lower = program.to_ascii_lowercase();
@@ -599,7 +600,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                 Input::Text(t) => cmd.extend(t.split_whitespace().take(64).map(Exp::lit)),
                 _ => cmd.push(super::shell::unknown("the words xargs reads from its input".to_owned())),
             }
-            return run(w, &cmd, Input::None, piped);
+            run(w, &cmd, Input::None, piped)
         }
         "infisical" | "op" | "doppler" | "dotenv" | "dotenvx" | "chamber" | "aws-vault" | "teller" | "sops"
         | "berglas" => {
@@ -1074,7 +1075,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         // ---- databases and infrastructure
         "psql" | "mysql" | "mariadb" | "sqlite3" | "sqlite" | "duckdb" | "clickhouse-client" | "cockroach"
         | "mongosh" | "mongo" | "redis-cli" | "pg_dump" | "pg_restore" | "dropdb" | "createdb" | "mysqldump"
-        | "mysqladmin" => super::infra::database(w, &lower, args, input),
+        | "mysqladmin" => super::infra::database(w, &lower, args, &input),
         "kubectl" | "oc" | "k9s" | "helm" | "terraform" | "tofu" | "terragrunt" | "pulumi" | "cdk" | "aws"
         | "gcloud" | "gsutil" | "az" | "doctl" | "flyctl" | "fly" | "vercel" | "netlify" | "heroku" | "wrangler"
         | "firebase" | "eksctl" | "kind" | "minikube" | "ansible" | "ansible-playbook" | "serverless" | "sls"
@@ -1374,7 +1375,10 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::Opaque(p.to_owned())
         }
         _ => {
-            if runs_from_path || program.ends_with(".sh") || program.ends_with(".py") {
+            let script = program
+                .rsplit_once('.')
+                .is_some_and(|(_, e)| e.eq_ignore_ascii_case("sh") || e.eq_ignore_ascii_case("py"));
+            if runs_from_path || script {
                 run_file(w, &words[0], args, Lang::Shell);
             } else {
                 unknown_program(w, &program);
@@ -1507,7 +1511,6 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 w.lower(Certainty::None, "fc runs commands from the shell's history");
             }
         }
-        "bc" => {}
         "dc" => w.lower(Certainty::None, "dc can run shell commands"),
         "fd" | "fdfind" => {
             if let Some(k) =
@@ -1531,18 +1534,17 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
         }
         "open" | "xdg-open" => {
             for a in args.iter().filter(|a| !a.text.starts_with('-')) {
-                match url_host(&a.text) {
-                    Some(host) => w.effect(Effect::Network {
+                if let Some(host) = url_host(&a.text) {
+                    w.effect(Effect::Network {
                         host,
                         method: NetMethod::Read,
-                    }),
-                    None => {
-                        w.effect(Effect::Exec {
-                            program: format!("the app that opens {}", a.text),
-                            source: CodeSource::Unknown,
-                        });
-                        w.lower(Certainty::Partial, format!("what opening {} does", a.text));
-                    }
+                    });
+                } else {
+                    w.effect(Effect::Exec {
+                        program: format!("the app that opens {}", a.text),
+                        source: CodeSource::Unknown,
+                    });
+                    w.lower(Certainty::Partial, format!("what opening {} does", a.text));
                 }
             }
         }
@@ -1632,7 +1634,7 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 settings_write(w, "Changes desktop settings");
             }
         }
-        "xrandr" | "wlr-randr" | "wpctl" | "amixer" | "playerctl" | "brightnessctl" => {}
+        "xrandr" | "wlr-randr" | "wpctl" | "amixer" | "playerctl" | "brightnessctl" | "bc" => {}
         "pactl" => {
             if first == "load-module"
                 && words.iter().any(|x| {
@@ -1699,7 +1701,7 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 "print" | "list" | "print-disabled" | "print-cache" | "blame" | "version" | "help" | "procinfo"
                 | "dumpstate" | "managerpid" | "manageruid" | "getenv" => {}
                 "unload" | "bootout" | "remove" | "disable" | "stop" | "kill" => {
-                    settings_write(w, "Stops or removes a background job")
+                    settings_write(w, "Stops or removes a background job");
                 }
                 _ => {
                     w.effect(Effect::Exec {
@@ -1732,7 +1734,7 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                         matches!(*x, "rm" | "pm" | "settings" | "am" | "cmd" | "input" | "wm" | "setprop" | "svc")
                     }) =>
                 {
-                    device(w, InfraChange::Apply)
+                    device(w, InfraChange::Apply);
                 }
                 "install" | "install-multiple" | "push" | "sideload" | "root" | "remount" | "reboot" | "emu"
                 | "disable-verity" | "enable-verity" | "tcpip" => device(w, InfraChange::Apply),
@@ -1764,8 +1766,8 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 server(w, args);
             }
         }
-        "nginx" | "http-server" | "serve" | "live-server" | "httpd" | "lighttpd" => server(w, args),
-        "uvicorn" | "gunicorn" | "hypercorn" | "daphne" | "waitress-serve" => server(w, args),
+        "nginx" | "http-server" | "serve" | "live-server" | "httpd" | "lighttpd" | "uvicorn" | "gunicorn"
+        | "hypercorn" | "daphne" | "waitress-serve" => server(w, args),
         "elixir" | "erl" | "iex" | "mix" | "rails" | "rake" | "jshell" | "django-admin" | "flask" | "groovy"
         | "scala" | "clojure" | "clj" | "lein" | "racket" | "guile" | "sbcl" | "ocaml" | "Rscript" | "julia"
         | "lua" | "luajit" | "php" | "tclsh" | "expect" | "osascript" => {
@@ -1798,7 +1800,7 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                     ));
             if inline {
                 w.lower(Certainty::None, format!("{program} runs code given on the command line"));
-            } else if interactive && !matches!(input, Input::None) || interactive && args.is_empty() {
+            } else if interactive && (args.is_empty() || !matches!(input, Input::None)) {
                 w.lower(Certainty::None, format!("{program} runs code from its input"));
             } else if words
                 .iter()
@@ -1835,7 +1837,7 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 w.effect(Effect::DataRead {
                     service: "Stripe".to_owned(),
                     resource: first.to_owned(),
-                })
+                });
             }
             "listen" => w.effect(Effect::Network {
                 host: "api.stripe.com".to_owned(),
@@ -1905,15 +1907,13 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
             if matches!(
                 first,
                 "create" | "convert" | "resize" | "commit" | "rebase" | "amend" | "snapshot" | "dd" | "bitmap"
-            ) {
-                if let Some(target) = args
-                    .iter()
-                    .rev()
-                    .find(|a| !a.text.starts_with('-') && !a.text.ends_with(['G', 'M', 'K', 'T']) && a.text != first)
-                {
-                    let p = w.path(target);
-                    w.write(p);
-                }
+            ) && let Some(target) = args
+                .iter()
+                .rev()
+                .find(|a| !a.text.starts_with('-') && !a.text.ends_with(['G', 'M', 'K', 'T']) && a.text != first)
+            {
+                let p = w.path(target);
+                w.write(p);
             }
         }
         "socat" => {

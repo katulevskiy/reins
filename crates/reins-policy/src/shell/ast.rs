@@ -372,8 +372,7 @@ impl Parser {
 
     fn at_terminator(&self, terms: &[&str]) -> bool {
         match self.peek() {
-            None => true,
-            Some(')') => true,
+            None | Some(')') => true,
             Some(';') if self.peek_at(1) == Some(';') || self.peek_at(1) == Some('&') => true,
             _ => self.keyword().is_some_and(|k| terms.contains(&k.as_str()) || (k == "}" && terms.contains(&"}"))),
         }
@@ -425,12 +424,11 @@ impl Parser {
             if self.at("&&") || self.at("||") {
                 self.i += 2;
                 self.separators(false);
-                match self.pipeline(terms) {
-                    Some(p) => pipelines.push(p),
-                    None => {
-                        self.problem("a `&&` or `||` with nothing after it".to_owned());
-                        break;
-                    }
+                if let Some(p) = self.pipeline(terms) {
+                    pipelines.push(p)
+                } else {
+                    self.problem("a `&&` or `||` with nothing after it".to_owned());
+                    break;
                 }
             } else {
                 break;
@@ -460,12 +458,11 @@ impl Parser {
                     self.i += 1;
                 }
                 self.separators(false);
-                match self.command(terms) {
-                    Some(c) => commands.push(c),
-                    None => {
-                        self.problem("a `|` with nothing after it".to_owned());
-                        break;
-                    }
+                if let Some(c) = self.command(terms) {
+                    commands.push(c)
+                } else {
+                    self.problem("a `|` with nothing after it".to_owned());
+                    break;
                 }
             } else {
                 break;
@@ -596,8 +593,7 @@ impl Parser {
                     self.problem("a `for` without a variable name".to_owned());
                 }
                 self.separators(false);
-                let mut words = None;
-                if self.keyword().as_deref() == Some("in") {
+                let words = if self.keyword().as_deref() == Some("in") {
                     self.i += 2;
                     let mut list = Vec::new();
                     loop {
@@ -610,8 +606,10 @@ impl Parser {
                             },
                         }
                     }
-                    words = Some(list);
-                }
+                    Some(list)
+                } else {
+                    None
+                };
                 self.separators(true);
                 let body = self.loop_body();
                 let redirects = self.redirects_after();
@@ -1397,6 +1395,7 @@ fn merge(parts: Vec<Part>) -> Vec<Part> {
 }
 
 /// `{a..e}`, `{1..10}`, `{1..10..2}` (at most 256 values).
+#[allow(clippy::many_single_char_names, reason = "the two ends and their characters, as the shell names them")]
 fn range(a: &str, b: &str) -> Option<Vec<String>> {
     let (b, step) = match b.split_once("..") {
         Some((b, s)) => (b, s.parse::<i64>().ok()?.unsigned_abs().max(1)),
@@ -1582,7 +1581,6 @@ mod tests {
     use super::*;
 
     fn simples(script: &Script) -> Vec<Simple> {
-        let mut out = Vec::new();
         fn walk(s: &Script, out: &mut Vec<Simple>) {
             for a in &s.0 {
                 for p in &a.pipelines {
@@ -1635,6 +1633,7 @@ mod tests {
                 } => cmd(body, out),
             }
         }
+        let mut out = Vec::new();
         walk(script, &mut out);
         out
     }

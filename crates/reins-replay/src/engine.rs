@@ -176,16 +176,15 @@ pub fn zone(ctx: &Context, case: &Case, a: &Analysis) -> Zone {
         Kind::GitPush | Kind::GitRead => repo_zone(ctx, case.repo.as_deref().unwrap_or_default(), Zone::Outside),
         // The repository the call will act on, exactly as the connector reads it; one it doesn't name exactly is
         // Outside.
-        Kind::Mcp => case
-            .args
-            .as_ref()
-            .filter(|a| a.get("repo").is_some() || a.get("owner").is_some())
-            .map(|a| match (a.get("repo"), a.get("owner").and_then(|o| o.as_str())) {
-                // `owner` alone (listing a user's repositories): that user.
-                (None, Some(o)) => repo_zone(ctx, &format!("{o}/*"), Zone::Outside),
-                _ => effects::tool_repo(a).map_or(Zone::Outside, |r| repo_zone(ctx, &r, Zone::Outside)),
+        Kind::Mcp => {
+            case.args.as_ref().filter(|a| a.get("repo").is_some() || a.get("owner").is_some()).map_or(Zone::Mine, |a| {
+                match (a.get("repo"), a.get("owner").and_then(|o| o.as_str())) {
+                    // `owner` alone (listing a user's repositories): that user.
+                    (None, Some(o)) => repo_zone(ctx, &format!("{o}/*"), Zone::Outside),
+                    _ => effects::tool_repo(a).map_or(Zone::Outside, |r| repo_zone(ctx, &r, Zone::Outside)),
+                }
             })
-            .unwrap_or(Zone::Mine),
+        }
         _ => Zone::Mine,
     };
     let mut z = base;
@@ -213,12 +212,8 @@ pub fn zone(ctx: &Context, case: &Case, a: &Analysis) -> Zone {
             } => to.iter().map(|r| repo_zone(ctx, r, base)).max().unwrap_or(base),
             Effect::Message {
                 ..
-            } => Zone::Outside,
-            Effect::Network {
-                host,
-                method: NetMethod::Write | NetMethod::Connect | NetMethod::UploadExecutable,
-            } => host_zone(ctx, host),
-            Effect::Infra {
+            }
+            | Effect::Infra {
                 local: false,
                 ..
             }
@@ -226,6 +221,10 @@ pub fn zone(ctx: &Context, case: &Case, a: &Analysis) -> Zone {
                 source: CodeSource::Downloaded,
                 ..
             } => Zone::Outside,
+            Effect::Network {
+                host,
+                method: NetMethod::Write | NetMethod::Connect | NetMethod::UploadExecutable,
+            } => host_zone(ctx, host),
             _ => continue,
         };
         z = z.max(ez);

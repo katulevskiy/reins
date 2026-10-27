@@ -322,7 +322,7 @@ impl<'a> Walk<'a> {
     }
 
     /// A redirection's effect; `content`: what a write puts in the file, when known.
-    fn redirect(&mut self, r: &ast::Redirect, content: Option<String>) {
+    fn redirect(&mut self, r: &ast::Redirect, content: Option<&str>) {
         if r.op == RedirOp::Dup {
             return;
         }
@@ -338,10 +338,10 @@ impl<'a> Walk<'a> {
                     let path = self.path(&e);
                     if e.known() {
                         let previous = self.files.get(&path.path).cloned().flatten();
-                        let text = match (r.op, previous, &content) {
+                        let text = match (r.op, previous, content) {
                             (RedirOp::Append, Some(p), Some(c)) => Some(format!("{p}{c}")),
                             (RedirOp::Append, _, _) => None,
-                            _ => content.clone(),
+                            _ => content.map(str::to_owned),
                         };
                         self.files.insert(path.path.clone(), text);
                     }
@@ -410,10 +410,11 @@ impl<'a> Walk<'a> {
                 recoverable: false,
             };
         };
-        let mut area = self.ctx.workspace.area(&path);
-        if self.fresh.iter().any(|f| path == *f || path.starts_with(&format!("{f}/"))) {
-            area = Area::Scratch;
-        }
+        let area = if self.fresh.iter().any(|f| path == *f || path.starts_with(&format!("{f}/"))) {
+            Area::Scratch
+        } else {
+            self.ctx.workspace.area(&path)
+        };
         let recoverable = self.ctx.workspace.recoverable(&path);
         PathRef {
             path: if partial {
@@ -591,8 +592,6 @@ impl<'a> Walk<'a> {
             Exp::lit(&strip(p, false, true))
         } else if let Some(p) = op.strip_prefix('#') {
             Exp::lit(&strip(p, false, false))
-        } else if op.starts_with(":+") || op.starts_with('+') {
-            unknown(format!("the value of ${{{inner}}}"))
         } else {
             unknown(format!("the value of ${{{inner}}}"))
         }
@@ -613,14 +612,13 @@ impl<'a> Walk<'a> {
         let saved_cwd = self.cwd.clone();
         self.script(script);
         self.cwd = saved_cwd;
-        match value {
-            Some(v) => Exp::lit(&v),
-            None => {
-                let what = simple
-                    .and_then(|s| s.words.first().map(Word::display))
-                    .map_or_else(|| "commands".to_owned(), |p| format!("`{p}`"));
-                unknown(format!("the output of {what}"))
-            }
+        if let Some(v) = value {
+            Exp::lit(&v)
+        } else {
+            let what = simple
+                .and_then(|s| s.words.first().map(Word::display))
+                .map_or_else(|| "commands".to_owned(), |p| format!("`{p}`"));
+            unknown(format!("the output of {what}"))
         }
     }
 
@@ -686,10 +684,10 @@ impl<'a> Walk<'a> {
                         best = Some(candidate);
                     }
                 }
-            } else if self.cwd == root || self.cwd.starts_with(&format!("{root}/")) {
-                if best.as_ref().is_none_or(|b| root.len() > b.len()) {
-                    best = Some(root);
-                }
+            } else if (self.cwd == root || self.cwd.starts_with(&format!("{root}/")))
+                && best.as_ref().is_none_or(|b| root.len() > b.len())
+            {
+                best = Some(root);
             }
         }
         best
@@ -708,7 +706,7 @@ impl<'a> Walk<'a> {
                 }
                 k += 1;
             } else if let Some(d) = a.strip_prefix("--tmpdir=") {
-                dir = d.to_owned();
+                d.clone_into(&mut dir);
             } else if !a.starts_with('-') {
                 template = Some(a.clone());
             }
@@ -772,7 +770,7 @@ impl<'a> Walk<'a> {
                 _ => None,
             };
             for r in &s.redirects {
-                self.redirect(r, content.clone());
+                self.redirect(r, content.as_deref());
             }
             return Input::None;
         }
@@ -809,7 +807,7 @@ impl<'a> Walk<'a> {
         let out = super::programs::run(self, &words, input, piped);
         for r in &s.redirects {
             let content = if matches!(r.op, RedirOp::Out | RedirOp::Append) {
-                content_for_redirect.clone()
+                content_for_redirect.as_deref()
             } else {
                 None
             };
@@ -905,6 +903,11 @@ pub(super) fn unknown(why: String) -> Exp {
     }
 }
 
+/// `name` ends with `.ext`, in any case.
+fn has_ext(name: &str, ext: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext))
+}
+
 /// What kind of file `path` is, by its name (08 R4): private keys, keystores, cloud credentials and token files are
 /// secrets; `.ssh/config`, `known_hosts`, `authorized_keys` and public keys are not.
 #[must_use]
@@ -931,7 +934,7 @@ pub fn file_kind(path: &str) -> FileKind {
     }
     let in_ssh = lower.contains("/.ssh/") || lower.starts_with(".ssh/");
     if in_ssh {
-        let public = name.ends_with(".pub")
+        let public = has_ext(name, "pub")
             || matches!(name, "config" | "known_hosts" | "known_hosts.old" | "authorized_keys" | "environment" | "rc")
             || lower.contains("/.ssh/config.d/");
         return if public || name.is_empty() {
@@ -940,7 +943,7 @@ pub fn file_kind(path: &str) -> FileKind {
             FileKind::Secret(SecretKind::PrivateKey)
         };
     }
-    if name.ends_with(".pub") {
+    if has_ext(name, "pub") {
         return FileKind::Other;
     }
     let Some(c) = crate::guard::classify_file(path) else {
