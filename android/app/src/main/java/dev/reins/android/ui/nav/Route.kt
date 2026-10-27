@@ -37,6 +37,12 @@ sealed interface Route {
     /** Settings > Profiles > Reviews (a work profile's): the org reviews waiting for this member. */
     data object OrgReviews : Route
 
+    /** Settings > Profiles > Add family account: a new account joins a family with its invitation link (P7). */
+    data object AddFamilyAccount : Route
+
+    /** Settings > Profiles > Family (a family profile's): what the family sees, leaving, guardians' consents. */
+    data object Family : Route
+
     /** Trust > Ended: the grants that ran out, to resume or delete. */
     data object EndedGrants : Route
 

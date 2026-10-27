@@ -53,7 +53,14 @@ import kotlinx.coroutines.withContext
  * only where the server has organizations, or the phone already has a work profile.
  */
 @Composable
-fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit, onReviews: () -> Unit = {}) {
+fun ProfilesGroup(
+    container: AppContainer,
+    server: String,
+    onAddWork: () -> Unit,
+    onReviews: () -> Unit = {},
+    onAddFamily: () -> Unit = {},
+    onFamily: () -> Unit = {},
+) {
     val activity = LocalContext.current as? Activity
     val profiles by produceState(emptyList<AccountProfile>(), container) {
         value = withContext(Dispatchers.IO) { runCatching { container.profiles.list() }.getOrDefault(emptyList()) }
@@ -69,6 +76,9 @@ fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit
     if (!offered && profiles.none { it.kind == ProfileKind.MANAGED }) return
     val active = WorkProfiles.active.id
     SettingsGroup(header = "Profiles", glyph = Glyph.Person) {
+        if (WorkProfiles.active.family) {
+            SetRow("Family", Glyph.Family, Modifier.testTag("familyRow"), onClick = onFamily)
+        }
         if (managed) {
             SetRow("Reviews", Glyph.ShieldCheck, Modifier.testTag("orgReviewsRow"), value = reviews?.takeIf { it > 0 }?.toString(), onClick = onReviews)
         }
@@ -76,7 +86,11 @@ fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit
             val managed = p.kind == ProfileKind.MANAGED
             SetRow(
                 WorkProfiles.label(p),
-                if (managed) Glyph.Briefcase else Glyph.Person,
+                when {
+                    p.family -> Glyph.Family
+                    managed -> Glyph.Briefcase
+                    else -> Glyph.Person
+                },
                 Modifier.testTag("profile:${p.id}"),
                 value = if (p.id == active) "In use" else p.email?.let { dev.reins.android.ui.common.untrustedName(it) },
                 chevron = p.id != active,
@@ -85,6 +99,7 @@ fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit
             }
         }
         SetRow("Add work account", Glyph.Briefcase, Modifier.testTag("addWorkAccount"), onClick = onAddWork)
+        SetRow("Add family account", Glyph.Family, Modifier.testTag("addFamilyAccount"), onClick = onAddFamily)
     }
 }
 

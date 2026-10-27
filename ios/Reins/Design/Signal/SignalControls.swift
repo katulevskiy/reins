@@ -91,20 +91,29 @@ struct Pill: View {
     var glyph: Glyph? = nil
     var mode: ModeKind? = nil
     var size: Size = .tag
+    /// An SF Symbol in place of a glyph (one the Signal set doesn't draw, like a family's).
+    var symbol: String? = nil
 
-    init(_ text: String, tone: Tone = .neutral, glyph: Glyph? = nil, mode: ModeKind? = nil, size: Size = .tag) {
+    init(_ text: String, tone: Tone = .neutral, glyph: Glyph? = nil, mode: ModeKind? = nil, size: Size = .tag, symbol: String? = nil) {
         self.text = text
         self.tone = tone
         self.glyph = glyph
         self.mode = mode
         self.size = size
+        self.symbol = symbol
     }
 
     var body: some View {
         let (ink, fill) = colors
         let tag = size == .tag
         HStack(spacing: tag ? 3 : 4) {
-            if let mode { ModeGlyph(mode, size: tag ? 11 : 12) } else if let glyph { GlyphIcon(glyph, size: tag ? 11 : 12) }
+            if let mode {
+                ModeGlyph(mode, size: tag ? 11 : 12)
+            } else if let symbol {
+                Image(systemName: symbol).font(.system(size: tag ? 10 : 11, weight: .semibold)).accessibilityHidden(true)
+            } else if let glyph {
+                GlyphIcon(glyph, size: tag ? 11 : 12)
+            }
             Text(text).lineLimit(1)
         }
         .font(RFont.sans(tag ? 11.5 : 12.5, .semibold))

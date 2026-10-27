@@ -266,6 +266,12 @@ class MainSafeCore(
     override suspend fun orgEnroll(challenge: String, input: dev.reins.core.EnrollInput) = io { orgEnroll(challenge, input) }
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) = io { orgReportPosture(posture) }
     override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = io { orgReviews() }
+    override suspend fun familyJoin(link: String): dev.reins.core.FamilyView = io { familyJoin(link) }
+    override suspend fun familyView(): dev.reins.core.FamilyView? = io { familyView() }
+    override suspend fun familyRequestLeave(): dev.reins.core.FamilyLeaveInfo = io { familyRequestLeave() }
+    override suspend fun familyCancelLeave() = io { familyCancelLeave() }
+    override suspend fun familyConsentLeave(member: String) = io { familyConsentLeave(member) }
+    override suspend fun familyAnswerMinor(accept: Boolean) = io { familyAnswerMinor(accept) }
     override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) = io { orgDecide(id, approve, at, signature) }
     override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) =
         io { orgSetMemberPolicy(body, version, at, signature) }

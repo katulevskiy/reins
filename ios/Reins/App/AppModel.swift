@@ -1373,6 +1373,8 @@ final class AppModel {
         case .orgReviews:
             // Only a work profile has them; the Personal one opens Settings.
             if WorkProfiles.active.managed { show(.orgReviews, in: .settings) } else { open(.settings) }
+        case .family:
+            if WorkProfiles.active.family { show(.family, in: .settings) } else { open(.settings) }
         case .pair:
             break
         }

@@ -372,6 +372,50 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::PUT, "/org/member-policy").json(policy)).await.map(drop)
     }
 
+    /// P7 `POST /org/family/join`: a new account takes a family's invitation.
+    pub async fn family_join(&self, token: &str) -> Result<reins_proto::org::FamilyMe, ApiFailure> {
+        let body = reins_proto::org::FamilyJoin {
+            token: token.to_owned(),
+        };
+        Self::json(self.request(Method::POST, "/org/family/join").json(&body)).await
+    }
+
+    /// P7 `GET /org/family`; `None` for an account that isn't a family's member.
+    pub async fn family_me(&self) -> Result<Option<reins_proto::org::FamilyMe>, ApiFailure> {
+        match Self::json(self.request(Method::GET, "/org/family")).await {
+            Ok(me) => Ok(Some(me)),
+            Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// P7 `POST /org/family/leave`.
+    pub async fn family_leave(&self) -> Result<reins_proto::org::FamilyLeaveView, ApiFailure> {
+        Self::json(self.request(Method::POST, "/org/family/leave")).await
+    }
+
+    /// P7 `DELETE /org/family/leave`.
+    pub async fn family_stay(&self) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::DELETE, "/org/family/leave")).await.map(drop)
+    }
+
+    /// P7 `POST /org/family/leaves/{member}/consent` (a guardian).
+    pub async fn family_consent(&self, member: &str) -> Result<(), ApiFailure> {
+        check_id(member)?;
+        Self::send(self.request(Method::POST, &format!("/org/family/leaves/{member}/consent"))).await.map(drop)
+    }
+
+    /// P7 `POST /org/family/minor`: this member's answer to a guardian's proposal.
+    pub async fn family_minor(&self, accept: bool) -> Result<(), ApiFailure> {
+        let body = reins_proto::org::FamilyMinorAnswer {
+            accept,
+        };
+        Self::send(self.request(Method::POST, "/org/family/minor").json(&body)).await.map(drop)
+    }
+
     /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
     pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
         check_id(id)?;

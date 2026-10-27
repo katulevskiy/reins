@@ -368,6 +368,7 @@ enum NotificationContent {
         let kind = payload?.itemKind.map(NotificationCategory.init) ?? .request
         let category: NotificationCategory = payload?.circle != nil ? .circle : kind == .request ? .arriving : kind
         if category == .circle, c.body == NotificationText.genericBody { c.body = NotificationText.circleGenericBody }
+        if let family = payload?.familyText { c.body = family }
         c.categoryIdentifier = category.rawValue
         c.threadIdentifier = category.thread
         c.interruptionLevel = .timeSensitive

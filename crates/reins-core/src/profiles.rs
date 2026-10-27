@@ -48,6 +48,9 @@ pub struct AccountProfile {
     pub key_alias: String,
     /// Put in front of notification channel ids and thread identifiers (`""` for Personal).
     pub channel_prefix: String,
+    /// A Family profile (P7): its org is a family (the badge shows the family glyph).
+    #[uniffi(default)]
+    pub family: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +63,9 @@ struct Managed {
     org_name: String,
     email: String,
     server_url: String,
+    /// The org is a family (P7).
+    #[serde(default)]
+    family: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +157,7 @@ impl ProfileRegistry {
             data_dir: self.base.join("core").to_string_lossy().into_owned(),
             key_alias: String::new(),
             channel_prefix: String::new(),
+            family: false,
         }
     }
 
@@ -165,6 +172,7 @@ impl ProfileRegistry {
             data_dir: self.profiles_dir().join(&m.id).join("core").to_string_lossy().into_owned(),
             key_alias: m.id.clone(),
             channel_prefix: format!("{}.", m.id),
+            family: m.family,
         }
     }
 
@@ -265,6 +273,7 @@ impl ProfileRegistry {
             org_name: "Work".to_owned(),
             email: String::new(),
             server_url: server_url.trim_end_matches('/').to_owned(),
+            family: false,
         };
         stored.managed.push(m.clone());
         self.save(&stored)?;
@@ -303,6 +312,24 @@ impl ProfileRegistry {
         let confirmed = m.clone();
         self.save(&stored)?;
         Ok(self.managed(&confirmed))
+    }
+
+    /// Finishes "Add family account" (P7): as [`Self::confirm_managed`], for an org that is a family.
+    pub fn confirm_family(
+        &self,
+        id: String,
+        org_id: String,
+        org_name: String,
+        email: String,
+    ) -> Result<AccountProfile, CoreError> {
+        let mut confirmed = self.confirm_managed(id.clone(), org_id, org_name, email)?;
+        let mut stored = self.lock();
+        if let Some(m) = stored.managed.iter_mut().find(|m| m.id == id) {
+            m.family = true;
+        }
+        self.save(&stored)?;
+        confirmed.family = true;
+        Ok(confirmed)
     }
 
     /// Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
@@ -424,6 +451,24 @@ mod tests {
         let personal = &r.list()[0];
         assert_ne!(personal.data_dir, w.data_dir);
         assert_ne!(personal.key_alias, w.key_alias);
+    }
+
+    #[test]
+    fn a_family_profile_is_marked_and_kept_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = registry(dir.path());
+        r.note_personal(Some("dana@gmail.com".into())).unwrap();
+        let pending = r.begin_managed("https://s".into()).unwrap();
+        assert!(!pending.family);
+        // The Personal account can't be the family account either (08 R6).
+        assert!(r.confirm_family(pending.id.clone(), "f1".into(), "The Lees".into(), "dana@gmail.com".into()).is_err());
+        let f = r.confirm_family(pending.id, "f1".into(), "The Lees".into(), "sam.lee@gmail.com".into()).unwrap();
+        assert!(f.family && f.kind == ProfileKind::Managed);
+        assert_ne!(f.data_dir, r.list()[0].data_dir);
+        // Read again from disk.
+        let again = registry(dir.path());
+        assert!(again.list().iter().any(|p| p.id == f.id && p.family));
+        assert!(!again.list()[0].family);
     }
 
     #[test]

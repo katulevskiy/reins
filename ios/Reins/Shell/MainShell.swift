@@ -243,6 +243,7 @@ struct RouteView: View {
         case .wallpaper: WallpaperScreen()
         case .devices: DevicesScreen()
         case .orgReviews: OrgReviewsScreen()
+        case .family: FamilyScreen()
         case .circles: CirclesScreen()
         case .vault: VaultScreen()
         case .vaultAdd: VaultAddScreen()

@@ -28,6 +28,8 @@ object WorkProfiles {
         val managed: Boolean,
         val channelPrefix: String,
         val keyAlias: String,
+        /** A Family profile (P7): its org is a family. */
+        val family: Boolean = false,
     )
 
     val PERSONAL = Active("personal", "Personal", managed = false, channelPrefix = "", keyAlias = "")
@@ -38,7 +40,7 @@ object WorkProfiles {
     /** Whether this phone has a work profile (then pairing says which profile an agent joins). */
     @Volatile var hasWork: Boolean = false
 
-    fun of(p: AccountProfile) = Active(p.id, label(p), p.kind == ProfileKind.MANAGED, p.channelPrefix, p.keyAlias)
+    fun of(p: AccountProfile) = Active(p.id, label(p), p.kind == ProfileKind.MANAGED, p.channelPrefix, p.keyAlias, p.family)
 
     /** A profile's label as shown anywhere: the org typed it, so it goes through `untrustedName` (the core already
      *  stripped control, bidi and invisible characters and kept it to 40). */

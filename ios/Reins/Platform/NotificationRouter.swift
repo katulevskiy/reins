@@ -239,7 +239,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                 if action == UNNotificationDefaultActionIdentifier, let owner,
                    (try? WorkProfiles.registry().list().contains { $0.id == owner }) == true {
                     // An org review opens that profile's reviews once it is shown.
-                    if payload?.kind == PushPayload.orgReview { ProfileSwitch.then = .orgReviews }
+                    if payload?.kind == PushPayload.orgReview { ProfileSwitch.then = payload?.link ?? .orgReviews }
                     ProfileSwitch.switchTo(owner)
                 }
                 completionHandler()

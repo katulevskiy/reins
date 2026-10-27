@@ -10,6 +10,18 @@ struct PushPayload: Equatable {
 
     /// An org review waits for this member (O2): the app opens the work profile's reviews; the core fetches nothing.
     static let orgReview = "orgreview"
+    /// An org-review push id for a family's ask (P7): `family:leave` (to guardians), `family:minor` (to the member).
+    static let familyPrefix = "family:"
+
+    /// What a family's ask says on the lock screen; nil for anything else.
+    var familyText: String? {
+        guard kind == Self.orgReview else { return nil }
+        switch id {
+        case "family:leave": return "A request to leave waits for you."
+        case "family:minor": return "Your family asks you something."
+        default: return nil
+        }
+    }
 
     static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview, "circle"]
 
@@ -66,7 +78,7 @@ struct PushPayload: Equatable {
 
     /// Where tapping the notification goes: a Circle's to Activity, where "For others" is.
     var link: DeepLink? {
-        if kind == Self.orgReview { return .orgReviews }
+        if kind == Self.orgReview { return id.hasPrefix(Self.familyPrefix) ? .family : .orgReviews }
         if kind == "circle" { return .home }
         return itemKind.map { .item(kind: $0, id: id) }
     }

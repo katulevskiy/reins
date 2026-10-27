@@ -17,6 +17,9 @@ enum class SsoPurpose {
 
     /** "Add work account" in Settings: the work profile's own core finishes it. */
     AddWork,
+
+    /** "Add family account" in Settings: the family profile's own core finishes it, then joins the family. */
+    AddFamily,
 }
 
 /** A sign-in through the server's SSO that waits for its browser page to come back: what `ssoFinish` needs. */
