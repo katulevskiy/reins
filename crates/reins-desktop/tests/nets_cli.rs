@@ -23,7 +23,8 @@ fn text(o: &Output) -> String {
 
 #[test]
 fn net_run_rm_then_restore() {
-    let dir = tempfile::tempdir().unwrap();
+    // Not the OS temp folder: that is scratch, deleted for real, with nothing to keep.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let work = dir.path().join("home/work");
     std::fs::create_dir_all(work.join("proj/src")).unwrap();
     std::fs::write(work.join("proj/src/main.rs"), "fn main() {}").unwrap();
