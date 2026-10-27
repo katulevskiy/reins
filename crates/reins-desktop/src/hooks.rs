@@ -32,7 +32,7 @@ use crate::auth::prompt::Prompter;
 use crate::config::{Config, Paths};
 use crate::guard::{GuardConfig, Match, OnNoAnswer};
 use crate::harness::Harness;
-use crate::journal::{Entry, Kind};
+use crate::journal::{Entry, Kind, Outcome};
 
 /// What the tool is about to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -676,18 +676,68 @@ pub async fn run(
         (Action::Command(c), Some(cwd)) if c.contains("push") => git_head(Path::new(cwd)),
         _ => None,
     };
-    let Some((m, q)) = question_in(&call, &config.guard, head.as_ref()) else {
-        let (out, code) = render(&call, &Verdict::Unmatched);
-        return (out, code, None);
-    };
-    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
-    let timeout = Duration::from_secs(config.guard.timeout_secs);
     let kind = match call.action {
         Action::Files {
             ..
         } => Kind::File,
         _ => Kind::Command,
     };
+    // Decisions v2: with `auto.matrix_decides`, the matrix decides first (with this computer's facts, under a
+    // deadline). Without a reading in time, or with it off, the guard decides as before.
+    let decided = if config.auto.matrix_decides {
+        crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
+    } else {
+        None
+    };
+    let guarded = question_in(&call, &config.guard, head.as_ref());
+    let (m, q, reading) = if let Some((summary, shadow)) = decided {
+        match shadow.outcome {
+            reins_policy::matrix::Outcome::Deny => {
+                let reason = format!("Reins: not allowed: {}", shadow.line);
+                let mut entry = Entry::new(kind, &action_line(&call))
+                    .source(Some(harness.label()))
+                    .decider(crate::journal::Decider::Settings)
+                    .effects(Some(summary))
+                    .matrix(Some(shadow));
+                entry.end(Outcome::Blocked, Some(&reason));
+                crate::journal::Journal::new(paths).record(&entry);
+                let (out, code) = render(&call, &Verdict::Deny(reason));
+                return (out, code, None);
+            }
+            reins_policy::matrix::Outcome::Auto => {
+                // Allowed without the phone. Only what the guard would have asked about is put in Activity (an
+                // entry for every `ls` would bury the rest); the harness keeps its own permission flow.
+                if guarded.is_some() {
+                    let mut entry = Entry::new(kind, &action_line(&call))
+                        .source(Some(harness.label()))
+                        .decider(crate::journal::Decider::Settings)
+                        .effects(Some(summary))
+                        .matrix(Some(shadow));
+                    entry.end(Outcome::Allowed, Some("Auto"));
+                    crate::journal::Journal::new(paths).record(&entry);
+                }
+                let (out, code) = render(&call, &Verdict::Unmatched);
+                return (out, code, None);
+            }
+            reins_policy::matrix::Outcome::Ask {
+                ..
+            } => {
+                let Some((m, q)) = guarded.or_else(|| matrix_question(&call, &shadow.line)) else {
+                    let (out, code) = render(&call, &Verdict::Unmatched);
+                    return (out, code, None);
+                };
+                (m, q, Some((summary, shadow)))
+            }
+        }
+    } else {
+        let Some((m, q)) = guarded else {
+            let (out, code) = render(&call, &Verdict::Unmatched);
+            return (out, code, None);
+        };
+        (m, q, None)
+    };
+    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
+    let timeout = Duration::from_secs(config.guard.timeout_secs);
     let entry =
         Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
     // stderr: the harness's log, and its transcript where it shows hook output.
@@ -696,13 +746,70 @@ pub async fn run(
         crate::ask::ask_logged_entry(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
     let v = verdict(answer, timed_out, config.guard.on_no_answer);
     let (out, code) = render(&call, &v);
-    // What it does, for Activity (Decisions v2 P1: shown, never deciding): read only once the verdict is fixed, on
+    // What it does and what the matrix says of it, for Activity: read only once the verdict is fixed (in shadow), on
     // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
-    if let Some(effects) = crate::consequences::guarded_action(config, &call.action, call.cwd.as_deref(), head.as_ref())
-    {
-        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)));
+    let reading = reading.or_else(|| {
+        crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
+    });
+    if let Some((effects, shadow)) = reading {
+        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)).matrix(Some(shadow)));
     }
     (out, code, None)
+}
+
+/// What an action is, on one line, for an Activity entry the phone never saw.
+fn action_line(call: &HookCall) -> String {
+    let who = call.harness.label();
+    match &call.action {
+        Action::Command(c) => format!("{who} ran: {}", c.split_whitespace().collect::<Vec<_>>().join(" ")),
+        Action::Files {
+            write,
+            paths,
+        } => format!(
+            "{who} {} {}",
+            if *write {
+                "changed"
+            } else {
+                "read"
+            },
+            paths.join(", ")
+        ),
+        Action::Other => format!("{who} used a tool"),
+    }
+}
+
+/// The question for something the matrix asks about that no guard rule matches.
+fn matrix_question(call: &HookCall, line: &str) -> Option<(Match, Question)> {
+    let who = call.harness.label();
+    let (question, mut detail) = match &call.action {
+        Action::Command(c) => {
+            let one_line = c.split_whitespace().collect::<Vec<_>>().join(" ");
+            (format!("{who} wants to run: {one_line}"), format!("Command:\n{c}"))
+        }
+        Action::Files {
+            write,
+            paths,
+        } => {
+            let verb = if *write {
+                "change"
+            } else {
+                "read"
+            };
+            (format!("{who} wants to {verb} {}", paths.join(", ")), format!("Files:\n{}", paths.join("\n")))
+        }
+        Action::Other => return None,
+    };
+    if let Some(cwd) = &call.cwd {
+        let _infallible = write!(detail, "\n\nIn: {cwd}");
+    }
+    let detail = format!("Auto: {line}\n\n{detail}");
+    let m = Match {
+        pattern: "auto".to_owned(),
+        topic: "auto".to_owned(),
+        matched: line.to_owned(),
+    };
+    let q = Question::new(&question, Some(&detail), None).ok()?;
+    Some((m, q))
 }
 
 #[cfg(test)]
