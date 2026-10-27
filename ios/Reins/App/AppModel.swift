@@ -140,6 +140,10 @@ final class AppModel {
     private(set) var mcpServers: [McpServerView] = []
     /// Autopilot's modes, bypasses and model; nil until first read.
     private(set) var autopilot: AutopilotSettings?
+    /// "Who is octo?": what Auto met and doesn't know yet, newest first. Shown with what waits, never notified.
+    private(set) var autoQuestions: [AutoQuestion] = []
+    /// Auto's setup is open (`AutoSetupScreen`): picking Auto for every AI before it was done guides through it first.
+    var autoSetupOpen = false
     private(set) var seenActivityId: Int64 = 0
     /// The server said another phone became the approval device.
     /// `-demoReplaced` (screenshots): the demo as if another phone had become the approval device.
@@ -384,6 +388,8 @@ final class AppModel {
         syncNotice = nil
         onboarding = false
         autopilot = nil
+        autoQuestions = []
+        autoSetupOpen = false
         sheet = nil
         paths = [:]
         section = .activity
@@ -585,6 +591,7 @@ final class AppModel {
             async let servicesRead = core.services()
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
+            async let questionsRead = core.autoQuestions()
             let newPending = AskGate.waiting(try await pendingRead, decided: autoDecided)
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
@@ -592,6 +599,8 @@ final class AppModel {
             let newServices = try await servicesRead.filter { $0.service != "sms" }
             let newServers = try await serversRead
             let newStarting = try? await startingRead
+            // Questions are extra: a list that cannot be read keeps the last one.
+            let newQuestions = try? await questionsRead
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 // Read before a change shown ahead of the core: read once more instead.
@@ -603,6 +612,7 @@ final class AppModel {
             if activity != newActivity { activity = newActivity }
             if grants != newGrants { grants = newGrants }
             if startingPolicy != newStarting { startingPolicy = newStarting }
+            if let newQuestions, autoQuestions != newQuestions { autoQuestions = newQuestions }
             if accounts != newAccounts { accounts = newAccounts }
             if services != newServices { services = newServices }
             if mcpServers != newServers { setMcpServers(newServers) }
@@ -708,6 +718,44 @@ final class AppModel {
     /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
     /// what is too risky: the same check as a bypass's.
     var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
+
+    // MARK: Auto's questions
+
+    /// Reads Auto's open questions again (kept as they were when they cannot be read).
+    func refreshAutoQuestions() async {
+        let epoch = accountEpoch
+        guard let read = try? await core.autoQuestions(), epoch == accountEpoch else { return }
+        if read != autoQuestions { autoQuestions = read }
+    }
+
+    /// Answers "Who is octo?" with a zone: anything but Outside is the owner's to say (the core asks for the check).
+    /// nil when it went through, else what to say.
+    func answerAutoQuestion(_ id: String, zone: ZoneChoice) async -> String? {
+        do {
+            try await core.answerAutoQuestion(id: id, zone: zone, owner: ownerCheck)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.selection)
+        autoQuestions.removeAll { $0.id == id }
+        await refreshAutoQuestions()
+        return nil
+    }
+
+    /// Puts a question away unanswered: the thing stays Outside and is not asked about again. Nothing to confirm.
+    func dismissAutoQuestion(_ id: String) async -> String? {
+        do {
+            try await core.dismissAutoQuestion(id: id)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.close)
+        autoQuestions.removeAll { $0.id == id }
+        await refreshAutoQuestions()
+        return nil
+    }
 
     /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
     /// a bypass of the same scope too, which only ever makes Autopilot stricter.

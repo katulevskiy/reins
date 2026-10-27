@@ -30,6 +30,12 @@ struct RootView: View {
             }
         }
         .environment(\.feedback, model.feedback)
+        // Auto's setup, over Trust, Activity's mode sheet or onboarding, wherever Auto was picked.
+        .fullScreenCover(isPresented: Binding(get: { model.autoSetupOpen }, set: { model.autoSetupOpen = $0 })) {
+            AutoSetupScreen()
+                .environment(model)
+                .environment(\.feedback, model.feedback)
+        }
         #if DEBUG
         // `-gallery`: every avatar on one page (provider logos, service logos, blobatars).
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
