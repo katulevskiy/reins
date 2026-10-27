@@ -27,9 +27,10 @@ use crate::engine::Engine;
 use crate::store::unix_now;
 use crate::{CoreError, OwnerCheck};
 
-/// Whether the matrix decides by default. Off until the consequence engine's hardening has shipped: the matrix then
-/// runs in shadow, and what it would have decided is recorded on every entry.
-pub const MATRIX_DECIDES_DEFAULT: bool = false;
+/// Whether the matrix decides by default (in Auto, once the owner finished Auto's setup). The stored switch
+/// (`set_matrix_decides`) turns it off: the matrix then runs in shadow, and what it would have decided is recorded on
+/// every entry.
+pub const MATRIX_DECIDES_DEFAULT: bool = true;
 
 const POLICY_KEY: &str = "autopilot.policy";
 const PROPOSALS_KEY: &str = "autopilot.world_proposals";
@@ -225,7 +226,7 @@ impl Engine {
                 level: e.level,
                 line: e.line(),
                 snapshot: e.snapshot,
-                shadow: !self.ap_matrix_decides(),
+                shadow: !self.ap_matrix_deciding(),
                 kinds,
                 resource: resolved.resource,
             },
@@ -264,7 +265,13 @@ impl Engine {
         self.ap_sealed(QUESTIONS_KEY)
     }
 
-    /// Whether the matrix decides (else it runs in shadow).
+    /// Whether the matrix decides now: it's switched on and the owner finished Auto's setup (until then Auto behaves as
+    /// before, minus auto-deny: 07 §2). Else it runs in shadow.
+    pub(crate) fn ap_matrix_deciding(&self) -> bool {
+        self.ap_matrix_decides() && self.ap_setup_done()
+    }
+
+    /// Whether the matrix is switched on (the stored switch, else [`MATRIX_DECIDES_DEFAULT`]).
     pub(crate) fn ap_matrix_decides(&self) -> bool {
         match self.store.meta_get(DECIDES_KEY).ok().flatten().as_deref() {
             Some("1") => true,

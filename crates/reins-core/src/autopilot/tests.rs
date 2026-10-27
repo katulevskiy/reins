@@ -4270,7 +4270,8 @@ mod decisions_v2 {
     #[tokio::test]
     async fn shadow_records_and_changes_nothing() {
         let env = auto_env().await;
-        assert!(!env.core.auto_setup().await.unwrap().matrix_decides, "off by default");
+        // On by default, but until the owner finishes Auto's setup, Auto behaves as before (07 §2): shadow.
+        assert!(env.core.auto_setup().await.unwrap().matrix_decides, "on by default");
         env.relay("r1", OLD, email("friend@x.com", "hi")).await;
         env.approve("r1").await;
         // Today's decision: approved by Autopilot (a known target the model approves)…
@@ -4288,12 +4289,21 @@ mod decisions_v2 {
             (qs[0].key.as_str(), qs[0].kind, qs[0].service.as_str()),
             ("friend@x.com", FactChoice::Person, "email")
         );
+        // After the setup, switched off: still shadow, and today's decision stands.
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core.set_matrix_decides(false, owner_yes()).await.unwrap();
+        env.relay("r3", OLD, email("friend@x.com", "and again")).await;
+        assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+        let entry = env.core.activity(1).await.unwrap().remove(0);
+        let note = entry.autopilot.unwrap();
+        assert_eq!(note.request_id, "r3");
+        assert!(note.matrix.unwrap().shadow);
     }
 
     #[tokio::test]
     async fn matrix_asks_when_on_and_auto_still_needs_the_model() {
         let env = auto_env().await;
-        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
         env.relay("r1", OLD, email("friend@x.com", "hi")).await;
         env.approve("r1").await;
         // Outside · Reaches people: asked, though the model would approve.
@@ -4323,7 +4333,7 @@ mod decisions_v2 {
     #[tokio::test]
     async fn only_a_rule_denies() {
         let env = auto_env().await;
-        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
         let engine = env.core.engine();
         let mut snap = engine.ap_snapshot().unwrap();
         snap.rules.push(Rule {
@@ -4379,9 +4389,12 @@ mod decisions_v2 {
         assert_eq!(rows[0].cells[0], CellChoice::Ask);
         assert_eq!(rows[2].cells[1], CellChoice::Ask);
         assert!(core.set_matrix_cell(ZoneChoice::Mine, 4, CellChoice::Ask, owner_no()).await.is_err());
-        // The matrix deciding is looser too.
-        assert!(core.set_matrix_decides(true, owner_no()).await.is_err());
+        // Switching the matrix off is stricter (no check); on again is looser.
+        core.set_matrix_decides(false, owner_no()).await.unwrap();
         assert!(!core.auto_setup().await.unwrap().matrix_decides);
+        assert!(core.set_matrix_decides(true, owner_no()).await.is_err());
+        core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        assert!(core.auto_setup().await.unwrap().matrix_decides);
     }
 
     #[tokio::test]
@@ -4464,7 +4477,7 @@ mod decisions_v2 {
         let pause = rules.iter().find(|r| r.id == "pause-r1").unwrap();
         assert!(pause.not_after.unwrap() > unix_now() && pause.when.resource.is_none());
         // With the matrix deciding, the next one is a hard ask.
-        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
         env.relay("r2", OLD, email("friend@x.com", "hi")).await;
         let s = env.suggestion("r2").await;
         assert!(s.matrix.as_ref().is_some_and(|m| m.hard), "{s:?}");

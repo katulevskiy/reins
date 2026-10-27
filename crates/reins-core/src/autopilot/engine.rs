@@ -314,6 +314,7 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
 pub(crate) fn activity_note(r: &AuditRecord) -> Option<AutopilotNote> {
     let n = r.info.autopilot.as_ref()?;
     Some(AutopilotNote {
+        request_id: n.request_id.clone(),
         mode: n.mode,
         suggested: n.suggested,
         p_approve: n.p_approve,
