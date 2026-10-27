@@ -1,5 +1,7 @@
 package dev.reins.android.platform
 
+import dev.reins.android.profiles.WorkProfiles
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -509,8 +511,8 @@ class AppNotifier(
         const val GROUP_AUTOPILOT = "autopilot"
 
         /** A channel id, e.g. `approvals-v2-sv` (sound and vibration), `-s`, `-v` or `-q` (quiet). */
-        fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean): String =
-            "${kind.key}-v$CHANNEL_VERSION-" + (if (sound) "s" else "") + (if (vibrate) "v" else "") + (if (!sound && !vibrate) "q" else "")
+        fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean, prefix: String = WorkProfiles.active.channelPrefix): String =
+            prefix + "${kind.key}-v$CHANNEL_VERSION-" + (if (sound) "s" else "") + (if (vibrate) "v" else "") + (if (!sound && !vibrate) "q" else "")
 
         /** Creates (once) and returns the channel [settings] ask for: the kind's chime under its category switch, vibration under Haptics. */
         fun channel(context: Context, kind: Kind, settings: FeedbackSettings, silent: Boolean = false): String {
@@ -519,9 +521,13 @@ class AppNotifier(
             val id = channelId(kind, sound, vibrate)
             val manager = context.getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(id) != null) return id
-            kind.group?.let { group ->
-                if (manager.getNotificationChannelGroup(group) == null) {
-                    manager.createNotificationChannelGroup(android.app.NotificationChannelGroup(group, "Autopilot"))
+            // A work profile's channels are its own, grouped under the org's name; the Personal ones are as before.
+            val profile = WorkProfiles.active
+            val group = if (profile.managed) profile.channelPrefix + "profile" else kind.group
+            group?.let { g ->
+                if (manager.getNotificationChannelGroup(g) == null) {
+                    val name = if (profile.managed) profile.label else "Autopilot"
+                    manager.createNotificationChannelGroup(android.app.NotificationChannelGroup(g, name))
                 }
             }
             val suffix = when {
@@ -535,7 +541,7 @@ class AppNotifier(
             val label = kind.labelRes?.let(context::getString) ?: kind.label
             val channel = NotificationChannel(id, label + suffix, kind.importance)
             channel.description = kind.description
-            kind.group?.let { channel.group = it }
+            group?.let { channel.group = it }
             if (kind.private) channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             if (sound) {
                 channel.setSound(

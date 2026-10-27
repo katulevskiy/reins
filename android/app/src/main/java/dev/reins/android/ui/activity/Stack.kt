@@ -392,6 +392,7 @@ private fun CardFace(
                     is WaitCard.Group -> dev.reins.android.ui.common.untrustedName(first.connectionLabel)
                 }
                 RText(who, RType.sans(15f, androidx.compose.ui.text.font.FontWeight.SemiBold), c.onField, Modifier.weight(1f).testTag("cardWho:${first.id}"), maxLines = 2)
+                dev.reins.android.design.ProfileBadge(onField = true)
                 val waitUntil = when (card) {
                     is WaitCard.One -> first.waitUntil.takeIf { first.kind != PendingKind.BLOB }
                     is WaitCard.Group -> card.items.mapNotNull { it.waitUntil }.minOrNull()

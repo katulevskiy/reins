@@ -217,6 +217,11 @@ class MainSafeCore(
     override suspend fun deleteAccount(confirmEmail: String) = io { deleteAccount(confirmEmail) }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart = io { ssoBegin(serverUrl) }
+    override suspend fun ssoBeginWork(serverUrl: String, domain: String): SsoStart = io { ssoBeginWork(serverUrl, domain) }
+    override suspend fun orgMembership(): dev.reins.core.OrgView? = io { orgMembership() }
+    override suspend fun orgChallenge(): String = io { orgChallenge() }
+    override suspend fun orgEnroll(challenge: String, input: dev.reins.core.EnrollInput) = io { orgEnroll(challenge, input) }
+    override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) = io { orgReportPosture(posture) }
     override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }
 
     override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =

@@ -114,6 +114,8 @@ fun SettingsScreen(
     onTour: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
+    /** Profiles > Add work account. */
+    onAddWorkAccount: () -> Unit = {},
     /** Debug builds: the Signal component gallery. */
     onSignalGallery: () -> Unit = {},
     authenticator: Authenticator,
@@ -147,6 +149,10 @@ fun SettingsScreen(
                     Box(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp).fillMaxWidth().pane(radius = 24.dp).padding(14.dp)) {
                         AccountBlock(it.info.email, it.info.serverUrl, state, viewModel)
                     }
+                }
+                if (signedIn != null) {
+                    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as? dev.reins.android.ReinsApp
+                    app?.let { ProfilesGroup(it.container, onAddWorkAccount) }
                 }
                 ui.message?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp)) }
                 ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp), BannerKind.Error) }

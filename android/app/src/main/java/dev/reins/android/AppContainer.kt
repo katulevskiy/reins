@@ -128,6 +128,21 @@ class AppContainer(private val context: Context) {
         ).also { it.start() }
     }
 
+    /** The application context (a work profile's core is made with it). */
+    val appContext: Context get() = context
+
+    /** The profiles on this phone (Personal, and a work profile per organization). */
+    val profiles: dev.reins.core.ProfileRegistryInterface
+        get() = dev.reins.android.profiles.ProfilesProvider.registryFor(context)
+
+    /** The profile this process shows: its core, Keystore alias and notification channels (Personal by default, and
+     *  when the registry can't be read). */
+    val activeProfile: dev.reins.core.AccountProfile? = runCatching { profiles.active() }.getOrNull()?.also {
+        dev.reins.android.profiles.WorkProfiles.active = dev.reins.android.profiles.WorkProfiles.of(it)
+        dev.reins.android.profiles.WorkProfiles.hasWork =
+            runCatching { profiles.list().any { p -> p.kind == dev.reins.core.ProfileKind.MANAGED } }.getOrDefault(false)
+    }
+
     /** Every call runs on `Dispatchers.IO`; the Rust core is built there too. */
     val core: ReinsCoreInterface = CoreProvider.factory.create(this) ?: MainSafeCore { createRealCore() }
 
@@ -160,10 +175,12 @@ class AppContainer(private val context: Context) {
     val ssoSignIn = SsoSignIn(context)
 
     private fun createRealCore(): ReinsCoreInterface {
-        val dataDir = java.io.File(context.noBackupFilesDir, "core").apply { mkdirs() }
+        // The active profile's own directory and data-key alias; the Personal profile keeps today's.
+        val profile = activeProfile
+        val dataDir = (profile?.dataDir?.let { java.io.File(it) } ?: java.io.File(context.noBackupFilesDir, "core")).apply { mkdirs() }
         return ReinsCore(
             dataDir.absolutePath,
-            KeystoreKeyWrapper(),
+            KeystoreKeyWrapper(dev.reins.android.profiles.WorkProfiles.dekAlias(profile?.keyAlias.orEmpty())),
             google,
             notifier,
             phone,
@@ -506,7 +523,11 @@ class AppContainer(private val context: Context) {
      * [AppState.registrationError] (Settings offers it again); the sign-in itself stands.
      */
     suspend fun finishSignIn(info: SessionInfo) {
-        withContext(Dispatchers.IO) { deviceStatus.selectAccount(info) }
+        withContext(Dispatchers.IO) {
+            deviceStatus.selectAccount(info)
+            // The Personal account's email, so a work profile can never be the same account.
+            if (!dev.reins.android.profiles.WorkProfiles.active.managed) runCatching { profiles.notePersonal(info.email) }
+        }
         setKeysLocked(false)
         beginOnboarding(info)
         state.setRegistrationError(null)

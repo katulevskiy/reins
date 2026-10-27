@@ -100,9 +100,15 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
             FactGroup(
                 Modifier.padding(top = 14.dp),
                 tag = "pairWho",
-                rows = listOf(
+                rows = listOfNotNull(
                     { FactRow("Calls itself", name, valueTag = "pairName") },
                     { FactRow("From", untrustedName(view.clientHost), mono = true, valueTag = "pairHost") },
+                    // Agents pair with one profile: the one this sign-in reached (switch in Settings for the other).
+                    if (dev.reins.android.profiles.WorkProfiles.hasWork) {
+                        { FactRow("Profile", dev.reins.android.profiles.WorkProfiles.active.label, valueTag = "pairProfile") }
+                    } else {
+                        null
+                    },
                 ),
             )
 

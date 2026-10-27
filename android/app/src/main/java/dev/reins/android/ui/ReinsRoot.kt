@@ -433,6 +433,7 @@ private fun TabContent(
             onTour = app::replaySetup,
             onVaultPasskeys = { app.open(Route.VaultPasskeys) },
             onDevices = { app.open(Route.Devices) },
+            onAddWorkAccount = { app.open(Route.AddWorkAccount) },
             onSignalGallery = { app.open(Route.SignalGallery) },
             authenticator = authenticator,
         )
@@ -457,6 +458,10 @@ private fun PageContent(
     val state = container.state
     val accountEpoch by state.accountEpoch.collectAsStateWithLifecycle()
     when (route) {
+        Route.AddWorkAccount -> dev.reins.android.ui.settings.AddWorkAccountScreen(
+            viewModel(key = "addWorkAccount") { dev.reins.android.ui.settings.AddWorkAccountViewModel(container) },
+            onBack = { app.back() },
+        )
         Route.Devices -> DevicesScreen(
             viewModel(key = "devices") { DevicesViewModel(container) },
             state,
