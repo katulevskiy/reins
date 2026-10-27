@@ -169,9 +169,11 @@ command in that folder, so a learnt answer never covers another command). There 
   explicit rule denies: Lockdown, and Overnight's "If something is too risky: deny it" (replaced by parking later).
 - **The matrix** (Decisions v2 P2): every request is also read for what it does (its level: undoable, recoverable,
   reaches people, can't be undone) and whose it touches (its zone: Mine, Friends, Work, Outside, from facts you
-  confirmed; anything unknown is Outside). Auto's setup asks you to confirm those facts the first time you turn it on.
-  For now the matrix runs in shadow: Activity shows what it would have decided ("Would be: Ask · Outside · Reaches
-  people") while the rules above decide.
+  confirmed; anything unknown is Outside). The first time you turn on Auto, its setup asks you to confirm those facts
+  and shows the matrix. From then on the matrix decides in Auto: an Ask cell asks you; an Auto cell is approved only
+  if the model agrees too (the model can only turn Auto into an ask); only an explicit rule denies. Until the setup
+  is done, or with the matrix switched off, Auto decides as described above and Activity shows what the matrix would
+  have decided ("Would be: Ask · Outside · Reaches people").
 - **Rate limit:** at most 30 automatic approvals per connection per 10 minutes, and 200 per day. Beyond that it asks,
   and tells you that it paused for that connection.
 - On the profile screen each kind shows **Auto**, **Asks**, **Paused** or **Locked by you**. You can lock a kind

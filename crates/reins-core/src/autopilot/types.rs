@@ -383,6 +383,9 @@ pub struct SuggestionView {
 /// What Autopilot knew about an activity entry (spec §8).
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct AutopilotNote {
+    /// The request it was about ("Ask me next time" takes it).
+    #[uniffi(default)]
+    pub request_id: String,
     /// The mode the request was decided or evaluated in.
     pub mode: AutopilotMode,
     /// What Autopilot did, or would have done.
@@ -651,7 +654,8 @@ pub struct MatrixRowView {
 pub struct AutoSetup {
     /// The owner finished the setup: turning on Auto no longer guides first.
     pub done: bool,
-    /// The matrix decides (else it runs in shadow: what it would decide is recorded on each entry).
+    /// The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+    /// decide is recorded on each entry).
     pub matrix_decides: bool,
     pub world: Vec<WorldItem>,
     pub matrix: Vec<MatrixRowView>,
