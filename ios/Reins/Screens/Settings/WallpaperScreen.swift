@@ -131,6 +131,7 @@ struct WallpaperScreen: View {
                     }
                 }
                 .padding(.horizontal, 16)
+                .id(Self.imageRowStart)
             }
             .onAppear { scrollToChosen(proxy, images: images, chosen: art.choice.image) }
             .onChange(of: scheme) { scrollToChosen(proxy, images: images, chosen: (scheme == .dark ? dark : light).image) }
@@ -139,8 +140,12 @@ struct WallpaperScreen: View {
 
     private func scrollToChosen(_ proxy: ScrollViewProxy, images: [Wallpaper], chosen: Wallpaper) {
         guard let at = images.firstIndex(of: chosen) else { return }
-        proxy.scrollTo(images[max(0, at - 1)], anchor: .leading)
+        // The first image: the row's start, padding and all, so its ring is not cut at the screen's edge.
+        if at == 0 { proxy.scrollTo(Self.imageRowStart, anchor: .leading) } else { proxy.scrollTo(images[at - 1], anchor: .leading) }
     }
+
+    /// The image row's own id: its start, before the padding.
+    private static let imageRowStart = "imageRowStart"
 
     @ViewBuilder
     private func imageTile(_ wallpaper: Wallpaper, art: WallpaperArt, hasPhoto: Bool, thumb: UIImage?) -> some View {
