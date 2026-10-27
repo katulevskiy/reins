@@ -26,7 +26,7 @@ use url::Url;
 use crate::{
     CONFIG,
     api::ApiResult,
-    db::models::{OIDCAuthenticatedUser, SsoAuth},
+    db::models::{OIDCAuthenticatedUser, SsoAuth, WorkosSignIn},
     http_client::get_reqwest_client_builder,
     sso::{OIDCCode, OIDCCodeChallenge, OIDCCodeVerifier, OIDCIdentifier, OIDCState},
     sso_client::RefreshTokenResponse,
@@ -96,6 +96,7 @@ pub fn authorize_url(
     client_challenge: OIDCCodeChallenge,
     redirect_uri: String,
     binding_hash: Option<String>,
+    hint: Option<&crate::api::reins::org::gate::OrgHint>,
 ) -> ApiResult<(Url, SsoAuth)> {
     let base64_state = data_encoding::BASE64.encode(state.to_string().as_bytes());
     let mut url = match Url::parse(&format!("{}{USER_MANAGEMENT}authorize", api_base()?)) {
@@ -103,8 +104,8 @@ pub fn authorize_url(
         Err(e) => err!(format!("Invalid WorkOS authorize URL: {e}")),
     };
     let extra = CONFIG.sso_authorize_extra_params_vec();
-    let picks_provider =
-        extra.iter().any(|(k, _)| matches!(k.as_str(), "provider" | "connection_id" | "organization_id"));
+    let picks_provider = hint.is_some()
+        || extra.iter().any(|(k, _)| matches!(k.as_str(), "provider" | "connection_id" | "organization_id"));
     {
         let mut q = url.query_pairs_mut();
         q.append_pair("client_id", &CONFIG.sso_client_id())
@@ -113,6 +114,14 @@ pub fn authorize_url(
             .append_pair("state", &base64_state);
         if !picks_provider {
             q.append_pair("provider", "authkit");
+        }
+        // A work account: straight to its organization's SSO, or its Team provider.
+        if let Some(hint) = hint {
+            if let Some(org) = &hint.organization_id {
+                q.append_pair("organization_id", org);
+            } else if let Some(provider) = hint.provider {
+                q.append_pair("provider", provider);
+            }
         }
         if CONFIG.sso_pkce() {
             q.append_pair("code_challenge", client_challenge.as_ref()).append_pair("code_challenge_method", "S256");
@@ -149,6 +158,16 @@ struct AuthenticateResponse {
     impersonator: Option<Value>,
     #[serde(default)]
     authentication_method: Option<String>,
+    #[serde(default)]
+    organization_id: Option<String>,
+    #[serde(default)]
+    oauth_tokens: Option<ProviderTokens>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProviderTokens {
+    #[serde(default)]
+    access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,10 +244,25 @@ pub async fn exchange_code(code: &OIDCCode, verifier: OIDCCodeVerifier) -> ApiRe
         body["code_verifier"] = Value::String(verifier.to_string());
     }
     let text = authenticate(&body).await?;
-    parse_authenticated(&text, CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey(), CONFIG.reins_enabled())
+    parse_authenticated(&text, CONFIG.reins_enabled())
 }
 
-fn parse_authenticated(text: &str, require_passkey: bool, require_session: bool) -> ApiResult<OIDCAuthenticatedUser> {
+/// `REINS_WORKOS_REQUIRE_PASSKEY`: a sign-in that is not a passkey is refused, unless it is a work account's (its
+/// organization decides how its members sign in: SSO, Google Workspace or GitHub).
+pub fn check_passkey(user: &OIDCAuthenticatedUser, require: bool, managed: bool) -> ApiResult<()> {
+    let method = user.workos.as_ref().and_then(|w| w.method.as_deref());
+    if require && !managed && method != Some("Passkey") {
+        err!("A passkey is required. Create a passkey in the WorkOS sign-up screen, then sign in with your passkey.")
+    }
+    Ok(())
+}
+
+/// Whether this server requires passkeys for personal accounts.
+pub fn passkeys_required() -> bool {
+    CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey()
+}
+
+fn parse_authenticated(text: &str, require_session: bool) -> ApiResult<OIDCAuthenticatedUser> {
     let auth: AuthenticateResponse = match serde_json::from_str(text) {
         Ok(a) => a,
         Err(e) => err!(format!("Unexpected WorkOS authenticate answer: {e}")),
@@ -236,11 +270,8 @@ fn parse_authenticated(text: &str, require_passkey: bool, require_session: bool)
     if auth.impersonator.as_ref().is_some_and(|i| !i.is_null()) {
         err!("A WorkOS impersonation session cannot sign in to Reins")
     }
-    if require_passkey && auth.authentication_method.as_deref() != Some("Passkey") {
-        err!("A passkey is required. Create a passkey in the WorkOS sign-up screen, then sign in with your passkey.")
-    }
     let claims = access_claims(&auth.access_token);
-    if (require_passkey || require_session) && claims.sid.as_deref().is_none_or(str::is_empty) {
+    if require_session && claims.sid.as_deref().is_none_or(str::is_empty) {
         err!("WorkOS did not return a session identifier; please sign in again")
     }
     let name = [auth.user.first_name.as_deref(), auth.user.last_name.as_deref()]
@@ -258,6 +289,11 @@ fn parse_authenticated(text: &str, require_passkey: bool, require_session: bool)
         email_verified: auth.user.email_verified,
         user_name: (!name.is_empty()).then_some(name),
         session_id: claims.sid,
+        workos: Some(WorkosSignIn {
+            method: auth.authentication_method,
+            organization_id: auth.organization_id.filter(|o| !o.is_empty()),
+            provider_token: auth.oauth_tokens.and_then(|t| t.access_token).filter(|t| !t.is_empty()),
+        }),
     })
 }
 
@@ -376,7 +412,7 @@ mod tests {
             "refresh_token": "rt-1",
             "authentication_method": "GoogleOAuth",
         });
-        let user = parse_authenticated(&answer.to_string(), false, false).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false).unwrap();
         assert_eq!(user.email, "me@example.com");
         assert_eq!(user.email_verified, Some(true));
         assert_eq!(user.user_name.as_deref(), Some("Ada Lovelace"));
@@ -394,28 +430,58 @@ mod tests {
             "access_token": "opaque",
             "impersonator": {"email": "admin@example.com", "reason": "support"},
         });
-        assert!(parse_authenticated(&answer.to_string(), false, false).is_err());
-        assert!(parse_authenticated("{\"access_token\": \"x\"}", false, false).is_err());
+        assert!(parse_authenticated(&answer.to_string(), false).is_err());
+        assert!(parse_authenticated("{\"access_token\": \"x\"}", false).is_err());
         // An opaque access token still signs in; it has no session id or expiry.
         let answer = json!({"user": {"id": "u", "email": "a@b.c"}, "access_token": "opaque"});
-        let user = parse_authenticated(&answer.to_string(), false, false).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false).unwrap();
         assert_eq!((user.session_id, user.expires_in, user.email_verified), (None, None, None));
     }
 
     #[test]
     fn passkey_policy_refuses_other_and_missing_authentication_methods() {
         let mut answer = json!({"user": {"id": "u", "email": "a@b.c", "email_verified": true},
-                                "access_token": "opaque"});
-        assert!(parse_authenticated(&answer.to_string(), true, true).is_err());
-        for method in ["Password", "MagicAuth", "GoogleOAuth", "passkey"] {
+                                "access_token": token(&json!({"sid": "session_passkey"}))});
+        let user = parse_authenticated(&answer.to_string(), true).unwrap();
+        assert!(check_passkey(&user, true, false).is_err());
+        for method in ["Password", "MagicAuth", "GoogleOAuth", "passkey", "SSO"] {
             answer["authentication_method"] = json!(method);
-            assert!(parse_authenticated(&answer.to_string(), true, true).is_err(), "{method}");
-            assert!(parse_authenticated(&answer.to_string(), false, false).is_ok());
+            let user = parse_authenticated(&answer.to_string(), true).unwrap();
+            assert!(check_passkey(&user, true, false).is_err(), "{method}");
+            assert!(check_passkey(&user, false, false).is_ok());
         }
         answer["authentication_method"] = json!("Passkey");
-        assert!(parse_authenticated(&answer.to_string(), true, true).is_err(), "revocation needs a WorkOS session id");
-        answer["access_token"] = json!(token(&json!({"sid": "session_passkey"})));
-        assert!(parse_authenticated(&answer.to_string(), true, true).is_ok());
+        assert!(check_passkey(&parse_authenticated(&answer.to_string(), true).unwrap(), true, false).is_ok());
+        answer["access_token"] = json!("opaque");
+        assert!(parse_authenticated(&answer.to_string(), true).is_err(), "revocation needs a WorkOS session id");
+    }
+
+    #[test]
+    fn managed_sign_ins_are_exempt_from_the_passkey_rule() {
+        let answer = json!({"user": {"id": "u", "email": "dana@acme.com", "email_verified": true},
+                            "access_token": token(&json!({"sid": "s"})), "authentication_method": "SSO",
+                            "organization_id": "org_01ACME"});
+        let user = parse_authenticated(&answer.to_string(), true).unwrap();
+        assert!(check_passkey(&user, true, true).is_ok());
+        assert!(check_passkey(&user, true, false).is_err());
+    }
+
+    #[test]
+    fn parses_org_method_and_provider_token() {
+        let answer = json!({"user": {"id": "u", "email": "dana@acme.com", "email_verified": true},
+                            "access_token": token(&json!({"sid": "s"})), "authentication_method": "GitHubOAuth",
+                            "organization_id": "org_01ACME",
+                            "oauth_tokens": {"provider": "GitHubOAuth", "access_token": "gho_x", "scopes": ["read:org"]}});
+        let user = parse_authenticated(&answer.to_string(), true).unwrap();
+        let w = user.workos.clone().unwrap();
+        assert_eq!(w.method.as_deref(), Some("GitHubOAuth"));
+        assert_eq!(w.organization_id.as_deref(), Some("org_01ACME"));
+        assert_eq!(w.provider_token.as_deref(), Some("gho_x"));
+        // The provider token never reaches the database (the sign-in is kept between steps as JSON).
+        let kept = serde_json::to_string(&user).unwrap();
+        assert!(!kept.contains("gho_x"), "{kept}");
+        let back: OIDCAuthenticatedUser = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.workos.unwrap().organization_id.as_deref(), Some("org_01ACME"));
     }
 
     #[test]
@@ -427,18 +493,18 @@ mod tests {
         for method in ["Password", "MagicAuth", "GoogleOAuth", "GitHubOAuth", "MicrosoftOAuth", "AppleOAuth", "Passkey"]
         {
             answer["authentication_method"] = json!(method);
-            let user = parse_authenticated(&answer.to_string(), false, true).unwrap();
+            let user = parse_authenticated(&answer.to_string(), true).unwrap();
             assert_eq!(user.session_id.as_deref(), Some("session_authkit"), "{method}");
             assert_eq!(user.email_verified, Some(true));
         }
         // Email/social sign-in needs the same session revocation support as passkeys.
         for claims in [json!({}), json!({"sid": ""})] {
             answer["access_token"] = json!(token(&claims));
-            assert!(parse_authenticated(&answer.to_string(), false, true).is_err());
+            assert!(parse_authenticated(&answer.to_string(), true).is_err());
         }
         answer["access_token"] = json!(token(&json!({"sid": "session_authkit"})));
         answer["impersonator"] = json!({"email": "admin@example.com"});
-        assert!(parse_authenticated(&answer.to_string(), false, true).is_err());
+        assert!(parse_authenticated(&answer.to_string(), true).is_err());
     }
 
     #[test]

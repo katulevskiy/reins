@@ -299,6 +299,10 @@ async fn sso_login(
         Some((user, sso_user)) => Some((user, Some(sso_user))),
     };
 
+    // Organizations: a work account signs in only through its org's identity; a Personal account is never captured.
+    let org_decision =
+        crate::api::reins::org::gate::check(&user_infos, user_with_sso.as_ref().map(|(u, _)| u), conn).await?;
+
     let now = Utc::now().naive_utc();
     // Will trigger 2FA flow if needed
     let (user, mut device, twofactor_token, sso_user) = match user_with_sso {
@@ -396,6 +400,8 @@ async fn sso_login(
         }
     };
 
+    crate::api::reins::org::gate::after_sign_in(&user, &org_decision, conn).await?;
+
     // Set the user_uuid here to be passed back used for event logging.
     *user_id = Some(user.uuid.clone());
 
@@ -426,6 +432,17 @@ async fn password_login(
 
     // Set the user_id here to be passed back used for event logging.
     *user_id = Some(user.uuid.clone());
+
+    // A work account (an org's member) signs in only through its organization.
+    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
+        err!(
+            "This is a work account. Sign in with your organization's SSO.",
+            format!("IP: {}. Username: {username}.", ip.ip),
+            ErrorEvent {
+                event: EventType::UserFailedLogIn
+            }
+        )
+    }
 
     // Check if the user is disabled
     if !user.enabled {
@@ -657,6 +674,17 @@ async fn user_api_key_login(
 
     // Set the user_id here to be passed back used for event logging.
     *user_id = Some(user.uuid.clone());
+
+    // A work account (an org's member) signs in only through its organization.
+    if crate::api::reins::org::gate::is_managed_member(&user.uuid, conn).await {
+        err!(
+            "This is a work account. Sign in with your organization's SSO.",
+            format!("IP: {}. Username: {}.", ip.ip, user.email),
+            ErrorEvent {
+                event: EventType::UserFailedLogIn
+            }
+        )
+    }
 
     // Check if the user is disabled
     if !user.enabled {
@@ -1379,7 +1407,7 @@ struct AuthorizeData {
     code_challenge_method: String,
     #[allow(unused)]
     response_mode: Option<String>,
-    #[allow(unused)]
+    /// The work account's email domain ("Add work account" in the phone apps).
     domain_hint: Option<String>,
     #[allow(unused)]
     #[field(name = uncased("ssoToken"))]
@@ -1415,6 +1443,7 @@ async fn authorize(
         state,
         code_challenge,
         code_challenge_method,
+        domain_hint,
         ..
     } = data;
 
@@ -1427,8 +1456,14 @@ async fn authorize(
     let binding_token = data_encoding::BASE64URL_NOPAD.encode(&crypto::get_random_bytes::<32>());
     let binding_hash = crypto::sha256_hex(binding_token.as_bytes());
 
+    // "Add work account": a domain an org verified goes straight to the org's SSO or Team provider.
+    let org_hint = match domain_hint.as_deref() {
+        Some(domain) => crate::api::reins::org::gate::hint_for(domain, &conn).await,
+        None => None,
+    };
     let mut auth_url =
-        sso::authorize_url(state, code_challenge, &client_id, &redirect_uri, Some(binding_hash), conn).await?;
+        sso::authorize_url(state, code_challenge, &client_id, &redirect_uri, Some(binding_hash), org_hint, conn)
+            .await?;
 
     // Mobile sign-in is an explicit user action. Do not silently resume a browser session after local/offline
     // sign-out or a cancelled provider logout. Keep this independent of the browser's cookie-clearing support.

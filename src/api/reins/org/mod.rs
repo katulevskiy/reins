@@ -18,6 +18,8 @@
 pub mod admin;
 pub mod deprovision;
 pub mod dns;
+pub mod gate;
+pub mod github;
 pub mod tenant;
 
 use reins_proto::org::{Capability, Role, role_grants};

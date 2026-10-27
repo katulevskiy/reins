@@ -54,7 +54,7 @@ pub use self::reins_roster::{
 pub use self::reins_vault_passkey::ReinsVaultPasskey;
 pub use self::reins_workos::{ReinsDeviceSignout, ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};
-pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth};
+pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth, WorkosSignIn};
 pub use self::two_factor::{TwoFactor, TwoFactorType};
 pub use self::two_factor_duo_context::TwoFactorDuoContext;
 pub use self::two_factor_incomplete::TwoFactorIncomplete;

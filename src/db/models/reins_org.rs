@@ -149,6 +149,28 @@ pub fn q_orgs_of_user(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<ReinsO
     reins_orgs::table.filter(reins_orgs::org_uuid.eq_any(orgs)).order(reins_orgs::created_at.asc()).load(c)
 }
 
+/// The tenants `user` has a membership in, whatever its status (a removed member is still the org's to refuse).
+pub fn q_orgs_of_user_any(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<String>> {
+    let orgs: Vec<String> = users_organizations::table
+        .filter(users_organizations::user_uuid.eq(user))
+        .select(users_organizations::org_uuid)
+        .load(c)?;
+    reins_orgs::table
+        .filter(reins_orgs::org_uuid.eq_any(orgs))
+        .order(reins_orgs::created_at.asc())
+        .select(reins_orgs::org_uuid)
+        .load(c)
+}
+
+/// The org's display name (`organizations.name`).
+pub fn q_org_name(c: &mut DbConnInner, org: &str) -> QueryResult<Option<String>> {
+    crate::db::schema::organizations::table
+        .filter(crate::db::schema::organizations::uuid.eq(org))
+        .select(crate::db::schema::organizations::name)
+        .first(c)
+        .optional()
+}
+
 pub fn q_domains(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<ReinsOrgDomain>> {
     reins_org_domains::table.filter(reins_org_domains::org_uuid.eq(org)).order(reins_org_domains::domain.asc()).load(c)
 }

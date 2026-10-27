@@ -38,6 +38,24 @@ pub struct OIDCAuthenticatedUser {
     /// The provider's session id, when it has one (WorkOS: the `sid` of its access token).
     #[serde(default)]
     pub session_id: Option<String>,
+    /// How WorkOS signed the user in (organizations: `api::reins::org::gate`).
+    #[serde(default)]
+    pub workos: Option<WorkosSignIn>,
+}
+
+/// What a WorkOS sign-in says about how it happened.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WorkosSignIn {
+    /// `authentication_method`: `SSO`, `GoogleOAuth`, `GitHubOAuth`, `Passkey`, …
+    #[serde(default)]
+    pub method: Option<String>,
+    /// The WorkOS organization the user signed in through, if any.
+    #[serde(default)]
+    pub organization_id: Option<String>,
+    /// The identity provider's own access token (`oauth_tokens`), when WorkOS returns it: a Team org on GitHub checks
+    /// the member's organization membership with it. Used during the sign-in only, never stored.
+    #[serde(skip)]
+    pub provider_token: Option<String>,
 }
 
 impl_FromToSqlText!(OIDCAuthenticatedUser);

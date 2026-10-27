@@ -194,6 +194,7 @@ pub async fn authorize_url(
     client_id: &str,
     raw_redirect_uri: &str,
     binding_hash: Option<String>,
+    org_hint: Option<crate::api::reins::org::gate::OrgHint>,
     conn: DbConn,
 ) -> ApiResult<Url> {
     let redirect_uri = match client_id {
@@ -215,7 +216,7 @@ pub async fn authorize_url(
     };
 
     let (auth_url, sso_auth) = if crate::sso_workos::enabled() {
-        crate::sso_workos::authorize_url(state, client_challenge, redirect_uri, binding_hash)?
+        crate::sso_workos::authorize_url(state, client_challenge, redirect_uri, binding_hash, org_hint.as_ref())?
     } else {
         Client::authorize_url(state, client_challenge, redirect_uri, binding_hash).await?
     };
@@ -300,6 +301,8 @@ pub async fn exchange_code(
             check_client_challenge(&client_verifier, &sso_auth)?;
         }
         let authenticated_user = crate::sso_workos::exchange_code(&code, client_verifier).await?;
+        let managed = crate::api::reins::org::gate::domain_is_managed(&authenticated_user.email, conn).await;
+        crate::sso_workos::check_passkey(&authenticated_user, crate::sso_workos::passkeys_required(), managed)?;
         debug!("Authenticated user {authenticated_user:?}");
         sso_auth.auth_response = Some(authenticated_user.clone());
         sso_auth.updated_at = Utc::now().naive_utc();
@@ -337,6 +340,7 @@ pub async fn exchange_code(
         email_verified,
         user_name: user_name.clone(),
         session_id: None,
+        workos: None,
     };
 
     debug!("Authenticated user {authenticated_user:?}");
