@@ -35,17 +35,21 @@ const ENV: &[&str] = &[
 
 /// The worktree `cwd` is in (the folder holding `.git`), found from its files.
 ///
-/// Only a repository inside one of `roots` counts: a `.git` an agent plants in a folder above (`~/.git`) must not make
-/// that folder a worktree whose deletes git brings back.
+/// Only a repository strictly inside one of `roots` counts, and the search for `.git` stops at that root: a `.git` an
+/// agent plants in a folder above (`~/.git`) or in the root itself must not make it a worktree whose deletes git brings
+/// back. Paths are compared resolved (symlinks, `.`); a `cwd` with `..` in it is not read.
 #[must_use]
 pub fn worktree_of(cwd: &Path, roots: &[String], home: &str) -> Option<String> {
-    let top = cwd.ancestors().find(|d| d.join(".git").exists())?;
-    let top_text = top.to_string_lossy().into_owned();
-    roots
-        .iter()
-        .map(|r| effects::normalize(r, "/", home))
-        .any(|r| top_text.starts_with(&format!("{}/", r.trim_end_matches('/'))))
-        .then_some(top_text)
+    if cwd.components().any(|c| c == std::path::Component::ParentDir) {
+        return None;
+    }
+    let real = std::fs::canonicalize(cwd).ok()?;
+    let roots: Vec<std::path::PathBuf> =
+        roots.iter().filter_map(|r| std::fs::canonicalize(effects::normalize(r, "/", home)).ok()).collect();
+    let root = roots.iter().filter(|r| real.starts_with(r) && real != **r).max_by_key(|r| r.components().count())?;
+    // How many folders up from `cwd` the repository is, then that folder as `cwd` names it.
+    let up = real.ancestors().take_while(|d| *d != root.as_path()).position(|d| d.join(".git").exists())?;
+    cwd.ancestors().nth(up).map(|d| d.to_string_lossy().into_owned())
 }
 
 /// The workspace for a request run in `cwd`: the configured roots and scratch folders, and the worktree `cwd` is in
@@ -195,6 +199,21 @@ mod tests {
         let mut config = Config::default();
         config.workspace.roots = vec![root.join("dev").to_string_lossy().into_owned()];
         assert_eq!(worktree_of(&inside, &config.workspace.roots, ""), None);
+        // A `.git` planted in a root itself, or a path climbing out with `..`: no worktree either.
+        let dev = root.join("dev");
+        std::fs::create_dir_all(dev.join(".git")).unwrap();
+        std::fs::create_dir_all(dev.join("app")).unwrap();
+        assert_eq!(worktree_of(&dev.join("app"), &config.workspace.roots, ""), None);
+        std::fs::create_dir_all(dev.join("app/.git")).unwrap();
+        assert_eq!(
+            worktree_of(&dev.join("app/src/.."), &config.workspace.roots, ""),
+            None,
+            "a cwd with .. is not read"
+        );
+        assert_eq!(
+            worktree_of(&dev.join("app"), &config.workspace.roots, ""),
+            Some(dev.join("app").to_string_lossy().into_owned())
+        );
         let ctx = context(&config, Some(&inside.to_string_lossy()), &|_| None, None);
         assert!(ctx.workspace.worktrees.is_empty(), "{:?}", ctx.workspace.worktrees);
         std::fs::remove_dir_all(&root).ok();

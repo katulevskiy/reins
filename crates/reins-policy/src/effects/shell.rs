@@ -119,9 +119,6 @@ pub(super) struct Walk<'a> {
     /// A command in this line may have moved HEAD (`checkout`, `switch`, `rebase`…): the request's branch is no longer
     /// known to be the one checked out.
     pub head_moved: bool,
-    /// The branch a move made and checked out, when the line names it (`checkout -b NEW`, `switch -c NEW`), with the
-    /// folder it was checked out in.
-    pub head_now: Option<(String, String)>,
     /// Paths made by `mktemp` in this line: new, so nothing in them is lost.
     pub fresh: Vec<String>,
     /// Commands run on another computer (`ssh host '…'`): their paths are its.
@@ -151,7 +148,6 @@ struct State {
     files: BTreeMap<String, Option<String>>,
     maybe_unwritten: std::collections::BTreeSet<String>,
     head_moved: bool,
-    head_now: Option<(String, String)>,
 }
 
 /// The effects of a shell command line run in `ctx`.
@@ -183,7 +179,6 @@ impl<'a> Walk<'a> {
             files: BTreeMap::new(),
             maybe_unwritten: std::collections::BTreeSet::new(),
             head_moved: false,
-            head_now: None,
             fresh: Vec::new(),
             remote: None,
             effects: Vec::new(),
@@ -208,7 +203,6 @@ impl<'a> Walk<'a> {
             files: self.files.clone(),
             maybe_unwritten: self.maybe_unwritten.clone(),
             head_moved: self.head_moved,
-            head_now: self.head_now.clone(),
         }
     }
 
@@ -221,7 +215,6 @@ impl<'a> Walk<'a> {
         self.files = s.files;
         self.maybe_unwritten = s.maybe_unwritten;
         self.head_moved = s.head_moved;
-        self.head_now = s.head_now;
     }
 
     /// The state after one of several ways a line may go (branches, `&&`, `||`): what they agree on, unknown
@@ -272,9 +265,6 @@ impl<'a> Walk<'a> {
                 }
             }
             j.maybe_unwritten.extend(e.maybe_unwritten.iter().cloned());
-            if j.head_moved != e.head_moved || j.head_now != e.head_now {
-                j.head_now = None;
-            }
             j.head_moved |= e.head_moved;
         }
         self.restore(j);
@@ -396,12 +386,15 @@ impl<'a> Walk<'a> {
                 self.redirects(redirects);
                 self.script(body);
                 if matches!(c, Command::Subshell(..)) {
-                    // A subshell's variables and folder are its own; the files it wrote stay written.
+                    // A subshell's variables and folder are its own; the files it wrote stay written, and a checkout in it
+                    // moved HEAD for everyone.
                     let files = std::mem::take(&mut self.files);
                     let maybe_unwritten = std::mem::take(&mut self.maybe_unwritten);
+                    let head_moved = self.head_moved || saved.head_moved;
                     self.restore(State {
                         files,
                         maybe_unwritten,
+                        head_moved,
                         ..saved
                     });
                 }
@@ -942,9 +935,9 @@ impl<'a> Walk<'a> {
     /// The branch checked out where git runs now: the request's own, while the line stays in the worktree the request
     /// came from (after `cd` into another repository it is not known) and nothing in it may have moved HEAD.
     pub fn current_branch(&self) -> Option<String> {
+        // Any move, even to a branch the line names (`checkout -b x` may fail, `-B` may reuse one): not known.
         if self.head_moved {
-            let here = self.repo_root().unwrap_or_else(|| self.cwd.clone());
-            return self.head_now.as_ref().filter(|(at, _)| *at == here).map(|(_, b)| b.clone());
+            return None;
         }
         let here = self.repo_root()?;
         let start = Walk::new(self.ctx).repo_root()?;

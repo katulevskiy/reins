@@ -268,8 +268,8 @@ pub fn analyze_tool(tool: &str, args: &Value) -> Analysis {
         }
         // A new repository is public unless it is asked private (GitHub's own default).
         "github_repo_create" => {
-            let private = args.get("private").and_then(Value::as_bool).unwrap_or(false)
-                || str_arg(args, "visibility").is_some_and(|v| v != "public");
+            // The connector reads `private` only: anything but `true` makes it public.
+            let private = args.get("private").and_then(Value::as_bool) == Some(true);
             if !private {
                 return full(vec![Effect::Publish {
                     target: format!("a public repository ({})", str_arg(args, "name").unwrap_or("new")),

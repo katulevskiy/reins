@@ -281,11 +281,29 @@ fn a_line_that_moves_head_forgets_the_request_s_branch() {
 }
 
 #[test]
-fn a_branch_the_line_creates_is_the_one_pushed() {
-    let a = run("git checkout -b feat/new && git push -u origin HEAD");
-    assert_eq!((a.level, a.certainty), (Level::L0, Certainty::Full), "{a:?}");
-    let a = run("git switch -c main && git push -f origin HEAD");
-    assert_eq!(a.level, Level::L3, "{a:?}");
+fn a_branch_the_line_creates_is_not_trusted() {
+    // `checkout -b` may fail (the branch exists) and `-B` reuses one: what is pushed is not known.
+    for cmd in [
+        "git checkout -b feat/new && git push -f origin HEAD",
+        "git checkout -B main; git push -f origin HEAD",
+        "git switch -c feat/new || true; git push -f origin HEAD",
+        "(git checkout main) && git push -f",
+        "(cd /tmp; git checkout main); git push -f",
+    ] {
+        let a = run(cmd);
+        assert_eq!((a.level, a.certainty), (Level::L3, Certainty::None), "{cmd}: {a:?}");
+    }
+}
+
+#[test]
+fn a_repository_is_public_unless_private_is_true() {
+    for args in [
+        serde_json::json!({"name": "x", "visibility": "private"}),
+        serde_json::json!({"name": "x", "private": "true"}),
+        serde_json::json!({"name": "x"}),
+    ] {
+        assert!(analyze_tool("github_repo_create", &args).floor.contains(&Floor::Publish), "{args}");
+    }
 }
 
 #[test]

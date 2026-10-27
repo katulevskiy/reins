@@ -344,19 +344,6 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     };
     if moves_head {
         w.head_moved = true;
-        // `checkout -b NEW`, `switch -c NEW` (and their forcing forms): NEW is checked out.
-        let creates = |names: &[&str]| {
-            rest.iter()
-                .position(|a| names.contains(&a.text.as_str()))
-                .and_then(|p| rest.get(p + 1))
-                .filter(|b| b.known())
-        };
-        w.head_now = match sub.as_str() {
-            "checkout" => creates(&["-b", "-B", "--orphan"]),
-            "switch" => creates(&["-c", "-C", "--create", "--force-create", "--orphan"]),
-            _ => None,
-        }
-        .map(|b| (w.repo_root().unwrap_or_else(|| w.cwd.clone()), b.text.clone()));
     }
     match sub.as_str() {
         // `git bisect run cmd args…`: the command's own words, as they are.
