@@ -1,6 +1,7 @@
 //! An organization's admin events (O1): append-only and hash-linked per org, so O2's audit log can take them over and
-//! check that none was edited, removed or reordered (`reins_proto::org::event_hash`). Nothing here updates or deletes
-//! an event; only deleting the organization removes them.
+//! check that none was edited, removed or reordered (`reins_proto::org::event_hash`). Nothing here updates an event;
+//! only pruning below a signed checkpoint (O5, `api::reins::org::audit::prune`) and deleting the organization remove
+//! them.
 
 use diesel::prelude::*;
 use reins_proto::org::{EventFields, GENESIS_HASH, event_hash};
@@ -123,6 +124,24 @@ pub fn q_head(c: &mut DbConnInner, org: &str) -> QueryResult<Option<(i64, String
         .select((reins_org_events::seq, reins_org_events::hash))
         .first(c)
         .optional()
+}
+
+/// The first event `org` still keeps: its sequence number and hash (1 unless the chain was pruned).
+pub fn q_first(c: &mut DbConnInner, org: &str) -> QueryResult<Option<(i64, String)>> {
+    reins_org_events::table
+        .filter(reins_org_events::org_uuid.eq(org))
+        .order(reins_org_events::seq.asc())
+        .select((reins_org_events::seq, reins_org_events::hash))
+        .first(c)
+        .optional()
+}
+
+/// Deletes `org`'s events before `seq` (exclusive): pruning down to the checkpoint at `seq`, which stays.
+pub fn q_delete_before(c: &mut DbConnInner, org: &str, seq: i64) -> QueryResult<usize> {
+    diesel::delete(
+        reins_org_events::table.filter(reins_org_events::org_uuid.eq(org)).filter(reins_org_events::seq.lt(seq)),
+    )
+    .execute(c)
 }
 
 impl ReinsOrgEvent {

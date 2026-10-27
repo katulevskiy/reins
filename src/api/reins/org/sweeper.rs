@@ -1,7 +1,7 @@
 //! The org decision service's housekeeping, every [`EVERY_SECS`] while organizations are on: expiring reviews and
 //! approvals nobody acted on, marking executions that never reported back, expiring leases (so the executor revokes
 //! them upstream) and settling revocations whose token died upstream on its own, purging bodies past retention,
-//! checkpointing the audit chains, and moving staged policy rollouts ([`rollout::tick_all`]).
+//! checkpointing the audit chains and pruning them by tier, and moving staged policy rollouts ([`rollout::tick_all`]).
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -57,6 +57,10 @@ pub fn sweep_routed(
     }
     if let Err(e) = audit::checkpoint_due(c, now) {
         warn!("Org sweeper: checkpoints: {e:?}");
+    }
+    // O5: events past the tier's retention go, down to a signed checkpoint.
+    if let Err(e) = audit::prune_due(c, now) {
+        warn!("Org sweeper: audit pruning: {e:?}");
     }
     swept
 }

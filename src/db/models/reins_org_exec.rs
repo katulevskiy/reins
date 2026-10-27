@@ -102,6 +102,26 @@ pub fn q_insert_checkpoint(c: &mut DbConnInner, row: &ReinsOrgCheckpoint) -> Que
     diesel::insert_into(reins_org_checkpoints::table).values(row).execute(c).map(drop)
 }
 
+/// The newest checkpoint of `org` signed at or before `at`.
+pub fn q_checkpoint_at_or_before(c: &mut DbConnInner, org: &str, at: i64) -> QueryResult<Option<ReinsOrgCheckpoint>> {
+    reins_org_checkpoints::table
+        .filter(reins_org_checkpoints::org_uuid.eq(org))
+        .filter(reins_org_checkpoints::at.le(at))
+        .order(reins_org_checkpoints::seq.desc())
+        .first(c)
+        .optional()
+}
+
+/// Deletes `org`'s checkpoints before `seq` (exclusive).
+pub fn q_delete_checkpoints_before(c: &mut DbConnInner, org: &str, seq: i64) -> QueryResult<usize> {
+    diesel::delete(
+        reins_org_checkpoints::table
+            .filter(reins_org_checkpoints::org_uuid.eq(org))
+            .filter(reins_org_checkpoints::seq.lt(seq)),
+    )
+    .execute(c)
+}
+
 /// Oldest first, after `after` (exclusive).
 pub fn q_checkpoints(c: &mut DbConnInner, org: &str, after: i64) -> QueryResult<Vec<ReinsOrgCheckpoint>> {
     reins_org_checkpoints::table
