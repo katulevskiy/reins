@@ -245,11 +245,37 @@ final class Backdrop {
 
 extension View {
     /// Registers this view (an image drawn aspect-filled into its frame, from the top) as the art under the page's
-    /// glass, tracking where it is on screen as it moves.
-    func backdropArt(key: String, image: UIImage, dark: Bool, shade: Color = .clear) -> some View {
-        onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { box in
-            Backdrop.shared.register(key: key, art: image, dark: dark, frame: Backdrop.fillRect(image: image.size, in: box), shade: shade)
-        }
+    /// glass, tracking where it is on screen as it moves and which art it is (`key`). `backdrop`: the shared one when
+    /// nil (tests pass their own).
+    func backdropArt(key: String, image: UIImage, dark: Bool, shade: Color = .clear, backdrop: Backdrop? = nil) -> some View {
+        modifier(BackdropArt(key: key, image: image, dark: dark, shade: shade, backdrop: backdrop))
+    }
+}
+
+/// Registers the art on both kinds of change: where it is (a new frame) and what it is (a new key: another image,
+/// effect, fade, photo or theme, or a render that just finished). A new art drawn in the same place has the same frame,
+/// so the frame alone kept the first art's frosted copy for good.
+private struct BackdropArt: ViewModifier {
+    let key: String
+    let image: UIImage
+    let dark: Bool
+    let shade: Color
+    let backdrop: Backdrop?
+    @State private var box: CGRect?
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { box in
+                self.box = box
+                register(in: box)
+            }
+            .onChange(of: key) {
+                if let box { register(in: box) }
+            }
+    }
+
+    private func register(in box: CGRect) {
+        (backdrop ?? .shared).register(key: key, art: image, dark: dark, frame: Backdrop.fillRect(image: image.size, in: box), shade: shade)
     }
 }
 
