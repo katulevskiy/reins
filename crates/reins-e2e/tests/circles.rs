@@ -15,7 +15,7 @@ const DANA: &str = "dana@example.com";
 const ALEX: &str = "alex@example.com";
 
 struct World {
-    _server: Server,
+    server: Server,
     dana: Phone,
     alex: Phone,
     ai: AiClient,
@@ -37,7 +37,7 @@ async fn world() -> World {
     ai.finish_authorization(&wait_url).await;
     dana.accept_sends().await;
     World {
-        _server: server,
+        server,
         dana,
         alex,
         ai,
@@ -301,7 +301,7 @@ async fn a_lying_server_changes_nothing() {
     // Summary cards: the helper sees the effects and the sentence, not who it goes to.
     draft.full_cards = false;
     let link = invite(&w, draft).await;
-    let db = || rusqlite::Connection::open(w._server.database_path()).unwrap();
+    let db = || rusqlite::Connection::open(w.server.database_path()).unwrap();
 
     // A first request, co-signed for real.
     let args = send_args();
@@ -330,7 +330,10 @@ async fn a_lying_server_changes_nothing() {
     );
     w.dana.core.approve(second.id.clone(), none()).await.unwrap();
     let packet: String = poll(async || {
-        db().query_row("SELECT id FROM reins_circle_packets WHERE state = 'waiting' AND kind = 'review'", [], |r| r.get(0)).ok()
+        db().query_row("SELECT id FROM reins_circle_packets WHERE state = 'waiting' AND kind = 'review'", [], |r| {
+            r.get(0)
+        })
+        .ok()
     })
     .await;
     db().execute(

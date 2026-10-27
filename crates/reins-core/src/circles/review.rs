@@ -581,8 +581,8 @@ impl Engine {
         item: &circle::AnswerItem,
     ) -> Result<CircleAnswer, CoreError> {
         // A paused or ended arrangement takes no answer, whenever it was signed.
-        let held = self.circle_state(&me.slot)?.held(&part.arrangement).cloned().ok_or(CoreError::NotFound)?;
-        if held.standing != Standing::Active || held.side != Side::Owner {
+        let row = self.circle_state(&me.slot)?.held(&part.arrangement).cloned().ok_or(CoreError::NotFound)?;
+        if row.standing != Standing::Active || row.side != Side::Owner {
             return Err(CoreError::invalid("the arrangement is not active"));
         }
         let sealed = item.sealed.as_deref().ok_or_else(|| CoreError::invalid("no answer"))?;
@@ -730,10 +730,10 @@ impl Engine {
                     log::warn!("Circle state: {e}");
                 }
                 Box::pin(self.circle_settle(session, me, &hold.id)).await;
-            } else if hold.parts.iter().any(|p| !p.sent && !p.lapsed) {
-                if let Err(e) = self.circle_send(session, &hold.id).await {
-                    log::info!("Circle packets: {e}");
-                }
+            } else if hold.parts.iter().any(|p| !p.sent && !p.lapsed)
+                && let Err(e) = self.circle_send(session, &hold.id).await
+            {
+                log::info!("Circle packets: {e}");
             }
         }
     }

@@ -221,6 +221,7 @@ pub struct CircleNoticeView {
 }
 
 /// What the apps hear from the core about Circles ([`crate::Notifier::circle_changed`]).
+#[allow(clippy::large_enum_variant, reason = "UniFFI enums carry records by value; the event is short-lived")]
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum CircleEvent {
     /// A request of another account waits for this phone: the one Circle notification ("Sam: purchase $42 waiting").
