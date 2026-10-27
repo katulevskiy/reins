@@ -209,23 +209,31 @@ fn insert_grant(conn: &Connection, grant: &Grant, label: &str, origin: &str) -> 
     Ok(())
 }
 
-fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Result<bool, CoreError> {
+/// The connected account this action targets, unless its agent was revoked or the account is gone. Only such an
+/// account can be admitted, or asked about on the phone before it is.
+fn account_askable(conn: &Connection, action: &ActionContext) -> Result<Option<(String, String)>, CoreError> {
     if connection_revoked(conn, &action.actor.connection_id)? {
-        return Ok(false);
+        return Ok(None);
     }
     let tuple: Vec<String> = serde_json::from_str(&action.resource.account_id)
         .map_err(|_| CoreError::invalid("invalid account identity"))?;
-    if tuple.len() != 2 || tuple[0] != action.operation.service {
+    let [service, account] =
+        <[String; 2]>::try_from(tuple).map_err(|_| CoreError::invalid("invalid account identity"))?;
+    if service != action.operation.service {
         return Err(CoreError::invalid("invalid account identity"));
     }
     let connected: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM accounts WHERE service=?1 AND account=?2)",
-        params![tuple[0], tuple[1]],
+        params![service, account],
         |row| row.get(0),
     )?;
-    if !connected {
+    Ok(connected.then_some((service, account)))
+}
+
+fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Result<bool, CoreError> {
+    let Some((service, account)) = account_askable(conn, action)? else {
         return Ok(false);
-    }
+    };
     let mut stmt = conn.prepare("SELECT grant_json,origin FROM grants WHERE connection_id=?1")?;
     let rows = stmt
         .query_map([&action.actor.connection_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
@@ -238,7 +246,7 @@ fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Resu
             serde_json::from_str(&raw).map_err(|_| CoreError::storage("an account admission could not be verified"))?;
         if grant.connection_id.0 == action.actor.connection_id
             && grant.is_active(now)
-            && matches!(&grant.scope, Scope::Accounts(scope) if scope.service == tuple[0] && (scope.accounts.is_empty() || scope.accounts.contains(&tuple[1])))
+            && matches!(&grant.scope, Scope::Accounts(scope) if scope.service == service && (scope.accounts.is_empty() || scope.accounts.contains(&account)))
         {
             return Ok(true);
         }
@@ -280,6 +288,7 @@ fn evaluate(
     action: &ActionContext,
     verified: &[AttributeKey],
     now: i64,
+    account_access: bool,
 ) -> Result<reins_policy::authorization::AuthorizationDecision, CoreError> {
     if state.conflicted
         || state.overflow_digest.is_some()
@@ -307,7 +316,7 @@ fn evaluate(
         account_id: &action.resource.account_id,
         resource_id: action.resource.resource_id.as_deref(),
         request_digest: &action.request_digest,
-        account_access: account_admitted(conn, action, now)?,
+        account_access,
         verified_attribute_keys: verified,
         authorized_policy_ids: &ids,
     };
@@ -493,11 +502,15 @@ impl Store {
                 "this request already has an execution attempt; its result must be reconciled before retrying",
             ));
         }
-        let decision = evaluate(&tx, &state, action, verified, now)?;
+        // A managed account this agent was not admitted to yet (a freshly connected verified-path account) asks on
+        // the phone, as it does without a roster. Its restrictions still apply, and it can never run automatically.
+        let admitted = account_admitted(&tx, action, now)?;
+        let access = admitted || account_askable(&tx, action)?.is_some();
+        let decision = evaluate(&tx, &state, action, verified, now, access)?;
         if matches!(decision.outcome, DecisionOutcome::Deny | DecisionOutcome::Hold) {
             return Err(CoreError::invalid("the action is blocked or its authority cannot be verified"));
         }
-        if decision.outcome != DecisionOutcome::Permit || decision.authorization_path.is_empty() {
+        if !admitted || decision.outcome != DecisionOutcome::Permit || decision.authorization_path.is_empty() {
             return Ok(PermissionReservation::Review);
         }
         let receipts = receipt_rows(&tx)?;
@@ -681,7 +694,7 @@ impl Store {
                 policy.limits.max_uses = None;
             }
         }
-        let decision = evaluate(&conn, &check, action, verified, now)?;
+        let decision = evaluate(&conn, &check, action, verified, now, account_admitted(&conn, action, now)?)?;
         if decision.outcome != DecisionOutcome::Permit
             || decision.authorization_path.iter().map(|p| (&p.id, p.revision)).collect::<BTreeSet<_>>() != ids
         {
@@ -1011,16 +1024,30 @@ mod tests {
         }
     }
 
+    fn read_action(id: &str) -> ActionContext {
+        let mut read = action(id);
+        read.operation.capability = "read".into();
+        read.operation.action = "read".into();
+        read.facts = vec![];
+        read
+    }
+
     fn setup(policies: Vec<PolicyRecord>) -> (tempfile::TempDir, Arc<Store>) {
+        setup_admitted(policies, true)
+    }
+
+    fn setup_admitted(policies: Vec<PolicyRecord>, admitted: bool) -> (tempfile::TempDir, Arc<Store>) {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(crate::store::tests::open(dir.path()));
         store.add_account("gmail", "me@example.com", 1).unwrap();
         let mut state = AuthorizationState::empty("owner");
         state.revision = 1;
-        state.managed_scopes.insert(ManagedOperation {
-            account_id: action("a").resource.account_id,
-            operation: action("a").operation,
-        });
+        for operation in [action("a").operation, read_action("a").operation] {
+            state.managed_scopes.insert(ManagedOperation {
+                account_id: action("a").resource.account_id,
+                operation,
+            });
+        }
         let budgets = policies
             .iter()
             .filter(|p| p.limits.max_uses.is_some())
@@ -1039,8 +1066,53 @@ mod tests {
             None,
         )
         .unwrap();
-        store.permissions_apply(0, &state, &[(admission, "Agent".into(), String::new())], &budgets).unwrap();
+        let admissions = if admitted {
+            vec![(admission, "Agent".into(), String::new())]
+        } else {
+            vec![]
+        };
+        store.permissions_apply(0, &state, &admissions, &budgets).unwrap();
         (dir, store)
+    }
+
+    #[test]
+    fn managed_account_without_admission_asks_instead_of_rejecting() {
+        // A freshly connected (verified-path) account is managed before any agent was admitted to it.
+        for policies in [vec![], vec![policy("permission", 3)]] {
+            let (_dir, store) = setup_admitted(policies, false);
+            assert!(matches!(
+                store.permission_reserve(&action("send"), &[AttributeKey::Recipients], 10).unwrap(),
+                PermissionReservation::Review
+            ));
+            assert!(matches!(
+                store.permission_reserve(&read_action("read"), &[], 10).unwrap(),
+                PermissionReservation::Review
+            ));
+            assert_eq!(store.permission_budget_uses("permission").unwrap_or(0), 0, "asking spends no budget");
+        }
+        // Once admitted, the same account behaves as before: a matching permission runs, the rest asks.
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        reserve(&store, "send");
+        assert!(matches!(
+            store.permission_reserve(&read_action("read"), &[], 10).unwrap(),
+            PermissionReservation::Review
+        ));
+    }
+
+    #[test]
+    fn missing_admission_never_softens_a_policy_deny_or_a_revoked_agent() {
+        let mut deny = policy("mandatory-deny", 1);
+        deny.kind = PolicyKind::Mandatory;
+        deny.limits = UsageLimits::default();
+        deny.effect = PolicyEffect::Deny;
+        for admitted in [true, false] {
+            let (_dir, store) = setup_admitted(vec![deny.clone()], admitted);
+            assert!(store.permission_reserve(&action("blocked"), &[AttributeKey::Recipients], 10).is_err());
+        }
+        let (_dir, store) = setup_admitted(vec![], false);
+        revoke_connection_in(&store.lock().unwrap(), "agent").unwrap();
+        assert!(store.permission_reserve(&action("revoked"), &[AttributeKey::Recipients], 10).is_err());
+        assert!(store.permission_reserve(&read_action("revoked-read"), &[], 10).is_err());
     }
 
     fn reserve(store: &Store, id: &str) -> VerifiedPermission {
@@ -1116,7 +1188,11 @@ mod tests {
         let (_dir, store) = setup(vec![policy("permission", 3)]);
         let mut wrong = action("wrong");
         wrong.actor.connection_id = "other".into();
-        assert!(store.permission_reserve(&wrong, &[AttributeKey::Recipients], 10).is_err());
+        // An agent that was never admitted is asked about on the phone; it can never run automatically.
+        assert!(matches!(
+            store.permission_reserve(&wrong, &[AttributeKey::Recipients], 10).unwrap(),
+            PermissionReservation::Review
+        ));
         let mut wrong = action("wrong");
         wrong.resource.account_id = crate::authorization::account_resource_id("gmail", "other@example.com");
         assert!(matches!(
@@ -1296,10 +1372,15 @@ mod tests {
         assert!(!store.add_verified_account("owner", "gmail", "old@example.com", 10).unwrap());
         assert!(store.authorization_state().unwrap().is_none());
         assert!(store.add_verified_account("owner", "gmail", "me@example.com", 10).unwrap());
-        assert!(
-            store.permission_reserve(&action("new"), &[AttributeKey::Recipients], 10).is_err(),
-            "account defaults grant no independent admission"
-        );
+        // Account defaults grant no independent admission: the agent's first send or read asks on the phone.
+        assert!(matches!(
+            store.permission_reserve(&action("new"), &[AttributeKey::Recipients], 10).unwrap(),
+            PermissionReservation::Review
+        ));
+        assert!(matches!(
+            store.permission_reserve(&read_action("new-read"), &[], 10).unwrap(),
+            PermissionReservation::Review
+        ));
         assert!(
             store
                 .authorization_state()

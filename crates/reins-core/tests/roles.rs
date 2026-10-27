@@ -2523,6 +2523,33 @@ async fn sent_count(gmail: &MockServer) -> usize {
 }
 
 #[tokio::test]
+async fn a_managed_account_the_agent_was_not_admitted_to_asks_on_the_primary_instead_of_rejecting() {
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    // Connected the verified way: the account is managed, and no agent has been admitted to it yet.
+    let core = permission_phone(&mut w, &gmail).await;
+    assert!(core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap().managed);
+    core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    assert_eq!(core.phone_role().await.unwrap(), PhoneRole::Primary);
+    core.engine().process_relayed(permission_send("first-send", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 0, "nothing runs before the user answers");
+    assert!(
+        core.pending().await.unwrap().iter().any(|p| p.id == "first-send"),
+        "the send is asked on the phone, not rejected"
+    );
+    core.approve(
+        "first-send".into(),
+        reins_core::ApprovalChoice {
+            selected_message_ids: vec![],
+            standing: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(sent_count(&gmail).await, 1, "the owner's approval sends it");
+}
+
+#[tokio::test]
 async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_truthful_native_defaults() {
     let mut w = world().await;
     let gmail = MockServer::start().await;
