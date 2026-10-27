@@ -175,6 +175,15 @@ class AutopilotTextTest {
     }
 
     @Test
+    fun `the header chip drops the seconds from an hour on`() {
+        assertEquals("47:12", AutopilotText.chipClock(1_000 + 47 * 60 + 12, 1_000))
+        assertEquals("23:39", AutopilotText.chipClock(1_000 + 23 * 3_600 + 39 * 60 + 19, 1_000))
+        assertEquals("1:00", AutopilotText.chipClock(1_000 + 3_600 + 30, 1_000))
+        assertEquals("2d 4h", AutopilotText.chipClock(1_000 + 2 * 86_400 + 4 * 3_600, 1_000))
+        assertEquals("∞", AutopilotText.chipClock(AutopilotText.UNTIL_OFF, 1_000))
+    }
+
+    @Test
     fun `a bypass without an end shows no countdown, only how long it has run`() {
         val off = AutopilotText.UNTIL_OFF
         assertTrue(AutopilotText.isUntilOff(off))
