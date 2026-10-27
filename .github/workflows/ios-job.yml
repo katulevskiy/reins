@@ -3,17 +3,14 @@ name: iOS job
 # Build and test jobs for agents that write Swift on Linux: scripts/ios-job.sh dispatches this for the current pushed
 # branch, waits, and downloads the artifact (summary, logs, xcresult summaries, snapshot PNGs). See docs/ios-dev.md.
 #
-# One macOS job: the prebuilt core (ios-core.yml publishes it once per content hash), one build-for-testing with the
-# DerivedData folder restored from an Actions cache, one simulator, then test-without-building per requested slice
+# One macOS job: the prebuilt core (ios-core.yml publishes it once per content hash), one build-for-testing seeded with
+# main's Swift compilation cache, one simulator, then test-without-building per requested slice
 # (ios/scripts/ios-job-run.sh). Nothing here gates a merge or a release; it is a tool, not a check.
 #
 # The runner is `vars.IOS_RUNNER` (default xcode-27, GitHub's free macOS image with Xcode 27 on this public repository)
 # and the Xcode `vars.IOS_DEVELOPER_DIR`, so another macOS runner (a self-hosted Mac, a third-party label) is one
 # repository variable away.
 on:
-  # TEMPORARY: lets this branch run the job before the workflow is on main (dispatch needs it there).
-  push:
-    branches: [infra/ios-fast]
   workflow_dispatch:
     inputs:
       ref:
@@ -71,11 +68,9 @@ jobs:
     permissions:
       contents: read
       attestations: read # core-cache.sh verifies the prebuilt core's provenance
-    outputs:
-      saved: ${{ steps.save.outputs.saved }}
     env:
       DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
-      RUN: ${{ inputs.run || 'snapshots:Approve,unit:GrantLogicTests' }}
+      RUN: ${{ inputs.run || 'snapshots' }}
       DEVICE: ${{ inputs.device || 'iPhone 17 Pro' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,24 +108,13 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           for archive in "$RUNNER_TEMP"/core/core-*.tar.gz; do ios/scripts/core-cache.sh install iphonesimulator "$archive"; done
-      # DerivedData, the Swift compilation cache and the packages: this branch's last job's (keyed by the Xcode version
-      # and the project and package pins). The repository's caches sit at GitHub's 10 GB limit, so one can be evicted
-      # within the hour; then main's Swift cache from ios.yml (the same compilation cache and packages paths and build
-      # settings) still gives hits for every module the branch did not change.
-      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        id: derived
-        with:
-          path: |
-            derived
-            compilation-cache
-            spm
-          key: ios-job-dd-v2-${{ steps.xcode.outputs.version }}-${{ hashFiles('ios/Reins.xcodeproj/project.pbxproj', 'ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            ios-job-dd-v2-${{ steps.xcode.outputs.version }}-${{ hashFiles('ios/Reins.xcodeproj/project.pbxproj', 'ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.ref_name }}-
-            ios-job-dd-v2-${{ steps.xcode.outputs.version }}-${{ hashFiles('ios/Reins.xcodeproj/project.pbxproj', 'ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
+      # The Swift compilation cache, module cache and packages that ios.yml saves from main (same paths, same build
+      # settings), so every module the branch did not change is a cache hit. Restore only: a job writes no cache. A
+      # branch's own DerivedData is not kept: after a fresh checkout Xcode recompiles every file of it anyway (new
+      # mtimes), and its incremental state splits the compile jobs differently from main's, so the cache then misses
+      # (measured: 660 s with it restored against 426 s with main's cache alone).
       # The path list must be ios.yml's exactly, or the cache does not match.
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        if: steps.derived.outputs.cache-matched-key == ''
         id: swift
         with:
           path: |
@@ -144,18 +128,15 @@ jobs:
       - name: Build and test
         id: job
         env:
-          MATCHED: ${{ steps.derived.outputs.cache-matched-key }}
           SWIFT: ${{ steps.swift.outputs.cache-matched-key }}
         run: |
           set -euo pipefail
-          echo "branch cache: ${MATCHED:-none}"
-          echo "main Swift cache: ${SWIFT:-not used}"
+          echo "main Swift cache: ${SWIFT:-none}"
           du -sh derived compilation-cache spm 2>/dev/null || true
           status=0
           ios/scripts/ios-job-run.sh --out "$RUNNER_TEMP/ios-job" --run "$RUN" --device "$DEVICE" \
             --derived "$GITHUB_WORKSPACE/derived" --cas "$GITHUB_WORKSPACE/compilation-cache" \
             --packages "$GITHUB_WORKSPACE/spm" || status=$?
-          echo "built=$([[ -n "$(find derived/Build/Products -maxdepth 1 -name '*.xctestrun' -print -quit 2>/dev/null)" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           {
             echo '```'
             cat "$RUNNER_TEMP/ios-job/summary.txt" 2>/dev/null || echo "no summary"
@@ -170,46 +151,3 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: false
           retention-days: 7
-      # Only a build of the run's own commit writes a cache: a dispatched ref never does.
-      - name: Trim DerivedData for the cache
-        id: save
-        if: always() && !cancelled() && steps.job.outputs.built == 'true' && (inputs.ref == '' || inputs.ref == github.sha)
-        run: |
-          set -euo pipefail
-          # Logs, result bundles and the index are not build state.
-          rm -rf derived/Logs derived/Index.noindex derived/TextIndex
-          du -sh derived compilation-cache spm
-          echo "saved=true" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        if: always() && !cancelled() && steps.save.outputs.saved == 'true'
-        with:
-          path: |
-            derived
-            compilation-cache
-            spm
-          key: ${{ steps.derived.outputs.cache-primary-key }}
-
-  # One DerivedData cache per branch: this branch's older ones go, so jobs on many branches do not push main's caches
-  # out of the repository's 10 GB. Its own job, with no checkout, so no repository code runs next to actions: write.
-  prune:
-    name: Prune DerivedData caches
-    needs: run
-    if: always() && !cancelled() && needs.run.outputs.saved == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: write # delete this branch's older ios-job caches
-    steps:
-      - name: Prune
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          gh cache list --key ios-job-dd- --ref "refs/heads/$BRANCH" --limit 100 --json key --jq '.[].key' |
-            while IFS= read -r key; do
-              [[ "$key" == *"-$BRANCH-$RUN_ID" ]] && continue
-              gh cache delete "$key" && echo "deleted $key"
-            done

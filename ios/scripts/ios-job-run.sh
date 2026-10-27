@@ -14,10 +14,11 @@
 # DIR gets summary.txt, summary.json, timings.tsv, logs/, results/*.xcresult (+ .json summaries) and snapshots/.
 # The exit status is 0 only when the build and every slice passed.
 #
-# Debug, simulator only, ad-hoc signed (as ci-xcode-test.sh). Swift compilation caching is on, its store inside the
-# DerivedData folder, which stays between runs: a fixed folder per checkout here, an Actions cache on GitHub. One
-# simulator named "Reins Job" is created once and reused, booted while the app builds. One job at a time per Mac
-# (a lock in ~/Library/Caches/reins-ios-job.lock); a second waits.
+# Debug, simulator only, ad-hoc signed, with ci-xcode-test.sh's settings, so the Swift compilation cache CI saves from
+# main gives hits on GitHub (--cas, --packages). On a Mac the DerivedData folder stays between jobs (a fixed folder
+# per checkout), so a Swift-only change builds incrementally. One simulator named "Reins Job" is created once and
+# reused, booted while the app builds (after it, on 4 cores or fewer). One job at a time per Mac (a lock in
+# ~/Library/Caches/reins-ios-job.lock); a second waits.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -187,11 +188,16 @@ PY
   xcrun simctl bootstatus "$udid" -b >/dev/null
 }
 
-if [[ "$TESTS" == 1 ]]; then
+# Alongside the build on a Mac with cores to spare. On a small runner (GitHub's has 3 cores) a first boot competes with
+# the compiler: the same build took 426 s beside a booting simulator and about 160 s alone (ios.yml), so it boots after.
+start_simulator() {
   t0=$(now)
   ( boot_simulator > "$OUT/logs/simulator.log" 2>&1; echo "$(( $(now) - t0 ))" > "$OUT/.boot-seconds" ) &
   SIM_PID=$!
-fi
+}
+PARALLEL_BOOT=true
+[[ "$(sysctl -n hw.ncpu 2>/dev/null || echo 8)" -le 4 ]] && PARALLEL_BOOT=false
+if [[ "$TESTS" == 1 ]] && $PARALLEL_BOOT; then start_simulator; fi
 
 # --- the Rust core: prebuilt for this hash, else built once and stamped -------------------------------------------
 t0=$(now)
@@ -202,6 +208,9 @@ if [[ "$status" == fail ]]; then
   echo "the Rust core is not available" >&2
   exit 1
 fi
+
+# Each log line with the second it was written, to see where a build's time goes.
+stamp() { perl -MPOSIX -ne '$| = 1; print strftime("%H:%M:%S ", localtime), $_'; }
 
 # --- build once ----------------------------------------------------------------------------------------------------
 settings=(
@@ -220,11 +229,6 @@ settings=(
 )
 export REINS_SKIP_CORE=1
 export COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS"
-# A fresh checkout gives every file a new mtime, which alone makes the Swift driver recompile it. With file hashing it
-# compares contents instead, so DerivedData kept between runs (an Actions cache) builds only what changed. A driver
-# option: the compile jobs, and so the compilation cache's keys, are the same.
-SWIFT_FLAGS='$(inherited) -enable-incremental-file-hashing'
-settings+=("OTHER_SWIFT_FLAGS=$SWIFT_FLAGS")
 t0=$(now)
 status=pass
 # generic/platform: no simulator needed to build, so the boot above runs alongside.
@@ -238,11 +242,11 @@ if ! xcodebuild build-for-testing \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackagePluginValidation \
   -showBuildTimingSummary \
-  "${settings[@]}" < /dev/null > "$OUT/logs/build.log" 2>&1; then
+  "${settings[@]}" < /dev/null 2>&1 | stamp > "$OUT/logs/build.log"; then
   status=fail
 fi
 record build "$(( $(now) - t0 ))" "$status"
-grep -E "^(/.*: )?(error|fatal error):|\*\* BUILD" "$OUT/logs/build.log" | sort -u | head -60 || true
+grep -E "^[0-9:]{8} (/.*: )?(error|fatal error):|\*\* BUILD" "$OUT/logs/build.log" | sort -u | head -60 || true
 # Where the build's time went (xcodebuild's timing summary, slowest first).
 sed -n '/Build Timing Summary/,$p' "$OUT/logs/build.log" | grep -E "seconds" | sort -t'|' -k2 -rn | head -15 || true
 
@@ -299,6 +303,7 @@ fi
 [[ "$TESTS" == 1 ]] || { finish; exit $?; }
 
 # --- the simulator, then each slice without building --------------------------------------------------------------
+$PARALLEL_BOOT || start_simulator
 t0=$(now)
 if ! wait "$SIM_PID"; then
   cat "$OUT/logs/simulator.log" >&2
