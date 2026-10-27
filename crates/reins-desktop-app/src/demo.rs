@@ -388,6 +388,7 @@ impl Demo {
                         confidence: 71,
                     }),
                     effects: None,
+                    matrix: None,
                 }
             })
             .collect()
