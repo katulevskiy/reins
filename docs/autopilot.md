@@ -165,9 +165,15 @@ command in that folder, so a learnt answer never covers another command). There 
 - **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
   have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
   wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.
-- **Auto-deny** stays cautious: a kind can deny on its own after at least 10 of your decisions, when it never
-  suggested denying something you approved in the last 20. Before that, it denies only what its risk rating is at
-  least 90% sure is catastrophic and its deny probability reaches your threshold.
+- **Auto never denies** (Decisions v2): when the model would deny something, Auto asks you instead. Only an
+  explicit rule denies: Lockdown, and Overnight's "If something is too risky: deny it" (replaced by parking later).
+- **The matrix** (Decisions v2 P2): every request is also read for what it does (its level: undoable, recoverable,
+  reaches people, can't be undone) and whose it touches (its zone: Mine, Friends, Work, Outside, from facts you
+  confirmed; anything unknown is Outside). The first time you turn on Auto, its setup asks you to confirm those facts
+  and shows the matrix. From then on the matrix decides in Auto: an Ask cell asks you; an Auto cell is approved only
+  if the model agrees too (the model can only turn Auto into an ask); only an explicit rule denies. Until the setup
+  is done, or with the matrix switched off, Auto decides as described above and Activity shows what the matrix would
+  have decided ("Would be: Ask · Outside · Reaches people").
 - **Rate limit:** at most 30 automatic approvals per connection per 10 minutes, and 200 per day. Beyond that it asks,
   and tells you that it paused for that connection.
 - On the profile screen each kind shows **Auto**, **Asks**, **Paused** or **Locked by you**. You can lock a kind

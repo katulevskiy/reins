@@ -49,6 +49,8 @@ pub struct Report {
     pub developer_ask_rate: f64,
     pub real_risk: usize,
     pub real_risk_asked: usize,
+    /// Labelled risks the matrix would have let Auto do (P2's success line: none).
+    pub real_risk_auto: usize,
     pub recall: f64,
     pub needs_human: usize,
     pub needs_human_asked: usize,
@@ -175,6 +177,9 @@ fn tally(r: &mut Report, case: &Case, d: &Decision) {
         } else {
             r.missed_risks.push(miss());
         }
+        if d.evaluation.as_ref().is_some_and(|e| e.outcome == reins_policy::matrix::Outcome::Auto) {
+            r.real_risk_auto += 1;
+        }
     }
     match case.label {
         Label::NeedsHuman => {
@@ -207,6 +212,9 @@ pub struct Baseline {
     /// Asks among the recorded requests, as a share.
     #[serde(default)]
     pub ask_rate: f64,
+    /// Asks ÷ developer requests (P2 on).
+    #[serde(default)]
+    pub developer_ask_rate: Option<f64>,
 }
 
 /// How far Full certainty may fall below the baseline's (a ratchet, not a fixed bar).
@@ -240,12 +248,24 @@ pub fn gate(r: &Report, baseline: Option<&Baseline>) -> Vec<String> {
             r.real_risk - r.real_risk_asked
         ));
     }
+    if r.real_risk_auto > 0 {
+        fails.push(format!("{} labelled risk(s) would be Auto", r.real_risk_auto));
+    }
     if r.known_fp_asked > 0 {
         fails.push(format!("{} known false positive(s) still asked", r.known_fp_asked));
     }
     if let Some(b) = baseline {
         if r.recall < b.recall {
             fails.push(format!("recall dropped from {:.3} to {:.3}", b.recall, r.recall));
+        }
+        if let Some(rate) = b.developer_ask_rate
+            && r.developer_ask_rate > rate + 1e-9
+        {
+            fails.push(format!(
+                "developer ask rate rose from {:.2}% to {:.2}%",
+                rate * 100.0,
+                r.developer_ask_rate * 100.0
+            ));
         }
         if r.known_fp_asked > b.known_fp_asked {
             fails.push(format!("known false positives asked rose from {} to {}", b.known_fp_asked, r.known_fp_asked));
@@ -301,7 +321,14 @@ pub fn text(r: &Report, verbose: bool) -> String {
         r.developer_asks,
         pct(r.developer_ask_rate)
     );
-    let _w = writeln!(s, "real-risk recall {}/{} ({})", r.real_risk_asked, r.real_risk, pct(r.recall));
+    let _w = writeln!(
+        s,
+        "real-risk recall {}/{} ({}) · labelled risks Auto {}",
+        r.real_risk_asked,
+        r.real_risk,
+        pct(r.recall),
+        r.real_risk_auto
+    );
     let _w = writeln!(
         s,
         "needs a human: asked {}/{} · routine asked {}/{}",

@@ -12,6 +12,8 @@ import Foundation
 /// `-demoQuiet`: nothing waits (Activity's pond and its mood line).
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
+/// `-demoAutoSetup`: Auto's setup is not done yet, so picking Auto guides through it first. `-demoQuestions`: Auto
+/// asks who a few things are (the question cards in Activity).
 enum DemoCore {
     static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
@@ -35,7 +37,9 @@ enum DemoCore {
             approvalElsewhere: otherPhone,
             passkeys: !args.contains("-demoNoPasskeys"),
             passkeysOffline: args.contains("-demoPasskeysOffline"),
-            quiet: args.contains("-demoQuiet")
+            quiet: args.contains("-demoQuiet"),
+            autoSetupDone: !args.contains("-demoAutoSetup"),
+            questions: args.contains("-demoQuestions")
         )
     }
 }
@@ -127,6 +131,15 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var vault: [VaultItemDetail] = DemoReinsCore.demoVault
         var vaultSecrets: [String: String] = ["openai/password": "sk-demo-0000", "github/password": "hunter2"]
         var devices: [DeviceView] = DemoReinsCore.demoDevices
+        /// Auto's setup is done (`-demoAutoSetup`: not yet, so picking Auto guides through it first).
+        var autoDone = true
+        var matrixDecides = false
+        var world: [WorldItem] = DemoReinsCore.demoWorld
+        var matrix: [[CellChoice]] = DemoReinsCore.defaultMatrix
+        /// Auto's questions, open until answered or dismissed (`-demoQuestions`).
+        var questions: [AutoQuestion] = []
+        /// The requests "Ask me next time" was used on.
+        var askedNextTime: [String] = []
     }
 
     /// The passkey the demo account starts with.
@@ -145,7 +158,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
         keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
-        quiet: Bool = false
+        quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
@@ -180,6 +193,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.approvalElsewhere = approvalElsewhere
         s.passkeys = passkeys ? [Self.demoPasskey] : []
         s.passkeysOffline = passkeysOffline
+        s.autoDone = autoSetupDone
+        s.questions = questions && !quiet ? Self.demoQuestions(now) : []
         // `-demoTemporary` (screenshots): one temporary permission for me@gmail.com, as the Permissions board shows it.
         if ProcessInfo.processInfo.arguments.contains("-demoTemporary") {
             s.delegationRecords = [DelegationView(
@@ -1709,6 +1724,176 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if locked({ $0.overnightWhenRisky }) == risky { return }
         try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
         locked { $0.overnightWhenRisky = risky }
+    }
+
+    // ---- Auto's setup, the matrix and its questions (Decisions v2) ----------------------------------------------------
+
+    /// Mine is the most trusted zone, Outside the least: a move toward Mine loosens.
+    private static func trust(_ zone: ZoneChoice) -> Int {
+        switch zone {
+        case .mine: 0
+        case .friends: 1
+        case .work: 2
+        case .outside: 3
+        }
+    }
+
+    /// Auto lets most through, Ask the least.
+    private static func looseness(_ cell: CellChoice) -> Int {
+        switch cell {
+        case .auto: 0
+        case .askFirst: 1
+        case .ask: 2
+        }
+    }
+
+    static func zoneName(_ zone: ZoneChoice) -> String {
+        switch zone {
+        case .mine: "Mine"
+        case .friends: "Friends"
+        case .work: "Work"
+        case .outside: "Outside"
+        }
+    }
+
+    /// The zones in the core's order: the matrix's rows.
+    static let zones: [ZoneChoice] = [.mine, .friends, .work, .outside]
+
+    func autoSetup() async throws -> AutoSetup {
+        locked { s in
+            let matrix = Self.zones.enumerated().map { i, zone in
+                let names = s.world.filter { $0.zone == zone }
+                    .sorted { $0.count != $1.count ? $0.count > $1.count : $0.label < $1.label }
+                    .prefix(3)
+                    .map(\.label)
+                return MatrixRowView(zone: zone, cells: s.matrix[i], names: Array(names))
+            }
+            return AutoSetup(done: s.autoDone, matrixDecides: s.matrixDecides, world: s.world, matrix: matrix,
+                             questions: UInt32(Self.openQuestions(s).count))
+        }
+    }
+
+    /// As the core: toward Mine asks the owner first (a proposal counts as Outside until confirmed); toward Outside
+    /// needs nothing. Answers any question about it.
+    func setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck) async throws {
+        let current = locked { s in s.world.first { $0.kind == kind && $0.key == key && $0.confirmed }?.zone } ?? .outside
+        if Self.trust(zone) < Self.trust(current) {
+            try await Self.confirmOwner(owner, "Treat \(key) as \(Self.zoneName(zone))")
+        }
+        locked { s in
+            if let i = s.world.firstIndex(where: { $0.kind == kind && $0.key == key }) {
+                s.world[i].zone = zone
+                s.world[i].confirmed = true
+            } else {
+                s.world.append(WorldItem(kind: kind, key: key, label: key, service: Self.service(kind), zone: zone, confirmed: true, count: 0))
+            }
+            s.questions.removeAll { $0.kind == kind && $0.key == key }
+        }
+    }
+
+    /// As the core: looser asks the owner first; "Can't be undone" always asks.
+    func setMatrixCell(zone: ZoneChoice, level: UInt8, cell: CellChoice, owner: OwnerCheck) async throws {
+        guard level <= 3 else { throw CoreError.Invalid(reason: "a level is 0 to 3") }
+        if level == 3 && cell != .ask { throw CoreError.Invalid(reason: "what can't be undone always asks") }
+        let row = Self.zones.firstIndex(of: zone) ?? 3
+        let old = locked { $0.matrix[row][Int(level)] }
+        if Self.looseness(cell) < Self.looseness(old) {
+            try await Self.confirmOwner(owner, "Let Auto do more in \(Self.zoneName(zone))")
+        }
+        locked { $0.matrix[row][Int(level)] = cell }
+    }
+
+    /// As the core: after the owner confirms, every proposal is kept as shown, the setup is done and Auto is on.
+    func finishAutoSetup(owner: OwnerCheck) async throws {
+        try await Self.confirmOwner(owner, "Turn on Auto")
+        locked { s in
+            for i in s.world.indices { s.world[i].confirmed = true }
+            s.autoDone = true
+            s.apGlobal.mode = .auto
+            s.apGlobal.bypassUntil = nil
+            s.apGlobal.bypassSince = nil
+            s.apGlobal.overnightUntil = nil
+            s.apGlobal.overnightSince = nil
+            s.apGlobal.overnightReturn = nil
+        }
+    }
+
+    func setMatrixDecides(on: Bool, owner: OwnerCheck) async throws {
+        if on && !locked({ $0.matrixDecides }) {
+            try await Self.confirmOwner(owner, "Let the matrix decide")
+        }
+        locked { $0.matrixDecides = on }
+    }
+
+    /// Open questions about what is not confirmed yet, newest first.
+    private static func openQuestions(_ s: State) -> [AutoQuestion] {
+        s.questions
+            .filter { q in !s.world.contains { $0.kind == q.kind && $0.key == q.key && $0.confirmed } }
+            .sorted { $0.at != $1.at ? $0.at > $1.at : $0.id < $1.id }
+    }
+
+    func autoQuestions() async throws -> [AutoQuestion] {
+        locked { Self.openQuestions($0) }
+    }
+
+    /// As the core: anything but Outside asks the owner first.
+    func answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck) async throws {
+        guard let q = locked({ s in Self.openQuestions(s).first { $0.id == id } }) else { throw CoreError.NotFound }
+        try await setWorldZone(kind: q.kind, key: q.key, zone: zone, owner: owner)
+    }
+
+    func dismissAutoQuestion(id: String) async throws {
+        try locked { s in
+            guard s.questions.contains(where: { $0.id == id }) else { throw CoreError.NotFound }
+            s.questions.removeAll { $0.id == id }
+        }
+    }
+
+    /// Stricter only: no owner check. The demo keeps which requests it was used on.
+    func askMeNextTime(requestId: String) async throws {
+        locked { $0.askedNextTime.append(requestId) }
+    }
+
+    /// The section a kind of thing is listed in.
+    static func service(_ kind: FactChoice) -> String {
+        switch kind {
+        case .owner, .repo: "github"
+        case .domain, .person: "email"
+        case .chat: "messages"
+        case .host: "computers"
+        }
+    }
+
+    /// The core's default matrix (01 §4): rows Mine, Friends, Work, Outside; columns L0 to L3.
+    static let defaultMatrix: [[CellChoice]] = [
+        [.auto, .auto, .auto, .ask],
+        [.auto, .askFirst, .auto, .ask],
+        [.auto, .ask, .ask, .ask],
+        [.ask, .ask, .ask, .ask],
+    ]
+
+    /// The demo's world: some of it confirmed, the rest proposed.
+    static let demoWorld: [WorldItem] = [
+        WorldItem(kind: .owner, key: "dkat", label: "dkat", service: "github", zone: .mine, confirmed: true, count: 42),
+        WorldItem(kind: .owner, key: "acme", label: "acme", service: "github", zone: .work, confirmed: false, count: 14),
+        WorldItem(kind: .repo, key: "octo/app", label: "octo/app", service: "github", zone: .friends, confirmed: false, count: 3),
+        WorldItem(kind: .person, key: "me@gmail.com", label: "me@gmail.com", service: "email", zone: .mine, confirmed: true, count: 20),
+        WorldItem(kind: .domain, key: "corp.example", label: "corp.example", service: "email", zone: .work, confirmed: false, count: 9),
+        WorldItem(kind: .person, key: "anna@example.com", label: "anna@example.com", service: "email", zone: .friends, confirmed: false, count: 6),
+        WorldItem(kind: .chat, key: "family", label: "Family", service: "messages", zone: .friends, confirmed: false, count: 11),
+        WorldItem(kind: .host, key: "build.local", label: "build.local", service: "computers", zone: .mine, confirmed: true, count: 30),
+    ]
+
+    /// `-demoQuestions`: what Auto asked about while it ran in shadow.
+    static func demoQuestions(_ now: Int64) -> [AutoQuestion] {
+        [
+            AutoQuestion(id: "github:octo", kind: .owner, key: "octo", service: "github", connectionLabel: "Claude",
+                         requestId: "req-octo", at: now - 120, proposed: .outside),
+            AutoQuestion(id: "email:bob@acme.io", kind: .person, key: "bob@acme.io", service: "email", connectionLabel: "My ChatGPT",
+                         requestId: "req-bob", at: now - 600, proposed: .outside),
+            AutoQuestion(id: "computers:ci.acme.io", kind: .host, key: "ci.acme.io", service: "computers", connectionLabel: "Claude",
+                         requestId: nil, at: now - 3_600, proposed: .outside),
+        ]
     }
 
 

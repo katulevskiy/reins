@@ -32,7 +32,7 @@ use crate::auth::prompt::Prompter;
 use crate::config::{Config, Paths};
 use crate::guard::{GuardConfig, Match, OnNoAnswer};
 use crate::harness::Harness;
-use crate::journal::{Entry, Kind};
+use crate::journal::{Entry, Kind, Outcome};
 
 /// What the tool is about to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,6 +229,9 @@ pub struct GitHead {
     /// The remote a push with no repository argument uses, from `branch.<name>.remote`. `None`: git's own default,
     /// which is `origin`.
     pub remote: Option<String>,
+    /// Every remote's `url`, by name (one each; the configuration parsed cleanly, with no `pushurl`, `insteadOf` or
+    /// include anywhere).
+    pub remotes: std::collections::BTreeMap<String, String>,
 }
 
 /// Reads a small file of the repository (at most 64 KiB): `None` when it is not there or larger.
@@ -253,6 +256,7 @@ struct PushSettings {
     default: Option<String>,
     merge: Option<String>,
     remote: Option<String>,
+    remotes: std::collections::BTreeMap<String, String>,
 }
 
 /// Reads a git configuration file into `into`; `false` unless every line of it parses cleanly by the plain subset:
@@ -322,7 +326,13 @@ fn push_settings(text: &str, branch: &str, into: &mut PushSettings) -> bool {
         // a push URL, `pushInsteadOf`, a push remote, `remote.pushDefault`…) and nothing is reported.
         match (section.as_str(), key.as_str()) {
             ("push", "default") => into.default = Some(value.to_ascii_lowercase()),
-            ("remote", "url" | "fetch") if !sub.is_empty() => {}
+            ("remote", "url") if !sub.is_empty() => {
+                // one url per remote: a second (git pushes to every one) and nothing is reported
+                if into.remotes.insert(sub.clone(), value.to_owned()).is_some() {
+                    return false;
+                }
+            }
+            ("remote", "fetch") if !sub.is_empty() => {}
             ("branch", "remote" | "merge") if !sub.is_empty() => {
                 // a section of this branch only by case: which one git reads is not certain
                 if sub != branch && sub.eq_ignore_ascii_case(branch) {
@@ -375,7 +385,7 @@ pub fn git_head(cwd: &Path) -> Option<GitHead> {
 }
 
 /// [`git_head`], with the system's and the user's configuration files named (`globals`).
-fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> {
+pub(crate) fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> {
     let (top, dot) = cwd.ancestors().find_map(|d| {
         let dot = d.join(".git");
         dot.exists().then(|| (d.to_path_buf(), dot))
@@ -426,6 +436,7 @@ fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> 
         branch,
         default,
         remote: s.remote,
+        remotes: s.remotes,
     })
 }
 
@@ -725,25 +736,91 @@ pub async fn run(
         (Action::Command(c), Some(cwd)) if c.contains("push") => git_head(Path::new(cwd)),
         _ => None,
     };
-    // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
-    if question_in(&call, &config.guard, head.as_ref()).is_none() {
-        let (out, code) = render(&call, &Verdict::Unmatched);
-        return (out, code, None);
-    }
-    // The safety net, planned before asking, so the question names it and the approval covers the netted command.
-    let net = crate::nets::hook::plan(config, paths, &call, head.as_ref());
-    let Some((m, q)) = question_netted(&call, &config.guard, head.as_ref(), net.as_ref()) else {
-        let (out, code) = render(&call, &Verdict::Unmatched);
-        return (out, code, None);
-    };
-    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
-    let timeout = Duration::from_secs(config.guard.timeout_secs);
     let kind = match call.action {
         Action::Files {
             ..
         } => Kind::File,
         _ => Kind::Command,
     };
+    // Decisions v2: with `auto.matrix_decides` (and this computer's setup done), the matrix only adds asks: what the
+    // guard asks about is still asked, and what the matrix asks about is asked even with no guard rule. Without a
+    // reading in time, or with it off, the guard decides as before.
+    let decided = if config.auto.matrix_decides && config.auto.setup_done {
+        crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
+    } else {
+        None
+    };
+    let guarded = question_in(&call, &config.guard, head.as_ref()).is_some();
+    let mut matrix_asks = false;
+    if let Some((summary, shadow)) = &decided {
+        if shadow.outcome == reins_policy::matrix::Outcome::Deny {
+            let reason = format!("Reins: not allowed: {}", shadow.line);
+            let mut entry = Entry::new(kind, &action_line(&call))
+                .source(Some(harness.label()))
+                .decider(crate::journal::Decider::Settings)
+                .effects(Some(summary.clone()))
+                .matrix(Some(shadow.clone()));
+            entry.end(Outcome::Blocked, Some(&reason));
+            crate::journal::Journal::new(paths).record(&entry);
+            let (out, code) = render(&call, &Verdict::Deny(reason));
+            return (out, code, None);
+        }
+        matrix_asks = matches!(shadow.outcome, reins_policy::matrix::Outcome::Ask { .. });
+    }
+    // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
+    if !guarded && !matrix_asks {
+        let (out, code) = render(&call, &Verdict::Unmatched);
+        return (out, code, None);
+    }
+    // The safety net, planned before asking, so the question names it and the approval covers the netted command.
+    let net = crate::nets::hook::plan(config, paths, &call, head.as_ref());
+    let tool_input: Value = serde_json::from_slice::<Value>(input)
+        .ok()
+        .and_then(|v| match call.harness {
+            Harness::Cursor => None,
+            _ => v.get("tool_input").cloned(),
+        })
+        .unwrap_or(Value::Null);
+    // Only the matrix asks, and a net is planned: the matrix decides on the netted request (`NetPlan::after`, P3's
+    // levels). Auto there allows the netted request without the phone, when the net can be applied: the netted command
+    // handed back to a harness that takes it, or the file copies taken now. Otherwise it is asked as below.
+    if !guarded
+        && let (Some((summary, _)), Some(n)) = (&decided, &net)
+        && let Some(after) = crate::consequences::evaluate_netted(config, &call, &n.plan.after, harness.label())
+        && after.outcome == reins_policy::matrix::Outcome::Auto
+    {
+        let applied = match &n.rewritten {
+            Some(_) => crate::nets::hook::rewrites(call.harness, call.event),
+            None => crate::nets::hook::apply_files(config, paths, n).is_ok(),
+        };
+        if applied {
+            let mut reason = format!("Reins: allowed by Auto: {}.", after.line);
+            if n.rewritten.is_some() {
+                reason.push_str(" Reins keeps a copy of what it deletes.");
+            }
+            let mut entry = Entry::new(kind, &action_line(&call))
+                .source(Some(harness.label()))
+                .decider(crate::journal::Decider::Settings)
+                .effects(Some(summary.clone()))
+                .matrix(Some(after))
+                .nets(Some(crate::nets::hook::record(n)));
+            entry.end(Outcome::Allowed, Some(&reason));
+            crate::journal::Journal::new(paths).record(&entry);
+            let (out, code) = render_netted(&call, &Verdict::Allow(reason), n.rewritten.as_deref(), &tool_input);
+            return (out, code, None);
+        }
+    }
+    let question = if guarded {
+        question_netted(&call, &config.guard, head.as_ref(), net.as_ref())
+    } else {
+        decided.as_ref().and_then(|(_, shadow)| matrix_question(&call, &shadow.line, net.as_ref()))
+    };
+    let Some((m, q)) = question else {
+        let (out, code) = render(&call, &Verdict::Unmatched);
+        return (out, code, None);
+    };
+    log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
+    let timeout = Duration::from_secs(config.guard.timeout_secs);
     let entry =
         Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
     // stderr: the harness's log, and its transcript where it shows hook output.
@@ -753,7 +830,7 @@ pub async fn run(
     let mut v = verdict(answer, timed_out, config.guard.on_no_answer);
     // The net, applied only when the request is allowed: file copies now (right before the tool runs), the netted
     // command handed back to the harness. A copy that can't be taken leaves the request as approved, without its net:
-    // in P3 the guard decides, so the approval never depended on the net. Activity says so.
+    // the approval was for the request at its own level, so it never depended on the net. Activity says so.
     let mut applied = None;
     let mut net_failed = None;
     if let (Verdict::Allow(_), Some(n)) = (&v, &net) {
@@ -769,27 +846,81 @@ pub async fn run(
     if let Some(e) = &net_failed {
         tell(&format!("Reins couldn't keep a copy ({e}); it runs without one."));
     }
-    let tool_input: Value = serde_json::from_slice::<Value>(input)
-        .ok()
-        .and_then(|v| match call.harness {
-            Harness::Cursor => None,
-            _ => v.get("tool_input").cloned(),
-        })
-        .unwrap_or(Value::Null);
     let rewritten = applied.as_ref().and(net.as_ref()).and_then(|n| n.rewritten.as_deref());
     if let (Verdict::Allow(reason), Some(_)) = (&mut v, rewritten) {
         reason.push_str(" Reins keeps a copy of what it deletes.");
     }
     let (out, code) = render_netted(&call, &v, rewritten, &tool_input);
-    // What it does, for Activity (Decisions v2 P1: shown, never deciding): read only once the verdict is fixed, on
+    // What it does and what the matrix says of it, for Activity: read only once the verdict is fixed (in shadow), on
     // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
-    if let Some(effects) = crate::consequences::guarded_action(config, &call.action, call.cwd.as_deref(), head.as_ref())
-    {
-        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)).nets(applied));
+    let reading = decided.or_else(|| {
+        crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
+    });
+    if let Some((effects, shadow)) = reading {
+        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)).matrix(Some(shadow)).nets(applied));
     } else if applied.is_some() {
         crate::journal::Journal::new(paths).record(&entry.nets(applied));
     }
     (out, code, None)
+}
+
+/// What an action is, on one line, for an Activity entry the phone never saw.
+fn action_line(call: &HookCall) -> String {
+    let who = call.harness.label();
+    match &call.action {
+        Action::Command(c) => format!("{who} ran: {}", c.split_whitespace().collect::<Vec<_>>().join(" ")),
+        Action::Files {
+            write,
+            paths,
+        } => format!(
+            "{who} {} {}",
+            if *write {
+                "changed"
+            } else {
+                "read"
+            },
+            paths.join(", ")
+        ),
+        Action::Other => format!("{who} used a tool"),
+    }
+}
+
+/// The question for something the matrix asks about that no guard rule matches.
+fn matrix_question(call: &HookCall, line: &str, net: Option<&crate::nets::hook::HookNet>) -> Option<(Match, Question)> {
+    let who = call.harness.label();
+    let (question, mut detail) = match &call.action {
+        Action::Command(c) => {
+            let one_line = c.split_whitespace().collect::<Vec<_>>().join(" ");
+            (format!("{who} wants to run: {one_line}"), format!("Command:\n{c}"))
+        }
+        Action::Files {
+            write,
+            paths,
+        } => {
+            let verb = if *write {
+                "change"
+            } else {
+                "read"
+            };
+            (format!("{who} wants to {verb} {}", paths.join(", ")), format!("Files:\n{}", paths.join("\n")))
+        }
+        Action::Other => return None,
+    };
+    if let Some(rewritten) = net.and_then(|n| n.rewritten.as_deref()) {
+        let _infallible = write!(detail, "\n\nNetted command:\n{rewritten}");
+    }
+    if let Some(cwd) = &call.cwd {
+        let _infallible = write!(detail, "\n\nIn: {cwd}");
+    }
+    let detail = format!("Auto: {line}\n\n{detail}");
+    let m = Match {
+        pattern: "auto".to_owned(),
+        topic: "auto".to_owned(),
+        matched: line.to_owned(),
+    };
+    let mut q = Question::new(&question, Some(&detail), None).ok()?;
+    q.net = net.map(crate::nets::hook::question_net);
+    Some((m, q))
 }
 
 #[cfg(test)]
@@ -953,6 +1084,7 @@ mod tests {
                 branch: Some("feature/x".into()),
                 default: Some("live".into()),
                 remote: None,
+                remotes: [("origin".to_owned(), "git@github.com:me/app.git".to_owned())].into(),
             }
         );
         // detached: no branch
@@ -1050,6 +1182,7 @@ mod tests {
                 branch: Some("feature/y".into()),
                 default: Some("main".into()),
                 remote: None,
+                remotes: [("origin".to_owned(), "git@github.com:me/app.git".to_owned())].into(),
             }
         );
         // `branch.<name>.remote` is where a push with no repository argument goes. Only origin matches the default
@@ -1083,6 +1216,7 @@ mod tests {
             branch: Some("feature/x".into()),
             default: Some("live".into()),
             remote: None,
+            ..GitHead::default()
         };
         let lines = reported_lines("git push --force origin HEAD", &head);
         let command = lines.iter().position(|l| l == "Command:").unwrap();
@@ -1114,11 +1248,13 @@ mod tests {
             branch: Some("main".into()),
             default: Some("decoy".into()),
             remote: None,
+            ..GitHead::default()
         };
         let feature = GitHead {
             branch: Some("feature/x".into()),
             default: Some("live".into()),
             remote: None,
+            ..GitHead::default()
         };
         let upstream = GitHead {
             remote: Some("upstream".into()),

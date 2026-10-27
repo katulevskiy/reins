@@ -60,6 +60,7 @@
     "192.168.1.1",
     "reins"
   ],
+  "origin": "github.com/dkat/reins",
   "default_branch": "main",
   "env": {
     "PATH": "/home/user/.cargo/bin:/usr/local/bin:/usr/bin:/bin",

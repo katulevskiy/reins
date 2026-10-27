@@ -473,6 +473,10 @@ pub struct Config {
     pub workspace: WorkspaceConfig,
     /// Safety nets (`[nets]`): the Reins trash, git backup refs and file copies for what agents run here.
     pub nets: NetsConfig,
+    /// Auto on this computer (`[auto]`): the facts it zones requests with, its matrix, and whether the matrix decides.
+    /// Left out of a written configuration while it is the default.
+    #[serde(skip_serializing_if = "AutoConfig::is_default")]
+    pub auto: AutoConfig,
 }
 
 /// `[nets]`: safety nets for approved commands and file changes (`docs/design/decisions-v2/01-decision-engine.md` §5).
@@ -491,6 +495,38 @@ impl Default for NetsConfig {
         Self {
             enabled: true,
             snapshot_max_bytes: 8 << 20,
+        }
+    }
+}
+
+/// `[auto]`: Decisions v2 on this computer (`docs/design/decisions-v2/08-review-resolutions.md` R1: the engine and
+/// the context graph run where the facts are). Off (`matrix_decides = false`) the matrix only runs in shadow: what it
+/// would decide is kept on the Activity entry and the guard decides as before.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AutoConfig {
+    /// The matrix decides hook requests (Auto: allowed without the phone; Ask: asked even without a guard rule).
+    pub matrix_decides: bool,
+    /// The owner went through this computer's setup.
+    pub setup_done: bool,
+    /// Zones of GitHub owners, repositories and hosts, as the owner set them here.
+    pub facts: reins_policy::context::Facts,
+    pub matrix: reins_policy::matrix::Matrix,
+}
+
+impl AutoConfig {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The snapshot hook requests are evaluated against: these facts and this matrix, no rules.
+    #[must_use]
+    pub fn snapshot(&self) -> reins_policy::matrix::Snapshot {
+        reins_policy::matrix::Snapshot {
+            matrix: self.matrix.clone(),
+            facts: self.facts.clone(),
+            ..reins_policy::matrix::Snapshot::default()
         }
     }
 }
@@ -543,6 +579,7 @@ impl Default for Config {
             profiles: Vec::new(),
             workspace: WorkspaceConfig::default(),
             nets: NetsConfig::default(),
+            auto: AutoConfig::default(),
         }
     }
 }

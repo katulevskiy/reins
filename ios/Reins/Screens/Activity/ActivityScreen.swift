@@ -341,11 +341,19 @@ struct ActivityScreen: View {
             NewAccountActivity(connectComputer: { model.openSheet(.connectComputer) }, connectAi: copyAddress)
                 .padding(.top, wallpaper ? 337 : 120)
         } else {
-            if !model.pending.isEmpty {
-                WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
-                    .padding(.top, wallpaper ? 70 : 14)
-                    .padding(.bottom, wallpaper ? 10 : 0)
-                    .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
+            if !model.pending.isEmpty || !model.autoQuestions.isEmpty {
+                // What waits, then what Auto asks (`QuestionCards`).
+                VStack(spacing: 10) {
+                    if !model.pending.isEmpty {
+                        WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
+                            .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
+                    }
+                    if !model.autoQuestions.isEmpty {
+                        QuestionCards(questions: model.autoQuestions)
+                    }
+                }
+                .padding(.top, wallpaper ? 70 : 14)
+                .padding(.bottom, wallpaper ? 10 : 0)
             } else if let missing = missingHalf {
                 ActionSlotCard(missing: missing, connect: copyAddress, scan: { model.openSheet(.connectComputer) }, typeCode: { model.openSheet(.connectComputer) })
                     .padding(.top, 70)

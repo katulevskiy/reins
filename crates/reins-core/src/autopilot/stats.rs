@@ -126,6 +126,7 @@ mod tests {
                 at: 0,
             }),
             risk: None,
+            matrix: None,
         }
     }
 

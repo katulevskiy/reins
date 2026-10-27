@@ -157,6 +157,9 @@ pub struct Entry {
     /// The safety net applied to it (Decisions v2 P3): what was kept, and the id `reins net restore` takes.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub nets: Option<NetRecord>,
+    /// What the matrix decided on this computer, or would have decided in shadow (Decisions v2).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub matrix: Option<crate::consequences::Shadow>,
 }
 
 /// A safety net applied to a request, as Activity shows it ("Netted · Restore").
@@ -273,6 +276,7 @@ impl Entry {
             leaning: None,
             effects: None,
             nets: None,
+            matrix: None,
         }
     }
 
@@ -322,6 +326,13 @@ impl Entry {
     #[must_use]
     pub fn nets(mut self, nets: Option<NetRecord>) -> Self {
         self.nets = nets;
+        self
+    }
+
+    /// What the matrix said (see [`Entry::matrix`]).
+    #[must_use]
+    pub fn matrix(mut self, matrix: Option<crate::consequences::Shadow>) -> Self {
+        self.matrix = matrix;
         self
     }
 
@@ -666,10 +677,19 @@ mod tests {
             reins_policy::effects::Workspace::standard("/home/me"),
         );
         let summary = reins_policy::effects::analyze_command("rm -rf target", &ctx).summary();
-        let e = Entry::new(Kind::Command, "rm").effects(Some(summary.clone()));
+        let shadow = crate::consequences::Shadow {
+            outcome: reins_policy::matrix::Outcome::Auto,
+            zone: reins_policy::context::Zone::Mine,
+            level: reins_policy::effects::Level::L0,
+            line: "Auto · Mine · Undoable".to_owned(),
+            snapshot: "ab".repeat(32),
+            decided: false,
+        };
+        let e = Entry::new(Kind::Command, "rm").effects(Some(summary.clone())).matrix(Some(shadow.clone()));
         j.record(&e);
         let read = read(&paths, 10, i64::MAX);
         assert_eq!(read[0].effects.as_ref(), Some(&summary));
+        assert_eq!(read[0].matrix.as_ref(), Some(&shadow));
         // A line from before effects, and one whose effects a newer app wrote in another shape.
         let old: Entry =
             serde_json::from_str(r#"{"id":"a","at":1,"kind":"ask","what":"x","outcome":"approved"}"#).unwrap();
@@ -679,6 +699,12 @@ mod tests {
         )
         .unwrap();
         assert!(newer.effects.is_none());
+        assert!(old.matrix.is_none());
+        let odd: Entry = serde_json::from_str(
+            r#"{"id":"a","at":1,"kind":"ask","what":"x","outcome":"approved","matrix":{"outcome":"maybe"}}"#,
+        )
+        .unwrap();
+        assert!(odd.matrix.is_none(), "a newer shape is dropped, not an error");
     }
 
     #[test]
