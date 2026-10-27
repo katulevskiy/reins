@@ -946,9 +946,10 @@ struct BypassLiveViews {
         return "\(name) on · \(state.scope)"
     }
 
-    var line: String { overnight ? AutopilotText.overnightText(scope: state.scope) : AutopilotText.bypassStillAsks }
-
     var approved: String { state.approvedCount == 0 ? "Nothing approved yet" : "\(state.approvedCount) approved so far" }
+
+    /// Under an ended one's heading: what it let through.
+    var endedLine: String { state.approvedCount == 0 ? "Nothing was approved" : "\(state.approvedCount) approved" }
 
     @ViewBuilder func timer(size: CGFloat, color: Color) -> some View {
         if untilOff {
@@ -981,11 +982,12 @@ struct BypassLiveViews {
         .buttonStyle(.plain)
     }
 
-    /// The Lock Screen's card, well inside the system's 160 pt (about 120): the heading row, the countdown with Stop
-    /// beside it, then the line. Taller content is cut off at the top by the system.
+    /// The Lock Screen's card, well inside the system's 160 pt (about 110): the heading row, then the countdown with
+    /// Stop beside it. What a bypass still asks is the Bypass sheet's, in the app. Taller content is cut off at the top
+    /// by the system.
     var lockScreen: some View {
         let ink: Color = ended ? Palette.ink : Palette.onField
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 FixedModeGlyph(mode: mode, size: 16)
                 Text(heading).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
@@ -1001,13 +1003,12 @@ struct BypassLiveViews {
             }
             if !ended {
                 HStack(alignment: .center, spacing: 12) {
-                    timer(size: 36, color: ink)
+                    timer(size: 40, color: ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     stop(island: false)
                 }
-                Text(line).font(RFont.fixedSans(12)).foregroundStyle(ink.opacity(0.82)).lineLimit(1).minimumScaleFactor(0.85)
             } else {
-                Text(line).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(2)
+                Text(endedLine).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(1)
             }
         }
         .foregroundStyle(ink)
