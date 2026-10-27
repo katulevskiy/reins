@@ -563,10 +563,11 @@ struct AskMeNextTimeDock: View {
 
 @MainActor
 enum AskMeNextTime {
-    /// The request an entry was: the approval it kept says. nil for an entry without one (an older entry, or one
-    /// decided on another device). The demo has no kept approvals for its seeded history, so it names one.
+    /// The request an entry was: its Autopilot note says, else the approval it kept. nil for an older entry without
+    /// either. The demo has no kept approvals for its seeded history, so it names one.
     static func requestId(_ entry: ActivityEntry, model: AppModel) async -> String? {
         guard MatrixLook.asksNextTime(entry) else { return nil }
+        if let id = entry.autopilot?.requestId, !id.isEmpty { return id }
         if let shown = try? await model.core.activityApproval(entryId: entry.id) { return shown.requestId }
         return model.demo ? "entry-\(entry.id)" : nil
     }

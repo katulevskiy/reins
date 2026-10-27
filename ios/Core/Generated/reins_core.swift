@@ -10065,7 +10065,8 @@ public struct AutoSetup: Equatable, Hashable {
      */
     public var done: Bool
     /**
-     * The matrix decides (else it runs in shadow: what it would decide is recorded on each entry).
+     * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+     * decide is recorded on each entry).
      */
     public var matrixDecides: Bool
     public var world: [WorldItem]
@@ -10082,7 +10083,8 @@ public struct AutoSetup: Equatable, Hashable {
          * The owner finished the setup: turning on Auto no longer guides first.
          */done: Bool, 
         /**
-         * The matrix decides (else it runs in shadow: what it would decide is recorded on each entry).
+         * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+         * decide is recorded on each entry).
          */matrixDecides: Bool, world: [WorldItem], matrix: [MatrixRowView], 
         /**
          * Open "Auto needs information" questions.
@@ -10177,6 +10179,10 @@ public struct AutopilotNote: Equatable, Hashable {
      * What the matrix decided, or would have decided in shadow (Decisions v2).
      */
     public var matrix: MatrixView?
+    /**
+     * The request it was about ("Ask me next time" takes it).
+     */
+    public var requestId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10198,7 +10204,10 @@ public struct AutopilotNote: Equatable, Hashable {
          */risk: RiskView? = nil, 
         /**
          * What the matrix decided, or would have decided in shadow (Decisions v2).
-         */matrix: MatrixView? = nil) {
+         */matrix: MatrixView? = nil, 
+        /**
+         * The request it was about ("Ask me next time" takes it).
+         */requestId: String = "") {
         self.mode = mode
         self.suggested = suggested
         self.pApprove = pApprove
@@ -10211,6 +10220,7 @@ public struct AutopilotNote: Equatable, Hashable {
         self.correctable = correctable
         self.risk = risk
         self.matrix = matrix
+        self.requestId = requestId
     }
 
     
@@ -10240,7 +10250,8 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
                 reason: FfiConverterString.read(from: &buf), 
                 correctable: FfiConverterBool.read(from: &buf), 
                 risk: FfiConverterOptionTypeRiskView.read(from: &buf), 
-                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf)
+                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf), 
+                requestId: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -10257,6 +10268,7 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
         FfiConverterBool.write(value.correctable, into: &buf)
         FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
         FfiConverterOptionTypeMatrixView.write(value.matrix, into: &buf)
+        FfiConverterString.write(value.requestId, into: &buf)
     }
 }
 
