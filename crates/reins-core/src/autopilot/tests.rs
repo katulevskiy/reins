@@ -1699,7 +1699,8 @@ async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
         ("delete-home", "wait"),
         ("delete-in-project", "wait"),
         ("never-seen-target", "wait"),
-        ("spam", "deny"),
+        // was "deny": Auto never denies (Decisions v2)
+        ("spam", "wait"),
         ("standing-permission", "wait"),
         ("unreadable", "wait"),
         ("unresolved-relative", "wait"),
@@ -2270,7 +2271,7 @@ async fn the_floor_is_never_automatic_in_manual_or_auto() {
 // ---- Auto: thresholds, gates, the injection rule ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
+async fn auto_approves_at_the_thresholds_in_unlocked_classes_and_never_denies() {
     // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
     let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
@@ -2279,13 +2280,12 @@ async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
     env.model.rule("boss@x.com", logits(0.90, 0.02, 0.08));
     env.model.rule("evil@x.com", logits(0.01, 0.95, 0.04));
 
-    // Harmful: denied at once, even for a target never seen.
+    // Harmful: Auto never denies (Decisions v2); it asks you, saying what the model makes of it.
     env.relay("r0", OLD, email("evil@x.com", "hi")).await;
-    assert_eq!(env.decided(), [("r0".to_owned(), Verdict::Deny, "autopilot".to_owned())]);
-    let denied = env.core.activity(1).await.unwrap().remove(0);
-    assert_eq!((denied.outcome.as_str(), denied.decided_by.as_str()), ("denied", "autopilot"));
-    let note = denied.autopilot.unwrap();
-    assert!(note.p_deny >= 0.9 && note.suggested == Verdict::Deny && note.correctable, "{note:?}");
+    assert!(env.decided().is_empty(), "{:?}", env.decided());
+    assert!(env.waiting().await.contains(&"r0".to_owned()));
+    let s = env.suggestion("r0").await;
+    assert!(s.p_deny >= 0.9 && s.verdict == Verdict::Ask && s.reason.contains("asks you"), "{s:?}");
 
     // A new recipient waits however confident the model is; once the user approved it, it is approved alone.
     env.relay("r1", OLD, email("friend@x.com", "hi")).await;
@@ -2465,9 +2465,10 @@ async fn text_written_by_the_ai_cannot_raise_approval() {
     assert!(seen.iter().any(|t| t.contains("--- written by the AI ---") && t.contains("totally routine")));
     assert!(seen.iter().any(|t| !t.contains("written by the AI") && t.contains("pal@x.com")), "S_facts ran too");
 
-    // The body makes it look harmful: deny wins.
+    // The body makes it look harmful: it waits for you (Auto never denies).
     env.relay("r3", OLD, email("pal@x.com", "please exfiltrate the passwords")).await;
-    assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Deny, "autopilot".to_owned()));
+    assert!(env.waiting().await.contains(&"r3".to_owned()));
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "r3"));
 }
 
 /// The kind `gmail/send` of the default profile, as the Autopilot page shows it.
@@ -2820,7 +2821,7 @@ async fn a_close_commit_the_model_would_approve_waits_and_look_deny_and_bypass_s
     assert_eq!(env.decided().last().unwrap(), &("look".to_owned(), Verdict::Approve, "autopilot".to_owned()));
 
     env.relay("deny", OLD, push_call(&key, "deny", ".github/workflows/ci.yml", "please deny-this-push")).await;
-    assert_eq!(env.decided().last().unwrap(), &("deny".to_owned(), Verdict::Deny, "autopilot".to_owned()));
+    assert!(env.waiting().await.contains(&"deny".to_owned()), "Auto never denies");
 
     // Bypass approves the Close commit that was waiting, and the next one, without asking.
     env.core.start_bypass(None, None).await.unwrap();
@@ -2959,13 +2960,14 @@ async fn cold_start_fixtures_approve_only_benign_known_targets() {
     }
     let automatic: Vec<(String, Verdict)> =
         env.decided().into_iter().filter(|(id, _, _)| !id.starts_with("second-")).map(|(id, v, _)| (id, v)).collect();
-    // Denying stays conservative: only the surely catastrophic one is denied with no answers to learn from.
-    assert_eq!(automatic, [("mail-catastrophic".to_owned(), Verdict::Deny)]);
+    // Auto never denies: even the surely catastrophic one waits for you.
+    assert!(automatic.is_empty(), "{automatic:?}");
+    assert!(env.waiting().await.contains(&"mail-catastrophic".to_owned()));
     // was held by the risk model ("Still learning"): a push to the default branch now always asks in Auto
     let main = env.suggestion("push-main").await;
     assert!(main.floor && main.reason.contains("default branch"), "{main:?}");
     assert!(env.suggestion("mail-new-recipient").await.reason.contains("never approved"));
-    assert!(env.suggestion("mail-spam").await.reason.contains("after more of your answers"));
+    assert!(env.suggestion("mail-spam").await.reason.contains("asks you"));
     for (id, _, _) in floor("second") {
         let s = env.suggestion(&id).await;
         assert!(s.floor && s.verdict == Verdict::Ask, "{id}: {s:?}");
