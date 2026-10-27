@@ -16,6 +16,7 @@
 //! [github]
 //! app_id = 12345
 //! installation_id = 67890
+//! owner = "acme"
 //! private_key = { file = "/etc/reins-executor/github-app.pem" }
 //!
 //! [google]
@@ -72,6 +73,8 @@ pub struct PinsConfig {
 pub struct GithubConfig {
     pub app_id: u64,
     pub installation_id: u64,
+    /// The installation's account (the org's GitHub login): only its repositories are served.
+    pub owner: String,
     /// The App's private key (PEM, PKCS#1 as GitHub hands it out, or PKCS#8).
     pub private_key: SecretSource,
     #[serde(default = "github_api")]
@@ -204,7 +207,7 @@ state_dir = "/s"
             public: [3; 32],
         };
         let text = format!(
-            "{BASE}\n[pins]\nissuer = \"{}\"\ndecision = \"{}\"\n\n[github]\napp_id = 1\ninstallation_id = 2\n\
+            "{BASE}\n[pins]\nissuer = \"{}\"\ndecision = \"{}\"\n\n[github]\napp_id = 1\ninstallation_id = 2\nowner = \"acme\"\n\
              private_key = {{ file = \"/etc/app.pem\" }}\n\n[google]\nservice_account = {{ env = \"SA\" }}\n",
             pin_text(&key),
             pin_text(&key),

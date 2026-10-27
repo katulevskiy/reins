@@ -170,7 +170,7 @@ impl Context {
         ctx.max_roster_age_secs = cfg.max_roster_age_secs;
         if let Some(gh) = &cfg.github {
             let pem = gh.private_key.read()?;
-            ctx = ctx.with_github(GithubApp::new(gh.app_id, gh.installation_id, &pem, &gh.api_base)?);
+            ctx = ctx.with_github(GithubApp::new(gh.app_id, gh.installation_id, &gh.owner, &pem, &gh.api_base)?);
         }
         if let Some(g) = &cfg.google {
             let key = g.service_account.read()?;
@@ -464,13 +464,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)
             .await;
+        crate::connectors::github::tests::repo_mocks(&server).await;
         let key = Arc::new(Ed25519KeyPair::from_seed_unchecked(&[8; 32]).unwrap());
         let executor_public = key.public_key().as_ref().to_vec();
         let client = Client::new(&server.uri(), ORG, "ex-1", key).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let ctx = Context::new(client, f.pins(), dir.path())
             .unwrap()
-            .with_github(GithubApp::new(123, 77, &test_pem(), &server.uri()).unwrap());
+            .with_github(GithubApp::new(123, 77, "acme", &test_pem(), &server.uri()).unwrap());
         World {
             server,
             ctx,
@@ -618,10 +619,11 @@ mod tests {
         assert_eq!(opener.open(sealed).unwrap().as_slice(), b"ghs_t");
         assert_eq!(r.result["expires_at"], f.lease_job(&box_key).lease.unwrap().expires_at);
         assert_eq!(w.ctx.leases.tokens("ls_1")[0].token, "ghs_t");
-        let minted = &hits(&w.server, "POST", "/app/installations/77/access_tokens").await[0];
+        // Minted for exactly the countersigned repository's id (after a metadata-only lookup).
+        let minted = &hits(&w.server, "POST", "/app/installations/77/access_tokens").await[1];
         assert_eq!(
             serde_json::from_slice::<Value>(&minted.body).unwrap(),
-            json!({"repositories": ["api"], "permissions": {"contents": "read"}})
+            json!({"repository_ids": [101], "permissions": {"contents": "read"}})
         );
 
         // Deprovisioned: the server lists the lease; the executor revokes the token upstream and says so.
@@ -640,9 +642,10 @@ mod tests {
             .await;
         let stats = run_once(&w.ctx).await.unwrap();
         assert_eq!(stats.revoked, 1);
+        // The lookup token was revoked at once; the lease's token now.
         let deleted = hits(&w.server, "DELETE", "/installation/token").await;
-        assert_eq!(deleted.len(), 1);
-        assert_eq!(deleted[0].headers.get("authorization").unwrap(), "Bearer ghs_t");
+        assert_eq!(deleted.len(), 2);
+        assert!(deleted.iter().all(|d| d.headers.get("authorization").unwrap() == "Bearer ghs_t"));
         assert!(w.ctx.leases.tokens("ls_1").is_empty());
         // A lease it never issued is not acknowledged.
         assert!(hits(&w.server, "POST", "/reins/org-exec/revoked/ls_other").await.is_empty());
