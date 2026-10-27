@@ -16,6 +16,7 @@
 #![allow(dead_code)] // O1 wiring in progress: the routes and console use these.
 
 pub mod admin;
+pub mod api;
 pub mod deprovision;
 pub mod dns;
 pub mod gate;
@@ -49,7 +50,7 @@ pub fn routes() -> Vec<Route> {
     if !enabled() {
         return Vec::new();
     }
-    Vec::new()
+    api::routes()
 }
 
 /// Why an org operation was refused. The texts are shown to admins as they are, so they never name a non-member.

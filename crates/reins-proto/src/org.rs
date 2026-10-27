@@ -457,6 +457,17 @@ pub struct EnrollmentRequest {
     #[serde(default)]
     pub attestations: Vec<Attestation>,
     pub posture: Posture,
+    /// The device key's signature over [`enrollment_message`] of the challenge (ECDSA P-256 with SHA-256, DER, base64):
+    /// proof that the phone holds the key it enrolls.
+    pub signature: String,
+}
+
+/// What the device key signs to enroll: a fixed context and the challenge.
+#[must_use]
+pub fn enrollment_message(challenge: &str) -> Vec<u8> {
+    let mut m = b"reins/org-enroll/v1\n".to_vec();
+    m.extend_from_slice(challenge.as_bytes());
+    m
 }
 
 /// The only key algorithm enrolled in O1.
@@ -472,6 +483,9 @@ impl EnrollmentRequest {
         }
         if self.device_key.is_empty() || self.device_key.len() > 512 {
             return Err("The device key is missing or too long");
+        }
+        if self.signature.is_empty() || self.signature.len() > 256 {
+            return Err("The enrollment is not signed by the device key");
         }
         if self.attestations.len() > MAX_ATTESTATIONS
             || self.attestations.iter().any(|a| a.data.len() > MAX_ATTESTATION_CHARS)
@@ -911,6 +925,7 @@ mod tests {
                 app_version: "1.4.0".to_owned(),
                 collected_at: 1,
             },
+            signature: "MEUC".to_owned(),
         }
     }
 
@@ -929,6 +944,10 @@ mod tests {
         let mut e = enrollment();
         e.key_algorithm = "rsa".to_owned();
         assert!(e.validate().is_err());
+        let mut e = enrollment();
+        e.signature.clear();
+        assert!(e.validate().is_err());
+        assert_eq!(enrollment_message("abc"), b"reins/org-enroll/v1\nabc");
         let mut e = enrollment();
         e.posture.os_version = "1\n2".to_owned();
         assert!(e.validate().is_err());
