@@ -12,6 +12,8 @@ enum DeepLink: Equatable {
     /// A computer's pairing code ("BCDF-GHJK"), to redeem and answer in the pairing sheet.
     case pair(code: String)
     case home
+    /// A work profile's org reviews (Settings > Reviews).
+    case orgReviews
 
     static let scheme = "reins"
 
@@ -37,6 +39,8 @@ enum DeepLink: Equatable {
             c.queryItems = [URLQueryItem(name: "code", value: code)]
         case .home:
             c.host = "home"
+        case .orgReviews:
+            c.host = "org-reviews"
         }
         return c.url!
     }
@@ -64,6 +68,7 @@ enum DeepLink: Equatable {
             guard let code = query["code"].flatMap(PairingCode.normalize) else { return nil }
             self = .pair(code: code)
         case "home": self = .home
+        case "org-reviews": self = .orgReviews
         default: return nil
         }
     }

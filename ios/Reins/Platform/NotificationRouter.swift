@@ -90,6 +90,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             category(.autopilot, [report]),
             category(.grant),
             category(.status),
+            category(.orgReview),
         ]
     }
 
@@ -156,7 +157,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                         }
                     }
                     completionHandler([])
-                case .status:
+                case .status, .orgReview:
                     completionHandler([.banner, .list])
                 case .autopilot, .grant, .deciding, nil:
                     completionHandler([])
@@ -183,6 +184,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if owner != WorkProfiles.active.id {
                 if action == UNNotificationDefaultActionIdentifier, let owner,
                    (try? WorkProfiles.registry().list().contains { $0.id == owner }) == true {
+                    // An org review opens that profile's reviews once it is shown.
+                    if payload?.kind == PushPayload.orgReview { ProfileSwitch.then = .orgReviews }
                     ProfileSwitch.switchTo(owner)
                 }
                 completionHandler()
