@@ -59,6 +59,18 @@ pub mod contexts {
     pub const HANDOVER_POLICY_SUPPORT: &str = "reins/handover-policy-support/v1";
     /// One event of an organization's admin log, chained to the one before ([`crate::org::event_hash`]).
     pub const ORG_EVENT: &str = "reins/org-event/v1";
+    /// A Managed request's digest ([`crate::managed::request_digest`]).
+    pub const ORG_REQUEST: &str = "reins/org-request/v1";
+    /// A reviewer's decision, signed by their enrolled device ([`crate::managed::review_message`]).
+    pub const ORG_REVIEW: &str = "reins/org-review/v1";
+    /// A pending admin change's digest ([`crate::managed::change_digest`]).
+    pub const ORG_CHANGE: &str = "reins/org-change/v1";
+    /// A body signed by an org key or an executor ([`crate::managed::envelope_message`]).
+    pub const ORG_ENVELOPE: &str = "reins/org-envelope/v1";
+    /// An executor's call to the server ([`crate::managed::exec_request_message`]).
+    pub const ORG_EXEC: &str = "reins/org-exec/v1";
+    /// A member's own policy, signed by their device ([`crate::managed::member_policy_message`]).
+    pub const ORG_MEMBER_POLICY: &str = "reins/org-member-policy/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,
