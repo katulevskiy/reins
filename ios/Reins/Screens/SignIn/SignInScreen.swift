@@ -291,6 +291,7 @@ private struct WelcomeArt: View {
                     .scaledToFill()
                     .frame(width: geo.size.width, height: 620, alignment: .top)
                     .clipped()
+                    .backdropArt(key: "welcome-\(scheme == .dark ? "dark" : "light")", image: image, dark: scheme == .dark)
             }
         }
         .frame(height: 620)

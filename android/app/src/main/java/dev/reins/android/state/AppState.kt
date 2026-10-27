@@ -12,8 +12,11 @@ import dev.reins.core.GrantView
 import dev.reins.core.McpServerView
 import dev.reins.core.PendingItem
 import dev.reins.core.SessionInfo
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
@@ -315,6 +318,20 @@ class AppState {
     /** An answer given at once on screen did not go through: [id]'s card may come back with the next refresh. */
     fun restorePending(id: String) {
         synchronized(answered) { answered.remove(id) }
+    }
+
+    private val _autoDecided = MutableSharedFlow<String>(extraBufferCapacity = ANSWERED_KEPT)
+
+    /** Requests a bypass, Lockdown, Overnight or Autopilot decided: an ask still open on one closes (`AppViewModel`). */
+    val autoDecided: SharedFlow<String> = _autoDecided.asSharedFlow()
+
+    /**
+     * A mode or Autopilot decided [id]: like an answer, it leaves the list at once and stays out of it, even from a
+     * refresh that read the list a moment before the decision, so it never pops up or counts as waiting again.
+     */
+    fun markAutoDecided(id: String) {
+        removePending(id)
+        _autoDecided.tryEmit(id)
     }
 
     /** The user answered [id]: its card goes at once, without waiting for the refresh behind it. */

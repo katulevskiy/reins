@@ -142,6 +142,15 @@ final class AppModel {
     private(set) var autopilot: AutopilotSettings?
     private(set) var seenActivityId: Int64 = 0
     /// The server said another phone became the approval device.
+    /// `-demoReplaced` (screenshots): the demo as if another phone had become the approval device.
+    static var demoReplaced: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-demo") && ProcessInfo.processInfo.arguments.contains("-demoReplaced")
+        #else
+        false
+        #endif
+    }
+
     private(set) var deviceReplaced = false
     /// This phone currently receives approval requests.
     private(set) var approvalDevice = false
@@ -220,6 +229,9 @@ final class AppModel {
     private(set) var newGrantToken = 0
     /// Items already popped up once; dismissing one leaves it in the list without popping up again.
     private var presented: Set<String> = []
+    /// Requests a bypass, Lockdown, Overnight or Autopilot decided lately: kept out of `pending` even by a read made a
+    /// moment before the decision (`AskGate`).
+    private var autoDecided: [String] = []
 
     // MARK: Lifecycle
 
@@ -346,6 +358,7 @@ final class AppModel {
         seenActivityId = 0
         deviceReplaced = false
         pending = []
+        autoDecided = []
         activity = []
         searchedEntries = [:]
         activityOpenDays = [:]
@@ -572,7 +585,7 @@ final class AppModel {
             async let servicesRead = core.services()
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
-            let newPending = try await pendingRead
+            let newPending = AskGate.waiting(try await pendingRead, decided: autoDecided)
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
             let newAccounts = try await accountsRead
@@ -602,7 +615,7 @@ final class AppModel {
             // Offline: the current account keeps its last decrypted view.
         }
         guard epoch == accountEpoch else { return }
-        deviceReplaced = DeviceStatus.replaced
+        deviceReplaced = DeviceStatus.replaced || Self.demoReplaced
         onPendingChanged?(pending)
         maybePresent()
         publish()
@@ -614,7 +627,7 @@ final class AppModel {
         let epoch = accountEpoch
         let edits = listEdits
         do {
-            let newPending = try await core.pending()
+            let newPending = AskGate.waiting(try await core.pending(), decided: autoDecided)
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 refreshAgain = true
@@ -627,7 +640,7 @@ final class AppModel {
             // Busy or offline: the next wake or the front reads it.
         }
         guard epoch == accountEpoch else { return }
-        deviceReplaced = DeviceStatus.replaced
+        deviceReplaced = DeviceStatus.replaced || Self.demoReplaced
         onPendingChanged?(pending)
         publish()
     }
@@ -825,6 +838,14 @@ final class AppModel {
             }
             await refreshPending()
         }
+    }
+
+    /// A bypass, Lockdown, Overnight or Autopilot decided `id` (`AppNotifier.autoDecided`): it leaves the list now and
+    /// stays out of it, and an ask open on it closes, since the owner has nothing left to answer.
+    func decidedAutomatically(_ id: String) {
+        autoDecided = AskGate.remember(id, in: autoDecided)
+        dropPending(id)
+        if AskGate.closes(sheet, decided: id) { closeSheet() }
     }
 
     /// An item the user just answered leaves the list now; the re-read that follows confirms it.
@@ -1084,7 +1105,7 @@ final class AppModel {
     private func maybePresent() {
         guard isActive, autoPopup, sheet == nil else { return }
         presented.formIntersection(Set(pending.map(\.id)))
-        guard let next = pending.first(where: { !presented.contains($0.id) }) else { return }
+        guard let next = AskGate.next(pending, presented: presented) else { return }
         openSheet(next.sheetTarget)
     }
 

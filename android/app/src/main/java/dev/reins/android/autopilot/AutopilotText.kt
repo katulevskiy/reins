@@ -183,6 +183,20 @@ object AutopilotText {
     }
 
     /** "14:05" for minutes and seconds left, "5:04:09" within a day, "2d 4h" beyond; "∞" without an end. */
+    /**
+     * The header chip's countdown: [clock] under an hour ("47:12"); from an hour on, hours and minutes only ("23:39"),
+     * so the chip leaves the page title room. The big clocks keep the seconds.
+     */
+    fun chipClock(until: Long, nowSeconds: Long): String {
+        if (isUntilOff(until)) return "∞"
+        val left = (until - nowSeconds).coerceAtLeast(0)
+        return if (left in 3_600 until 86_400) {
+            String.format(java.util.Locale.ROOT, "%d:%02d", left / 3_600, left % 3_600 / 60)
+        } else {
+            clock(until, nowSeconds)
+        }
+    }
+
     fun clock(until: Long, nowSeconds: Long): String {
         if (isUntilOff(until)) return "∞"
         val left = (until - nowSeconds).coerceAtLeast(0)

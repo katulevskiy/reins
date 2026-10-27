@@ -969,7 +969,7 @@ class AutopilotFlowTest : FlowHarness() {
         launch()
         awaitTag("modePill")
         rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
-        awaitText("8:00:00")
+        awaitText("8:00")
     }
 
     @Test

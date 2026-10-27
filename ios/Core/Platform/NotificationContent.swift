@@ -15,6 +15,11 @@ enum NotificationCategory: String, CaseIterable {
     case blob
     /// Another phone asks for the account's keys.
     case join
+    /// A pushed item the extension could not read in time (the app holds the store, the network failed): its generic
+    /// text, with no action, since it may be one a bypass or Autopilot answers. A tap opens it if it waits.
+    case arriving
+    /// A request Autopilot (Auto, Overnight) has still to decide, which only the app can: no action, a tap opens Reins.
+    case deciding
     /// Autopilot, a bypass or Lockdown decided by itself: "Report" opens the activity entry.
     case autopilot
     /// A grant ends soon.
@@ -25,7 +30,8 @@ enum NotificationCategory: String, CaseIterable {
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
         switch self {
-        case .request, .quickRequest, .pairing, .blob, .join: NotificationText.genericBody
+        case .request, .quickRequest, .pairing, .blob, .join, .arriving: NotificationText.genericBody
+        case .deciding: NotificationText.decidingBody
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
         case .status: "Open Reins to see more"
@@ -34,7 +40,7 @@ enum NotificationCategory: String, CaseIterable {
 
     var thread: String {
         switch self {
-        case .request, .quickRequest, .pairing, .blob, .join: "requests"
+        case .request, .quickRequest, .pairing, .blob, .join, .arriving, .deciding: "requests"
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
@@ -185,6 +191,9 @@ enum NotificationText {
     /// A push whose item turned out to be answered already (a grant, another device, its time ran out).
     static let handledTitle = "Already handled"
     static let handledBody = "Nothing is waiting for you."
+
+    /// A request Autopilot has still to decide, which needs the app (its model runs there only).
+    static let decidingBody = "Open Reins so Autopilot can decide"
 }
 
 /// Builds notification content; the app (`AppNotifier`, `GrantReminders`) and the notification extension use the same
@@ -239,12 +248,15 @@ enum NotificationContent {
     }
 
     /// The push as the server sent it ("Reins", "Something is waiting for you"), with the sound the in-app switches
-    /// allow and the category, thread and urgency of its kind. Used whenever the item cannot be read in time.
+    /// allow and the thread and urgency of its kind. Used whenever the item cannot be read in time. A request gets no
+    /// action (`arriving`): unread, it may be one a bypass, Lockdown or Autopilot answers, and the app takes this away
+    /// once it knows (`AppNotifier`). Pairings, files and other phones keep their own (action-free) categories.
     static func generic(_ original: UNNotificationContent, payload: PushPayload?, settings: FeedbackSettings) -> UNMutableNotificationContent {
         let c = (original.mutableCopy() as? UNMutableNotificationContent) ?? UNMutableNotificationContent()
         if c.title.isEmpty { c.title = NotificationText.genericTitle }
         if c.body.isEmpty { c.body = NotificationText.genericBody }
-        let category = payload?.itemKind.map(NotificationCategory.init) ?? .request
+        let kind = payload?.itemKind.map(NotificationCategory.init) ?? .request
+        let category: NotificationCategory = kind == .request ? .arriving : kind
         c.categoryIdentifier = category.rawValue
         c.threadIdentifier = category.thread
         c.interruptionLevel = .timeSensitive
@@ -256,6 +268,42 @@ enum NotificationContent {
             c.userInfo = info
         }
         return c
+    }
+
+    /// A request Autopilot (Auto, Overnight) has still to decide, which only the app can: who asks for what, and
+    /// that opening Reins lets Autopilot decide. Never an ask: no action, and a tap opens Reins, not the request; if
+    /// Autopilot leaves it to the owner, the app asks then (and takes this away).
+    static func deciding(_ item: PendingItem, settings: FeedbackSettings) -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.title = NotificationText.headline(item)
+        c.body = NotificationText.decidingBody
+        c.categoryIdentifier = NotificationCategory.deciding.rawValue
+        c.threadIdentifier = NotificationCategory.deciding.thread
+        c.interruptionLevel = .active
+        c.relevanceScore = 0.6
+        c.sound = NotificationSoundFile.sound(NotificationSoundFile.attention, .alerts, settings)
+        let kind: Snapshot.Item.Kind = switch item.kind {
+        case .request: .request
+        case .pairing: .pairing
+        case .blob: .blob
+        case .join: .join
+        }
+        c.userInfo = [
+            NotificationKey.kind: PushPayload.kind(of: kind),
+            NotificationKey.id: item.id,
+            NotificationKey.link: DeepLink.home.url.absoluteString,
+        ]
+        return c
+    }
+
+    /// What the extension shows for a push, from what the core said about its item (`PushOutcome`).
+    static func outcome(_ outcome: PushOutcome, original: UNNotificationContent, settings: FeedbackSettings) -> UNMutableNotificationContent {
+        switch outcome {
+        case let .decided(d): decision(d, settings: settings)
+        case let .waiting(item): pending(item, settings: settings)
+        case let .deciding(item): deciding(item, settings: settings)
+        case .handled: handled(original)
+        }
     }
 
     /// A push whose item is no longer waiting: a quiet line instead of an alarm for nothing.
@@ -288,15 +336,67 @@ enum NotificationContent {
     }
 }
 
+/// What a pushed item turned out to be, once the core handled the push: what the extension shows. Only an item that
+/// waits for its owner is an ask; what a mode decided is said as decided, and what Autopilot has still to decide is
+/// never an ask.
+enum PushOutcome {
+    /// A bypass, Lockdown, Overnight or Autopilot decided it.
+    case decided(AutoDecisionView)
+    /// It waits for the owner (the core's `pending`).
+    case waiting(PendingItem)
+    /// Autopilot has still to decide it, which only the app can (the core's `deciding`).
+    case deciding(PendingItem)
+    /// Answered before it could be shown (a grant, another device, its time ran out).
+    case handled
+
+    /// A decision first (it is final), then the owner's list, then what is still to be decided.
+    static func of(decision: AutoDecisionView?, waiting: PendingItem?, deciding: PendingItem?) -> PushOutcome {
+        if let decision { return .decided(decision) }
+        if let waiting { return .waiting(waiting) }
+        if let deciding { return .deciding(deciding) }
+        return .handled
+    }
+}
+
+/// Which delivered notifications no longer have anything to offer: an item's ask once the item stops waiting (answered
+/// here or elsewhere, decided by a mode), and the extension's own texts once the app knows better.
+enum NotificationSweep {
+    /// The categories of notifications about one item that the sweep looks at (another phone's ask is left alone).
+    static let itemCategories: Set<String> = Set(
+        [NotificationCategory.request, .quickRequest, .pairing, .blob, .arriving, .deciding].map(\.rawValue)
+    )
+
+    /// How long a push the extension could not read is left alone for the app to fetch it.
+    static let unreadGrace: TimeInterval = 60
+    /// How long "Autopilot has still to decide" stays without the item being decided or asked: as long as the server
+    /// holds a request.
+    static let decidingLifetime: TimeInterval = 600
+
+    /// Whether a delivered notification of `category` about item `id` (delivered at `date`) is stale, `waiting` being the
+    /// owner's list. One about an item that waits is kept. "Autopilot has still to decide" is never in that list: it goes
+    /// when the app decides or asks (`AppNotifier`), or when the request's time is up.
+    static func isStale(category: String, id: String, date: Date, waiting: Set<String>, now: Date) -> Bool {
+        guard itemCategories.contains(category), !waiting.contains(id) else { return false }
+        if category == NotificationCategory.deciding.rawValue { return date < now.addingTimeInterval(-decidingLifetime) }
+        return date < now.addingTimeInterval(-unreadGrace)
+    }
+
+    /// The delivered notifications about item `id` (by their identifier or the item they name), but `keeping`.
+    static func about(_ id: String, delivered: [(identifier: String, item: String?)], keeping: String? = nil) -> [String] {
+        delivered.filter { ($0.identifier == id || $0.item == id) && $0.identifier != keeping }.map(\.identifier)
+    }
+}
+
 /// What the notification extension leaves to the app.
 enum ExtensionPolicy {
-    /// Any connection in a mode that judges with the model (Manual, Auto), with the model there to run. Only the app
-    /// runs it, so the extension handles such a push with `handlePushDeferringAutopilot`: Bypass and Lockdown still
-    /// decide here (they need no model, so a bypass answers while the app is closed), and what Manual or Auto would
-    /// judge is left for the app; handling it fully here would settle it as "could not judge" for good.
+    /// Any connection in a mode that judges with the model (Manual, Auto, Overnight), with the model there to run. Only
+    /// the app runs it, so the extension handles such a push with `handlePushDeferringAutopilot`: Bypass and Lockdown
+    /// still decide here (they need no model, so a bypass answers while the app is closed), and what Manual, Auto or
+    /// Overnight would judge is left for the app; handling it fully here would settle it as "could not judge" for good
+    /// (or load the model in a process that cannot hold it).
     static func needsModel(_ s: AutopilotSettings) -> Bool {
         guard s.model.state == .installed else { return false }
         let modes = [s.mode] + s.connections.map(\.mode)
-        return modes.contains { $0 == .manual || $0 == .auto }
+        return modes.contains { $0 == .manual || $0 == .auto || $0 == .overnight }
     }
 }

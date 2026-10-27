@@ -2874,6 +2874,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func createProfile(name: String, icon: String?) async throws  -> ProfileView
     
     /**
+     * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
+     * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
+     * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
+     */
+    func deciding() async throws  -> [PendingItem]
+    
+    /**
      * Deletes the signed-in account for good: on the server its vault, devices, approval device, AI and desktop
      * connections, files and stored state (and its WorkOS user, on a server that signs in through WorkOS); then signs
      * out and removes this phone's encrypted copy of the account. `confirm_email` is the account's email as the user
@@ -3069,7 +3076,8 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func pauseModelDownload() async 
     
     /**
-     * Items parked for the user, newest first.
+     * What waits for the owner, newest first: the only items an app presents, notifies, counts or badges. What a
+     * bypass, Lockdown, Auto or Overnight has still to look at is not here (see `deciding`).
      */
     func pending() async throws  -> [PendingItem]
     
@@ -4244,6 +4252,27 @@ open func createProfile(name: String, icon: String?)async throws  -> ProfileView
 }
     
     /**
+     * Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
+     * newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
+     * notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
+     */
+open func deciding()async throws  -> [PendingItem]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_deciding(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypePendingItem.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Deletes the signed-in account for good: on the server its vault, devices, approval device, AI and desktop
      * connections, files and stored state (and its WorkOS user, on a server that signs in through WorkOS); then signs
      * out and removes this phone's encrypted copy of the account. `confirm_email` is the account's email as the user
@@ -5017,7 +5046,8 @@ open func pauseModelDownload()async   {
 }
     
     /**
-     * Items parked for the user, newest first.
+     * What waits for the owner, newest first: the only items an app presents, notifies, counts or badges. What a
+     * bypass, Lockdown, Auto or Overnight has still to look at is not here (see `deciding`).
      */
 open func pending()async throws  -> [PendingItem]  {
     return
@@ -26021,6 +26051,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_create_profile() != 4955) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_deciding() != 19882) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_delete_account() != 17250) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -26144,7 +26177,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_pause_model_download() != 7554) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {
+    if (uniffi_reins_core_checksum_method_reinscore_pending() != 949) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_phone_key_fingerprint() != 65272) {

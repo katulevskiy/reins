@@ -332,7 +332,7 @@ struct AccountRowView<Avatar: View>: View {
                     .font(mono ? RFont.mono(15) : TextRole.row.font())
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(mono ? .middle : .tail)
                     .environment(\.layoutDirection, .leftToRight)
                 if problem { AccountStatusLine(status: status, needsAgain: needsAgain) }
             }

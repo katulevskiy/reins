@@ -890,10 +890,31 @@ impl Engine {
 
     // ---- read-only views -----------------------------------------------------------
 
+    /// What waits for the owner: the only list an app may present, notify, count or badge. A parked request that a
+    /// bypass, Lockdown, Auto or Overnight has still to look at is not in it (it is in [`Engine::deciding`]): the
+    /// automatic deciders run first, and only what they leave to the owner reaches the owner. Pairings, other phones
+    /// and owner-only asks always do.
     pub fn pending(&self) -> Result<Vec<PendingItem>, CoreError> {
+        self.parked_items(true)
+    }
+
+    /// Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at:
+    /// never shown to the owner as waiting. Each either gets decided or, left to the owner, moves to
+    /// [`Engine::pending`] (told through `Notifier::item_pending`). Where the model cannot run (the iOS notification
+    /// extension, an app in the background), Auto and Overnight leave theirs here until a pass that can.
+    pub fn deciding(&self) -> Result<Vec<PendingItem>, CoreError> {
+        self.parked_items(false)
+    }
+
+    fn parked_items(&self, for_owner: bool) -> Result<Vec<PendingItem>, CoreError> {
         let names = self.names();
+        let now = unix_now();
+        let evaluated = self.store.ap_evaluated()?;
         let mut items = Vec::new();
-        for row in self.store.pending_rows(unix_now())? {
+        for row in self.store.pending_rows(now)? {
+            if self.ap_needs_owner(&row, &evaluated, now) != for_owner {
+                continue;
+            }
             let item = match row.kind {
                 PendingKind::Request => {
                     serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| self.pending_request_item(&p))
