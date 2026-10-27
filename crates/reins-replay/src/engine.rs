@@ -151,10 +151,20 @@ pub fn netted(ctx: &Context, case: &Case) -> Option<Analysis> {
         return None;
     }
     let ec = engine_context(ctx, case);
+    // The recording computer: home is its own mount (btrfs subvolume) with the trash in it; `/`, `/tmp` and the rest
+    // are other disks. The known worktrees are linked worktrees.
+    let home = ctx.home.trim_end_matches('/');
     let facts = effects::nets::SameDisk {
-        trash: format!("{}/.local/state/reins/nets", ctx.home),
+        trash: format!("{home}/.local/state/reins/nets"),
+        disk: home.to_owned(),
+        worktrees: ctx.worktrees.iter().map(|w| effects::normalize(w, "/", home)).collect(),
     };
-    effects::nets::plan_command(case.command.as_deref()?, &ec, &facts, REPLAY_REINS, REPLAY_PLAN).map(|p| p.after)
+    let runner = effects::nets::Runner {
+        reins: REPLAY_REINS,
+        plan: REPLAY_PLAN,
+        store: &facts.trash,
+    };
+    effects::nets::plan_command(case.command.as_deref()?, &ec, &facts, runner).map(|p| p.after)
 }
 
 /// The owner of `github.com/<owner>/<name>` or `<owner>/<name>`.
