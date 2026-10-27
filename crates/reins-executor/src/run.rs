@@ -610,7 +610,8 @@ mod tests {
     async fn a_lease_is_kept_before_it_is_sealed_and_revoked_when_the_server_says() {
         let f = Fixture::new();
         let (opener, box_key) = Opener::new().unwrap();
-        let w = world(&f, vec![f.lease_job(&box_key)]).await;
+        let job = f.lease_job(&box_key);
+        let w = world(&f, vec![job.clone()]).await;
         Mock::given(method("GET"))
             .and(path("/reins/org-exec/revocations"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
@@ -622,7 +623,7 @@ mod tests {
         let r = &receipts(&w).await[0];
         let sealed = r.result["sealed"].as_str().unwrap();
         assert_eq!(opener.open(sealed).unwrap().as_slice(), b"ghs_t");
-        assert_eq!(r.result["expires_at"], f.lease_job(&box_key).lease.unwrap().expires_at);
+        assert_eq!(r.result["expires_at"], job.lease.unwrap().expires_at);
         assert_eq!(w.ctx.leases.tokens("ls_1")[0].token, "ghs_t");
         // Minted for exactly the countersigned repository's id (after a metadata-only lookup).
         let minted = &hits(&w.server, "POST", "/app/installations/77/access_tokens").await[1];

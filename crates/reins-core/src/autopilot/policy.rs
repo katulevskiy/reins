@@ -327,7 +327,7 @@ impl Engine {
                 )
                 .or_else(|| self.accounts_of(reins_proto::connector::GITHUB).into_iter().next())
         {
-            let mut logins: BTreeSet<String> = self.ap_github_logins(&out.request);
+            let mut logins: BTreeSet<String> = Self::ap_github_logins(&out.request);
             if let Ok(snap) = self.ap_snapshot() {
                 logins.extend(snap.facts.owners.keys().filter(|k| legacy_github_login(k)).cloned());
             }
@@ -340,7 +340,7 @@ impl Engine {
     }
 
     /// The GitHub logins a request names (its repositories' owners).
-    fn ap_github_logins(&self, request: &RelayRequest) -> BTreeSet<String> {
+    fn ap_github_logins(request: &RelayRequest) -> BTreeSet<String> {
         let Ok(Some(reading)) = request_analysis(request) else {
             return BTreeSet::new();
         };
