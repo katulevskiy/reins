@@ -178,9 +178,13 @@ pub fn tick(c: &mut DbConnInner, row: &ReinsOrgRollout, now: i64) -> Result<Step
     let p = plan(row)?;
     let g = p.guards;
     let (cand, stable) = numbers(c, row)?;
-    let enough = cand.decisions >= g.min_decisions && stable.decisions >= g.min_decisions;
+    // In the last stage everyone is on the candidate: the stable baseline is the earlier stages'. When those were
+    // advanced by hand with too few decisions to compare, only the candidate's own guard (time to decision) applies.
+    let last = row.published_seq >= stages_count(row)?;
+    let baseline = stable.decisions >= g.min_decisions;
+    let enough = cand.decisions >= g.min_decisions && (baseline || last);
     if enough {
-        let ask = cand.ask_rate - stable.ask_rate > g.max_ask_rate_delta_pp;
+        let ask = baseline && cand.ask_rate - stable.ask_rate > g.max_ask_rate_delta_pp;
         let slow = cand.median_ttd > g.max_median_ttd_secs;
         if ask || slow {
             let why = if ask {
@@ -403,12 +407,252 @@ pub fn revision_state(c: &mut DbConnInner, org: &str, revision: i64) -> Result<O
 
 #[cfg(all(test, sqlite))]
 mod tests {
+    use reins_proto::managed::{DecisionRecord, EnvelopeKind};
+    use serde_json::Value;
+
     use super::*;
+    use crate::api::reins::org::{
+        activation::tests::{activate_by_two, staged, stricter_draft},
+        decisions::{self, tests::pilot},
+        simulation,
+        testing::{db, member},
+    };
+    use crate::db::models::{reins_org_event, reins_org_request};
+
+    /// The pilot org with a stricter candidate (`api-review`) rolling out pilot (Kim) → 25% → everyone, a minute's
+    /// dwell, guards judged at `min` decisions; activated at t = 100. Returns (stable, candidate).
+    fn rolling(c: &mut DbConnInner, min: u32) -> (String, String) {
+        let stable = pilot(c);
+        let (rev, hash) = stricter_draft(c, "dana", Some(&staged(min)), 50);
+        let report = simulation::run(c, "o1", "dana", rev, None, None, None, 60).unwrap().hash();
+        activate_by_two(c, rev, &hash, &report, 99);
+        (stable, hash)
+    }
+
+    fn open(c: &mut DbConnInner) -> ReinsOrgRollout {
+        code::q_open_rollout(c, "o1").unwrap().unwrap()
+    }
+
+    fn tick_open(c: &mut DbConnInner, now: i64) -> Result<Step, OrgError> {
+        let row = open(c);
+        tick(c, &row, now)
+    }
+
+    fn ask_as(c: &mut DbConnInner, user: &str, repo: &str, n: usize, now: i64) -> Vec<String> {
+        (0..n)
+            .map(|i| {
+                let args = json!({"repo": repo, "title": format!("t{i}")});
+                decisions::submit(
+                    c,
+                    "o1",
+                    user,
+                    &format!("conn-{user}"),
+                    "Laptop",
+                    "github_create_issue",
+                    &args,
+                    None,
+                    now,
+                )
+                .unwrap()
+                .id
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dwell_then_advance() {
+        let mut c = db();
+        rolling(&mut c, 3);
+        ask_as(&mut c, "kim", "acme/web", 3, 110);
+        ask_as(&mut c, "lee", "acme/web", 3, 110);
+        // Not before the dwell, even with enough decisions.
+        assert_eq!(
+            tick_open(&mut c, 159).unwrap(),
+            Step::Wait {
+                more_decisions: 0
+            }
+        );
+        assert_eq!(
+            tick_open(&mut c, 161).unwrap(),
+            Step::Advanced {
+                seq: 2
+            }
+        );
+        let row = open(&mut c);
+        assert_eq!((row.published_seq, row.stage_started_at), (2, 161));
+        assert_eq!(published_envelopes(&row).unwrap().len(), 2);
+        // The next stage measures afresh: nothing since 161 yet.
+        assert_eq!(
+            tick(&mut c, &row, 300).unwrap(),
+            Step::Wait {
+                more_decisions: 3
+            }
+        );
+    }
+
+    #[test]
+    fn breach_rolls_back_automatically() {
+        let mut c = db();
+        let (stable, candidate) = rolling(&mut c, 3);
+        // Kim (the pilot) is now asked on acme/api; Lee isn't.
+        ask_as(&mut c, "kim", "acme/api", 3, 110);
+        ask_as(&mut c, "lee", "acme/api", 3, 110);
+        let row = open(&mut c);
+        let (cand, st) = numbers(&mut c, &row).unwrap();
+        assert_eq!((cand.decisions, cand.asked, st.decisions, st.asked), (3, 3, 3, 0));
+        let Step::RolledBack {
+            notify,
+        } = tick(&mut c, &row, 120).unwrap()
+        else {
+            panic!("a 100-point jump in the ask rate rolls back");
+        };
+        assert_eq!(notify, ["dana", "kim"]);
+        assert!(code::q_open_rollout(&mut c, "o1").unwrap().is_none());
+        let back = code::q_rollout(&mut c, "o1", &row.rollout_id).unwrap().unwrap();
+        assert_eq!(back.state, rollout_state::ROLLED_BACK);
+        let why: Value = serde_json::from_str(back.reason.as_deref().unwrap()).unwrap();
+        assert_eq!(why["why"], "ask rate");
+        // Everyone is on stable again, and the candidate is a draft.
+        assert_eq!(effective_policy(&mut c, "o1", "kim", 121).unwrap().1, stable);
+        let rev = reins_org_keys::q_policy(&mut c, "o1", row.revision).unwrap().unwrap();
+        assert_eq!((rev.state.as_str(), rev.hash.as_str()), (policy_state::DRAFT, candidate.as_str()));
+        let published = published_envelopes(&back).unwrap();
+        assert_eq!(published.len(), 2, "stage 1 and the rollback");
+        assert!(published[1].parse::<Rollout>().unwrap().terminal);
+    }
+
+    #[test]
+    fn small_samples_never_roll_back_or_advance() {
+        let mut c = db();
+        rolling(&mut c, 3);
+        ask_as(&mut c, "kim", "acme/api", 2, 110);
+        ask_as(&mut c, "lee", "acme/api", 5, 110);
+        // Breaching, but only 2 candidate decisions: no rollback; and after the dwell, no advance.
+        assert_eq!(
+            tick_open(&mut c, 120).unwrap(),
+            Step::Wait {
+                more_decisions: 0
+            }
+        );
+        assert_eq!(
+            tick_open(&mut c, 500).unwrap(),
+            Step::Wait {
+                more_decisions: 1
+            }
+        );
+        assert_eq!(open(&mut c).published_seq, 1);
+        assert_eq!(open(&mut c).state, rollout_state::RUNNING);
+    }
+
+    #[test]
+    fn a_member_never_flips_within_a_rollout() {
+        let mut c = db();
+        let (_, candidate) = rolling(&mut c, 3);
+        let people: Vec<String> = (0..60).map(|i| format!("p{i}")).collect();
+        for p in &people {
+            member(&mut c, "o1", p, &[]);
+        }
+        let mut was: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+        for (now, seq) in [(110, 1), (170, 2), (230, 3)] {
+            if seq > 1 {
+                let id = open(&mut c).rollout_id;
+                control(&mut c, "o1", "dana", &id, Control::Advance, now).unwrap();
+            }
+            for p in people.iter().chain(std::iter::once(&"kim".to_owned())) {
+                let on = effective_policy(&mut c, "o1", p, now).unwrap().1 == candidate;
+                if was.get(p).copied().unwrap_or(false) {
+                    assert!(on, "{p} flipped back at stage {seq}");
+                }
+                was.insert(p.clone(), on);
+            }
+        }
+        assert!(was["kim"], "the pilot");
+        assert!(was.values().all(|on| *on), "everyone at the last stage");
+        // A stage can't be published before its signed time, by hand either.
+        let mut c = db();
+        rolling(&mut c, 3);
+        let id = open(&mut c).rollout_id;
+        assert_eq!(
+            control(&mut c, "o1", "dana", &id, Control::Advance, 150),
+            Err(OrgError::Invalid("The next stage isn't due yet."))
+        );
+    }
+
+    #[test]
+    fn every_decision_records_snapshot_and_seq() {
+        let mut c = db();
+        let (stable, candidate) = rolling(&mut c, 3);
+        let id = open(&mut c).rollout_id;
+        let kim = ask_as(&mut c, "kim", "acme/web", 1, 110).remove(0);
+        let lee = ask_as(&mut c, "lee", "acme/web", 1, 110).remove(0);
+        for (req, want) in [(&kim, &candidate), (&lee, &stable)] {
+            let row = reins_org_request::q_request(&mut c, "o1", req).unwrap().unwrap();
+            assert_eq!((&row.snapshot, row.rollout_id.as_deref(), row.rollout_seq), (want, Some(id.as_str()), Some(1)));
+            let env: Envelope = serde_json::from_str(row.decision.as_deref().unwrap()).unwrap();
+            assert_eq!(env.kind, EnvelopeKind::Decision);
+            let record: DecisionRecord = env.parse().unwrap();
+            assert_eq!((&record.snapshot, record.rollout.clone()), (want, Some((id.clone(), 1))));
+        }
+        let events = reins_org_event::q_events(&mut c, "o1", None, 50).unwrap();
+        let received =
+            events.iter().find(|e| e.kind == "request.received" && e.subject.as_deref() == Some(&kim)).unwrap();
+        let d: Value = serde_json::from_str(&received.detail).unwrap();
+        assert_eq!((&d["policy"]["snapshot"], &d["policy"]["rollout"]), (&json!(candidate), &json!([id, 1])));
+        // Executors are given exactly the published step.
+        assert_eq!(published_for_org(&mut c, "o1", 111).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rollback_is_terminal() {
+        let mut c = db();
+        let (stable, _) = rolling(&mut c, 3);
+        let id = open(&mut c).rollout_id;
+        control(&mut c, "o1", "dana", &id, Control::Pause, 105).unwrap();
+        assert_eq!(
+            control(&mut c, "o1", "dana", &id, Control::Advance, 200),
+            Err(OrgError::Invalid("Resume the rollout first."))
+        );
+        // One holder may roll back (a plain member may not).
+        assert_eq!(control(&mut c, "o1", "lee", &id, Control::Rollback, 106), Err(OrgError::Forbidden));
+        control(&mut c, "o1", "dana", &id, Control::Rollback, 106).unwrap();
+        for what in [Control::Resume, Control::Advance, Control::Rollback, Control::Pause] {
+            assert!(control(&mut c, "o1", "kim", &id, what, 300).is_err(), "{what:?}");
+        }
+        let row = code::q_rollout(&mut c, "o1", &id).unwrap().unwrap();
+        assert_eq!(
+            tick(&mut c, &row, 10_000).unwrap(),
+            Step::Wait {
+                more_decisions: 0
+            }
+        );
+        assert_eq!(effective_policy(&mut c, "o1", "kim", 10_000).unwrap().1, stable);
+    }
+
+    #[test]
+    fn completion_activates_the_candidate() {
+        let mut c = db();
+        let (stable, candidate) = rolling(&mut c, 3);
+        let id = open(&mut c).rollout_id;
+        control(&mut c, "o1", "dana", &id, Control::Advance, 161).unwrap();
+        control(&mut c, "o1", "dana", &id, Control::Advance, 221).unwrap();
+        assert_eq!(effective_policy(&mut c, "o1", "lee", 222).unwrap().1, candidate, "everyone");
+        // The last stage's dwell passes cleanly: complete.
+        ask_as(&mut c, "lee", "acme/web", 3, 230);
+        ask_as(&mut c, "kim", "acme/web", 3, 230);
+        assert_eq!(tick_open(&mut c, 300).unwrap(), Step::Completed);
+        assert!(code::q_open_rollout(&mut c, "o1").unwrap().is_none());
+        let (active, _) = policy::active(&mut c, "o1").unwrap().unwrap();
+        assert_eq!(active.hash(), candidate);
+        let old = reins_org_keys::q_policy_by_hash(&mut c, "o1", &stable).unwrap().unwrap();
+        assert_eq!(old.state, policy_state::RETIRED);
+        // Still the candidate for everyone, by the same signed steps.
+        assert_eq!(effective_policy(&mut c, "o1", "lee", 301).unwrap().1, candidate);
+    }
 
     #[test]
     fn measure_counts_asks_and_median() {
         let mk = |outcome: &str, created: i64, decided: Option<i64>| {
-            let mut r = crate::db::models::reins_org_request::tests::request("o1", "or_x", "approved");
+            let mut r = reins_org_request::tests::request("o1", "or_x", "approved");
             r.outcome = outcome.to_owned();
             r.created_at = created;
             r.decided_at = decided;
@@ -419,6 +663,6 @@ mod tests {
         let m = measure(rows.iter());
         assert_eq!((m.decisions, m.asked, m.median_ttd), (4, 3, 30));
         assert!((m.ask_rate - 75.0).abs() < 1e-9);
-        assert_eq!(measure(std::iter::empty()).ask_rate, 0.0);
+        assert!(measure(std::iter::empty()).ask_rate.abs() < 1e-9);
     }
 }
