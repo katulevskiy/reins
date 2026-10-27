@@ -225,6 +225,9 @@ jobs:
         run: |
           set -o pipefail
           cargo run --locked -q -p reins-replay -- run --engine effects --check 2>&1 | tee replay.txt
+          # With safety nets (P3): the same gate, and the ask rate they leave.
+          cargo run --locked -q -p reins-replay -- run --engine effects --policy crates/reins-replay/policy/nets.json \
+            --check 2>&1 | tee -a replay.txt
           { echo '```'; cat replay.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   desktop-linux:

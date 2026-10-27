@@ -173,7 +173,10 @@ fn unresolved(args: &[String]) -> Result<ExitCode, String> {
 fn list(args: &[String]) -> Result<ExitCode, String> {
     let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
     let corpus = Corpus::load(&corpus_dir)?;
-    let policy = Policy::default();
+    let policy: Policy = match value(args, "--policy") {
+        Some(p) => read_json(&PathBuf::from(p))?,
+        None => Policy::default(),
+    };
     let level = value(args, "--level");
     let certainty = value(args, "--certainty");
     for case in &corpus.cases {

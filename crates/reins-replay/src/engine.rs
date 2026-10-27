@@ -41,6 +41,9 @@ pub struct Policy {
     /// may force an ask. On, the recorded corpus asks 11.2% and 11 known false positives return.
     #[serde(default)]
     pub ask_on_partial: bool,
+    /// Safety nets (P3): a command from a harness whose hook can rewrite it is decided on its netted levels.
+    #[serde(default)]
+    pub nets: bool,
 }
 
 impl Default for Policy {
@@ -54,6 +57,7 @@ impl Default for Policy {
             work: [Auto, Ask, Ask, Ask],
             outside: [Ask, Ask, Ask, Ask],
             ask_on_partial: false,
+            nets: false,
         }
     }
 }
@@ -129,6 +133,28 @@ pub fn analyze(ctx: &Context, case: &Case) -> Analysis {
         ),
         Kind::Ask => effects::analyze_question(),
     }
+}
+
+/// Harnesses whose hook can hand back a rewritten command (`reins_desktop::nets::hook::rewrites`).
+/// The adversarial set ("synthetic") is replayed without nets, as from a harness that can't rewrite (Cursor):
+/// `corpus/nets.jsonl` holds the cases that try the nets themselves.
+const REWRITING: &[&str] = &["Claude Code", "Codex", "Gemini CLI"];
+
+/// The plan id and program a replayed rewrite uses.
+const REPLAY_PLAN: &str = "replay01";
+const REPLAY_REINS: &str = "/usr/bin/reins";
+
+/// A command's analysis with its safety nets (P3), when one applies: one disk, the trash in the state folder.
+#[must_use]
+pub fn netted(ctx: &Context, case: &Case) -> Option<Analysis> {
+    if case.kind != Kind::Command || !case.agent.as_deref().is_some_and(|a| REWRITING.contains(&a)) {
+        return None;
+    }
+    let ec = engine_context(ctx, case);
+    let facts = effects::nets::SameDisk {
+        trash: format!("{}/.local/state/reins/nets", ctx.home),
+    };
+    effects::nets::plan_command(case.command.as_deref()?, &ec, &facts, REPLAY_REINS, REPLAY_PLAN).map(|p| p.after)
 }
 
 /// The owner of `github.com/<owner>/<name>` or `<owner>/<name>`.
@@ -265,7 +291,12 @@ pub fn decide(ctx: &Context, case: &Case, policy: &Policy, engine: EngineKind) -
             }
         }
         EngineKind::Effects => {
-            let a = analyze(ctx, case);
+            let a = if policy.nets {
+                netted(ctx, case)
+            } else {
+                None
+            }
+            .unwrap_or_else(|| analyze(ctx, case));
             let z = zone(ctx, case, &a);
             let (ask, why) = if !a.floor.is_empty() {
                 (true, format!("always asked: {}", a.floor.iter().map(|f| f.label()).collect::<Vec<_>>().join(", ")))
