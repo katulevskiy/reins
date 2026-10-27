@@ -135,6 +135,20 @@ class WorkProfileFlowTest : FlowHarness() {
     }
 
     @Test
+    fun `switching profiles reopens the app on the other core in this process`() {
+        val app = context.applicationContext as ReinsApp
+        val before = app.container
+        registry.profiles += FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1")
+        registry.setActive("work-1")
+        app.switchProfile()
+        assertTrue(app.container !== before)
+        assertEquals("work-1", app.container.activeProfile?.id)
+        assertEquals("work-1", WorkProfiles.active.id)
+        assertTrue(WorkProfiles.hasWork)
+        assertFalse(before.appScope.coroutineContext[kotlinx.coroutines.Job]!!.isActive)
+    }
+
+    @Test
     fun `org names are shown as untrusted names`() {
         val p = FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme\u202Elanosrep", "o1")
         assertFalse(WorkProfiles.of(p).label.contains('\u202E'))

@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.StrictMode
 import androidx.work.Configuration
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -28,6 +29,22 @@ class ReinsApp : Application(), Configuration.Provider {
         }
         dev.reins.android.design.Fonts.init(this)
         container = AppContainer(this)
+        start(container)
+    }
+
+    /**
+     * Switches to the profile the registry now names, in this process: a new container opens that profile's core,
+     * Keystore alias and notification channels; the old one's work stops. The caller recreates the activity, so
+     * every screen binds to the new container.
+     */
+    fun switchProfile() {
+        val old = container
+        container = AppContainer(this)
+        start(container)
+        old.appScope.cancel()
+    }
+
+    private fun start(container: AppContainer) {
         container.appScope.launch(Dispatchers.IO) {
             // Opens the native core (library, store, Keystore) while the UI draws; its first real use finds it ready.
             runCatching { container.core.session() }
