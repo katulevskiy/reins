@@ -64,6 +64,7 @@ pub fn routes() -> Vec<Route> {
         set_identity,
         set_tier,
         set_two_person,
+        confirm_held,
         members,
         roles,
         remove_member,
@@ -583,6 +584,8 @@ async fn overview(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             can_set_up: can(c, &o, &u, Capability::SetUpOrg)?,
             names,
             roles,
+            held: super::scim::q_held(c, &o)?.map(|h| (h.external_ids.len(), h.digest)),
+            can_confirm_held: can(c, &o, &u, Capability::ManageMembers)?,
         })
     })
     .await;
@@ -791,6 +794,38 @@ async fn set_tier(
         )
         .await;
         let (t, bad) = outcome_text(&r, "Plan changed.");
+        flash(&s.sid, &t, bad);
+    }
+    to_org(org, "")
+}
+
+#[derive(FromForm)]
+struct HeldForm {
+    csrf: String,
+    held: String,
+}
+
+/// Confirms the removals the directory sync held back (a two-person change like any removal).
+#[post("/reins/org/<org>/directory/confirm", data = "<form>")]
+async fn confirm_held(
+    org: &str,
+    form: Form<HeldForm>,
+    cookies: &CookieJar<'_>,
+    conn: DbConn,
+    pool: &State<DbPool>,
+) -> Redirect {
+    let Some(s) = admin_of(cookies, &conn, org, &[Capability::ManageMembers]).await else {
+        return to_home();
+    };
+    if check_csrf(&s, &form.csrf) {
+        let action = AdminAction::ConfirmDirectoryRemovals {
+            held: form.held.clone(),
+        };
+        let r = propose(&conn, pool, org, &s.user, action, None).await;
+        if matches!(r, Ok(admin::Proposed::Applied)) {
+            super::scim::backfill_soon();
+        }
+        let (t, bad) = outcome_text(&r, "Confirmed. They're removed at the next directory sync.");
         flash(&s.sid, &t, bad);
     }
     to_org(org, "")

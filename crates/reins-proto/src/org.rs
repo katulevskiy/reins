@@ -279,6 +279,12 @@ pub enum AdminAction {
     SetTwoPerson {
         on: bool,
     },
+    /// Lets the directory sync remove the members it held back: more than a backfill removes without an admin
+    /// (a listing that lost most of a directory looks like a broken listing). `held`: the digest of exactly the
+    /// members held, so what's approved is what was shown.
+    ConfirmDirectoryRemovals {
+        held: String,
+    },
 }
 
 impl AdminAction {
@@ -317,6 +323,9 @@ impl AdminAction {
                 ..
             } => Capability::SetUpOrg,
             Self::RemoveMember {
+                ..
+            }
+            | Self::ConfirmDirectoryRemovals {
                 ..
             } => {
                 if touches_privileged {

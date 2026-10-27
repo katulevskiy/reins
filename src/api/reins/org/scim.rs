@@ -15,6 +15,7 @@
 use std::{sync::LazyLock, time::Duration};
 
 use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
@@ -31,6 +32,7 @@ use crate::{
         models::{
             Group, Invitation, Membership, ReinsSetting, User,
             reins_org::{self, ReinsOrg, SUBJECT_GROUP, state},
+            reins_workos::{q_delete_setting, q_get_setting, q_set_setting},
         },
         schema::{groups, groups_users, invitations, users, users_organizations},
     },
@@ -371,6 +373,7 @@ pub fn apply(c: &mut DbConnInner, action: &DirAction, now: i64) -> Result<Vec<Re
             ..
         } => {
             let mut t = tenant.clone();
+            q_directory_changed(c, org, t.directory_id.as_deref(), None, now)?;
             t.directory_id = None;
             t.updated_at = now;
             reins_org::q_save_org(c, &t)?;
@@ -443,8 +446,13 @@ fn upsert_user(
             }
         }
     } else {
+        if !crate::util::is_valid_email(email) {
+            event(c, org, "scim.refused", None, Some(user_id), &json!({"why": "invalid_email"}), now)?;
+            return Ok(Vec::new());
+        }
         let mut stub = User::new(email, name.map(str::to_owned));
         stub.verified_at = None;
+        stub.ready_to_write().map_err(|e| OrgError::Internal(format!("{e:?}")))?;
         diesel::insert_into(users::table).values(&stub).execute(c)?;
         let invited: i64 = invitations::table.filter(invitations::email.eq(email)).count().get_result(c)?;
         if invited == 0 {
@@ -526,7 +534,7 @@ pub async fn sync_once(source: &dyn EventSource, conn: &DbConn, pool: Option<&Db
 }
 
 /// How often every bound directory is listed again, besides right after it is bound.
-const BACKFILL_EVERY: Duration = Duration::from_secs(30 * 60);
+const BACKFILL_EVERY: Duration = Duration::from_mins(30);
 
 static BACKFILL_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
@@ -568,13 +576,27 @@ async fn list_all(path: &str, directory: &str) -> Result<Vec<Value>, String> {
             return Err(format!("WorkOS answered {}", response.status()));
         }
         let page: Value = response.json().await.map_err(|e| format!("unexpected WorkOS list: {e}"))?;
-        out.extend(page["data"].as_array().cloned().unwrap_or_default());
-        after = page["list_metadata"]["after"].as_str().map(str::to_owned);
+        let (data, next) = parse_list_page(&page)?;
+        out.extend(data);
+        after = next;
         if after.is_none() {
             return Ok(out);
         }
     }
     Err("the directory listing did not end".to_owned())
+}
+
+/// One page of a WorkOS list: its items and the cursor of the next page. A page without a `data` array or without
+/// `list_metadata` is an error, never an empty page: a backfill reads absence as removal.
+pub fn parse_list_page(page: &Value) -> Result<(Vec<Value>, Option<String>), String> {
+    let data = page.get("data").and_then(Value::as_array).ok_or("a WorkOS list without data")?;
+    let meta = page.get("list_metadata").and_then(Value::as_object).ok_or("a WorkOS list without list_metadata")?;
+    let after = match meta.get("after") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(a)) if !a.is_empty() => Some(a.clone()),
+        Some(_) => return Err("a WorkOS list with an unreadable cursor".to_owned()),
+    };
+    Ok((data.clone(), after))
 }
 
 #[rocket::async_trait]
@@ -588,9 +610,111 @@ impl DirectoryListing for WorkosListing {
     }
 }
 
-/// Applies a complete listing of `tenant`'s directory: its groups, its users and their group memberships, as the
-/// events would have; then the members it linked before whose directory id is gone are deprovisioned (the directory
-/// deleted them while nothing listened). One transaction.
+/// Most members one backfill removes for being absent from the listing without an admin confirming: 5, or a tenth
+/// of the linked members if that is more.
+#[must_use]
+pub fn removal_limit(linked: usize) -> usize {
+    (linked / 10).max(5)
+}
+
+fn held_key(org: &str) -> String {
+    format!("dsync.held.{org}")
+}
+
+fn confirmed_key(org: &str) -> String {
+    format!("dsync.confirmed.{org}")
+}
+
+/// Members (their directory ids) a backfill held back until an admin confirms ([`reins_proto::org::AdminAction::ConfirmDirectoryRemovals`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Held {
+    pub external_ids: Vec<String>,
+    pub digest: String,
+}
+
+impl Held {
+    fn of(mut ids: Vec<String>) -> Self {
+        ids.sort();
+        ids.dedup();
+        let digest = crate::crypto::sha256_hex(ids.join("\n").as_bytes());
+        Self {
+            external_ids: ids,
+            digest,
+        }
+    }
+}
+
+/// What the last backfill held back in `org`, if anything.
+pub fn q_held(c: &mut DbConnInner, org: &str) -> Result<Option<Held>, OrgError> {
+    Ok(q_get_setting(c, &held_key(org))?.and_then(|v| serde_json::from_str(&v).ok()))
+}
+
+/// The memberships a held removal would end (for the capability confirming it takes).
+pub fn q_held_memberships(c: &mut DbConnInner, org: &str) -> Result<Vec<String>, OrgError> {
+    let Some(held) = q_held(c, org)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in &held.external_ids {
+        if let Some(m) = membership_by_external(c, org, id)? {
+            out.push(m.uuid.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// An admin confirmed the held removals `digest` names: the next backfill removes those members if the directory still
+/// doesn't list them. Refused when what's held changed since the admin looked.
+pub fn q_confirm_held(c: &mut DbConnInner, org: &str, digest: &str, check_only: bool) -> Result<usize, OrgError> {
+    let Some(held) = q_held(c, org)?.filter(|h| crate::crypto::ct_eq(&h.digest, digest)) else {
+        return Err(OrgError::Invalid("The directory changed since. Look again."));
+    };
+    if !check_only {
+        let ids = serde_json::to_string(&held.external_ids).map_err(|e| OrgError::Internal(e.to_string()))?;
+        q_set_setting(c, &confirmed_key(org), &ids)?;
+    }
+    Ok(held.external_ids.len())
+}
+
+/// The tenant's directory changed (another one bound, or none): members and groups the old one linked keep their
+/// membership and roles, but no longer carry its ids, so the new directory links them by address and never removes
+/// them for being absent from it. What a backfill of the old one held is dropped.
+pub fn q_directory_changed(
+    c: &mut DbConnInner,
+    org: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+    now: i64,
+) -> Result<(), OrgError> {
+    if old.is_none() || old == new {
+        return Ok(());
+    }
+    let members = diesel::update(
+        users_organizations::table
+            .filter(users_organizations::org_uuid.eq(org))
+            .filter(users_organizations::external_id.is_not_null()),
+    )
+    .set(users_organizations::external_id.eq(None::<String>))
+    .execute(c)?;
+    let groups_unlinked = diesel::update(
+        groups::table.filter(groups::organizations_uuid.eq(org)).filter(groups::external_id.is_not_null()),
+    )
+    .set(groups::external_id.eq(None::<String>))
+    .execute(c)?;
+    q_delete_setting(c, &held_key(org))?;
+    q_delete_setting(c, &confirmed_key(org))?;
+    event(c, org, "directory.unlinked", None, None, &json!({"members": members, "groups": groups_unlinked}), now)?;
+    Ok(())
+}
+
+/// Applies a complete listing of `tenant`'s directory, in the caller's transaction: its groups, its users and their
+/// group memberships, as the events would have. Then, from the listing being complete:
+///
+/// - directory groups it no longer lists are deleted, and linked members leave the directory groups it no longer
+///   lists them in;
+/// - linked members it no longer lists are deprovisioned (the directory deleted them while nothing listened), but
+///   never on an empty listing while linked members exist, and never more than [`removal_limit`] at once unless an
+///   admin confirmed exactly those ([`q_confirm_held`]); otherwise they're held, and the console shows them.
 pub fn q_backfill(
     c: &mut DbConnInner,
     tenant: &ReinsOrg,
@@ -598,10 +722,11 @@ pub fn q_backfill(
     groups: &[Value],
     now: i64,
 ) -> Result<Vec<Removal>, OrgError> {
+    use std::collections::HashSet;
     let (Some(directory), Some(workos)) = (tenant.directory_id.as_deref(), tenant.workos_org_id.as_deref()) else {
         return Ok(Vec::new());
     };
-    let event = |kind: &str, data: &Value| {
+    let event_of = |kind: &str, data: &Value| {
         let mut data = data.clone();
         data["directory_id"] = json!(directory);
         data["organization_id"] = json!(workos);
@@ -611,36 +736,132 @@ pub fn q_backfill(
             data,
         }
     };
+    let org = tenant.org_uuid.as_str();
     let mut removals = Vec::new();
+    let mut listed_groups = HashSet::new();
     for g in groups {
-        removals.extend(apply(c, &plan(&event("dsync.group.updated", g)), now)?);
-    }
-    let mut listed = std::collections::HashSet::new();
-    for u in users {
-        if let Some(id) = u.get("id").and_then(Value::as_str) {
-            listed.insert(id.to_owned());
+        if let Some(id) = g.get("id").and_then(Value::as_str) {
+            listed_groups.insert(id.to_owned());
         }
-        removals.extend(apply(c, &plan(&event("dsync.user.updated", u)), now)?);
-        let user_id = u.get("id").and_then(Value::as_str).unwrap_or_default();
+        removals.extend(apply(c, &plan(&event_of("dsync.group.updated", g)), now)?);
+    }
+    let mut listed = HashSet::new();
+    let mut pairs = HashSet::new();
+    for u in users {
+        let Some(user_id) = u.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        listed.insert(user_id.to_owned());
+        removals.extend(apply(c, &plan(&event_of("dsync.user.updated", u)), now)?);
         for g in u.get("groups").and_then(Value::as_array).cloned().unwrap_or_default() {
             if let Some(group_id) = g.get("id").and_then(Value::as_str) {
+                pairs.insert((user_id.to_owned(), group_id.to_owned()));
                 let added =
-                    event("dsync.group.user_added", &json!({"user": {"id": user_id}, "group": {"id": group_id}}));
+                    event_of("dsync.group.user_added", &json!({"user": {"id": user_id}, "group": {"id": group_id}}));
                 removals.extend(apply(c, &plan(&added), now)?);
             }
         }
     }
-    let org = tenant.org_uuid.as_str();
+
+    // Directory groups the listing no longer has. An empty group listing deletes nothing (deletions also come as
+    // events).
+    let directory_groups: Vec<(String, String)> = groups::table
+        .filter(groups::organizations_uuid.eq(org))
+        .filter(groups::external_id.is_not_null())
+        .select((groups::uuid, groups::external_id.assume_not_null()))
+        .load(c)?;
+    if !listed_groups.is_empty() {
+        for (uuid, external) in &directory_groups {
+            if !listed_groups.contains(external) {
+                diesel::delete(groups_users::table.filter(groups_users::groups_uuid.eq(uuid))).execute(c)?;
+                reins_org::q_revoke_all(c, org, SUBJECT_GROUP, uuid)?;
+                diesel::delete(groups::table.filter(groups::uuid.eq(uuid))).execute(c)?;
+                event(c, org, "group.deprovisioned", None, Some(uuid), &json!({"backfill": true}), now)?;
+            }
+        }
+    }
+
+    // Linked members, and which of them the listing left out.
+    let mut linked = Vec::new();
     for m in reins_org::q_members(c, org)? {
-        let Some(external) = m.external_id.as_deref() else {
+        let Some(external) = m.external_id.clone() else {
             continue;
         };
         let user = m.user_uuid.to_string();
-        let active = reins_org::q_member_state(c, org, &user)?.is_some_and(|s| s.is_active());
-        if active && !listed.contains(external) {
-            removals.extend(deprovision::q_deprovision(c, org, &user, Reason::DirectoryDelete, None, now)?);
+        if reins_org::q_member_state(c, org, &user)?.is_some_and(|s| s.is_active()) {
+            linked.push((m.uuid.to_string(), user, external));
         }
     }
+
+    // Directory-group memberships of listed members that the listing no longer pairs.
+    for (membership, _, external) in linked.iter().filter(|(_, _, x)| listed.contains(x)) {
+        for (group, group_external) in &directory_groups {
+            if pairs.contains(&(external.clone(), group_external.clone())) {
+                continue;
+            }
+            let gone = diesel::delete(
+                groups_users::table
+                    .filter(groups_users::groups_uuid.eq(group))
+                    .filter(groups_users::users_organizations_uuid.eq(membership)),
+            )
+            .execute(c)?;
+            if gone > 0 {
+                event(c, org, "group.member_removed", None, Some(group), &json!({"member": membership}), now)?;
+            }
+        }
+    }
+
+    let absent: Vec<&(String, String, String)> = linked.iter().filter(|(_, _, x)| !listed.contains(x)).collect();
+    if absent.is_empty() {
+        q_delete_setting(c, &held_key(org))?;
+        q_delete_setting(c, &confirmed_key(org))?;
+        return Ok(removals);
+    }
+    if listed.is_empty() {
+        // A listing without a single user, while members are linked: a broken listing, not an empty company.
+        event(
+            c,
+            org,
+            "directory.removals_held",
+            None,
+            None,
+            &json!({"count": absent.len(), "why": "empty_listing"}),
+            now,
+        )?;
+        return Ok(removals);
+    }
+    let confirmed: HashSet<String> = q_get_setting(c, &confirmed_key(org))?
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let all_confirmed = absent.iter().all(|(_, _, x)| confirmed.contains(x));
+    if absent.len() > removal_limit(linked.len()) && !all_confirmed {
+        let held = Held::of(absent.iter().map(|(_, _, x)| x.clone()).collect());
+        let changed = q_held(c, org)?.is_none_or(|h| h.digest != held.digest);
+        q_set_setting(
+            c,
+            &held_key(org),
+            &serde_json::to_string(&held).map_err(|e| OrgError::Internal(e.to_string()))?,
+        )?;
+        if changed {
+            event(
+                c,
+                org,
+                "directory.removals_held",
+                None,
+                None,
+                &json!({"count": absent.len(), "why": "too_many"}),
+                now,
+            )?;
+        }
+        return Ok(removals);
+    }
+    for (_, user, _) in absent {
+        removals.extend(deprovision::q_deprovision(c, org, user, Reason::DirectoryDelete, None, now)?);
+    }
+    q_delete_setting(c, &held_key(org))?;
+    q_delete_setting(c, &confirmed_key(org))?;
     Ok(removals)
 }
 
@@ -650,7 +871,7 @@ pub async fn backfill_all(
     conn: &DbConn,
     pool: Option<&DbPool>,
 ) -> Result<usize, String> {
-    let tenants = conn.run(|c| reins_org::q_bound_directories(c)).await.map_err(|e| e.to_string())?;
+    let tenants = conn.run(reins_org::q_bound_directories).await.map_err(|e| e.to_string())?;
     let mut done = 0;
     for tenant in tenants.into_iter().filter(|t| t.tier().scim()) {
         let Some(directory) = tenant.directory_id.clone() else {
@@ -1000,6 +1221,158 @@ mod tests {
         add_member(&mut c, "o1", "m_owner", "creator", ACTIVE_STATUS);
         q_backfill(&mut c, &tenant, &[], &[], 30).unwrap();
         assert!(reins_org::q_member_state(&mut c, "o1", "creator").unwrap().unwrap().is_active());
+    }
+
+    #[test]
+    fn a_list_page_without_data_or_metadata_is_an_error() {
+        let ok = json!({"data": [{"id": "u1"}], "list_metadata": {"after": "u1", "before": null}});
+        assert_eq!(parse_list_page(&ok).unwrap(), (vec![json!({"id": "u1"})], Some("u1".to_owned())));
+        let last = json!({"data": [], "list_metadata": {"after": null}});
+        assert_eq!(parse_list_page(&last).unwrap(), (vec![], None));
+        for bad in [
+            json!({"list_metadata": {"after": null}}),
+            json!({"data": null, "list_metadata": {"after": null}}),
+            json!({"data": {"id": "u1"}, "list_metadata": {}}),
+            json!({"data": []}),
+            json!({"data": [], "list_metadata": null}),
+            json!({"data": [], "list_metadata": {"after": 7}}),
+            json!({"error": "rate limited"}),
+        ] {
+            assert!(parse_list_page(&bad).is_err(), "{bad}");
+        }
+    }
+
+    /// `n` members the directory linked, as a listing returns them.
+    fn linked(c: &mut DbConnInner, n: usize) -> Vec<Value> {
+        let users: Vec<Value> =
+            (0..n).map(|i| dir_user(&format!("directory_user_{i}"), &format!("p{i}@acme.com"), "active")).collect();
+        for u in &users {
+            run(c, &ev("dsync.user.created", u.clone()));
+        }
+        users
+    }
+
+    fn active_count(c: &mut DbConnInner) -> usize {
+        reins_org::q_members(c, "o1")
+            .unwrap()
+            .into_iter()
+            .filter(|m| {
+                reins_org::q_member_state(c, "o1", m.user_uuid.as_ref()).unwrap().is_some_and(|s| s.is_active())
+            })
+            .count()
+    }
+
+    #[test]
+    fn an_empty_listing_removes_nobody() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        linked(&mut c, 3);
+        let tenant = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        assert!(q_backfill(&mut c, &tenant, &[], &[], 20).unwrap().is_empty());
+        assert_eq!(active_count(&mut c), 3);
+    }
+
+    #[test]
+    fn a_mass_removal_waits_for_an_admin() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        let users = linked(&mut c, 20);
+        add_user(&mut c, "creator", "owner@acme.com");
+        add_member(&mut c, "o1", "m_owner", "creator", ACTIVE_STATUS);
+        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m_owner", reins_proto::org::Role::OrgOwner);
+        let tenant = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        // Up to the limit (5 of 20) goes through.
+        assert_eq!(removal_limit(20), 5);
+        assert_eq!(q_backfill(&mut c, &tenant, &users[5..], &[], 20).unwrap().len(), 5);
+        assert!(q_held(&mut c, "o1").unwrap().is_none());
+        // Six more of the fifteen left: held, nobody removed, and the console has something to show.
+        assert!(q_backfill(&mut c, &tenant, &users[11..], &[], 30).unwrap().is_empty());
+        assert_eq!(active_count(&mut c), 16);
+        let held = q_held(&mut c, "o1").unwrap().unwrap();
+        assert_eq!(held.external_ids.len(), 6);
+        // A confirmation of something else (stale) is refused; of exactly what's held, it's recorded.
+        let stale = reins_proto::org::AdminAction::ConfirmDirectoryRemovals {
+            held: "stale".to_owned(),
+        };
+        assert!(super::super::admin::propose(&mut c, "o1", "creator", &stale, None, 40).is_err());
+        let confirm = reins_proto::org::AdminAction::ConfirmDirectoryRemovals {
+            held: held.digest.clone(),
+        };
+        super::super::admin::propose(&mut c, "o1", "creator", &confirm, None, 40).unwrap();
+        // The next backfill removes them, and only them.
+        assert_eq!(q_backfill(&mut c, &tenant, &users[11..], &[], 50).unwrap().len(), 6);
+        assert_eq!(active_count(&mut c), 10);
+        assert!(q_held(&mut c, "o1").unwrap().is_none());
+        // A confirmation is spent: another mass removal is held again.
+        assert!(q_backfill(&mut c, &tenant, &users[19..], &[], 60).unwrap().is_empty());
+        assert!(q_held(&mut c, "o1").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_complete_listing_reconciles_groups() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        let tenant = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        let sec = json!({"id": "directory_group_sec", "name": "Security"});
+        let ops = json!({"id": "directory_group_ops", "name": "Ops"});
+        let mut kim = dir_user("directory_user_kim", "kim@acme.com", "active");
+        kim["groups"] = json!([sec.clone(), ops.clone()]);
+        q_backfill(&mut c, &tenant, std::slice::from_ref(&kim), &[sec.clone(), ops.clone()], 10).unwrap();
+        let g_sec = group_by_external(&mut c, "o1", "directory_group_sec").unwrap().unwrap();
+        let g_ops = group_by_external(&mut c, "o1", "directory_group_ops").unwrap().unwrap();
+        let kim_m = member_by_email(&mut c, "kim@acme.com").unwrap().uuid.to_string();
+        assert_eq!(reins_org::q_group_members(&mut c, &g_sec).unwrap(), [kim_m.clone()]);
+        // A group made in Reins (no directory id) is never touched by a listing.
+        add_group(&mut c, "o1", "g_local", &[&kim_m]);
+        grant(&mut c, "o1", SUBJECT_GROUP, &g_ops, reins_proto::org::Role::Approver);
+        // The directory dropped Ops, and Kim from Security (events missed).
+        kim["groups"] = json!([]);
+        q_backfill(&mut c, &tenant, std::slice::from_ref(&kim), std::slice::from_ref(&sec), 20).unwrap();
+        assert!(group_by_external(&mut c, "o1", "directory_group_ops").unwrap().is_none());
+        assert!(reins_org::q_subject_roles(&mut c, "o1", SUBJECT_GROUP, &g_ops).unwrap().is_empty());
+        assert!(reins_org::q_group_members(&mut c, &g_sec).unwrap().is_empty());
+        assert_eq!(reins_org::q_group_members(&mut c, "g_local").unwrap(), [kim_m]);
+        // An empty group listing deletes no group.
+        q_backfill(&mut c, &tenant, std::slice::from_ref(&kim), &[], 30).unwrap();
+        assert!(group_by_external(&mut c, "o1", "directory_group_sec").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_new_directory_relinks_members_and_never_removes_them() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        linked(&mut c, 3);
+        run(
+            &mut c,
+            &ev(
+                "dsync.group.created",
+                json!({"id": "directory_group_sec", "name": "Security",
+            "directory_id": "directory_ACME", "organization_id": "org_ACME"}),
+            ),
+        );
+        let g = group_by_external(&mut c, "o1", "directory_group_sec").unwrap().unwrap();
+        // The tenant moves to another directory.
+        let mut t = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        q_directory_changed(&mut c, "o1", t.directory_id.as_deref(), Some("directory_NEW"), 40).unwrap();
+        t.directory_id = Some("directory_NEW".to_owned());
+        q_save_org(&mut c, &t).unwrap();
+        // The new directory lists only one of them, under a new id: nobody is removed for being absent from it.
+        let mut p0 = dir_user("directory_user_new0", "p0@acme.com", "active");
+        p0["directory_id"] = json!("directory_NEW");
+        assert!(q_backfill(&mut c, &t, &[p0], &[], 50).unwrap().is_empty());
+        assert_eq!(active_count(&mut c), 3);
+        // The one it lists is linked to it again; the old group stays, a plain group now.
+        assert_eq!(member_by_email(&mut c, "p0@acme.com").unwrap().external_id.as_deref(), Some("directory_user_new0"));
+        assert!(member_by_email(&mut c, "p1@acme.com").unwrap().external_id.is_none());
+        assert_eq!(reins_org::q_groups(&mut c, "o1").unwrap().into_iter().filter(|(id, _, _)| *id == g).count(), 1);
+    }
+
+    #[test]
+    fn a_directory_user_with_an_invalid_address_is_refused() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_x", "a b@acme.com", "active")));
+        assert!(member_by_email(&mut c, "a b@acme.com").is_none());
     }
 
     #[test]

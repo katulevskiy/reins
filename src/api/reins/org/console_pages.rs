@@ -216,6 +216,7 @@ pub struct ChangeView {
     pub can_reject: bool,
 }
 
+#[allow(clippy::struct_excessive_bools, reason = "independent facts the page shows")]
 pub struct OverviewView {
     pub org_id: String,
     pub name: String,
@@ -233,6 +234,10 @@ pub struct OverviewView {
     pub names: std::collections::HashMap<String, String>,
     /// The roles members (by membership) and groups hold now.
     pub roles: std::collections::HashMap<String, Vec<Role>>,
+    /// Members the directory sync held back (how many, and the digest a confirmation names).
+    pub held: Option<(usize, String)>,
+    /// The viewer may propose removing them.
+    pub can_confirm_held: bool,
 }
 
 fn name_of<'a>(names: &'a std::collections::HashMap<String, String>, id: &'a str) -> &'a str {
@@ -341,6 +346,19 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
             format!("Remove {}", e(name_of(names, member))),
             field("Roles", &e(&roles_text(v.roles.get(member))), "none, signed out everywhere"),
         ),
+        AdminAction::ConfirmDirectoryRemovals {
+            held,
+        } => {
+            let now = v
+                .held
+                .as_ref()
+                .filter(|(_, d)| d == held)
+                .map_or_else(|| "changed since".to_owned(), |(n, _)| format!("{n} not in the directory"));
+            (
+                "Remove members the directory dropped".to_owned(),
+                field("Members", &e(&now), "removed, signed out everywhere"),
+            )
+        }
         AdminAction::SetTwoPerson {
             on,
         } => (
@@ -374,6 +392,28 @@ make a new one.</p>",
     } else {
         String::new()
     };
+    let held = match &v.held {
+        Some((n, digest)) => {
+            let button = if v.can_confirm_held {
+                format!(
+                    "<form method=\"post\" action=\"{}{}/directory/confirm\">{csrf}<input type=\"hidden\" \
+name=\"held\" value=\"{}\"><button type=\"submit\">Remove them</button></form>",
+                    e(frame.base),
+                    e(&v.org_id),
+                    e(digest)
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "<div class=\"banner\" role=\"alert\">{}<p>The directory no longer lists {n} members. Kept until an \
+admin confirms.</p>{button}</div>",
+                svg(icon::WARNING)
+            )
+        }
+        None => String::new(),
+    };
+    let recovery = format!("{recovery}{held}");
     let domains: String = v
         .domains
         .iter()
@@ -737,7 +777,36 @@ mod tests {
             can_set_up: true,
             names: std::iter::once(("m2".to_owned(), "<script>lee</script>".to_owned())).collect(),
             roles: std::iter::once(("m2".to_owned(), vec![Role::SecurityAdmin])).collect(),
+            held: None,
+            can_confirm_held: false,
         }
+    }
+
+    #[test]
+    fn held_directory_removals_are_shown_and_confirmed_by_digest() {
+        let mut v = view();
+        assert!(!overview(&frame(), &v).contains("no longer lists"));
+        v.held = Some((7, "abc123".to_owned()));
+        let html = overview(&frame(), &v);
+        assert!(html.contains("no longer lists 7 members"));
+        assert!(!html.contains("directory/confirm"), "only for whoever may remove members");
+        v.can_confirm_held = true;
+        let html = overview(&frame(), &v);
+        assert!(html.contains("/reins/org/o1/directory/confirm") && html.contains("value=\"abc123\""));
+        let d = describe(
+            &AdminAction::ConfirmDirectoryRemovals {
+                held: "abc123".to_owned(),
+            },
+            &v,
+        );
+        assert!(d.contains("7 not in the directory"), "{d}");
+        let stale = describe(
+            &AdminAction::ConfirmDirectoryRemovals {
+                held: "old".to_owned(),
+            },
+            &v,
+        );
+        assert!(stale.contains("changed since"), "{stale}");
     }
 
     #[test]
@@ -773,6 +842,9 @@ mod tests {
             },
             AdminAction::SetTwoPerson {
                 on: false,
+            },
+            AdminAction::ConfirmDirectoryRemovals {
+                held: "d1".to_owned(),
             },
             AdminAction::RemoveDomain {
                 domain: "acme.com".to_owned(),

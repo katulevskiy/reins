@@ -291,6 +291,10 @@ pub(crate) fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Opti
         .optional()
 }
 
+pub(crate) fn q_delete_setting(c: &mut DbConnInner, name: &str) -> QueryResult<()> {
+    diesel::delete(reins_settings::table.filter(reins_settings::name.eq(name))).execute(c).map(|_| ())
+}
+
 pub(crate) fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()> {
     c.transaction(|c| {
         diesel::delete(reins_settings::table.filter(reins_settings::name.eq(name))).execute(c)?;

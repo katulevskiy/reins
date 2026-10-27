@@ -20,7 +20,7 @@ use super::{enabled, event};
 use crate::{
     api::{ApiResult, EmptyResult},
     db::{
-        DbConn,
+        DbConn, DbConnInner,
         models::{
             Membership, OIDCAuthenticatedUser, User, UserId,
             reins_org::{self, ReinsOrg},
@@ -210,54 +210,81 @@ pub async fn hint_for(domain: &str, conn: &DbConn) -> Option<OrgHint> {
     })
 }
 
+/// The signing-in account, as [`q_facts`] reads it.
+#[derive(Clone, Debug)]
+pub struct Account {
+    pub uuid: String,
+    pub email: String,
+    pub has_keys: bool,
+}
+
+/// The org a sign-in is about and the account as that org sees it: the account's own org first; then the org whose
+/// IdP the sign-in came through; then the one that verified its email's domain.
+///
+/// An account counts as not there yet only when it was **provisioned** as a placeholder nobody has signed in to: no
+/// keys, no org's member, and an invitation on its address (an org admin's invitation, or a directory's
+/// provisioning). Any other account is someone's, and a sign-in to it is never captured by an org.
+pub fn q_facts(
+    c: &mut DbConnInner,
+    account: Option<&Account>,
+    idp_org: Option<&str>,
+    domain_org: Option<&str>,
+) -> Result<Option<(OrgFacts, Existing)>, diesel::result::Error> {
+    use diesel::prelude::*;
+    let member_of = match account {
+        Some(a) => reins_org::q_orgs_of_user_any(c, &a.uuid)?,
+        None => Vec::new(),
+    };
+    let placeholder = match account {
+        Some(a) if !a.has_keys && member_of.is_empty() => {
+            let invited: i64 = crate::db::schema::invitations::table
+                .filter(crate::db::schema::invitations::email.eq(a.email.to_lowercase()))
+                .count()
+                .get_result(c)?;
+            invited > 0
+        }
+        _ => false,
+    };
+    let existing_uuid = account.filter(|_| !placeholder).map(|a| a.uuid.clone());
+    let idp_tenant = match idp_org {
+        Some(id) => reins_org::q_org_by_workos(c, id)?.map(|o| o.org_uuid),
+        None => None,
+    };
+    let Some(org_uuid) = member_of.first().cloned().or(idp_tenant).or(domain_org.map(str::to_owned)) else {
+        return Ok(None);
+    };
+    let Some(org) = reins_org::q_org(c, &org_uuid)? else {
+        return Ok(None);
+    };
+    let name = reins_org::q_org_name(c, &org_uuid)?.unwrap_or_default();
+    let domains =
+        reins_org::q_domains(c, &org_uuid)?.into_iter().filter(|d| d.verified_at.is_some()).map(|d| d.domain).collect();
+    let existing = match &existing_uuid {
+        None => Existing::NoAccount,
+        Some(u) => match reins_org::q_member_state(c, &org_uuid, u)? {
+            None => Existing::NotMember,
+            Some(m) => Existing::Member {
+                active: m.is_active(),
+            },
+        },
+    };
+    Ok(Some((OrgFacts::of(&org, name, domains), existing)))
+}
+
 /// Applies [`decide`] to a sign-in: the org is the one the existing account is a member of, else the one that
 /// verified the email's domain.
 pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: &DbConn) -> ApiResult<Decision> {
     if !enabled() {
         return Ok(Decision::Personal);
     }
-    let existing_uuid = existing.map(|u| u.uuid.to_string());
-    let existing_is_stub = existing.is_some_and(|u| u.private_key.is_none());
+    let account = existing.map(|u| Account {
+        uuid: u.uuid.to_string(),
+        email: u.email.clone(),
+        has_keys: u.private_key.is_some(),
+    });
     let domain_org = org_of_domain(&user.email, conn).await;
     let idp_org = user.workos.as_ref().and_then(|w| w.organization_id.clone());
-    let loaded = conn
-        .run(move |c| -> Result<Option<(OrgFacts, Existing)>, diesel::result::Error> {
-            let member_of = match &existing_uuid {
-                Some(u) => reins_org::q_orgs_of_user_any(c, u)?,
-                None => Vec::new(),
-            };
-            // A stub nobody ever signed in to (no keys) and no org's member is no account yet: it joins like a new one.
-            let existing_uuid = existing_uuid.filter(|_| !(existing_is_stub && member_of.is_empty()));
-            // The account's own org first; then the org whose IdP the sign-in came through; then its email's domain.
-            let idp_tenant = match &idp_org {
-                Some(id) => reins_org::q_org_by_workos(c, id)?.map(|o| o.org_uuid),
-                None => None,
-            };
-            let org_uuid = member_of.first().cloned().or(idp_tenant).or(domain_org);
-            let Some(org_uuid) = org_uuid else {
-                return Ok(None);
-            };
-            let Some(org) = reins_org::q_org(c, &org_uuid)? else {
-                return Ok(None);
-            };
-            let name = reins_org::q_org_name(c, &org_uuid)?.unwrap_or_default();
-            let domains = reins_org::q_domains(c, &org_uuid)?
-                .into_iter()
-                .filter(|d| d.verified_at.is_some())
-                .map(|d| d.domain)
-                .collect();
-            let existing = match &existing_uuid {
-                None => Existing::NoAccount,
-                Some(u) => match reins_org::q_member_state(c, &org_uuid, u)? {
-                    None => Existing::NotMember,
-                    Some(m) => Existing::Member {
-                        active: m.is_active(),
-                    },
-                },
-            };
-            Ok(Some((OrgFacts::of(&org, name, domains), existing)))
-        })
-        .await;
+    let loaded = conn.run(move |c| q_facts(c, account.as_ref(), idp_org.as_deref(), domain_org.as_deref())).await;
     let loaded = match loaded {
         Ok(l) => l,
         Err(e) => err!(format!("Could not check the organization: {e}")),
@@ -313,6 +340,7 @@ pub async fn create_account(user: &mut User, decision: &Decision, conn: &DbConn)
     else {
         return user.save(conn).await;
     };
+    user.ready_to_write()?;
     let org = org.clone();
     let now = super::super::now_unix();
     let done = conn
@@ -571,6 +599,44 @@ mod tests {
             crate::sso_workos::check_passkey(&signed_in("SSO", Some("org_ACME")), true, d.through_org_identity())
                 .is_ok()
         );
+    }
+
+    #[cfg(sqlite)]
+    #[test]
+    fn only_a_provisioned_placeholder_counts_as_no_account() {
+        use super::super::testing::{add_org, add_user, db};
+        use crate::db::{models::Invitation, schema::invitations};
+        use diesel::RunQueryDsl;
+        let c = &mut db();
+        add_org(c, "o1");
+        add_user(c, "u-own", "dana@acme.com");
+        let mut account = Account {
+            uuid: "u-own".to_owned(),
+            email: "dana@acme.com".to_owned(),
+            has_keys: false,
+        };
+        // No keys, but nobody provisioned it: someone's own account. Through the org's domain it stays theirs.
+        let (_, existing) = q_facts(c, Some(&account), None, Some("o1")).unwrap().unwrap();
+        assert_eq!(existing, Existing::NotMember);
+        let o = org(IdentityKind::Sso, Tier::Business);
+        assert_eq!(decide(Some(&o), existing, &via("SSO", Some("org_ACME"))), Err(NOT_THIS_WAY.to_owned()));
+        // Provisioned as a placeholder (an invitation on its address): it joins like a new account.
+        diesel::insert_into(invitations::table).values(&Invitation::new("dana@acme.com")).execute(c).unwrap();
+        let (_, existing) = q_facts(c, Some(&account), None, Some("o1")).unwrap().unwrap();
+        assert_eq!(existing, Existing::NoAccount);
+        // An account someone set up (it has keys) is theirs, invitation or not.
+        account.has_keys = true;
+        let (_, existing) = q_facts(c, Some(&account), None, Some("o1")).unwrap().unwrap();
+        assert_eq!(existing, Existing::NotMember);
+    }
+
+    #[test]
+    fn a_new_account_is_checked_and_stamped_before_any_write() {
+        assert!(User::new("not an address", None).ready_to_write().is_err());
+        let mut u = User::new("dana@acme.com", None);
+        u.updated_at = chrono::DateTime::UNIX_EPOCH.naive_utc();
+        u.ready_to_write().unwrap();
+        assert!(u.updated_at > chrono::DateTime::UNIX_EPOCH.naive_utc());
     }
 
     #[test]

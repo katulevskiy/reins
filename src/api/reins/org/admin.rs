@@ -60,6 +60,15 @@ pub fn target_roles(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Res
         AdminAction::RemoveMember {
             member,
         } => reins_org::q_roles_of(c, org, member)?,
+        AdminAction::ConfirmDirectoryRemovals {
+            ..
+        } => {
+            let mut roles = Vec::new();
+            for m in super::scim::q_held_memberships(c, org)? {
+                roles.extend(reins_org::q_roles_of(c, org, &m)?);
+            }
+            roles
+        }
         _ => Vec::new(),
     })
 }
@@ -348,6 +357,9 @@ fn validate(
         AdminAction::SetTwoPerson {
             ..
         } => Ok(()),
+        AdminAction::ConfirmDirectoryRemovals {
+            held,
+        } => super::scim::q_confirm_held(c, org, held, true).map(drop),
     }
 }
 
@@ -412,7 +424,9 @@ fn apply(
             identity.as_str().clone_into(&mut tenant.identity);
             let sso = *identity == IdentityKind::Sso;
             tenant.workos_org_id = workos_org_id.clone().filter(|_| *identity != IdentityKind::None);
-            tenant.directory_id = directory_id.clone().filter(|_| sso && tenant.tier().scim());
+            let directory = directory_id.clone().filter(|_| sso && tenant.tier().scim());
+            super::scim::q_directory_changed(c, org, tenant.directory_id.as_deref(), directory.as_deref(), now)?;
+            tenant.directory_id = directory;
             tenant.github_org = github_org.clone().filter(|_| *identity == IdentityKind::GithubOrg);
             tenant.updated_at = now;
             reins_org::q_save_org(c, &tenant)?;
@@ -423,6 +437,7 @@ fn apply(
             let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
             tier.as_str().clone_into(&mut tenant.tier);
             if !tier.scim() {
+                super::scim::q_directory_changed(c, org, tenant.directory_id.as_deref(), None, now)?;
                 tenant.directory_id = None;
             }
             tenant.updated_at = now;
@@ -452,6 +467,12 @@ fn apply(
             tenant.two_person = *on;
             tenant.updated_at = now;
             reins_org::q_save_org(c, &tenant)?;
+        }
+        AdminAction::ConfirmDirectoryRemovals {
+            held,
+        } => {
+            let count = super::scim::q_confirm_held(c, org, held, false)?;
+            event(c, org, "directory.removals_confirmed", Some(actor), None, &json!({"count": count}), now)?;
         }
     }
     Ok(Vec::new())
