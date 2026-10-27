@@ -126,6 +126,10 @@ pub(super) struct Walk<'a> {
 /// The effects of a shell command line run in `ctx`.
 #[must_use]
 pub fn analyze_command(command: &str, ctx: &Context) -> Analysis {
+    // Too long to read at all: nothing else looks at it (the labels' own reader is not bounded).
+    if command.len() > ast::MAX_INPUT {
+        return Analysis::new(Vec::new(), Certainty::None, vec!["a command too long to read".to_owned()]);
+    }
     let mut w = Walk::new(ctx);
     w.run_text(command);
     let mut a = Analysis::new(std::mem::take(&mut w.effects), w.certainty, std::mem::take(&mut w.unresolved));

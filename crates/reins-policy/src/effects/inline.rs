@@ -330,6 +330,10 @@ pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str, args: &[Exp
         w.run_script(code, args.to_vec());
         return;
     }
+    if code.len() > crate::shell::ast::MAX_INPUT {
+        w.lower(Certainty::None, "code too long to read");
+        return;
+    }
     let toks = lex(lang, code);
     let cwd = w.cwd.clone();
     let argv = args
