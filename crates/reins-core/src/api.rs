@@ -2450,6 +2450,23 @@ impl ReinsCore {
         .await
     }
 
+    /// What `change` would have done on this phone's own last 30 days (02 §4): shown before a matrix cell or a rule
+    /// changes. Read on the phone only; nothing is sent.
+    pub async fn preview_policy_change(
+        &self,
+        change: crate::autopilot::preview::PolicyChange,
+    ) -> Result<crate::autopilot::preview::PreviewView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.preview_policy_change(&change) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// The open "Auto needs information" questions, newest first. They are listed, never notified.
     pub async fn auto_questions(&self) -> Result<Vec<AutoQuestion>, CoreError> {
         let runtime = Arc::clone(&self.runtime);

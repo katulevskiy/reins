@@ -306,7 +306,11 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
         neighbours: neighbour_lines(j),
         reason: s.reason.clone(),
         risk: s.risk.clone(),
-        matrix: s.matrix.clone(),
+        // The note without its preview input: that stays on the sealed suggestion, never in Activity.
+        matrix: s.matrix.clone().map(|mut m| {
+            m.input = None;
+            m
+        }),
     }
 }
 
