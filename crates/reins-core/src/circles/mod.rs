@@ -182,6 +182,12 @@ fn not_available(e: ApiFailure) -> CoreError {
         } if message.contains("phone roles") => {
             CoreError::invalid("Circles need phone roles on both accounts (Settings › Phones).")
         }
+        // The server's own words for a refused step ("This is your own invitation").
+        ApiFailure::Status {
+            status: 400,
+            message,
+            ..
+        } if !message.is_empty() => CoreError::invalid(message),
         other => other.into_core(),
     }
 }

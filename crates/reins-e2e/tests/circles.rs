@@ -293,3 +293,85 @@ async fn revoke_stops_late_answers() {
     w.dana.core.approve(item.id, none()).await.unwrap();
     assert_eq!(sent(&w.dana).await, 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lying_server_changes_nothing() {
+    let w = world().await;
+    let mut draft = cosign(true);
+    // Summary cards: the helper sees the effects and the sentence, not who it goes to.
+    draft.full_cards = false;
+    let link = invite(&w, draft).await;
+    let db = || rusqlite::Connection::open(w._server.database_path()).unwrap();
+
+    // A first request, co-signed for real.
+    let args = send_args();
+    let (_, first) = tokio::join!(w.ai.tool("gmail_send", &args), circled_item(&w.dana));
+    w.dana.core.approve(first.id.clone(), none()).await.unwrap();
+    let review = review_for(&w.alex).await;
+    assert!(review.detail.is_none() && review.subtitle.is_empty(), "a summary card carries no detail: {review:?}");
+    w.alex.core.circle_answer(review.id.clone(), true, None).await.unwrap();
+    poll(async || {
+        w.dana.core.sync(1).await.unwrap();
+        (sent(&w.dana).await == 1).then_some(())
+    })
+    .await;
+    let old_answer: String = db()
+        .query_row("SELECT sealed_answer FROM reins_circle_packets WHERE id = ?1", [&review.id], |r| r.get(0))
+        .unwrap();
+
+    // A second request: Dana approves; the server replays Alex's old answer as the answer to this one.
+    let second_args = json!({"to": ["ann@acme.com"], "subject": "Another", "body": "Second"});
+    let (_, second) = tokio::join!(
+        w.ai.tool("gmail_send", &second_args),
+        poll(async || {
+            let items = w.dana.core.sync(1).await.unwrap();
+            items.into_iter().find(|i| i.circle.is_some() && i.id != first.id)
+        })
+    );
+    w.dana.core.approve(second.id.clone(), none()).await.unwrap();
+    let packet: String = poll(async || {
+        db().query_row("SELECT id FROM reins_circle_packets WHERE state = 'waiting' AND kind = 'review'", [], |r| r.get(0)).ok()
+    })
+    .await;
+    db().execute(
+        "UPDATE reins_circle_packets SET state = 'answered', sealed_answer = ?1, owner_seen = 0 WHERE id = ?2",
+        rusqlite::params![old_answer, packet],
+    )
+    .unwrap();
+    // It also claims the arrangement ended (an unsigned change) and plants an arrangement Dana never made.
+    db().execute(
+        "UPDATE reins_circle_links SET last_change = ?1 WHERE id = ?2",
+        rusqlite::params![
+            json!({"body": json!({"v": 1, "link": link, "arrangement": "0".repeat(64), "seq": 9, "state": "ended", "by": "helper", "at": 1}).to_string(), "sig": "A".repeat(86)}).to_string(),
+            link
+        ],
+    )
+    .unwrap();
+    let (dana_id, alex_id): (String, String) = {
+        let c = db();
+        let id = |email: &str| c.query_row("SELECT uuid FROM users WHERE email = ?1", [email], |r| r.get(0)).unwrap();
+        (id(DANA), id(ALEX))
+    };
+    db().execute(
+        "INSERT INTO reins_circle_links VALUES (?1, ?2, ?3, 'delegate', 'active', 'AAAA', 'AAAA', NULL, 1, 1)",
+        rusqlite::params!["f".repeat(32), dana_id, alex_id],
+    )
+    .unwrap();
+    for _ in 0..3 {
+        w.dana.core.sync(1).await.unwrap();
+    }
+    assert_eq!(sent(&w.dana).await, 1, "a replayed answer never runs the second request");
+    let card = w.dana.core.pending().await.unwrap().into_iter().find(|i| i.id == second.id).expect("still waiting");
+    assert_eq!(card.circle.unwrap().line, format!("Waiting for {ALEX}"));
+    let people = w.dana.core.circle_people(true).await.unwrap();
+    assert_eq!(people.len(), 1, "a planted arrangement is ignored: {people:?}");
+    assert_eq!(people[0].state, CircleLinkState::Active, "an unsigned end is ignored");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nobody_shares_control_with_themself() {
+    let w = world().await;
+    let start = w.dana.core.circle_invite_create(cosign(false)).await.unwrap();
+    let err = w.dana.core.circle_join_open(start.link).await.unwrap_err();
+    assert!(err.to_string().contains("own invitation"), "{err}");
+}
