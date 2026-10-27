@@ -182,6 +182,8 @@ pub enum EnvelopeKind {
     Head,
     /// An executor's [`Receipt`], signed by the executor's key.
     Receipt,
+    /// One step of a staged policy rollout ([`crate::rollout::Rollout`]), pre-signed by the org issuer key (O4).
+    Rollout,
 }
 
 impl EnvelopeKind {
@@ -194,6 +196,7 @@ impl EnvelopeKind {
             Self::Checkpoint => "checkpoint",
             Self::Head => "head",
             Self::Receipt => "receipt",
+            Self::Rollout => "rollout",
         }
     }
 }
