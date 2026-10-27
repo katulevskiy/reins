@@ -447,7 +447,58 @@ pub fn check_run(org: &str, sha: &str, checked: &Checked) -> Value {
     }
 }
 
-/// Handles a verified webhook's work; on a push, returns the pending change and whom to tell.
+/// The database half of a webhook's work: checks what was read and, on a push, proposes the activation (as the system;
+/// it applies nothing). Returns the result and, on a push that compiled, the pending change and whom to tell.
+pub fn act(
+    c: &mut DbConnInner,
+    org: &str,
+    read: Result<BTreeMap<String, String>, String>,
+    source_ref: &str,
+    is_push: bool,
+    now: i64,
+) -> Result<(Checked, Option<(String, Vec<String>)>), OrgError> {
+    let checked = match read {
+        Ok(files) => check_files(c, org, &files, source_ref, now)?,
+        Err(m) => Checked::Errors(vec![SourceError {
+            file: source::MAIN_FILE.to_owned(),
+            line: 0,
+            message: m,
+        }]),
+    };
+    let detail = match &checked {
+        Checked::Errors(e) => json!({"source": source_ref, "errors": e.len()}),
+        Checked::Simulated {
+            revision,
+            report_hash,
+            ..
+        } => json!({"source": source_ref, "revision": revision, "report": report_hash}),
+    };
+    audit::record(c, org, audit::kinds::POLICY_REPO_CHECKED, Some(SYSTEM_ACTOR), None, &detail, now)?;
+    let proposed = match (&checked, is_push) {
+        (
+            Checked::Simulated {
+                revision,
+                hash,
+                report_hash,
+                ..
+            },
+            true,
+        ) => {
+            let action = AdminAction::ActivatePolicy {
+                revision: *revision,
+                hash: hash.clone(),
+                report: Some(report_hash.clone()),
+            };
+            let id = admin::propose_as_system(c, org, &action, now)?;
+            Some((id, reins_org::q_holders(c, org, Capability::ActivatePolicy)?))
+        }
+        _ => None,
+    };
+    Ok((checked, proposed))
+}
+
+/// Handles a verified webhook's work: reads the repo at the commit, then [`act`]s; a PR gets its check run, a merge's
+/// pending activation is sent to the Security admins' phones.
 pub async fn handle(
     pool: &DbPool,
     conn: &DbConn,
@@ -472,58 +523,16 @@ pub async fn handle(
     };
     let read = read_tree(&gh, &bound.repo, &sha).await;
     let (o, r) = (org.clone(), source_ref.clone());
-    let checked = conn
-        .run(move |c| -> Result<Checked, OrgError> {
-            let now = now_unix();
-            let checked = match read {
-                Ok(files) => check_files(c, &o, &files, &r, now)?,
-                Err(m) => Checked::Errors(vec![SourceError {
-                    file: source::MAIN_FILE.to_owned(),
-                    line: 0,
-                    message: m,
-                }]),
-            };
-            let detail = match &checked {
-                Checked::Errors(e) => json!({"source": r, "errors": e.len()}),
-                Checked::Simulated {
-                    revision,
-                    report_hash,
-                    ..
-                } => json!({"source": r, "revision": revision, "report": report_hash}),
-            };
-            audit::record(c, &o, audit::kinds::POLICY_REPO_CHECKED, Some(SYSTEM_ACTOR), None, &detail, now)?;
-            Ok(checked)
-        })
-        .await?;
+    let (checked, proposed) = conn.run(move |c| act(c, &o, read, &r, is_push, now_unix())).await?;
     if !is_push {
         let body = check_run(&org, &sha, &checked);
         if let Err(e) = gh.post_json(&format!("/repos/{}/check-runs", bound.repo), &body).await {
             warn!("Org {org}: check run for {source_ref}: {e}");
         }
-        return Ok(());
     }
-    let Checked::Simulated {
-        revision,
-        hash,
-        report_hash,
-        ..
-    } = checked
-    else {
-        return Ok(());
-    };
-    let action = AdminAction::ActivatePolicy {
-        revision,
-        hash,
-        report: Some(report_hash),
-    };
-    let o = org.clone();
-    let (change, notify) = conn
-        .run(move |c| -> Result<(String, Vec<String>), OrgError> {
-            let id = admin::propose_as_system(c, &o, &action, now_unix())?;
-            Ok((id, reins_org::q_holders(c, &o, Capability::ActivatePolicy)?))
-        })
-        .await?;
-    reviews::notify(pool, &notify, &change);
+    if let Some((change, notify)) = proposed {
+        reviews::notify(pool, &notify, &change);
+    }
     Ok(())
 }
 
@@ -583,5 +592,254 @@ async fn policy_webhook(h: HookHeaders, data: Data<'_>, conn: DbConn, pool: &Sta
             warn!("Policy webhook for {org}: {e:?}");
             Status::Accepted
         }
+    }
+}
+
+#[cfg(all(test, sqlite))]
+mod tests {
+    use reins_proto::org::Role;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::api::reins::org::{decisions::tests::pilot, testing::db, testing::member};
+
+    const SECRET: &str = "webhook-secret-for-tests";
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn pem() -> String {
+        let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+        String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap()
+    }
+
+    /// The pilot org with its GitHub reader (installation 77) and `acme/reins-policy` bound.
+    fn org() -> DbConnInner {
+        let mut c = db();
+        pilot(&mut c);
+        code::q_set_github_reader(&mut c, "o1", 1, 77, 10).unwrap();
+        github_reader::set_secrets(&mut c, "o1", &pem(), SECRET, 10).unwrap();
+        apply_binding(&mut c, "o1", "Acme/Reins-Policy", "main", "dana", 11).unwrap();
+        c
+    }
+
+    /// A small policy repo: the pilot's rules plus `extra`.
+    fn repo(extra: &str) -> BTreeMap<String, String> {
+        let mut m = BTreeMap::new();
+        m.insert(
+            "reins-policy.toml".to_owned(),
+            "version = 1\norg = \"acme\"\n\n[rollout]\npilot_group = \"Group sec\"\nstages = [\"pilot\", \"100%\"]\ndwell = \"1h\"\n"
+                .to_owned(),
+        );
+        m.insert(
+            "matrix.toml".to_owned(),
+            "mine = [\"auto\", \"auto\", \"auto\", \"ask\"]\nfriends = [\"auto\", \"ask_first\", \"auto\", \"ask\"]\nwork = [\"auto\", \"auto\", \"auto\", \"ask\"]\noutside = [\"ask\", \"ask\", \"ask\", \"ask\"]\n".to_owned(),
+        );
+        m.insert("facts.toml".to_owned(), "[owners]\nacme = \"work\"\n".to_owned());
+        m.insert(
+            "rules/prod.toml".to_owned(),
+            format!(
+                "[[rule]]\nid = \"prod-review\"\nexplain = \"Production needs Security\"\nwhen = {{ resource = \"acme/prod-*\" }}\nreview = {{ reviewers = \"any of Group sec\", class = \"deferred\" }}\n\n[[rule]]\nid = \"prod-deny\"\nexplain = \"Not through agents\"\nwhen = {{ resource = \"acme/forbidden\" }}\ndeny = true\n{extra}"
+            ),
+        );
+        m
+    }
+
+    const API_REVIEW: &str = "\n[[rule]]\nid = \"api-review\"\nwhen = { resource = \"acme/api\" }\nreview = { reviewers = \"any of Group sec\", class = \"deferred\" }\n";
+
+    fn sign(body: &[u8]) -> String {
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, SECRET.as_bytes());
+        format!("sha256={}", data_encoding::HEXLOWER.encode(ring::hmac::sign(&key, body).as_ref()))
+    }
+
+    #[test]
+    fn unsigned_or_misrouted_webhooks_are_refused() {
+        let mut c = org();
+        let body = br#"{"zen": "x"}"#;
+        assert!(signature_ok(SECRET.as_bytes(), body, &sign(body)));
+        assert!(!signature_ok(SECRET.as_bytes(), b"{\"zen\": \"y\"}", &sign(body)));
+        assert!(!signature_ok(b"another secret", body, &sign(body)));
+        assert!(!signature_ok(SECRET.as_bytes(), body, &sign(body).replace("sha256=", "sha1=")));
+        assert!(!signature_ok(SECRET.as_bytes(), body, "sha256=zz"));
+        assert!(!signature_ok(SECRET.as_bytes(), body, ""));
+        let payload = |inst: i64, repo: &str| json!({"installation": {"id": inst}, "repository": {"full_name": repo}});
+        let (o, bound) = route(&mut c, &payload(77, "ACME/reins-policy")).unwrap().unwrap();
+        assert_eq!(
+            (o.as_str(), bound.repo.as_str(), bound.default_branch.as_str()),
+            ("o1", "acme/reins-policy", "main")
+        );
+        // Another repo of the installation, another installation, no installation: nobody's.
+        assert!(route(&mut c, &payload(77, "acme/api")).unwrap().is_none());
+        assert!(route(&mut c, &payload(78, "acme/reins-policy")).unwrap().is_none());
+        assert!(route(&mut c, &json!({"repository": {"full_name": "acme/reins-policy"}})).unwrap().is_none());
+        // Only PRs to the default branch and pushes to it are work.
+        let pr = |action: &str, base: &str| json!({"action": action, "number": 3, "pull_request": {"base": {"ref": base}, "head": {"sha": SHA}}});
+        assert_eq!(
+            work_of("pull_request", &pr("synchronize", "main"), &bound),
+            Work::PullRequest {
+                number: 3,
+                sha: SHA.into()
+            }
+        );
+        assert_eq!(work_of("pull_request", &pr("closed", "main"), &bound), Work::Ignore);
+        assert_eq!(work_of("pull_request", &pr("opened", "dev"), &bound), Work::Ignore);
+        assert_eq!(work_of("push", &json!({"ref": "refs/heads/dev", "after": SHA}), &bound), Work::Ignore);
+        assert_eq!(
+            work_of("push", &json!({"ref": "refs/heads/main", "after": "0".repeat(40)}), &bound),
+            Work::Ignore,
+            "a deleted branch"
+        );
+        assert_eq!(work_of("issues", &pr("opened", "main"), &bound), Work::Ignore);
+        // Another org can't bind the same repo.
+        crate::api::reins::org::testing::add_org(&mut c, "o2");
+        assert!(matches!(
+            check_binding(&mut c, "o2", "acme/reins-policy", "main"),
+            Err(OrgError::Invalid(_) | OrgError::Taken(_))
+        ));
+        assert!(check_binding(&mut c, "o1", "not a repo", "main").is_err());
+    }
+
+    #[test]
+    fn deliveries_are_deduplicated() {
+        let mut c = org();
+        assert!(code::q_first_delivery(&mut c, "d-1", 100).unwrap());
+        assert!(!code::q_first_delivery(&mut c, "d-1", 101).unwrap());
+        assert!(code::q_first_delivery(&mut c, "d-2", 101).unwrap());
+        // Forgotten after a day.
+        assert!(code::q_first_delivery(&mut c, "d-1", 100 + 86_401).unwrap());
+    }
+
+    #[test]
+    fn a_pr_gets_a_check_run_with_the_simulation_line() {
+        let mut c = org();
+        let (checked, proposed) = act(&mut c, "o1", Ok(repo(API_REVIEW)), &format!("pr#3@{SHA}"), false, 100).unwrap();
+        assert!(proposed.is_none(), "a PR proposes nothing");
+        let Checked::Simulated {
+            revision,
+            report,
+            report_hash,
+            ..
+        } = &checked
+        else {
+            panic!("{checked:?}");
+        };
+        let run = check_run("o1", SHA, &checked);
+        assert_eq!((run["name"].as_str(), run["conclusion"].as_str()), (Some(CHECK_NAME), Some("neutral")));
+        assert_eq!(run["head_sha"], SHA);
+        assert_eq!(run["output"]["title"].as_str(), Some(report.line().as_str()));
+        assert!(run["output"]["summary"].as_str().unwrap().contains(&format!("Draft revision {revision}")));
+        assert!(run["details_url"].as_str().unwrap().ends_with(&format!("/policy/simulations/{report_hash}")));
+        let row = crate::db::models::reins_org_keys::q_policy(&mut c, "o1", i64::try_from(*revision).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!((row.state.as_str(), row.source_ref.as_deref()), ("draft", Some(format!("pr#3@{SHA}").as_str())));
+        // Group names became the org's group ids.
+        let p: OrgPolicy = serde_json::from_str(&row.body).unwrap();
+        let api = p.rules.iter().find(|r| r.rule.id == "api-review").unwrap();
+        assert_eq!(api.review.as_ref().unwrap().reviewers, reins_policy::org::Reviewers::Group("sec".into()));
+    }
+
+    #[test]
+    fn compile_errors_annotate_the_check_run() {
+        let mut c = org();
+        let bad = "\n[[rule]]\nid = \"bad\"\nwhen = { zones = [\"moon\"] }\ndeny = true\n";
+        let (checked, _) = act(&mut c, "o1", Ok(repo(bad)), &format!("pr#4@{SHA}"), false, 100).unwrap();
+        let run = check_run("o1", SHA, &checked);
+        assert_eq!(run["conclusion"], "failure");
+        let a = &run["output"]["annotations"][0];
+        assert_eq!((a["path"].as_str(), a["annotation_level"].as_str()), (Some("rules/prod.toml"), Some("failure")));
+        assert!(a["start_line"].as_u64().unwrap() >= 1);
+        assert!(a["message"].as_str().unwrap().contains("moon"));
+        // An unknown group, and a repo too big to read, are errors too; nothing is saved.
+        let (checked, _) =
+            act(&mut c, "o1", Ok(repo(&API_REVIEW.replace("Group sec", "Nobody"))), "pr#5@x", false, 100).unwrap();
+        assert!(matches!(&checked, Checked::Errors(e) if e[0].message.contains("Nobody")), "{checked:?}");
+        let (checked, _) = act(&mut c, "o1", Err("more than 200 policy files".into()), "pr#6@x", false, 100).unwrap();
+        assert_eq!(check_run("o1", SHA, &checked)["output"]["annotations"][0]["start_line"], 1);
+        assert!(code::q_drafts(&mut c, "o1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_merge_only_creates_a_pending_activation() {
+        let mut c = org();
+        let active = policy::active(&mut c, "o1").unwrap().unwrap().0.hash();
+        let (checked, proposed) = act(&mut c, "o1", Ok(repo(API_REVIEW)), &format!("main@{SHA}"), true, 100).unwrap();
+        assert!(matches!(checked, Checked::Simulated { .. }));
+        let (change, notify) = proposed.unwrap();
+        assert_eq!(notify, ["dana", "kim"]);
+        // Nothing applied; the change is the system's, waiting.
+        assert_eq!(policy::active(&mut c, "o1").unwrap().unwrap().0.hash(), active);
+        let row = reins_org::q_change(&mut c, "o1", &change).unwrap().unwrap();
+        assert_eq!(row.proposed_by, admin::SYSTEM_PROPOSER);
+        // Nobody approves it straight away, and it never applies alone.
+        assert_eq!(
+            admin::approve(&mut c, "o1", &change, "kim", None, 101).unwrap_err(),
+            OrgError::Invalid("Confirm it on your phone first.")
+        );
+        let action: AdminAction = serde_json::from_str(&row.action).unwrap();
+        assert!(!admin::can_apply_alone(&mut c, "o1", &row, &action).unwrap());
+        // A Policy author (who may have merged it) can't confirm it.
+        member(&mut c, "o1", "pat", &[Role::PolicyAuthor]);
+        assert_eq!(admin::adopt(&mut c, "o1", &change, "pat", 102), Err(OrgError::Forbidden));
+        // A first Security admin confirms it and becomes its proposer; they can't also approve it.
+        admin::adopt(&mut c, "o1", &change, "dana", 103).unwrap();
+        assert!(admin::adopt(&mut c, "o1", &change, "kim", 103).is_err());
+        assert_eq!(
+            admin::approve(&mut c, "o1", &change, "dana", None, 104).unwrap_err(),
+            OrgError::Invalid("You can't approve your own change.")
+        );
+        // A second one approves: the rollout starts.
+        admin::approve(&mut c, "o1", &change, "kim", None, 105).unwrap();
+        assert!(code::q_open_rollout(&mut c, "o1").unwrap().is_some());
+    }
+
+    async fn github(tree: Value) -> MockServer {
+        let gh = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/app/installations/77/access_tokens"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"token": "ghs_reader"})))
+            .mount(&gh)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/acme/reins-policy/git/trees/{SHA}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tree))
+            .mount(&gh)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/reins-policy/git/blobs/b1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"content": data_encoding::BASE64.encode(b"version = 1\norg = \"acme\"\n")})),
+            )
+            .mount(&gh)
+            .await;
+        gh
+    }
+
+    #[tokio::test]
+    async fn oversized_repos_are_refused() {
+        rustls::crypto::ring::default_provider().install_default().ok();
+        let blob = |p: &str, size: u64| json!({"path": p, "type": "blob", "sha": "b1", "size": size});
+        // A small repo reads; files that aren't policy are skipped (and never fetched).
+        let gh = github(json!({"tree": [blob("reins-policy.toml", 30), blob("README.md", 9_000_000),
+                                        {"path": "rules", "type": "tree", "sha": "t1"}]}))
+        .await;
+        let reader = GithubReader::for_tests("o-big", 77, &pem(), &gh.uri());
+        let files = read_tree(&reader, "acme/reins-policy", SHA).await.unwrap();
+        assert_eq!(files.keys().collect::<Vec<_>>(), ["reins-policy.toml"]);
+        assert!(source::compile(&files).is_ok());
+        // Over 200 policy files.
+        let many: Vec<Value> = (0..201).map(|i| blob(&format!("rules/r{i}.toml"), 10)).collect();
+        let gh = github(json!({"tree": many})).await;
+        let reader = GithubReader::for_tests("o-big2", 77, &pem(), &gh.uri());
+        assert!(read_tree(&reader, "acme/reins-policy", SHA).await.unwrap_err().contains("200"));
+        // Over 1 MiB, or a tree GitHub truncated.
+        let gh = github(json!({"tree": [blob("rules/a.toml", 1_048_577)]})).await;
+        let reader = GithubReader::for_tests("o-big3", 77, &pem(), &gh.uri());
+        assert!(read_tree(&reader, "acme/reins-policy", SHA).await.unwrap_err().contains("1 MiB"));
+        let gh = github(json!({"tree": [], "truncated": true})).await;
+        let reader = GithubReader::for_tests("o-big4", 77, &pem(), &gh.uri());
+        assert!(read_tree(&reader, "acme/reins-policy", SHA).await.is_err());
     }
 }

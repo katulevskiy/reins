@@ -112,6 +112,20 @@ pub fn set_secrets(c: &mut DbConnInner, org: &str, pem: &str, webhook_secret: &s
     Ok(())
 }
 
+#[cfg(test)]
+impl GithubReader {
+    /// A reader for `org` with `pem`, calling `base` (a mock).
+    pub fn for_tests(org: &str, installation_id: i64, pem: &str, base: &str) -> Self {
+        Self {
+            org: org.to_owned(),
+            app_id: 1,
+            installation_id,
+            key_pem: Zeroizing::new(pem.to_owned()),
+            base: base.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
 static TOKENS: LazyLock<Mutex<HashMap<(String, i64), (String, i64)>>> = LazyLock::new(Mutex::default);
 
 #[derive(serde::Serialize)]
@@ -123,7 +137,7 @@ struct AppClaims {
 
 impl GithubReader {
     fn client() -> Result<reqwest::Client, String> {
-        reqwest::Client::builder()
+        crate::http_client::get_reqwest_client_builder(false)
             .timeout(TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .build()

@@ -11448,6 +11448,7 @@ dependencies = [
  "webauthn-rs-core",
  "webauthn-rs-proto",
  "which 8.0.6",
+ "wiremock",
  "x509-parser",
  "yubico_ng",
  "zeroize",
