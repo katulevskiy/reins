@@ -278,6 +278,7 @@ fn the_command_line_reads_stdin_and_answers() {
     assert!(err.contains("unknown harness"), "{err}");
 }
 
+#[cfg(unix)]
 /// A folder outside the OS temp folder (which is scratch: nothing there is netted).
 fn project() -> (tempfile::TempDir, std::path::PathBuf, Config) {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
@@ -289,6 +290,7 @@ fn project() -> (tempfile::TempDir, std::path::PathBuf, Config) {
     (dir, proj, config)
 }
 
+#[cfg(unix)]
 fn bash(harness: &str, cwd: &std::path::Path, command: &str) -> String {
     match harness {
         "cursor" => json!({"hook_event_name": "beforeShellExecution", "command": command, "cwd": cwd}).to_string(),
