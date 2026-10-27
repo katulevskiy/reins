@@ -215,7 +215,12 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
         };
         let answers = reins_org_request::q_approvals(c, org, &change.uuid)?;
         let proposed = answers.iter().any(|a| a.decision == ReviewDecision::Propose.as_str());
-        let own = change.proposed_by == user;
+        // A change the policy repo proposed is every holder's to confirm (the first to confirm becomes its proposer).
+        let system = change.proposed_by == admin::SYSTEM_PROPOSER && {
+            let cap = admin::needed(c, org, &action)?;
+            super::can(c, org, user, cap)?
+        };
+        let own = change.proposed_by == user || system;
         let show = if own {
             action.needs_device_signatures() && !proposed
         } else {
@@ -245,7 +250,11 @@ fn change_item(
         id: change.uuid.clone(),
         subject: ReviewSubject::Change,
         org_name: org_name.to_owned(),
-        requester: email_of(c, &change.proposed_by)?,
+        requester: if change.proposed_by == admin::SYSTEM_PROPOSER {
+            "Policy repo".to_owned()
+        } else {
+            email_of(c, &change.proposed_by)?
+        },
         connection: String::new(),
         title,
         request: None,
@@ -426,9 +435,12 @@ fn answer_change(
     let answers = reins_org_request::q_approvals(c, org, id)?;
     match ans.decision {
         ReviewDecision::Propose => {
-            if change.proposed_by != user || !action.needs_device_signatures() {
+            if change.proposed_by == admin::SYSTEM_PROPOSER && action.needs_device_signatures() {
+                admin::adopt(c, org, id, user, now)?;
+            } else if change.proposed_by != user || !action.needs_device_signatures() {
                 return Err(OrgError::Forbidden);
             }
+            let change = reins_org::q_change(c, org, id)?.ok_or(OrgError::NotFound)?;
             record_answer(c, org, id, user, dev, ans)?;
             audit::record(
                 c,

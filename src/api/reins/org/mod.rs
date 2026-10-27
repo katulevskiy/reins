@@ -25,6 +25,7 @@
 //! - deprovisioning (`deprovision::q_deprovision`, reached only for an account whose state row is in this org): the
 //!   account's devices, sessions, roster and connections, and, for a directory delete, the account itself.
 
+pub mod activation;
 pub mod admin;
 pub mod api;
 pub mod attest;
@@ -39,15 +40,23 @@ pub mod dns;
 pub mod executor_api;
 pub mod gate;
 pub mod github;
+#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
+pub mod github_reader;
 pub mod invariants;
 pub mod kms;
 pub mod leases;
 pub mod managed_mcp;
 pub mod policy;
+#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
+pub mod policy_repo;
 pub mod posture;
 pub mod reviews;
+#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
+pub mod rollout;
 pub mod roster;
 pub mod scim;
+#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
+pub mod simulation;
 pub mod sweeper;
 pub mod tenant;
 pub mod workos_api;
@@ -77,6 +86,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console_managed::routes());
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
+    routes.extend(policy_repo::routes());
     routes
 }
 

@@ -184,6 +184,7 @@ impl Fixture {
             approvals: Vec::new(),
             lease: None,
             evaluated_at: at,
+            rollout: None,
             decided_at: at,
             valid_until: at + 3600,
         }

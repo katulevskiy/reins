@@ -67,6 +67,11 @@ pub struct ReinsOrgRequest {
     pub finished_at: Option<i64>,
     /// The executor's signed receipt envelope.
     pub receipt: Option<String>,
+    /// `reins_policy::org::SimInput` as JSON: what simulation replays (decision metadata, no body).
+    pub analysis: Option<String>,
+    /// The rollout step it was decided under, if any (effective-version pinning).
+    pub rollout_id: Option<String>,
+    pub rollout_seq: Option<i32>,
 }
 
 pub fn q_insert_request(c: &mut DbConnInner, row: &ReinsOrgRequest) -> QueryResult<()> {
@@ -745,6 +750,9 @@ pub(crate) mod tests {
             claimed_at: None,
             finished_at: None,
             receipt: None,
+            analysis: None,
+            rollout_id: None,
+            rollout_seq: None,
         }
     }
 

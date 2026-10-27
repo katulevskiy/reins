@@ -75,7 +75,8 @@ pub fn check_size(files: &BTreeMap<String, String>) -> Result<(), String> {
 const NEEDS_O3: &str = "needs O3 (routing): not available yet";
 
 /// One stage as written: `pilot`, `25%`, `100%` (or `everyone`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StageSource {
     Pilot,
     Percent(u8),
@@ -83,7 +84,8 @@ pub enum StageSource {
 }
 
 /// The rollout plan as written. Pilot members are resolved from `pilot_group` when the policy is activated.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
 pub struct RolloutPlanSource {
     pub pilot_group: Option<String>,
     pub stages: Vec<StageSource>,

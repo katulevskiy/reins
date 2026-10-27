@@ -290,6 +290,9 @@ pub enum AdminAction {
     ActivatePolicy {
         revision: u64,
         hash: String,
+        /// The simulation report this activation rests on (O4): its hash. Needed once a policy is active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
     },
     /// How long request bodies are kept: 0, 30 or 365 days (06 §4).
     SetRetention {
@@ -303,6 +306,20 @@ pub enum AdminAction {
     },
     RemoveExecutor {
         executor_id: String,
+    },
+    /// Binds the org's policy repo (`owner/name` on GitHub, O4); an empty `repo` unbinds it. The repo is input, never
+    /// authority: a merge there only proposes an activation.
+    BindPolicyRepo {
+        repo: String,
+        /// The repo's default branch as the org's GitHub reader saw it when this was proposed.
+        #[serde(default)]
+        default_branch: String,
+    },
+    /// The org's GitHub reader App (O3, O4): its app and installation ids. Its private key and webhook secret are posted
+    /// apart, sealed.
+    SetGithubReader {
+        app_id: u64,
+        installation_id: u64,
     },
 }
 
@@ -392,7 +409,13 @@ impl AdminAction {
             }
             | Self::RemoveExecutor {
                 ..
+            }
+            | Self::SetGithubReader {
+                ..
             } => Capability::ManageConnections,
+            Self::BindPolicyRepo {
+                ..
+            } => Capability::SetUpOrg,
         }
     }
 
@@ -789,7 +812,22 @@ mod tests {
         let activate = AdminAction::ActivatePolicy {
             revision: 3,
             hash: "h".to_owned(),
+            report: None,
         };
+        // O2's stored changes (no report) still read.
+        let old: AdminAction = serde_json::from_str(r#"{"kind":"activate_policy","revision":3,"hash":"h"}"#).unwrap();
+        assert_eq!(old, activate);
+        assert_eq!(serde_json::to_string(&activate).unwrap(), r#"{"kind":"activate_policy","revision":3,"hash":"h"}"#);
+        let bind = AdminAction::BindPolicyRepo {
+            repo: "acme/reins-policy".to_owned(),
+            default_branch: "main".to_owned(),
+        };
+        assert_eq!(bind.capability(&[]), Capability::SetUpOrg);
+        let reader = AdminAction::SetGithubReader {
+            app_id: 1,
+            installation_id: 2,
+        };
+        assert_eq!(reader.capability(&[]), Capability::ManageConnections);
         assert_eq!(activate.capability(&[]), Capability::ActivatePolicy);
         assert!(activate.needs_device_signatures());
         let exec = AdminAction::RegisterExecutor {

@@ -577,6 +577,29 @@ pub fn q_pending_changes(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<Rein
         .load(c)
 }
 
+/// A pending change's proposer becomes `to` (an admin confirming a system-proposed change); `false` unless it was
+/// pending and proposed by `from`.
+pub fn q_adopt_change(c: &mut DbConnInner, uuid: &str, from: &str, to: &str) -> QueryResult<bool> {
+    let n = diesel::update(
+        reins_org_changes::table
+            .filter(reins_org_changes::uuid.eq(uuid))
+            .filter(reins_org_changes::state.eq(CHANGE_PENDING))
+            .filter(reins_org_changes::proposed_by.eq(from)),
+    )
+    .set(reins_org_changes::proposed_by.eq(to))
+    .execute(c)?;
+    Ok(n == 1)
+}
+
+/// The org's newest changes, any state.
+pub fn q_changes(c: &mut DbConnInner, org: &str, limit: i64) -> QueryResult<Vec<ReinsOrgChange>> {
+    reins_org_changes::table
+        .filter(reins_org_changes::org_uuid.eq(org))
+        .order(reins_org_changes::proposed_at.desc())
+        .limit(limit)
+        .load(c)
+}
+
 /// Moves a pending change to `state`; `false` when it was no longer pending (decided by someone else meanwhile).
 pub fn q_decide(c: &mut DbConnInner, uuid: &str, state: &str, by: &str, at: i64) -> QueryResult<bool> {
     let n = diesel::update(

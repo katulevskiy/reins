@@ -321,6 +321,9 @@ pub struct DecisionRecord {
     pub lease: Option<LeaseBinding>,
     /// When the request was evaluated (the time rules were judged at).
     pub evaluated_at: i64,
+    /// The rollout step (rollout id, seq) whose cohorts chose `snapshot`, when a staged rollout was under way (O4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout: Option<(String, u32)>,
     pub decided_at: i64,
     /// Not executed after this, it expires (03 §6: 24 h for executor-run actions).
     pub valid_until: i64,

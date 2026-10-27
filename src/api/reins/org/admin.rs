@@ -25,6 +25,7 @@ use crate::db::{
         ReinsOrgRole, SUBJECT_GROUP, SUBJECT_MEMBER,
     },
     models::reins_org_exec::{self, ReinsOrgExecutor},
+    models::reins_org_policy_code as code,
     schema::groups,
 };
 
@@ -32,6 +33,10 @@ use crate::db::{
 pub const CHANGE_TTL_SECS: i64 = 7 * 24 * 3600;
 /// Changes that may wait at once in one org (older ones lapse after [`CHANGE_TTL_SECS`]).
 pub const MAX_PENDING: usize = 50;
+
+/// Who proposes an activation a merge in the org's policy repo asked for. It holds no role: a first admin confirms
+/// the change on their phone (and becomes its proposer, [`adopt`]), and a second approves it.
+pub const SYSTEM_PROPOSER: &str = super::simulation::SYSTEM_ACTOR;
 
 /// What [`propose`] did.
 #[derive(Debug, PartialEq, Eq)]
@@ -114,7 +119,7 @@ pub fn propose(
         if !can(c, org, proposer, cap)? {
             return Err(OrgError::Forbidden);
         }
-        validate(c, org, action, binding)?;
+        validate(c, org, action, binding, now)?;
         let detail = serde_json::to_value(action).unwrap_or_default();
         let others = other_holders(c, org, cap, proposer)?;
         if is_owner_recovery(c, org, action)? && others == 0 {
@@ -159,6 +164,56 @@ pub fn propose(
     })
 }
 
+/// Proposes `action` on the policy repo's behalf (an `ActivatePolicy` only): it waits, always, for two admins.
+pub fn propose_as_system(c: &mut DbConnInner, org: &str, action: &AdminAction, now: i64) -> Result<String, OrgError> {
+    if !matches!(action, AdminAction::ActivatePolicy { .. }) {
+        return Err(OrgError::Forbidden);
+    }
+    c.transaction(|c| {
+        validate(c, org, action, None, now)?;
+        let waiting = reins_org::q_pending_changes(c, org)?;
+        if waiting.iter().filter(|ch| ch.expires_at > now).count() >= MAX_PENDING {
+            return Err(OrgError::Invalid("Too many changes are waiting. Approve or reject some first."));
+        }
+        let detail = serde_json::to_value(action).unwrap_or_default();
+        let uuid = crate::util::get_uuid();
+        reins_org::q_insert_change(
+            c,
+            &ReinsOrgChange {
+                uuid: uuid.clone(),
+                org_uuid: org.to_owned(),
+                action: detail.to_string(),
+                proposed_by: SYSTEM_PROPOSER.to_owned(),
+                proposed_at: now,
+                expires_at: now + CHANGE_TTL_SECS,
+                state: CHANGE_PENDING.to_owned(),
+                decided_by: None,
+                decided_at: None,
+            },
+        )?;
+        event(c, org, "change.proposed", Some(SYSTEM_PROPOSER), Some(&uuid), &json!({"action": detail}), now)?;
+        Ok(uuid)
+    })
+}
+
+/// A holder of the capability confirms a system-proposed change on their phone and so becomes its proposer: a second
+/// person must still approve it, and the confirming admin can't.
+pub fn adopt(c: &mut DbConnInner, org: &str, change: &str, user: &str, now: i64) -> Result<(), OrgError> {
+    let (row, action) = load_pending(c, org, change)?;
+    if row.proposed_by != SYSTEM_PROPOSER {
+        return Err(OrgError::Forbidden);
+    }
+    let cap = needed(c, org, &action)?;
+    if !can(c, org, user, cap)? {
+        return Err(OrgError::Forbidden);
+    }
+    validate(c, org, &action, None, now)?;
+    if !reins_org::q_adopt_change(c, change, SYSTEM_PROPOSER, user)? {
+        return Err(OrgError::Invalid("This change was already decided."));
+    }
+    event(c, org, "change.adopted", Some(user), Some(change), &json!({"from": SYSTEM_PROPOSER}), now)
+}
+
 fn load_pending(c: &mut DbConnInner, org: &str, change: &str) -> Result<(ReinsOrgChange, AdminAction), OrgError> {
     let row = reins_org::q_change(c, org, change)?.ok_or(OrgError::NotFound)?;
     if row.state != CHANGE_PENDING {
@@ -183,6 +238,11 @@ pub fn approve(
         if crate::crypto::ct_eq(&row.proposed_by, approver) {
             return Err(OrgError::Invalid("You can't approve your own change."));
         }
+        if row.proposed_by == SYSTEM_PROPOSER {
+            // A merge in the policy repo proposed it: a first admin confirms it on their phone (and becomes its
+            // proposer), then a second approves. Nobody approves it straight away.
+            return Err(OrgError::Invalid("Confirm it on your phone first."));
+        }
         let cap = needed(c, org, &action)?;
         if !can(c, org, approver, cap)? {
             return Err(OrgError::Forbidden);
@@ -193,7 +253,7 @@ pub fn approve(
             event(c, org, "change.expired", Some(approver), Some(change), &json!({}), now)?;
             return Ok(None);
         }
-        validate(c, org, &action, binding)?;
+        validate(c, org, &action, binding, now)?;
         if !reins_org::q_decide(c, change, CHANGE_APPLIED, approver, now)? {
             return Err(OrgError::Invalid("This change was already decided."));
         }
@@ -215,8 +275,12 @@ pub fn can_apply_alone(
     action: &AdminAction,
 ) -> Result<bool, OrgError> {
     let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
-    if is_owner_recovery(c, org, action)? {
+    if is_owner_recovery(c, org, action)? || change.proposed_by == SYSTEM_PROPOSER {
         return Ok(false);
+    }
+    if matches!(action, AdminAction::ActivatePolicy { .. }) {
+        // Two people, always (08 R5); a Family's single guardian is the one exception.
+        return super::activation::may_apply_alone(c, org);
     }
     let cap = needed(c, org, action)?;
     Ok(!tenant.two_person || other_holders(c, org, cap, &change.proposed_by)? == 0)
@@ -238,7 +302,7 @@ pub fn apply_alone(
     if !can(c, org, proposer, cap)? {
         return Err(OrgError::Forbidden);
     }
-    validate(c, org, &action, None)?;
+    validate(c, org, &action, None, now)?;
     if !reins_org::q_decide(c, change, CHANGE_APPLIED, proposer, now)? {
         return Err(OrgError::Invalid("This change was already decided."));
     }
@@ -350,6 +414,7 @@ fn validate(
     org: &str,
     action: &AdminAction,
     binding: Option<&VerifiedBinding>,
+    now: i64,
 ) -> Result<(), OrgError> {
     let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
     match action {
@@ -430,7 +495,27 @@ fn validate(
         AdminAction::ActivatePolicy {
             revision,
             hash,
-        } => super::policy::check_draft(c, org, *revision, hash).map(drop),
+            report,
+        } => super::activation::check(c, org, *revision, hash, report.as_deref(), now).map(drop),
+        AdminAction::BindPolicyRepo {
+            repo,
+            default_branch,
+        } => super::policy_repo::check_binding(c, org, repo, default_branch),
+        AdminAction::SetGithubReader {
+            app_id,
+            installation_id,
+        } => {
+            let (Ok(app), Ok(inst)) = (i64::try_from(*app_id), i64::try_from(*installation_id)) else {
+                return Err(OrgError::Invalid("Name the GitHub App and its installation by their numbers."));
+            };
+            if app == 0 || inst == 0 {
+                return Err(OrgError::Invalid("Name the GitHub App and its installation by their numbers."));
+            }
+            if code::q_github_reader_by_installation(c, inst)?.is_some_and(|r| r.org_uuid != org) {
+                return Err(OrgError::Taken("That GitHub installation belongs to another organization."));
+            }
+            Ok(())
+        }
         AdminAction::SetRetention {
             days,
         } => {
@@ -487,7 +572,7 @@ fn apply(
     binding: Option<&VerifiedBinding>,
     now: i64,
 ) -> Result<Followups, OrgError> {
-    validate(c, org, action, binding)?;
+    validate(c, org, action, binding, now)?;
     let recovery = is_owner_recovery(c, org, action)?;
     let subject_row = |subject: &Subject| match subject {
         Subject::Member(m) => (SUBJECT_MEMBER, m.clone()),
@@ -592,7 +677,33 @@ fn apply(
         AdminAction::ActivatePolicy {
             revision,
             hash,
-        } => super::policy::apply_activation(c, org, *revision, hash, actor, now)?,
+            report,
+        } => super::policy::apply_activation(c, org, *revision, hash, report.as_deref(), actor, now)?,
+        AdminAction::BindPolicyRepo {
+            repo,
+            default_branch,
+        } => super::policy_repo::apply_binding(c, org, repo, default_branch, actor, now)?,
+        AdminAction::SetGithubReader {
+            app_id,
+            installation_id,
+        } => {
+            code::q_set_github_reader(
+                c,
+                org,
+                i64::try_from(*app_id).unwrap_or(0),
+                i64::try_from(*installation_id).unwrap_or(0),
+                now,
+            )?;
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::GITHUB_READER_SET,
+                Some(actor),
+                None,
+                &json!({"app_id": app_id, "installation_id": installation_id}),
+                now,
+            )?;
+        }
         AdminAction::SetRetention {
             days,
         } => {
