@@ -80,6 +80,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console_managed::routes());
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
+    routes.extend(routing::sla::routes());
     routes
 }
 

@@ -562,7 +562,7 @@ pub fn status(c: &mut DbConnInner, org: &str, connection: &str, id: &str, now: i
         other => {
             let reason = receipt_of(c, org, &row)?.map(|r| r.reason).unwrap_or_default();
             let words = match other {
-                st::EXPIRED => "Expired, not approved.",
+                st::EXPIRED => "Expired: not approved in time.",
                 st::CANCELLED => "Cancelled.",
                 st::STALE => "Your organization's policy changed since it was approved. Ask again.",
                 st::REFUSED => "Your organization's executor refused to run it.",
@@ -600,20 +600,39 @@ pub async fn wait_change(id: &str, max: Duration) {
     let _ = tokio::time::timeout(max.min(Duration::from_secs(1)), rx.changed()).await;
 }
 
+/// Expires a request under review that nobody approved in time (`why`: what ran out).
+pub fn expire(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, why: &str, now: i64) -> Result<bool, OrgError> {
+    let moved = end(c, org, row, st::EXPIRED, now)?;
+    if moved {
+        audit::record(
+            c,
+            org,
+            audit::kinds::REVIEW_EXPIRED,
+            None,
+            Some(&row.uuid),
+            &json!({"on_expiry": "deny", "why": why}),
+            now,
+        )?;
+    }
+    Ok(moved)
+}
+
 /// The sweeper's part: expires overdue reviews and lapsed approvals, and marks stuck executions unknown.
 pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
-    let mut n = 0;
+    Ok(sweep_routed(c, now, &std::collections::BTreeMap::new())?.0)
+}
+
+/// [`sweep`], escalating first (O3) with what the dynamic sources said (org → answers); returns the escalations to
+/// notify.
+pub fn sweep_routed(
+    c: &mut DbConnInner,
+    now: i64,
+    dynamic: &std::collections::BTreeMap<String, routing::Dynamic>,
+) -> Result<(usize, Vec<routing::escalation::Swept>), OrgError> {
+    let swept = routing::escalation::escalate_due(c, now, dynamic)?;
+    let mut n = swept.len();
     for row in reins_org_request::q_overdue_reviews(c, now)? {
-        if end(c, &row.org_uuid, &row, st::EXPIRED, now)? {
-            audit::record(
-                c,
-                &row.org_uuid,
-                audit::kinds::REVIEW_EXPIRED,
-                None,
-                Some(&row.uuid),
-                &json!({"on_expiry": "deny"}),
-                now,
-            )?;
+        if expire(c, &row.org_uuid, &row, "window", now)? {
             n += 1;
         }
     }
@@ -640,7 +659,7 @@ pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
             n += 1;
         }
     }
-    Ok(n)
+    Ok((n, swept))
 }
 
 /// A member is gone (deprovisioning): their requests no executor took yet are cancelled, and their answers to reviews

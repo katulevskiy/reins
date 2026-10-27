@@ -123,6 +123,11 @@ fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, 
     Ok((met, signatures))
 }
 
+/// Whether a request's obligations are met by the answers so far.
+pub fn met(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<Met, OrgError> {
+    Ok(weigh(c, org, row)?.0)
+}
+
 /// [`weigh`], with how many eligible approvals each obligation has.
 fn weigh_counted(
     c: &mut DbConnInner,

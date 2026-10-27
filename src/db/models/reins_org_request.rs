@@ -725,7 +725,6 @@ pub(crate) mod tests {
     }
 }
 /// O3: records what an obligation's relationships and escalations resolved to.
-#[allow(dead_code, reason = "O3 routing uses it")]
 pub fn q_set_resolved(c: &mut DbConnInner, org: &str, id: &str, resolved: &str) -> QueryResult<bool> {
     let n = diesel::update(
         reins_org_requests::table.filter(reins_org_requests::org_uuid.eq(org)).filter(reins_org_requests::uuid.eq(id)),
@@ -736,7 +735,6 @@ pub fn q_set_resolved(c: &mut DbConnInner, org: &str, id: &str, resolved: &str) 
 }
 
 /// O3: moves a request's review deadline (an escalation step), while it is still under review.
-#[allow(dead_code, reason = "O3 routing uses it")]
 pub fn q_set_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -> QueryResult<bool> {
     let n = diesel::update(
         reins_org_requests::table
@@ -750,7 +748,14 @@ pub fn q_set_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -
 }
 
 /// O3: requests of `org` decided (or expired) in `[since, until)`, for SLA reports.
-#[allow(dead_code, reason = "O3 routing uses it")]
+/// O3: every request under review (the escalation sweep).
+pub fn q_reviewing(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgRequest>> {
+    reins_org_requests::table
+        .filter(reins_org_requests::state.eq(request_state::REVIEWING))
+        .order(reins_org_requests::created_at.asc())
+        .load(c)
+}
+
 pub fn q_finished_between(c: &mut DbConnInner, org: &str, since: i64, until: i64) -> QueryResult<Vec<ReinsOrgRequest>> {
     reins_org_requests::table
         .filter(reins_org_requests::org_uuid.eq(org))

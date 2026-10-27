@@ -642,6 +642,15 @@ pub fn apply_admin(
     Ok(())
 }
 
+/// After a sweep: tells the members an escalation reached (they must act), and updates channel messages.
+pub async fn after_sweep(pool: &DbPool, swept: Vec<escalation::Swept>) {
+    for s in swept {
+        if let escalation::Swept::Escalated(e) = s {
+            super::reviews::notify(pool, &e.to, &e.request);
+        }
+    }
+}
+
 /// The resources a request names, for resource tags.
 #[must_use]
 pub fn resources_of(policy: &OrgPolicy, req: &ManagedRequest<'_>) -> Vec<String> {
