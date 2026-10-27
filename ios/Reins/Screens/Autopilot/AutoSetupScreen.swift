@@ -268,7 +268,10 @@ private struct MatrixGrid: View {
                         .font(RFont.sans(11.5, .semibold))
                         .foregroundStyle(Palette.ink2)
                         .multilineTextAlignment(.center)
-                        .lineLimit(2)
+                        // One word never breaks inside itself ("Recoverab-le"): it shrinks to fit its column instead;
+                        // a phrase wraps onto two lines.
+                        .lineLimit(level.contains(" ") ? 2 : 1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: 66)
                         .accessibilityAddTraits(.isHeader)
                 }
