@@ -5,7 +5,6 @@ import SwiftUI
 /// asks, how long it waits, what in one sentence, every warning and Autopilot's score; the facts below (long lists folded into
 /// pages), and the dock at the bottom with how long to remember it and Deny / Approve. Approving asks for Face ID,
 /// Touch ID or the passcode first; denying never does.
-// (timing probe for the iOS job; reverted)
 struct ApprovalSheet: View {
     var requestId: String
     @Environment(AppModel.self) private var model
