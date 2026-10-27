@@ -231,6 +231,8 @@ struct FactsFile {
     people: BTreeMap<String, Zone>,
     hosts: BTreeMap<String, Zone>,
     chats: BTreeMap<String, Zone>,
+    /// What an id-keyed fact is shown as (`owner:#583231` → `dkat`): decides nothing.
+    labels: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -754,6 +756,8 @@ pub fn compile(files: &BTreeMap<String, String>) -> Result<Compiled, Vec<SourceE
             people: lower_keys(f.people),
             hosts: lower_keys(f.hosts),
             chats: lower_keys(f.chats),
+            labels: f.labels,
+            github_ids: BTreeMap::new(),
         };
     }
     if let Some(text) = files.get(POSTURE_FILE)
@@ -963,6 +967,12 @@ pub fn render(policy: &OrgPolicy, plan: &RolloutPlanSource) -> BTreeMap<String, 
         ] {
             zone_map(&mut out, table, m);
         }
+        if !f.labels.is_empty() {
+            let _ = writeln!(out, "\n[labels]");
+            for (k, v) in &f.labels {
+                let _ = writeln!(out, "{} = {}", q(k), q(v));
+            }
+        }
         files.insert(FACTS_FILE.to_owned(), out.trim_start().to_owned());
     }
     if policy.posture != PostureRule::default() {
@@ -1134,6 +1144,8 @@ mod tests {
         p.rules[0].rule.when.connection = Some("conn-1".into());
         p.facts.own_addresses.insert("ops@acme.com".into());
         p.facts.hosts.insert("api.acme.com".into(), Zone::Work);
+        p.facts.chats.insert("-100123".into(), Zone::Friends);
+        p.facts.labels.insert("chat:-100123".into(), "Team chat".into());
         p.revision = 9;
         identity(&p, &c.plan);
     }

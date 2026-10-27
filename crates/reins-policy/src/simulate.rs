@@ -294,6 +294,7 @@ pub fn simulate_personal(history: &[PersonalCase], base: &Snapshot, draft: &Snap
             seen_resource: case.seen_resource,
             now: case.at,
             overnight: false,
+            netted: false,
         };
         let before = matrix::evaluate(&input, base);
         let after = matrix::evaluate(&input, draft);
