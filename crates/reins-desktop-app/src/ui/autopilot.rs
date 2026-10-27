@@ -189,7 +189,14 @@ impl Root {
                         s.cursor_pointer()
                             .hover(|h| h.text_color(pal.ink()))
                             .active(|s| s.opacity(kit::button::PRESSED))
-                            .on_click(Self::on_model(cx, move |m, cx| m.change_mode(choice, cx)))
+                            // Auto the first time opens this computer's setup ([`Root::choose_auto`]).
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if choice == ModeChoice::Auto {
+                                    this.choose_auto(cx);
+                                } else {
+                                    this.model.update(cx, |m, cx| m.change_mode(choice, cx));
+                                }
+                            }))
                     })
             };
             foot = foot.child(

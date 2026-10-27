@@ -195,9 +195,67 @@ pub fn set_host_enabled(paths: &Paths, host: &str, on: bool) -> Result<Change, S
     })
 }
 
+/// This computer's Auto setup is done (`[auto]`): `setup_done` and the zones in `facts` (all of them, as they are to
+/// be). The matrix and `matrix_decides` are left as they are.
+pub fn set_auto_setup(paths: &Paths, facts: &reins_policy::context::Facts) -> Result<Change, String> {
+    use std::collections::BTreeMap;
+
+    use reins_policy::context::Zone;
+    fn zones(map: &BTreeMap<String, Zone>) -> Result<Table, String> {
+        let mut t = Table::new();
+        for (k, z) in map {
+            let word = toml::Value::try_from(z).map_err(|e| e.to_string())?;
+            t.insert(k, value(word.as_str().ok_or("a zone is not a word")?));
+        }
+        Ok(t)
+    }
+    let mut t = Table::new();
+    t.set_implicit(true);
+    for (name, map) in [
+        ("owners", &facts.owners),
+        ("repos", &facts.repos),
+        ("domains", &facts.domains),
+        ("people", &facts.people),
+        ("hosts", &facts.hosts),
+        ("chats", &facts.chats),
+    ] {
+        if !map.is_empty() {
+            t.insert(name, Item::Table(zones(map)?));
+        }
+    }
+    if !facts.own_addresses.is_empty() {
+        t.insert("own_addresses", value(strings(&facts.own_addresses)));
+    }
+    edit(paths, |doc| {
+        let auto = table(doc, "auto")?;
+        auto["setup_done"] = value(true);
+        auto.remove("facts");
+        if !t.is_empty() {
+            auto.insert("facts", Item::Table(t));
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_auto_setup_keeps_the_matrix() {
+        use reins_policy::context::{FactKind, Zone};
+        let (_dir, paths) = setup();
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.config_file(), "[auto]\nmatrix_decides = true\n\n[auto.facts.owners]\nold = \"work\"\n")
+            .unwrap();
+        let mut facts = reins_policy::context::Facts::default();
+        assert!(facts.set(FactKind::Owner, "dkat", Zone::Mine));
+        assert!(facts.set(FactKind::Host, "build.example.com", Zone::Work));
+        assert_eq!(set_auto_setup(&paths, &facts).unwrap(), Change::Live);
+        let c = Config::load(&paths).unwrap();
+        assert!(c.auto.setup_done && c.auto.matrix_decides);
+        assert_eq!(c.auto.facts, facts, "the facts given replace the ones before");
+    }
 
     fn setup() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
