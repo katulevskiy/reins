@@ -101,6 +101,9 @@ pub struct AuditAutopilot {
     /// The risk, when the model rated it (`docs/autopilot-risk.md`).
     #[serde(default)]
     pub risk: Option<crate::autopilot::risk::RiskNote>,
+    /// What the matrix decided or would have decided (Decisions v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<crate::autopilot::store::MatrixNote>,
 }
 
 /// What the activity screen shows when an entry is opened. Sealed with the data key.

@@ -12,8 +12,9 @@ use reins_proto::oplog::Restriction;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
-    AutopilotMode, AutopilotSettings, AutopilotStats, DownloadProgress, ModelRuntime, ModelStatus, ModelUpdateOutcome,
-    OvernightRisky, Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
+    AutoQuestion, AutoSetup, AutopilotMode, AutopilotSettings, AutopilotStats, CellChoice, DownloadProgress,
+    FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightRisky, Preset, ProfileView, SuggestionView,
+    ThresholdReplay, Verdict, ZoneChoice,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -1882,6 +1883,150 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_stats(days) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
+    pub async fn auto_setup(&self) -> Result<AutoSetup, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.auto_setup() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
+    pub async fn set_world_zone(
+        &self,
+        kind: FactChoice,
+        key: String,
+        zone: ZoneChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_world_zone(kind, &key, zone, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
+    pub async fn set_matrix_cell(
+        &self,
+        zone: ZoneChoice,
+        level: u8,
+        cell: CellChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_matrix_cell(zone, level, cell, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Finishes Auto's setup and turns Auto on, after `owner` confirms.
+    pub async fn finish_auto_setup(&self, owner: Arc<dyn OwnerCheck>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.finish_auto_setup(owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Lets the matrix decide (asks `owner`), or returns it to shadow.
+    pub async fn set_matrix_decides(&self, on: bool, owner: Arc<dyn OwnerCheck>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_matrix_decides(on, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The open "Auto needs information" questions, newest first. They are listed, never notified.
+    pub async fn auto_questions(&self) -> Result<Vec<AutoQuestion>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.auto_questions() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers a question with a zone (anything but Outside asks `owner` first).
+    pub async fn answer_auto_question(
+        &self,
+        id: String,
+        zone: ZoneChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.answer_auto_question(&id, zone, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Dismisses a question: the thing stays Outside and isn't asked about again.
+    pub async fn dismiss_auto_question(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.dismiss_auto_question(&id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
+    pub async fn ask_me_next_time(&self, request_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.ask_me_next_time(&request_id) }).await;
             runtime.finish(&engine, result)
         })
         .await

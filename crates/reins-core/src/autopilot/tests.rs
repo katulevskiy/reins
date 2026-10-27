@@ -4244,3 +4244,216 @@ async fn held_execution_history_keeps_account_inspection_and_braking_available()
     assert!(!saved.usage_verified);
     assert!(saved.capabilities.iter().all(|capability| capability.configured_mode == Some(PermissionMode::Ask)));
 }
+
+// ---- Decisions v2: the matrix in shadow and deciding, the setup, questions, "Ask me next time" ------------------------
+
+mod decisions_v2 {
+    use super::*;
+    use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
+    use reins_policy::context::Zone;
+    use reins_policy::effects::EffectKind;
+    use reins_policy::matrix::{Issuer, Rule, Then, When};
+
+    fn owner_no() -> Arc<testing::FakeOwner> {
+        testing::FakeOwner::new(Ok(false))
+    }
+
+    /// Auto, with the model sure to approve mail to friend@x.com and its kind unlocked by hand.
+    async fn auto_env() -> Env {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+        env
+    }
+
+    #[tokio::test]
+    async fn shadow_records_and_changes_nothing() {
+        let env = auto_env().await;
+        assert!(!env.core.auto_setup().await.unwrap().matrix_decides, "off by default");
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.approve("r1").await;
+        // Today's decision: approved by Autopilot (a known target the model approves)…
+        env.relay("r2", OLD, email("friend@x.com", "hi again")).await;
+        assert_eq!(env.decided().last().unwrap(), &("r2".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+        // …while the matrix, in shadow, would have asked: nobody said who friend@x.com is.
+        let entry = env.core.activity(1).await.unwrap().remove(0);
+        let m = entry.autopilot.unwrap().matrix.unwrap();
+        assert!(m.shadow && m.outcome == Verdict::Ask && !m.hard, "{m:?}");
+        assert_eq!(m.line, "Ask · Outside · Reaches people");
+        // The unknown person becomes one question, listed, never notified on its own.
+        let qs = env.core.auto_questions().await.unwrap();
+        assert_eq!(qs.len(), 1, "{qs:?}");
+        assert_eq!(
+            (qs[0].key.as_str(), qs[0].kind, qs[0].service.as_str()),
+            ("friend@x.com", FactChoice::Person, "email")
+        );
+    }
+
+    #[tokio::test]
+    async fn matrix_asks_when_on_and_auto_still_needs_the_model() {
+        let env = auto_env().await;
+        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.approve("r1").await;
+        // Outside · Reaches people: asked, though the model would approve.
+        env.relay("r2", OLD, email("friend@x.com", "hi again")).await;
+        assert!(env.waiting().await.contains(&"r2".to_owned()));
+        let s = env.suggestion("r2").await;
+        assert!(s.reason.starts_with("Asks: Ask · Outside"), "{s:?}");
+        assert!(!s.matrix.unwrap().shadow);
+        // Friends · Reaches people is Auto: the model approves, so it is approved.
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        assert!(env.core.auto_questions().await.unwrap().is_empty(), "answered by the change");
+        env.relay("r3", OLD, email("friend@x.com", "and again")).await;
+        assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+        // A Friends person the model is unsure about: still asked (the model can only make Auto an ask).
+        env.core
+            .set_world_zone(FactChoice::Person, "pal@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env.model.rule("pal@x.com", logits(0.40, 0.10, 0.50));
+        env.relay("r4", OLD, email("pal@x.com", "hi")).await;
+        assert!(env.waiting().await.contains(&"r4".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn only_a_rule_denies() {
+        let env = auto_env().await;
+        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        let engine = env.core.engine();
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.rules.push(Rule {
+            id: "never-mail".to_owned(),
+            issuer: Issuer::Owner,
+            when: When {
+                effects: vec![EffectKind::Message],
+                ..When::default()
+            },
+            then: Then::Deny,
+            not_after: None,
+            accepted: true,
+            explain: "No mail from agents".to_owned(),
+        });
+        engine.ap_put_snapshot(&snap).unwrap();
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Deny, "rule".to_owned())]);
+        let entry = env.core.activity(1).await.unwrap().remove(0);
+        assert_eq!(entry.autopilot.unwrap().matrix.unwrap().line, "Deny · No mail from agents");
+    }
+
+    #[tokio::test]
+    async fn matrix_uses_the_connections_profile_only() {
+        // Two connections in different Autopilot profiles are evaluated against the one Personal snapshot of the
+        // account (the phone holds no other profile: a Managed connection is its org's, O1).
+        let env = auto_env().await;
+        let work = env.core.create_profile("Work".to_owned(), None).await.unwrap();
+        env.core.assign_profile("c2".to_owned(), Some(work.id)).await.unwrap();
+        env.relay("a", OLD, email("friend@x.com", "hi")).await;
+        env.relay("b", "c2", email("friend@x.com", "hi")).await;
+        let hash = env.core.engine().ap_snapshot().unwrap().hash();
+        for id in ["a", "b"] {
+            let note = env.store().ap_suggestion(id).unwrap().unwrap().matrix.unwrap();
+            assert_eq!(note.snapshot, hash, "{id}");
+            assert_eq!(note.zone, Zone::Outside);
+        }
+    }
+
+    #[tokio::test]
+    async fn loosening_needs_the_owner() {
+        let env = env(false).await;
+        let core = &env.core;
+        let refused = core.set_world_zone(FactChoice::Owner, "octo".to_owned(), ZoneChoice::Mine, owner_no()).await;
+        assert!(refused.is_err());
+        assert_eq!(core.engine().ap_snapshot().unwrap().facts.owners.get("octo"), None);
+        // Toward Outside: no check at all.
+        core.set_world_zone(FactChoice::Owner, "octo".to_owned(), ZoneChoice::Outside, owner_no()).await.unwrap();
+        assert_eq!(core.engine().ap_snapshot().unwrap().facts.owners.get("octo"), Some(&Zone::Outside));
+        // Cells: Work L1 to Auto is looser (refused without the owner); Mine L0 to Ask is stricter.
+        assert!(core.set_matrix_cell(ZoneChoice::Work, 1, CellChoice::Auto, owner_no()).await.is_err());
+        core.set_matrix_cell(ZoneChoice::Mine, 0, CellChoice::Ask, owner_no()).await.unwrap();
+        let rows = core.auto_setup().await.unwrap().matrix;
+        assert_eq!(rows[0].cells[0], CellChoice::Ask);
+        assert_eq!(rows[2].cells[1], CellChoice::Ask);
+        assert!(core.set_matrix_cell(ZoneChoice::Mine, 4, CellChoice::Ask, owner_no()).await.is_err());
+        // The matrix deciding is looser too.
+        assert!(core.set_matrix_decides(true, owner_no()).await.is_err());
+        assert!(!core.auto_setup().await.unwrap().matrix_decides);
+    }
+
+    #[tokio::test]
+    async fn setup_proposes_from_verified_facts_and_finishing_turns_auto_on() {
+        let env = env(false).await;
+        env.store().add_account("gmail", "me@acme.io", 1).unwrap();
+        env.store().add_account("github", "dkat", 1).unwrap();
+        let setup = env.core.auto_setup().await.unwrap();
+        assert!(!setup.done);
+        let find = |key: &str| setup.world.iter().find(|w| w.key == key).cloned();
+        let me = find("me@acme.io").unwrap();
+        assert!(me.confirmed && me.zone == ZoneChoice::Mine && me.service == "email", "{me:?}");
+        let gh = find("dkat").unwrap();
+        assert!(gh.confirmed && gh.zone == ZoneChoice::Mine && gh.service == "github", "{gh:?}");
+        let domain = find("acme.io").unwrap();
+        assert!(!domain.confirmed && domain.zone == ZoneChoice::Work, "a proposal: {domain:?}");
+        // A proposal decides nothing until confirmed.
+        assert_eq!(env.core.engine().ap_snapshot().unwrap().facts.domains.get("acme.io"), None);
+        assert!(setup.matrix[0].names.contains(&"dkat".to_owned()));
+        // The snapshot is sealed: the stored value doesn't show the address.
+        let raw = env.store().meta_get("autopilot.policy").unwrap().unwrap();
+        assert!(!raw.contains("acme"), "{raw}");
+        assert!(env.core.finish_auto_setup(owner_no()).await.is_err());
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        let after = env.core.auto_setup().await.unwrap();
+        assert!(after.done);
+        assert!(after.world.iter().all(|w| w.confirmed), "{:?}", after.world);
+        assert_eq!(env.core.autopilot_settings().await.unwrap().base_mode, AutopilotMode::Auto);
+    }
+
+    #[tokio::test]
+    async fn questions_are_deduplicated_answered_and_dismissed() {
+        let env = auto_env().await;
+        env.relay("r1", OLD, email("a@y.io", "hi")).await;
+        env.relay("r2", OLD, email("a@y.io", "hi")).await;
+        env.relay("r3", OLD, email("b@y.io", "hi")).await;
+        let qs = env.core.auto_questions().await.unwrap();
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        let a = qs.iter().find(|q| q.key == "a@y.io").unwrap().id.clone();
+        let b = qs.iter().find(|q| q.key == "b@y.io").unwrap().id.clone();
+        assert!(env.core.answer_auto_question(a.clone(), ZoneChoice::Work, owner_no()).await.is_err());
+        env.core.answer_auto_question(a, ZoneChoice::Work, owner_yes()).await.unwrap();
+        env.core.dismiss_auto_question(b).await.unwrap();
+        assert!(env.core.auto_questions().await.unwrap().is_empty());
+        // Dismissed: not asked again.
+        env.relay("r4", OLD, email("b@y.io", "hi")).await;
+        assert!(env.core.auto_questions().await.unwrap().is_empty());
+        assert_eq!(env.core.engine().ap_snapshot().unwrap().facts.people.get("a@y.io"), Some(&Zone::Work));
+    }
+
+    #[tokio::test]
+    async fn ask_me_next_time_writes_an_exception() {
+        let env = auto_env().await;
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.core.ask_me_next_time("r1".to_owned()).await.unwrap();
+        let rules = env.core.engine().ap_snapshot().unwrap().rules;
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        let exception = rules.iter().find(|r| r.id == "exception-r1").unwrap();
+        assert_eq!((exception.then, exception.not_after), (Then::Review, None));
+        assert_eq!(exception.when.resource.as_deref(), Some("friend@x.com"));
+        assert_eq!(exception.when.zones, vec![Zone::Friends]);
+        let pause = rules.iter().find(|r| r.id == "pause-r1").unwrap();
+        assert!(pause.not_after.unwrap() > unix_now() && pause.when.resource.is_none());
+        // With the matrix deciding, the next one is a hard ask.
+        env.core.set_matrix_decides(true, owner_yes()).await.unwrap();
+        env.relay("r2", OLD, email("friend@x.com", "hi")).await;
+        let s = env.suggestion("r2").await;
+        assert!(s.matrix.as_ref().is_some_and(|m| m.hard), "{s:?}");
+        assert!(env.waiting().await.contains(&"r2".to_owned()));
+    }
+}

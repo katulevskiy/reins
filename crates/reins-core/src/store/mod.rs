@@ -581,6 +581,23 @@ impl Store {
         Ok(())
     }
 
+    /// A value sealed with the data key (`key` is its associated data), as stored by [`Self::meta_set_sealed`]. `None`
+    /// when there is none; an error when it can't be opened (another data key, a changed row).
+    pub(crate) fn meta_get_sealed(&self, key: &str) -> Result<Option<Vec<u8>>, CoreError> {
+        let Some(text) = self.meta_get(key)? else {
+            return Ok(None);
+        };
+        let blob =
+            data_encoding::BASE64.decode(text.as_bytes()).map_err(|_| CoreError::storage("corrupt sealed value"))?;
+        self.unseal(key, &blob).map(Some)
+    }
+
+    /// Seals `value` with the data key and keeps it under `key`.
+    pub(crate) fn meta_set_sealed(&self, key: &str, value: &[u8]) -> Result<(), CoreError> {
+        let sealed = self.seal(key, value)?;
+        self.meta_set(key, &data_encoding::BASE64.encode(&sealed))
+    }
+
     pub(crate) fn bound_owner(&self) -> Option<Owner> {
         self.owner.clone().or_else(|| self.control_owner.lock().unwrap_or_else(PoisonError::into_inner).clone())
     }
