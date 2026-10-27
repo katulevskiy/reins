@@ -275,3 +275,48 @@ fn file_snapshots() {
     assert!(plan_files(&["/etc/hosts"], &c, &disk()).is_none());
     assert!(plan_files(&["/tmp/x"], &c, &disk()).is_none());
 }
+
+/// Anything that could make `rm`, `git` or the net's own prefix run something else: no net, and the level stays.
+#[test]
+fn shadowing_forms_are_never_netted() {
+    let base = "rm -rf old";
+    assert!(plan(base).is_some(), "the same delete alone is netted");
+    let reins_fn = format!("{REINS}() {{ :; }}; {base}");
+    for c in [
+        // A function named like the net's prefix, its program, or with a `/` (bash takes a quoted absolute path to it).
+        "reins() { :; }; rm -rf old",
+        reins_fn.as_str(),
+        "'/usr/local/bin/reins'() { :; }; rm -rf old",
+        "/x/y() { :; }; rm -rf old",
+        // Functions named like the netted word or the builtins that bypass functions, in every place one can be.
+        "rm() { echo kept; }; rm -rf old",
+        "function rm { echo kept; }; rm -rf old",
+        "rm() ( echo kept ); rm -rf old",
+        "x=$(rm() { :; }; echo); rm -rf old",
+        "echo > \"$(reins() { :; })\"; rm -rf old",
+        "if true; then command() { :; }; fi; rm -rf old",
+        "for i in a; do builtin() { :; }; done; rm -rf old",
+        "case x in x) rm() { :; } ;; esac; rm -rf old",
+        "f() { g() { :; }; reins() { :; }; }; f; rm -rf old",
+        // Code run as text, aliases, builtins switched or bypassed.
+        "eval 'rm() { :; }'; rm -rf old",
+        "source ./defs.sh; rm -rf old",
+        ". ./defs.sh; rm -rf old",
+        "alias rm='echo'; rm -rf old",
+        "unalias rm; rm -rf old",
+        "enable -n echo; rm -rf old",
+        "hash -p /bin/echo rm; rm -rf old",
+        "builtin cd . && rm -rf old",
+        "command -v rm && rm -rf old",
+        "trap 'rm() { :; }' DEBUG; rm -rf old",
+        // A command word that could be any of them.
+        "E=eval; $E 'rm() { :; }'; rm -rf old",
+        "$(printf eval) x; rm -rf old",
+        // The agent calling reins itself.
+        "reins net list; rm -rf old",
+    ] {
+        // No plan: the request is decided on its own analysis, at the level it has without a net.
+        let p = plan(c);
+        assert!(p.is_none(), "{c}: {p:?}");
+    }
+}

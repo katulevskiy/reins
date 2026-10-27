@@ -278,85 +278,142 @@ fn strip(script: &mut Script, reins: &str, plan: &str) -> Vec<Simple> {
     stripped
 }
 
-/// Whether `script` may give `word` another meaning: a function of that name, or `alias`/`unalias`/`enable`/`hash`
-/// anywhere (an alias or a disabled builtin would make the command word run something else than the program).
-fn shadowed(script: &Script, word: &str) -> bool {
-    fn in_command(c: &Command, word: &str, found: &mut bool) {
-        if let Command::Function {
-            name,
-            ..
-        } = c
-            && name == word
-        {
-            *found = true;
-        }
-    }
-    // Functions sit in the tree as commands: look at every one, nested ones included.
-    fn walk(s: &Script, word: &str, found: &mut bool) {
-        for ao in &s.0 {
-            for p in &ao.pipelines {
-                for c in &p.commands {
-                    in_command(c, word, found);
-                    match c {
-                        Command::Subshell(b, _) | Command::Group(b, _) => walk(b, word, found),
-                        Command::If {
-                            branches,
-                            otherwise,
-                            ..
-                        } => {
-                            for (a, b) in branches {
-                                walk(a, word, found);
-                                walk(b, word, found);
-                            }
-                            if let Some(o) = otherwise {
-                                walk(o, word, found);
-                            }
-                        }
-                        Command::For {
-                            body,
-                            ..
-                        } => walk(body, word, found),
-                        Command::While {
-                            cond,
-                            body,
-                            ..
-                        } => {
-                            walk(cond, word, found);
-                            walk(body, word, found);
-                        }
-                        Command::Case {
-                            arms,
-                            ..
-                        } => {
-                            for (_, b) in arms {
-                                walk(b, word, found);
-                            }
-                        }
-                        Command::Function {
-                            body,
-                            ..
-                        } => {
-                            if let Command::Group(b, _) | Command::Subshell(b, _) = body.as_ref() {
-                                walk(b, word, found);
-                            }
-                        }
-                        Command::Simple(_) => {}
-                    }
-                }
+/// Calls `f` on every command in `s`, everywhere one can be: lists, pipelines, compound commands, function bodies of
+/// any shape, and substitutions in words, assignments, redirections and here-strings.
+fn visit_script(s: &Script, f: &mut dyn FnMut(&Command)) {
+    for ao in &s.0 {
+        for p in &ao.pipelines {
+            for c in &p.commands {
+                visit_command(c, f);
             }
         }
     }
-    let mut found = false;
-    let mut copy = script.clone();
-    walk(script, word, &mut found);
-    each_simple(&mut copy, &mut |s: &mut Simple| {
-        if s.words
-            .first()
-            .and_then(Word::literal)
-            .is_some_and(|w| matches!(w.as_str(), "alias" | "unalias" | "enable" | "hash"))
-        {
-            found = true;
+}
+
+fn visit_word(w: &Word, f: &mut dyn FnMut(&Command)) {
+    for part in &w.0 {
+        match part {
+            Part::CmdSub(s) | Part::ProcSub(s) => visit_script(s, f),
+            Part::Default(_, w) => visit_word(w, f),
+            Part::Brace(alts) => alts.iter().for_each(|a| visit_word(a, f)),
+            Part::Lit(_)
+            | Part::Quoted(_)
+            | Part::Var(_)
+            | Part::Param(_)
+            | Part::Arith(_)
+            | Part::Glob(_)
+            | Part::Tilde(_) => {}
         }
+    }
+}
+
+fn visit_redirects(r: &[ast::Redirect], f: &mut dyn FnMut(&Command)) {
+    for x in r {
+        visit_word(&x.target, f);
+    }
+}
+
+fn visit_command(c: &Command, f: &mut dyn FnMut(&Command)) {
+    f(c);
+    match c {
+        Command::Simple(s) => {
+            s.assigns.iter().for_each(|(_, w)| visit_word(w, f));
+            s.words.iter().for_each(|w| visit_word(w, f));
+            visit_redirects(&s.redirects, f);
+            s.heredocs.iter().filter_map(|h| h.word.as_ref()).for_each(|w| visit_word(w, f));
+        }
+        Command::Subshell(b, r) | Command::Group(b, r) => {
+            visit_script(b, f);
+            visit_redirects(r, f);
+        }
+        Command::If {
+            branches,
+            otherwise,
+            redirects,
+        } => {
+            for (a, b) in branches {
+                visit_script(a, f);
+                visit_script(b, f);
+            }
+            if let Some(o) = otherwise {
+                visit_script(o, f);
+            }
+            visit_redirects(redirects, f);
+        }
+        Command::For {
+            words,
+            body,
+            redirects,
+            ..
+        } => {
+            words.iter().flatten().for_each(|w| visit_word(w, f));
+            visit_script(body, f);
+            visit_redirects(redirects, f);
+        }
+        Command::While {
+            cond,
+            body,
+            redirects,
+        } => {
+            visit_script(cond, f);
+            visit_script(body, f);
+            visit_redirects(redirects, f);
+        }
+        Command::Case {
+            word,
+            arms,
+            redirects,
+        } => {
+            visit_word(word, f);
+            for (pats, body) in arms {
+                pats.iter().for_each(|p| visit_word(p, f));
+                visit_script(body, f);
+            }
+            visit_redirects(redirects, f);
+        }
+        Command::Function {
+            body,
+            ..
+        } => visit_command(body, f),
+    }
+}
+
+/// Programs that change what a command word runs, or run text as code: with any of them in a script, nothing in it
+/// is netted (an alias, a disabled builtin, a function made by `eval` or a sourced file could make `rm`, `git` or the
+/// net's own prefix run something else).
+const SHADOWING: &[&str] = &["eval", "source", ".", "alias", "unalias", "enable", "hash", "builtin", "command", "trap"];
+
+/// Whether `script` could give a netted command word, or the net's own prefix, another meaning. When in doubt it
+/// says yes: the request then keeps its level, which is the safe outcome.
+/// - a function named `word`, `reins`, the reins program's file name, a name with a `/` (bash allows one, and it would
+///   take a quoted absolute path), or one of [`SHADOWING`], anywhere (substitutions and function bodies included);
+/// - any of [`SHADOWING`] run anywhere;
+/// - a command word that is not literal (`$E`, `$(…)`): it could be any of them.
+fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
+    let base = reins.rsplit('/').next().unwrap_or(reins);
+    let mut found = false;
+    visit_script(script, &mut |c: &Command| match c {
+        Command::Function {
+            name,
+            ..
+        } => {
+            if name == word
+                || name == "reins"
+                || name == base
+                || name.contains('/')
+                || SHADOWING.contains(&name.as_str())
+            {
+                found = true;
+            }
+        }
+        Command::Simple(s) => match s.words.first().map(Word::literal) {
+            Some(Some(w)) if SHADOWING.contains(&w.as_str()) || w == reins || w == base || w == "reins" => {
+                found = true;
+            }
+            Some(None) => found = true,
+            _ => {}
+        },
+        _ => {}
     });
     found
 }
@@ -444,7 +501,7 @@ pub fn rewrite(
         return None;
     }
     let original = ast::parse(command);
-    if !original.complete || shadowed(&original.script, word) {
+    if !original.complete || shadowed(&original.script, word, reins) {
         return None;
     }
     let pre = prefix(reins, plan);
