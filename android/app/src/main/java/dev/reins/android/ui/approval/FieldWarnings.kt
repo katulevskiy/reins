@@ -20,8 +20,10 @@ data class FieldWarning(
     val tone: WarnTone,
     val help: String? = null,
     val maxLines: Int = Int.MAX_VALUE,
+    /** A glyph of its own instead of the tone's (a safety net reassures: it doesn't wear a warning). */
+    val icon: Glyph? = null,
 ) {
-    val glyph: Glyph get() = when (tone) {
+    val glyph: Glyph get() = icon ?: when (tone) {
         WarnTone.Red -> Glyph.Lock
         WarnTone.Amber -> Glyph.Warning
         WarnTone.Plain -> Glyph.ShieldAlert
@@ -50,7 +52,7 @@ fun fieldWarnings(view: ApprovalView, suggestion: SuggestionView?, risk: RiskVie
     defaultBranchPush(view)?.let { add(FieldWarning("defaultBranch", "To the default branch ${untrusted(it)}", WarnTone.Amber)) }
     // The computer's safety net (Decisions v2 P3): shown as it says, read-only; it never makes the question looser.
     view.ask?.net?.takeIf { it.isNotBlank() }?.let { net ->
-        add(FieldWarning("netted", "Netted", WarnTone.Plain, "${untrusted(net)} Your computer says so. Restore it there, in Activity."))
+        add(FieldWarning("netted", "Netted", WarnTone.Plain, "${untrusted(net)} Your computer says so. Restore it there, in Activity.", icon = Glyph.Undo))
     }
     view.ssh?.takeIf { it.host.isNullOrBlank() }?.let { ssh ->
         add(FieldWarning("unknownHost", if (ssh.hostKey.isNullOrBlank()) "Unknown server" else "Server known only by its key", WarnTone.Amber))

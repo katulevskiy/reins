@@ -78,6 +78,7 @@ class FieldWarningsTest {
         val w = lines(netted).line("netted")
         assertEquals("Netted", w.text)
         assertEquals(WarnTone.Plain, w.tone)
+        assertEquals(dev.reins.android.design.Glyph.Undo, w.glyph)
         assertTrue(w.help!!.contains("Reins trash"))
         assertEquals(heldByDanger(ruled), heldByDanger(netted))
         assertEquals(dangerTag(ruled), dangerTag(netted))
