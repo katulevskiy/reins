@@ -13,6 +13,7 @@
 //!   witness): the export still has that checkpoint's hash at its sequence number. A server holding the decision
 //!   service key could re-sign a rewritten chain; it can't make it agree with a checkpoint someone kept.
 
+pub mod cli;
 pub mod evidence;
 
 use std::collections::BTreeMap;

@@ -492,6 +492,15 @@ fn cell(s: &str) -> String {
     s.replace('\\', "\\\\").replace('|', "\\|").replace(['\n', '\r'], " ")
 }
 
+/// `1 event`, `2 events`.
+fn count(n: u64, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 fn seq_list(seqs: &[i64]) -> String {
     seqs.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")
 }
@@ -513,8 +522,11 @@ pub fn render_markdown(e: &Evidence) -> String {
     let _ = writeln!(md, "| Period | {} |", period_text(e.period));
     let _ = writeln!(
         md,
-        "| Verified export | events {} to {} ({} events, {} checkpoints) |",
-        x.first_seq, x.last_seq, x.events, x.checkpoints
+        "| Verified export | events {} to {} ({}, {}) |",
+        x.first_seq,
+        x.last_seq,
+        count(x.events, "event"),
+        count(x.checkpoints, "checkpoint")
     );
     let _ = writeln!(md, "| Head hash | `{}` |\n", cell(&x.head_hash));
 
@@ -547,7 +559,7 @@ pub fn render_markdown(e: &Evidence) -> String {
             let _ = writeln!(md, "No events in the period.\n");
             continue;
         }
-        let _ = writeln!(md, "{} events.\n\n| Kind | Count |\n|---|---:|", c.total);
+        let _ = writeln!(md, "{}.\n\n| Kind | Count |\n|---|---:|", count(c.total, "event"));
         for (kind, n) in &c.counts {
             let _ = writeln!(md, "| {} | {n} |", cell(kind));
         }
@@ -741,6 +753,7 @@ mod tests {
         };
         let md = render_markdown(&build(Framework::Soc2, &report, &events, period));
         assert!(md.contains("2026-10-01 to 2026-10-31"), "{md}");
+        assert!(md.contains("(6 events, 1 checkpoint)"), "{md}");
     }
 
     #[test]
