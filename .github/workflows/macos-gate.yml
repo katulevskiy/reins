@@ -9,6 +9,9 @@ name: macOS gate
 #   - its "TestFlight upload" job (after publication) waits for a runner.
 # Once a release's macOS job has its runner it keeps it, so CI goes on then: waiting until it finished would only hold
 # CI back.
+# Only ci.yml passes at once, on a push to main (that commit's release waits for CI's result); every iOS gate waits,
+# on main too. A gate is asked once, before its jobs queue: ios.yml's UI shards that max-parallel starts later ask again
+# from their runner and skip their tests while a release waits (ios.yml, "Yield to a release").
 #
 # It never waits more than `minutes` (60): then CI goes on, with a warning, so CI cannot wait forever on a stuck
 # release. An API error is asked again; after five in a row CI goes on. It reads the runs with the workflow's token and

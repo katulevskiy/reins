@@ -85,9 +85,10 @@ it adds over this window is reference-image comparison, which these tests do wit
 **The Rust core is prebuilt.**
 - `ios/scripts/core-cache.sh` hashes the core's inputs as they are on disk: the three crates, `Cargo.toml`,
   `Cargo.lock`, the toolchain, `.cargo/` and `build-core.sh`.
-- On main, `.github/workflows/ios-core.yml` builds a missing simulator or device core once per hash. It attests the
-  core and uploads it to the rolling `ios-core-cache` prerelease (`core-<hash>-<platform>.tar.gz`), keeping the
-  newest twelve per platform.
+- On main, `.github/workflows/ios-core.yml` builds a missing core once per hash, in three variants: Debug for the
+  simulator and for devices, and Release for devices (`iphoneos-release`, the TestFlight archive's). It attests the
+  core and uploads it to the rolling `ios-core-cache` prerelease (`core-<hash>-<variant>.tar.gz`), keeping the
+  newest twelve per variant.
 - The iOS job, CI's iOS core job and the Mac (`core-cache.sh ensure iphonesimulator`) download it and verify it (see
   [Trust](#trust)). They build the core only when no verified build exists for that hash.
 - A branch that changes the core builds its own core in each job, as an artifact of that run, until the change
@@ -96,7 +97,10 @@ it adds over this window is reference-image comparison, which these tests do wit
   - Actions caches are scoped to a branch and main, and are evicted after 7 days unused or past 10 GB.
   - Actions caches cannot be downloaded from a Mac or this PC.
   - Release assets are public and permanent.
-- The TestFlight archive builds its own Release core.
+- The TestFlight upload (`release.yml`) fetches the Release core the same way. It takes it only when it was compiled
+  against the iOS SDK of its own Xcode, and builds the core itself otherwise (about eight minutes).
+- Every archive carries the hash of the sources it was built from and its profile. `core-cache.sh` installs one only
+  when both are this tree's and the variant's.
 
 ### Trust
 

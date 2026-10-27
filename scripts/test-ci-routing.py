@@ -125,9 +125,25 @@ assert "41 5 * * 1" not in ios_workflow
 assert "github.event_name != 'push'" not in ios_workflow
 # A main push or a hand run must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
-# Pushes to main share one group, and a newer push cancels the older run; nothing else is cancelled.
+# Pushes to main share one group, and a newer push cancels the older run; a newer push to a pull request cancels its
+# older run too. Nightly and hand runs are never cancelled.
 assert "github.event_name == 'push' && 'main'" in ios_workflow
-assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in ios_workflow
+assert "cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}" in ios_workflow
+# A UI shard that max-parallel starts late asks again, and skips its tests while a release wants a macOS runner; the
+# unit shard (it gates) never does. Every later step needs the plan, which a yielding shard skips.
+shards = ios_workflow.split("\n  ios-test:\n", 1)[1].split("\n\n  # ", 1)[0]
+yield_step = shards.split("      - name: Yield to a release\n", 1)[1].split("\n      - name: ", 1)[0]
+assert "if: matrix.shard != 'unit'" in yield_step and "release.yml/runs" in yield_step
+assert '"macOS builds"' in yield_step and '"TestFlight upload"' in yield_step and "skip=true" in yield_step
+assert "if: steps.yield.outputs.skip != 'true'" in shards.split("      - name: Plan this shard\n", 1)[1].split("\n      - ", 1)[0]
+assert shards.index("Yield to a release") < shards.index("Plan this shard")
+for step in shards.split("\n      - ")[4:]:
+    assert "steps.plan.outputs.only != ''" in step or "steps.tests.outcome" in step, step
+assert "      actions: read" in shards.split("\n    steps:", 1)[0]
+# ios-core.yml: a newer main push cancels an older one's build of the same variant; calls and hand runs never.
+ios_core = (ROOT / ".github/workflows/ios-core.yml").read_text()
+assert "format('ios-core-main-{0}', matrix.platform)" in ios_core
+assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in ios_core
 # Each pull request has its own group, so unrelated pull requests never replace each other's pending iOS runs.
 assert "format('pr-{0}', github.event.pull_request.number)" in ios_workflow
 # A failed shard can be retried for as long as its result bundle is retained.
@@ -163,6 +179,9 @@ for name in ("ci", "ios", "ios-core", "ios-job"):
     gates = {job for job, body in jobs.items() if GATE in body}
     assert gates, name
     for job in gates:
+        # Only ci.yml's gate may pass at once (on a push to main: that commit's release waits for CI). Every iOS gate
+        # waits, on main too.
+        assert name == "ci" or "wait:" not in jobs[job], (name, job)
         permissions = jobs[job].split("    permissions:\n", 1)[1].split("\n    with:", 1)[0]
         assert permissions.split("#", 1)[0].split() == ["actions:", "read"], (name, job, permissions)
     for job, body in jobs.items():
@@ -174,6 +193,9 @@ for name in ("ci", "ios", "ios-core", "ios-job"):
 assert gated == 6, gated
 # ci.yml's gate passes at once on a push to main: the release of that commit waits for that run.
 assert "wait: ${{ github.event_name != 'push' }}" in (ROOT / ".github/workflows/ci.yml").read_text()
+# Publication waits for CI's whole result (scripts/wait-for-ci.sh): CI calls no other workflow that could wait or fail.
+ci_text = (ROOT / ".github/workflows/ci.yml").read_text()
+assert set(re.findall(r"uses: \./\.github/workflows/([a-z0-9-]+\.yml)", ci_text)) == {"macos-gate.yml"}
 # ios-job.yml calls ios-core.yml, whose gate needs actions: read from its caller too.
 ios_job = (ROOT / ".github/workflows/ios-job.yml").read_text()
 assert "      actions: read" in ios_job.split("\n  core:\n", 1)[1].split("\n  run:\n", 1)[0]
