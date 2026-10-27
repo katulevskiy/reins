@@ -927,7 +927,7 @@ pub async fn run(
         log::info!("hook {}: `{}` approved earlier ({})", harness.id(), m.pattern, pass.ticket);
         let reason = format!("Approved earlier (ticket {})", pass.ticket);
         let mut entry = entry.decider(crate::journal::Decider::Phone);
-        entry.end(crate::journal::Outcome::Approved, Some(&reason));
+        entry.end(Outcome::Approved, Some(&reason));
         crate::journal::Journal::new(paths).record(&entry);
         let (out, code) = render_with(&call, &Verdict::Allow(reason), &news);
         return (out, code, None);
