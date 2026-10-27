@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 500" width="1024" height="500">
-  <!-- Google Play's feature graphic (1024 x 500). The launcher icon's violet, the app's dark palette
+  <!-- Google Play's feature graphic (1024 x 500). The Reins R (design/brand), the app's dark palette
        (design/Palette.kt) and its Geist faces (app/src/main/assets/fonts). render.sh turns it into a PNG. -->
   <style>
     @font-face { font-family: "Geist"; font-weight: 400; src: url("../../app/src/main/assets/fonts/Geist.ttf"); }
@@ -28,10 +28,7 @@
   <rect width="1024" height="500" fill="url(#glow)"/>
 
   <!-- The mark and the name -->
-  <g transform="translate(72 112) scale(4)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z" stroke="#C9C1FB" stroke-width="1.5"/>
-    <path d="M8.7,12l2.4,2.4 4.2,-4.6" stroke="#FFFFFF" stroke-width="1.7"/>
-  </g>
+  <image href="../../../design/brand/reins-mark.svg" x="70" y="100" width="104" height="104"/>
   <text x="78" y="282" font-size="76" font-weight="600" fill="#FFFFFF" letter-spacing="-1.5">Reins</text>
   <text x="80" y="332" font-size="29" font-weight="400" fill="#C9C1FB">Your AI asks. You decide.</text>
   <text x="80" y="372" font-size="20" font-weight="400" fill="#A9A9AE">Approvals on your phone. Your keys stay there.</text>
