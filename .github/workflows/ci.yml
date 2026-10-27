@@ -103,6 +103,7 @@ jobs:
       - run: python3 scripts/test-supersede-releases.py
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
+      - run: python3 scripts/test-macos-gate.py
       - run: python3 scripts/test-ios-ui-plan.py
       - name: Conflict markers and shell syntax
         run: |
@@ -278,10 +279,22 @@ jobs:
           tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
       - run: NFPM="$RUNNER_TEMP/nfpm" python3 scripts/test-linux-packages.py
 
+  # Waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml). Not on a push to main: the
+  # release of that commit waits for this run (scripts/wait-for-ci.sh), so its macOS job must not wait for the release.
+  macos-gate:
+    name: Yield to releases
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
+    permissions:
+      actions: read # the release runs and their jobs
+    with:
+      wait: ${{ github.event_name != 'push' }}
+
   desktop-macos:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
-    needs: changes
+    needs: [changes, macos-gate]
     if: needs.changes.outputs.desktop == 'true'
     runs-on: macos-15
     timeout-minutes: 60

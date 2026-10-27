@@ -227,11 +227,16 @@ You must be logged in on the Mac, because the simulator runs in your GUI session
 ## UI tests in CI
 
 `.github/workflows/ios.yml` runs on pull requests, main and nightly:
-- One build, then a `unit` shard (ReinsTests) and five UI shards.
+- A pull request: the core, one build, then the `unit` shard (ReinsTests). No UI shard.
+- A push to main (a newer push cancels the older run), the nightly and a hand run (`gh workflow run ios.yml --ref
+  <branch>`, for a pull request whose UI needs a look): the same, plus the five UI shards.
 - The `iOS` check gates on the core, the build and the unit shard.
 - The UI shards continue on error. A failing UI test shows as a warning on a green job, with its `.xcresult` as an
   artifact. It never holds a merge.
 - Releases wait only for `ci.yml` (`scripts/wait-for-ci.sh`), so iOS UI tests never hold a release either.
+- Before the core and before the tests, a Linux job waits while a release waits for its macOS runner
+  (`.github/workflows/macos-gate.yml`, at most an hour). `ios-core.yml`, `ios-job.yml` and `ci.yml`'s macOS job
+  wait the same way.
 
 `scripts/test-ci-routing.py` checks all of this.
 

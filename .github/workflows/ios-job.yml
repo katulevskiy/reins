@@ -55,13 +55,21 @@ jobs:
       contents: write # upload a missing core to the ios-core-cache prerelease
       id-token: write # attest it
       attestations: write
+      actions: read # its macOS gate reads the release runs
     with:
       ref: ${{ inputs.ref }}
       platforms: iphonesimulator
 
+  # Waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml).
+  macos-gate:
+    name: Yield to releases
+    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
+    permissions:
+      actions: read # the release runs and their jobs
+
   run:
     name: "iOS job: ${{ inputs.run || 'snapshots' }}"
-    needs: core
+    needs: [core, macos-gate]
     if: ${{ !cancelled() }}
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 60

@@ -167,7 +167,7 @@ To measure the complete release pipeline before merging, run **Release** on a CI
 enabled (`gh workflow run release.yml --ref <branch> -f verify_only=true`). It builds and verifies the signed APK,
 installers, archives and both server image architectures, but creates no GitHub release and does not update image
 version/latest tags. It restores the build caches and writes none: they, and the per-architecture GHCR image caches,
-are written from `main` only. On `main`, a `verify_only` run also builds and signs the iOS app (`ios-build`) and
+are written from `main` only. On `main`, a `verify_only` run also builds and signs the iOS app (`ios-testflight`) and
 uploads nothing.
 
 Server, CLI, Android and iOS release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
@@ -175,8 +175,11 @@ LTO/one-codegen-unit configuration for explicit optimization benchmarks. The ins
 level 3 with LTO disabled to avoid long GPUI links and large bitcode caches. Installers compile the GUI and bundled CLI
 under one profile to share dependencies; Windows CLI downloads reuse the installer binary. Both macOS GUI architectures
 compile in one cargo run on an Apple silicon runner (x86_64 cross-compiled) before universal bundling and signing.
-Standalone macOS CLI builds (both architectures, one runner) remain separate to preserve macOS 11 support (the GUI
-requires macOS 12). The iOS core's uniffi-bindgen is a host tool built with the unoptimized `host-tool` profile. Android builds each ABI and the Kotlin bindings on separate workers; native
+Standalone macOS CLI builds (both architectures) remain a separate cargo run to preserve macOS 11 support (the GUI
+requires macOS 12), before any signing secret is fetched. All of that is one job, `macos`: the account runs
+five GitHub-hosted macOS jobs at once, shared with CI, so a release takes one macOS runner before publication (and one
+after it, for TestFlight). CI's macOS jobs wait while a release still waits for its runner
+(`.github/workflows/macos-gate.yml`, at most an hour). The iOS core's uniffi-bindgen is a host tool built with the unoptimized `host-tool` profile. Android builds each ABI and the Kotlin bindings on separate workers; native
 outputs are reused only for an exact native source/configuration hash. CI uses separate debug output caches and
 retains both Android flavor test suites. Every packaged APK verifies both ELF
 architectures as well as the production signing certificate and installed identity.
@@ -259,15 +262,17 @@ upload with a notice while the folder or the secret is missing; a repository sec
 
 ## Maintainers: TestFlight
 
-The `ios-build` job (runner `xcode-27`, its released Xcode 27.0) starts with the release's other builds: it archives
-and signs the iOS app, sending Apple nothing. Once the release is published, the `ios-testflight` job signs that
-archive for the App Store and uploads it to App Store Connect ("Reins 2FA", `com.reins2fa.app`). Then
+Once the release is published, the `ios-testflight` job (runner `xcode-27`, its released Xcode 27.0) archives and
+signs the iOS app, then exports it for the App Store and uploads it to App Store Connect ("Reins 2FA",
+`com.reins2fa.app`). It is one job after publication, not a build beside the others: its signing material is the
+`testflight` environment's, which the `macos` job, bound to the main ref's Infisical identity, cannot have, and a
+second macOS job before publication waited in the account's macOS queue on its own. Then
 `scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
 Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
 beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
 never touches the GitHub release: rerun the failed job. A newer release's upload cancels an older one still waiting or
-running. To test or redo one release, run the Release workflow from main with `testflight_tag` = `vX.Y.Z`; only these
-two jobs run.
+running. To test or redo one release, run the Release workflow from main with `testflight_tag` = `vX.Y.Z`; only this
+job runs.
 
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.

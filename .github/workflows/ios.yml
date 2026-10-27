@@ -1,13 +1,14 @@
 name: iOS
 
-# A pull request runs ReinsTests and the UI classes ios/ci-ui-map.txt names for its diff.
-# The full suite runs on a push to main, the nightly, a hand run, and a pull request labelled ios-full.
+# A pull request runs the core, the build and ReinsTests (the unit shard): three macOS jobs, one after another.
+# The five UI shards run on a push to main (a newer push cancels the older run), the nightly and a hand run
+# (workflow_dispatch, also on a branch, for a pull request whose UI needs a look before merging).
 # scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow, so none of this holds a release.
-# The iOS check gates on the core, the build and ReinsTests (the unit shard). The UI shards never gate a merge:
-# their failures are warnings with the result bundle attached (docs/ios-dev.md).
+# The iOS check gates on the core, the build and ReinsTests. The UI shards never gate a merge: their failures are
+# warnings with the result bundle attached (docs/ios-dev.md).
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
   push:
     branches: [main]
@@ -30,10 +31,11 @@ permissions:
 
 # One group per pull request: a newer run of the same pull request replaces its pending run (GitHub keeps one pending
 # run per group), and pull requests no longer replace each other's queued runs. A run in progress is not cancelled.
-# A main, nightly or hand run keeps its own group per commit and is not cancelled.
+# Pushes to main share one group, and a newer push cancels the older run (its UI shards included): the newer commit
+# has every change of the older one. A nightly or hand run keeps its own group per commit and is not cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 defaults:
   run:
@@ -49,11 +51,13 @@ defaults:
 # apply, matching a local simulator build with an empty REINS_TEAM. The core is arm64. No test retries.
 #
 # Run 38858281608 kept five xcode-27 jobs busy and started the sixth seven seconds after one finished.
-# The build is one job before the shards, not a sixth shard beside them. A pull request runs at most
-# three shards at once, so two runners stay free for ci.yml and for a release. The nightly is off peak
-# and may take all five. ActivityFlowTests is divided by method. ReinsTests shares the rest shard.
-# scripts/ios-ui-plan.py owns that list. A mapped pull request leaves a shard empty instead of borrowing
-# tests. Classes added later still land on rest when the full suite runs.
+# The build is one job before the shards, not a sixth shard beside them. A main push or a hand run runs
+# at most three shards at once, so two runners stay free for ci.yml and for a release. The nightly is off
+# peak and may take all five. ActivityFlowTests is divided by method. scripts/ios-ui-plan.py owns that
+# list. Classes added later still land on rest.
+#
+# The account's five macOS runners are shared with release.yml. Before the core and again before the
+# tests, a Linux job waits while a release waits for its macOS runner (.github/workflows/macos-gate.yml).
 #
 # The simulator core and the Swift compile cache are written from main only. A pull request restores them.
 # Build products are uploaded for the shards, not cached: they carry absolute paths, which match this
@@ -99,18 +103,26 @@ jobs:
             done < <(git diff --name-only -z "$BASE_SHA" HEAD)
           fi
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
+      # A pull request runs no UI shard.
       - name: Select UI tests
         id: uitests
-        if: steps.paths.outputs.ios == 'true'
+        if: steps.paths.outputs.ios == 'true' && github.event_name != 'pull_request'
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ',') || '' }}
         run: python3 scripts/ios-ui-plan.py select >> "$GITHUB_OUTPUT"
+
+  macos-gate:
+    name: Yield to releases
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
+    permissions:
+      actions: read # the release runs and their jobs
 
   ios-core:
     name: iOS Rust core
-    needs: changes
+    needs: [changes, macos-gate]
     if: needs.changes.outputs.ios == 'true'
     permissions:
       contents: read
@@ -214,7 +226,7 @@ jobs:
 
   ios-build:
     name: iOS build
-    needs: [changes, ios-core]
+    needs: [changes, macos-gate, ios-core]
     if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
@@ -322,21 +334,31 @@ jobs:
           # Keep build inputs as long as test results so failed shards can be rerun.
           retention-days: 7
 
+  # Again before the tests: on main they are six jobs, and a release may have started since the core.
+  macos-gate-tests:
+    name: Yield to releases (tests)
+    needs: [changes, ios-build]
+    if: needs.changes.outputs.ios == 'true' && needs.ios-build.result == 'success'
+    uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
+    permissions:
+      actions: read # the release runs and their jobs
+
   # unit (ReinsTests) gates the iOS check. The five UI shards do not: the job and its test step continue on error, so a
   # failing UI test is a warning on a green job, with its result bundle uploaded, and never holds a merge or a release.
+  # A pull request runs unit only; the UI shards run on a push to main, the nightly and a hand run.
   ios-test:
     name: iOS tests (${{ matrix.shard }})
-    needs: [changes, ios-build]
+    needs: [changes, ios-build, macos-gate-tests]
     if: needs.changes.outputs.ios == 'true' && needs.ios-build.result == 'success'
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.shard != 'unit' }}
     strategy:
       fail-fast: false
-      # Three at a time on a pull request, a main push, or a hand run. The nightly uses all five.
+      # Three at a time on a main push or a hand run. The nightly uses all five.
       max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}
       matrix:
-        shard: [unit, autopilot, grants, onboarding, field, rest]
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '["unit"]' || '["unit", "autopilot", "grants", "onboarding", "field", "rest"]') }}
     env:
       XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
       DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
