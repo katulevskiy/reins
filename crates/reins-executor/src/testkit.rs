@@ -5,8 +5,7 @@ use reins_audit::TrustedKey;
 use reins_policy::context::{FactKind, Zone};
 use reins_policy::matrix::{Cell, Issuer, Rule, Then, When};
 use reins_policy::org::{
-    ManagedOutcome, ManagedRequest, MemberPolicy, OrgPolicy, OrgRule, ReviewClass, ReviewSpec, Reviewers,
-    evaluate_managed,
+    ManagedOutcome, ManagedRequest, MemberPolicy, OrgPolicy, OrgRule, ReviewSpec, Reviewers, evaluate_managed,
 };
 use reins_proto::managed::{
     DECISION_VERSION, DecisionRecord, Envelope, EnvelopeKind, Job, JobKind, LeaseAccess, LeaseBinding, LeaseJob,
@@ -133,6 +132,8 @@ impl Fixture {
                 key: d.spki(),
                 may_decide,
             }],
+            manager: None,
+            passkeys: Vec::new(),
         };
         Roster {
             org: ORG.to_owned(),
@@ -143,6 +144,7 @@ impl Fixture {
                 member(KIM, &["sec"], vec![Role::SecurityAdmin], &self.kim, true),
                 member(SAM, &["sec"], vec![Role::Member], &self.sam, false),
             ],
+            backups: std::collections::BTreeMap::new(),
         }
     }
 
@@ -161,6 +163,7 @@ impl Fixture {
                 tool,
                 args,
                 now: at,
+                reason: None,
             },
             &self.policy,
             member,
@@ -183,6 +186,8 @@ impl Fixture {
             obligations: v.obligation_ids(),
             approvals: Vec::new(),
             lease: None,
+            resolved: std::collections::BTreeMap::new(),
+            reason: None,
             evaluated_at: at,
             decided_at: at,
             valid_until: at + 3600,
@@ -208,6 +213,7 @@ impl Fixture {
             decision: ReviewDecision::Approve,
             at,
             sig: device.sign(&msg),
+            webauthn: None,
         }
     }
 
@@ -283,19 +289,12 @@ pub fn issue(repo: &str) -> Value {
 }
 
 pub fn sec_review() -> ReviewSpec {
-    ReviewSpec {
-        reviewers: Reviewers::Group("sec".to_owned()),
-        quorum: 1,
-        distinct_persons: true,
-        exclude_requester: true,
-        class: ReviewClass::Deferred,
-        window_secs: 0,
-    }
+    ReviewSpec::by(Reviewers::Group("sec".to_owned()))
 }
 
 pub fn org_rule(id: &str, resource: &str, then: Then, review: Option<ReviewSpec>) -> OrgRule {
-    OrgRule {
-        rule: Rule {
+    OrgRule::new(
+        Rule {
             id: id.to_owned(),
             issuer: Issuer::Org(ORG.to_owned()),
             when: When {
@@ -308,7 +307,7 @@ pub fn org_rule(id: &str, resource: &str, then: Then, review: Option<ReviewSpec>
             explain: format!("{id} says so"),
         },
         review,
-    }
+    )
 }
 
 /// Acme's policy: its repositories are Work (Auto up to L2), and writes on `acme/prod-*` are reviewed by `sec`.

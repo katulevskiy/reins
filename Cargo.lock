@@ -8479,6 +8479,8 @@ dependencies = [
 name = "reins-policy"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "data-encoding",
  "proptest",
  "regex",

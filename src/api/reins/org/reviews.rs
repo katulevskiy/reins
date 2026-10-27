@@ -111,6 +111,7 @@ fn requires(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result
         Reviewers::Group(g) => group_name(c, org, g)?,
         Reviewers::Role(r) => r.label().to_owned(),
         Reviewers::Members(_) => "Named reviewers".to_owned(),
+        other => super::routing::label(c, org, other)?,
     })
 }
 
@@ -131,6 +132,7 @@ fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, 
                 decision: ReviewDecision::Approve,
                 at: a.at,
                 sig: a.sig.clone(),
+                webauthn: None,
             });
         }
         people.push((a.user_uuid, groups, roles, approve));
@@ -204,6 +206,11 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
             zone: trace["zone"].as_str().unwrap_or_default().to_owned(),
             expires_at: row.expires_at,
             own,
+            needs: Vec::new(),
+            progress: String::new(),
+            step: None,
+            urgent: false,
+            reason: None,
         });
     }
     for change in reins_org::q_pending_changes(c, org)? {
@@ -262,6 +269,11 @@ fn change_item(
         zone: String::new(),
         expires_at: change.expires_at,
         own,
+        needs: Vec::new(),
+        progress: String::new(),
+        step: None,
+        urgent: false,
+        reason: None,
     })
 }
 

@@ -65,6 +65,8 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
                     may_decide: posture::may_decide(d, &rule, now).is_ok(),
                 })
                 .collect(),
+            manager: None,
+            passkeys: Vec::new(),
         });
     }
     Ok(Roster {
@@ -72,6 +74,7 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
         version: u64::try_from(now).unwrap_or(0),
         issued_at: now,
         members,
+        backups: std::collections::BTreeMap::new(),
     })
 }
 

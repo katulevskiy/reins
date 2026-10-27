@@ -517,6 +517,11 @@ mod tests {
             zone: "external".into(),
             expires_at: 100,
             own: false,
+            needs: Vec::new(),
+            progress: String::new(),
+            step: None,
+            urgent: false,
+            reason: None,
         }
     }
 
@@ -538,6 +543,11 @@ mod tests {
             zone: String::new(),
             expires_at: 100,
             own,
+            needs: Vec::new(),
+            progress: String::new(),
+            step: None,
+            urgent: false,
+            reason: None,
         }
     }
 

@@ -147,6 +147,7 @@ pub fn verify_job_with(
         tool: &job.tool,
         args: &job.args,
         now: at,
+        reason: record.reason.as_deref(),
     };
     let ours = evaluate_managed(&request(record.evaluated_at), &decided_with, member_policy.as_ref());
     let differs = |ours: &str| Refusal::VerdictDiffers {
