@@ -4818,7 +4818,13 @@ mod decisions_v2_o4_preview {
             .unwrap();
         assert_eq!((v.line.as_str(), v.changed, v.days), ("Last 30 days: 3 Auto → Ask, 0 Ask → Auto", 3, 30));
         // "Ask me next time" on one of them: the same three.
-        let v = env.core.preview_policy_change(PolicyChange::AskMeNextTime { request_id: "p0".into() }).await.unwrap();
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::AskMeNextTime {
+                request_id: "p0".into(),
+            })
+            .await
+            .unwrap();
         assert_eq!(v.changed, 3, "{v:?}");
         // Nothing was asked of the server, and nothing changed.
         let all = env.server.received_requests().await.unwrap_or_default();
@@ -4830,13 +4836,16 @@ mod decisions_v2_o4_preview {
             .collect();
         assert!(new.is_empty(), "{new:?}");
         assert!(env.core.engine().ap_snapshot().unwrap().rules.is_empty());
-        assert!(env.core.preview_policy_change(PolicyChange::SetCell {
-            zone: ZoneChoice::Friends,
-            level: 9,
-            cell: CellChoice::Ask
-        })
-        .await
-        .is_err());
+        assert!(
+            env.core
+                .preview_policy_change(PolicyChange::SetCell {
+                    zone: ZoneChoice::Friends,
+                    level: 9,
+                    cell: CellChoice::Ask
+                })
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -4870,7 +4879,14 @@ mod decisions_v2_o4_preview {
         assert_eq!(v.line, "No history yet");
         // And Activity never carries the input.
         let rec = env.store().activity(10).unwrap();
-        assert!(rec.iter().all(|r| r.info.autopilot.as_ref().and_then(|a| a.matrix.as_ref()).is_none_or(|m| m.input.is_none())));
+        assert!(
+            rec.iter().all(|r| r
+                .info
+                .autopilot
+                .as_ref()
+                .and_then(|a| a.matrix.as_ref())
+                .is_none_or(|m| m.input.is_none()))
+        );
     }
 
     #[tokio::test]

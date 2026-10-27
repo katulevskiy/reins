@@ -1048,38 +1048,38 @@ impl Engine {
 
 /// The rules "Ask me next time" on `request_id` writes (its preview applies the same).
 pub(crate) fn exception_rules(request_id: &str, note: &MatrixNote, now: i64) -> Vec<Rule> {
-        let mut out = Vec::new();
-        let kinds: BTreeSet<EffectKind> = note.kinds.iter().copied().collect();
-        let kinds: Vec<EffectKind> = kinds.into_iter().collect();
-        let explain = "You asked to be asked".to_owned();
-        if let Some(resource) = &note.resource {
-            out.push(Rule {
-                id: format!("exception-{request_id}"),
-                issuer: Issuer::Owner,
-                when: When {
-                    zones: vec![note.zone],
-                    effects: kinds.clone(),
-                    resource: Some(resource.clone()),
-                    ..When::default()
-                },
-                then: Then::Review,
-                not_after: None,
-                accepted: true,
-                explain: explain.clone(),
-            });
-        }
+    let mut out = Vec::new();
+    let kinds: BTreeSet<EffectKind> = note.kinds.iter().copied().collect();
+    let kinds: Vec<EffectKind> = kinds.into_iter().collect();
+    let explain = "You asked to be asked".to_owned();
+    if let Some(resource) = &note.resource {
         out.push(Rule {
-            id: format!("pause-{request_id}"),
+            id: format!("exception-{request_id}"),
             issuer: Issuer::Owner,
             when: When {
                 zones: vec![note.zone],
-                effects: kinds,
+                effects: kinds.clone(),
+                resource: Some(resource.clone()),
                 ..When::default()
             },
             then: Then::Review,
-            not_after: Some(now + EXCEPTION_PAUSE_SECS),
+            not_after: None,
             accepted: true,
-            explain,
+            explain: explain.clone(),
         });
-        out
+    }
+    out.push(Rule {
+        id: format!("pause-{request_id}"),
+        issuer: Issuer::Owner,
+        when: When {
+            zones: vec![note.zone],
+            effects: kinds,
+            ..When::default()
+        },
+        then: Then::Review,
+        not_after: Some(now + EXCEPTION_PAUSE_SECS),
+        accepted: true,
+        explain,
+    });
+    out
 }

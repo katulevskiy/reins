@@ -31,9 +31,15 @@ pub struct PreviewInput {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum PolicyChange {
     /// One matrix cell (`level` 0 to 3).
-    SetCell { zone: ZoneChoice, level: u8, cell: CellChoice },
+    SetCell {
+        zone: ZoneChoice,
+        level: u8,
+        cell: CellChoice,
+    },
     /// The rules "Ask me next time" on this Activity entry would add.
-    AskMeNextTime { request_id: String },
+    AskMeNextTime {
+        request_id: String,
+    },
 }
 
 /// What a change would have done on the phone's own history.
@@ -106,10 +112,7 @@ impl Engine {
         let r = simulate_personal(&cases, &base, &draft);
         let changed = r.auto_to_review + r.review_to_auto + r.to_deny + r.from_deny;
         Ok(PreviewView {
-            line: format!(
-                "Last {PREVIEW_DAYS} days: {} Auto → Ask, {} Ask → Auto",
-                r.auto_to_review, r.review_to_auto
-            ),
+            line: format!("Last {PREVIEW_DAYS} days: {} Auto → Ask, {} Ask → Auto", r.auto_to_review, r.review_to_auto),
             changed,
             days: PREVIEW_DAYS,
         })
