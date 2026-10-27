@@ -155,12 +155,34 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                         program: "a program set in git's configuration".to_owned(),
                         source: CodeSource::Unknown,
                     });
-                    w.lower(Certainty::Partial, "a program git's configuration runs");
+                    w.lower(Certainty::None, "a program git's configuration runs");
                 }
                 k += 2;
             }
-            "--git-dir" | "--work-tree" | "--namespace" | "--exec-path" | "--config-env" => k += 2,
-            t if t.starts_with('-') => k += 1,
+            "--git-dir" | "--work-tree" | "--namespace" | "--config-env" => k += 2,
+            "--no-pager"
+            | "-P"
+            | "--paginate"
+            | "-p"
+            | "--bare"
+            | "--no-replace-objects"
+            | "--literal-pathspecs"
+            | "--glob-pathspecs"
+            | "--noglob-pathspecs"
+            | "--icase-pathspecs"
+            | "--no-optional-locks"
+            | "--version"
+            | "--help"
+            | "--no-lazy-fetch"
+            | "--no-advice" => k += 1,
+            t if t.starts_with("--git-dir=") || t.starts_with("--work-tree=") || t.starts_with("--namespace=") => {
+                k += 1;
+            }
+            // Any other global option (`--exec-path=…` picks the programs git runs): not read.
+            t if t.starts_with('-') => {
+                w.lower(Certainty::None, format!("the git option {t}"));
+                k += 1;
+            }
             _ => break,
         }
     }
@@ -171,12 +193,95 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     let rest = &args[k + 1..];
     let worktree = w.repo_root().unwrap_or_else(|| w.cwd.clone());
     let wt = Exp::lit(&worktree);
+    // Programs git runs from its environment (`GIT_SEQUENCE_EDITOR=… git rebase -i`): read as commands.
+    for var in [
+        "GIT_EDITOR",
+        "GIT_SEQUENCE_EDITOR",
+        "GIT_SSH_COMMAND",
+        "GIT_SSH",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_ASKPASS",
+        "GIT_PROXY_COMMAND",
+    ] {
+        match w.var_state(var) {
+            Some(Some(cmd)) if !matches!(cmd.as_str(), "" | "true" | ":" | "cat" | "less" | "ssh") => {
+                w.run_script(&cmd, Vec::new());
+            }
+            Some(None) => w.lower(Certainty::None, format!("the program ${var} names")),
+            _ => {}
+        }
+    }
+    // Commands git itself runs: read as commands.
+    let run_value = |w: &mut Walk<'_>, names: &[&str]| {
+        let mut k = 0;
+        while k < rest.len() {
+            let t = rest[k].text.as_str();
+            let value = names.iter().find_map(|n| {
+                if t == *n {
+                    rest.get(k + 1).cloned()
+                } else {
+                    t.strip_prefix(&format!("{n}=")).map(|v| Exp {
+                        text: v.to_owned(),
+                        ..rest[k].clone()
+                    })
+                }
+            });
+            if let Some(v) = value {
+                if v.known() {
+                    w.run_script(&v.text, Vec::new());
+                } else {
+                    w.lower(Certainty::None, format!("a command git runs ({t})"));
+                }
+            }
+            k += 1;
+        }
+    };
     match sub.as_str() {
+        "bisect" => {
+            if rest.first().is_some_and(|a| a.text == "run") {
+                let line = rest[1..].iter().map(|a| a.text.clone()).collect::<Vec<_>>().join(" ");
+                w.run_script(&line, Vec::new());
+            }
+        }
+        "submodule" if rest.iter().any(|a| a.text == "foreach") => {
+            let at = rest.iter().position(|a| a.text == "foreach").map_or(rest.len(), |p| p + 1);
+            let line = rest[at..]
+                .iter()
+                .filter(|a| !a.text.starts_with("--"))
+                .map(|a| a.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            w.run_script(&line, Vec::new());
+        }
+        "rebase" if rest.iter().any(|a| a.text == "-x" || a.text.starts_with("--exec")) => {
+            run_value(w, &["-x", "--exec"]);
+            local_change(w, &sub, rest, &worktree);
+        }
+        "filter-branch" => {
+            run_value(
+                w,
+                &[
+                    "--tree-filter",
+                    "--index-filter",
+                    "--msg-filter",
+                    "--env-filter",
+                    "--commit-filter",
+                    "--parent-filter",
+                    "--tag-name-filter",
+                    "--setup",
+                ],
+            );
+            local_change(w, &sub, rest, &worktree);
+        }
+        "filter-repo" if rest.iter().any(|a| a.text.ends_with("-callback") || a.text.contains("-callback=")) => {
+            w.lower(Certainty::None, "Python code git filter-repo runs");
+        }
         "status" | "log" | "diff" | "show" | "rev-parse" | "ls-files" | "ls-tree" | "cat-file" | "describe"
         | "blame" | "grep" | "shortlog" | "merge-base" | "rev-list" | "for-each-ref" | "name-rev" | "symbolic-ref"
         | "show-ref" | "whatchanged" | "range-diff" | "cherry" | "check-ignore" | "check-attr" | "count-objects"
         | "fsck" | "verify-commit" | "verify-tag" | "help" | "version" | "var" | "diff-tree" | "diff-index"
-        | "diff-files" | "annotate" | "format-patch" | "bundle" | "archive" | "notes" | "bisect" | "ls-remote"
+        | "diff-files" | "annotate" | "format-patch" | "bundle" | "archive" | "notes" | "ls-remote"
         | "request-pull" | "instaweb" => {
             if sub == "ls-remote" {
                 w.effect(Effect::Network {
@@ -241,18 +346,18 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
         }
         "add" | "commit" | "stash" | "tag" | "checkout" | "switch" | "branch" | "merge" | "rebase" | "cherry-pick"
         | "revert" | "am" | "apply" | "mv" | "rm" | "restore" | "reset" | "clean" | "worktree" | "config"
-        | "update-ref" | "reflog" | "replace" | "filter-branch" | "filter-repo" | "sparse-checkout" | "init"
-        | "update-index" | "commit-tree" | "hash-object" | "read-tree" | "write-tree" | "mktag" | "mktree"
-        | "rerere" => {
+        | "update-ref" | "reflog" | "replace" | "filter-repo" | "sparse-checkout" | "init" | "update-index"
+        | "commit-tree" | "hash-object" | "read-tree" | "write-tree" | "mktag" | "mktree" | "rerere" => {
             local_change(w, &sub, rest, &worktree);
         }
         "push" | "send-pack" => push(w, rest),
+        // Anything else (an alias, `difftool`, `send-email`, a third-party `git-foo`): not read.
         _ => {
             w.effect(Effect::Exec {
                 program: format!("git {sub}"),
                 source: CodeSource::Unknown,
             });
-            w.lower(Certainty::Partial, format!("what `git {sub}` does"));
+            w.lower(Certainty::None, format!("what `git {sub}` does"));
         }
     }
     w.cwd = saved_cwd;
@@ -401,7 +506,7 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                     program: format!("a program set as {key}"),
                     source: CodeSource::Unknown,
                 });
-                w.lower(Certainty::Partial, format!("the program `{key}` runs"));
+                w.lower(Certainty::None, format!("the program `{key}` runs"));
             }
         }
         "update-ref" => {
@@ -764,7 +869,7 @@ pub(super) fn shell_gh(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 source: CodeSource::Unknown,
             });
             w.lower(
-                Certainty::Partial,
+                Certainty::None,
                 format!("what `gh {}` does", words.iter().take(2).copied().collect::<Vec<_>>().join(" ")),
             );
         }

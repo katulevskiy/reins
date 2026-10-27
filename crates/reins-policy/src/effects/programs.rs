@@ -74,6 +74,9 @@ const READERS: &[&str] = &[
     "unexpand",
     "look",
     "tsort",
+    "llvm-readelf",
+    "llvm-objdump",
+    "llvm-nm",
 ];
 
 /// Programs whose first argument is a pattern or a program text, the rest files they read.
@@ -190,153 +193,51 @@ const TOOLCHAIN: &[&str] = &[
     "just",
     "ninja",
     "cmake",
-    "meson",
-    "bazel",
     "gradle",
     "gradlew",
     "mvn",
-    "mvnw",
-    "ant",
-    "sbt",
     "xcodebuild",
     "xcrun",
     "swift",
     "swiftc",
     "swiftlint",
     "swiftformat",
-    "xcodegen",
-    "go",
-    "gofmt",
     "rustc",
     "rustup",
     "rustfmt",
-    "clippy-driver",
     "cargo-nextest",
-    "gcc",
-    "g++",
-    "cc",
-    "c++",
-    "clang",
-    "clang++",
-    "ld",
+    "uniffi-bindgen",
     "javac",
-    "java",
     "kotlinc",
-    "kotlin",
-    "dotnet",
-    "flutter",
-    "dart",
+    "javap",
     "tsc",
     "eslint",
     "prettier",
-    "biome",
-    "vite",
-    "webpack",
-    "esbuild",
-    "rollup",
-    "jest",
-    "vitest",
-    "mocha",
-    "playwright",
-    "pytest",
-    "tox",
-    "nox",
     "ruff",
     "black",
-    "isort",
     "mypy",
-    "pyright",
-    "pylint",
-    "flake8",
-    "emulator",
+    "pytest",
+    "protoc",
+    "typos",
+    "shfmt",
+    "clang-format",
+    "actionlint",
+    "zizmor",
+    "hadolint",
+    "xcbeautify",
+    "xcpretty",
+    "ktlint",
     "apksigner",
-    "aapt",
-    "aapt2",
     "zipalign",
-    "bundletool",
+    "aapt2",
+    "emulator",
     "ffmpeg",
     "magick",
     "convert",
     "montage",
-    "composite",
-    "mogrify",
-    "inkscape",
-    "rsvg-convert",
     "grim",
     "slurp",
-    "wf-recorder",
-    "gamescope",
-    "gamescopectl",
-    "imv",
-    "mpv",
-    "vlc",
-    "sox",
-    "lame",
-    "pandoc",
-    "typst",
-    "latexmk",
-    "pdflatex",
-    "xelatex",
-    "uniffi-bindgen",
-    "protoc",
-    "buf",
-    "wasm-pack",
-    "wasm-bindgen",
-    "trunk",
-    "hugo",
-    "zola",
-    "mdbook",
-    "node-gyp",
-    "xcpretty",
-    "xcbeautify",
-    "simctl",
-    "instruments",
-    "hyperfine",
-    "cargo-llvm-cov",
-    "grcov",
-    "llvm-cov",
-    "lcov",
-    "gcov",
-    "act",
-    "actionlint",
-    "zizmor",
-    "hadolint",
-    "typos",
-    "codespell",
-    "markdownlint",
-    "yamllint",
-    "taplo",
-    "shfmt",
-    "clang-format",
-    "clang-tidy",
-    "ktlint",
-    "detekt",
-    "spotless",
-    "golangci-lint",
-    "staticcheck",
-    "javap",
-    "jar",
-    "jdeps",
-    "jlink",
-    "d8",
-    "r8",
-    "sccache",
-    "ccache",
-    "mold",
-    "lld",
     "pdftotext",
-    "exiftool",
-    "plutil",
-    "csplit",
-    "tuist",
-    "swiftly",
-    "zig",
-    "nim",
-    "crystal",
-    "dune",
-    "ghc",
-    "cabal",
-    "stack",
 ];
 
 /// System package managers: installing changes the whole computer.
@@ -495,6 +396,7 @@ pub fn url_host(text: &str) -> Option<String> {
 /// Walks one program with its words (the program first, wrappers included).
 #[allow(clippy::too_many_lines, reason = "one arm per program family")]
 #[allow(clippy::similar_names, reason = "the program's `args` and inline code's `argv`")]
+#[allow(clippy::many_single_char_names, reason = "w(alk), p(rogram), k, f, t as in every arm")]
 pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) -> Input {
     let program = program_name(&words[0].text);
     let lower = program.to_ascii_lowercase();
@@ -502,6 +404,17 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
     let runs_from_path = words[0].text.contains('/');
     if let Some(out) = special(w, &lower, args, &input) {
         return out;
+    }
+    // Programs whose options are closed: any option this model doesn't know makes the request unreadable. Wrappers'
+    // options are only theirs (up to the program they run).
+    if let Some((_, flags, values, long)) = OPTIONS.iter().find(|(p, ..)| *p == lower) {
+        if WRAPPERS.contains(&lower.as_str()) {
+            // Up to the program it runs (a value-taking option's value is not the program).
+            let own = after_options(args, values, &[], 0).min(args.len());
+            known_options(w, &lower, &args[..own], flags, values, long);
+        } else {
+            known_options(w, &lower, args, flags, values, long);
+        }
     }
     match lower.as_str() {
         // ---- wrappers: what they run is read
@@ -629,17 +542,24 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             unknown_program(w, &lower);
             Input::None
         }
-        "uv" | "poetry" | "pipenv" | "bundle" | "pnpm" | "npx" | "bunx" | "pdm" | "hatch" | "rye"
-            if is_runner(&lower, args) =>
-        {
+        "uv" | "poetry" | "pipenv" | "bundle" | "pnpm" | "npx" | "bunx" | "uvx" | "pipx" if is_runner(&lower, args) => {
+            // The runner's own effect, then the program it runs on top of it. `npx`, `bunx`, `uvx`, `pipx run` and
+            // `pnpm dlx` fetch the package they run; the others run the project's own environment.
+            let fetches = matches!(lower.as_str(), "npx" | "bunx" | "uvx" | "pipx")
+                || args.first().is_some_and(|a| a.text == "dlx");
             let start = runner_start(&lower, args);
+            w.effect(Effect::Exec {
+                program: args.get(start).map_or_else(|| lower.clone(), |a| format!("{lower} {}", a.text)),
+                source: if fetches {
+                    CodeSource::Downloaded
+                } else {
+                    CodeSource::Workspace
+                },
+            });
             if start < args.len() {
                 return run(w, &args[start..], input, piped);
             }
-            w.effect(Effect::Exec {
-                program: lower.clone(),
-                source: CodeSource::Toolchain,
-            });
+            w.lower(Certainty::None, format!("what {lower} runs"));
             Input::None
         }
 
@@ -885,6 +805,31 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             input
         }
         "dd" => {
+            // Operands are `key=value`; any other is not read.
+            for a in args {
+                let key = a.text.split_once('=').map(|(k, _)| k);
+                if !key.is_some_and(|k| {
+                    matches!(
+                        k,
+                        "if" | "of"
+                            | "bs"
+                            | "ibs"
+                            | "obs"
+                            | "cbs"
+                            | "count"
+                            | "skip"
+                            | "seek"
+                            | "iseek"
+                            | "oseek"
+                            | "conv"
+                            | "status"
+                            | "iflag"
+                            | "oflag"
+                    )
+                }) {
+                    w.lower(Certainty::None, format!("the dd operand {}", a.text));
+                }
+            }
             for a in args {
                 if let Some(of) = a.text.strip_prefix("of=") {
                     let e = Exp {
@@ -941,27 +886,120 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::None
         }
         "sed" | "gsed" => {
-            let in_place = args.iter().any(|a| {
-                a.text == "-i"
-                    || a.text.starts_with("-i")
-                    || a.text.starts_with("--in-place")
-                    || (a.text.starts_with('-') && !a.text.starts_with("--") && a.text.contains('i'))
-            });
-            let script_given = has(args, "-e") || has(args, "-f") || has(args, "--expression");
-            let mut files = positional(args, &["-e", "-f", "--expression", "--file", "-l"]);
-            let mut scripts: Vec<String> = args
-                .windows(2)
-                .filter(|p| p[0].text == "-e" || p[0].text == "--expression")
-                .map(|p| p[1].text.clone())
-                .collect();
-            if !script_given && !files.is_empty() {
-                scripts.push(files.remove(0).text.clone());
+            // Scripts from `-e x`, `-ex`, `--expression=x`, `--expression x`; script files from `-f x`, `-fx`,
+            // `--file=x`; the first word when none is given.
+            let mut scripts: Vec<Exp> = Vec::new();
+            let mut script_files: Vec<Exp> = Vec::new();
+            let mut files: Vec<Exp> = Vec::new();
+            let mut in_place = false;
+            let mut options = true;
+            let mut k = 0;
+            while k < args.len() {
+                let a = &args[k];
+                let t = a.text.as_str();
+                k += 1;
+                if !options || !t.starts_with('-') || t == "-" {
+                    files.push(a.clone());
+                    continue;
+                }
+                if t == "--" {
+                    options = false;
+                    continue;
+                }
+                if let Some(long) = t.strip_prefix("--") {
+                    let (name, value) = long.split_once('=').map_or((long, None), |(n, v)| (n, Some(v)));
+                    let take = |k: &mut usize| {
+                        value
+                            .map(|v| Exp {
+                                text: v.to_owned(),
+                                ..a.clone()
+                            })
+                            .or_else(|| {
+                                *k += 1;
+                                args.get(*k - 1).cloned()
+                            })
+                    };
+                    match name {
+                        "expression" => scripts.extend(take(&mut k)),
+                        "file" => script_files.extend(take(&mut k)),
+                        "in-place" => in_place = true,
+                        "line-length" => {
+                            if value.is_none() {
+                                k += 1;
+                            }
+                        }
+                        "quiet" | "silent" | "regexp-extended" | "null-data" | "zero-terminated" | "separate"
+                        | "unbuffered" | "posix" | "debug" | "sandbox" | "follow-symlinks" | "help" | "version" => {}
+                        other => w.lower(Certainty::None, format!("the option --{other} of sed")),
+                    }
+                    continue;
+                }
+                let short = &t[1..];
+                for (i, ch) in short.char_indices() {
+                    let rest = &short[i + ch.len_utf8()..];
+                    let value = || {
+                        if rest.is_empty() {
+                            args.get(k).cloned()
+                        } else {
+                            Some(Exp {
+                                text: rest.to_owned(),
+                                ..a.clone()
+                            })
+                        }
+                    };
+                    match ch {
+                        'n' | 'r' | 'E' | 's' | 'u' | 'z' => {}
+                        // `-i` takes an attached suffix only.
+                        'i' => {
+                            in_place = true;
+                            break;
+                        }
+                        'e' | 'f' | 'l' => {
+                            let v = value();
+                            if rest.is_empty() {
+                                k += 1;
+                            }
+                            match ch {
+                                'e' => scripts.extend(v),
+                                'f' => script_files.extend(v),
+                                _ => {}
+                            }
+                            break;
+                        }
+                        other => {
+                            w.lower(Certainty::None, format!("the option -{other} of sed"));
+                            break;
+                        }
+                    }
+                }
             }
-            // GNU sed's `e` command and `s///e` run what they read; `w file` and `s///w file` write files.
-            if has(args, "-f") || has(args, "--file") || scripts.iter().any(|sc| sed_runs_or_writes(sc)) {
-                w.lower(Certainty::None, "a sed script that runs commands or writes files");
+            if scripts.is_empty() && script_files.is_empty() && !files.is_empty() {
+                scripts.push(files.remove(0));
             }
-            for f in files {
+            for f in &script_files {
+                let p = w.path(f);
+                match w.files.get(&p.path).cloned().flatten() {
+                    Some(text) => scripts.push(Exp::lit(&text)),
+                    None => w.lower(Certainty::None, format!("the sed script in {}", f.text)),
+                }
+            }
+            for sc in &scripts {
+                if !sc.known() {
+                    w.lower(Certainty::None, "a sed script with values that are not in the command");
+                }
+                let (runs, writes, reads) = sed_script(&sc.text);
+                if runs {
+                    w.lower(Certainty::None, "a sed script that runs commands");
+                }
+                for f in writes {
+                    let p = w.path(&Exp::lit(&f));
+                    w.write(p);
+                }
+                for f in reads {
+                    w.read_file(&Exp::lit(&f));
+                }
+            }
+            for f in &files {
                 if in_place {
                     let p = w.path(f);
                     w.write(p);
@@ -973,6 +1011,144 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         }
         "find" | "gfind" => find(w, args, piped),
         "tar" | "bsdtar" | "gtar" => {
+            let operation =
+                args.iter().take(1).any(|a| !a.text.starts_with('-') && a.text.chars().any(|c| "cxtruAd".contains(c)))
+                    || args.iter().any(|a| {
+                        (a.text.starts_with('-')
+                            && !a.text.starts_with("--")
+                            && a.text.chars().any(|c| "cxtruAd".contains(c)))
+                            || matches!(
+                                a.text.as_str(),
+                                "--create"
+                                    | "--extract"
+                                    | "--get"
+                                    | "--list"
+                                    | "--append"
+                                    | "--update"
+                                    | "--diff"
+                                    | "--compare"
+                                    | "--delete"
+                                    | "--catenate"
+                                    | "--concatenate"
+                            )
+                    });
+            if !operation {
+                w.lower(Certainty::None, "a tar command without an operation it knows");
+            }
+            // Options that run a program: not read.
+            if args.iter().any(|a| {
+                let t = a.text.as_str();
+                [
+                    "--to-command",
+                    "--use-compress-program",
+                    "--checkpoint-action",
+                    "--info-script",
+                    "--new-volume-script",
+                    "--rsh-command",
+                    "--rmt-command",
+                ]
+                .iter()
+                .any(|o| t.starts_with(o))
+                    || t == "-I"
+                    || t == "-F"
+            }) {
+                w.lower(Certainty::None, "tar runs a program it is given");
+            }
+            let mut opts: Vec<Exp> = args.to_vec();
+            // `tar czf x`: the first word is a group of flags without its dash.
+            if let Some(first) = opts.first_mut()
+                && !first.text.starts_with('-')
+                && first.text.chars().all(|c| c.is_ascii_alphabetic())
+            {
+                first.text = format!("-{}", first.text);
+            }
+            known_options(
+                w,
+                &lower,
+                &opts,
+                "cxtrudAvzjJaZpkmOPShHlWBiGRMUw",
+                "fCTXbLgNKVH",
+                &[
+                    "create",
+                    "extract",
+                    "get",
+                    "list",
+                    "append",
+                    "update",
+                    "diff",
+                    "compare",
+                    "delete",
+                    "file",
+                    "directory",
+                    "verbose",
+                    "gzip",
+                    "gunzip",
+                    "bzip2",
+                    "xz",
+                    "zstd",
+                    "lzma",
+                    "auto-compress",
+                    "exclude",
+                    "exclude-from",
+                    "exclude-vcs",
+                    "exclude-caches",
+                    "strip-components",
+                    "to-stdout",
+                    "no-same-owner",
+                    "same-owner",
+                    "no-same-permissions",
+                    "preserve-permissions",
+                    "overwrite",
+                    "keep-old-files",
+                    "skip-old-files",
+                    "wildcards",
+                    "no-wildcards",
+                    "transform",
+                    "xform",
+                    "null",
+                    "files-from",
+                    "owner",
+                    "group",
+                    "mtime",
+                    "sort",
+                    "numeric-owner",
+                    "format",
+                    "warning",
+                    "totals",
+                    "one-file-system",
+                    "dereference",
+                    "absolute-names",
+                    "show-transformed-names",
+                    "anchored",
+                    "recursion",
+                    "no-recursion",
+                    "ignore-zeros",
+                    "occurrence",
+                    "mode",
+                    "atime-preserve",
+                    "touch",
+                    "unlink-first",
+                    "recursive-unlink",
+                    "help",
+                    "version",
+                    "label",
+                    "blocking-factor",
+                    "record-size",
+                    "hard-dereference",
+                    "check-links",
+                    "selinux",
+                    "acls",
+                    "xattrs",
+                    "no-xattrs",
+                    "no-acls",
+                    "pax-option",
+                    "posix",
+                    "sparse",
+                    "level",
+                    "quiet",
+                    "force-local",
+                ],
+            );
             let create = args.first().is_some_and(|a| !a.text.starts_with('-') && a.text.contains('c'))
                 || short(args, 'c')
                 || has(args, "--create");
@@ -998,6 +1174,14 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         | "xz" | "bzip2" => {
             if lower == "unzip" && short(args, 'l') {
                 return Input::None;
+            }
+            if args.iter().any(|a| a.text == "-TT" || a.text.starts_with("--unzip-command")) {
+                w.lower(Certainty::None, format!("{lower} runs a program it is given"));
+            }
+            if matches!(lower.as_str(), "zip" | "unzip" | "7z" | "7za" | "unrar")
+                && !args.iter().any(|a| !a.text.starts_with('-'))
+            {
+                w.lower(Certainty::None, format!("{lower} without an archive"));
             }
             let dest = opt_value(args, &["-d"]).cloned().or_else(|| {
                 if lower == "7z" || lower == "7za" {
@@ -1029,10 +1213,6 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         // ---- git and forges
         "git" => super::git::shell_git(w, args),
         "gh" => super::git::shell_gh(w, args),
-        "glab" | "tea" | "hub" => {
-            unknown_program(w, &lower);
-            Input::None
-        }
 
         // ---- network
         "curl" | "wget" | "http" | "https" | "xh" | "httpie" | "aria2c" => network(w, &lower, args, piped),
@@ -1055,6 +1235,15 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::Opaque(lower)
         }
         "openssl" => {
+            let known = [
+                "version", "rand", "dgst", "x509", "req", "verify", "genrsa", "genpkey", "rsa", "pkey", "ec",
+                "ecparam", "enc", "base64", "smime", "cms", "pkeyutl", "rsautl", "pkcs12", "crl", "list", "help",
+                "sha256", "sha1", "md5", "speed",
+            ];
+            if !args.first().is_some_and(|a| known.contains(&a.text.as_str())) {
+                unmodelled(w, "openssl", args.first().map_or("", |a| a.text.as_str()));
+                return Input::Opaque("openssl".to_owned());
+            }
             if args
                 .first()
                 .is_some_and(|a| matches!(a.text.as_str(), "enc" | "base64" | "smime" | "cms" | "rsautl" | "pkeyutl"))
@@ -1076,14 +1265,8 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         "psql" | "mysql" | "mariadb" | "sqlite3" | "sqlite" | "duckdb" | "clickhouse-client" | "cockroach"
         | "mongosh" | "mongo" | "redis-cli" | "pg_dump" | "pg_restore" | "dropdb" | "createdb" | "mysqldump"
         | "mysqladmin" => super::infra::database(w, &lower, args, &input),
-        "kubectl" | "oc" | "k9s" | "helm" | "terraform" | "tofu" | "terragrunt" | "pulumi" | "cdk" | "aws"
-        | "gcloud" | "gsutil" | "az" | "doctl" | "flyctl" | "fly" | "vercel" | "netlify" | "heroku" | "wrangler"
-        | "firebase" | "eksctl" | "kind" | "minikube" | "ansible" | "ansible-playbook" | "serverless" | "sls"
-        | "railway" | "render" | "supabase" => super::infra::cloud(w, &lower, args),
-        "docker" | "podman" | "nerdctl" | "buildah" | "skopeo" => super::infra::containers(w, &lower, args),
-        "systemctl" | "launchctl" | "service" | "rc-service" | "sv" | "crontab" | "at" => {
-            super::infra::services(w, &lower, args)
-        }
+        // Clusters, clouds, containers and infrastructure as code are not modelled: they are asked (certainty
+        // `None`), which is safe; a model is added when the replay shows it matters.
         p if SYSTEM_PACKAGES.contains(&p) => {
             let read_only = args.first().is_none_or(|a| {
                 matches!(
@@ -1101,8 +1284,10 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                         | "-q"
                         | "policy"
                         | "--version"
-                ) || a.text.starts_with("-Q")
-                    || a.text.starts_with("-Ss")
+                ) || matches!(
+                    a.text.as_str(),
+                    "-Qe" | "-Qm" | "-Qdt" | "-Qqe" | "-Qo" | "-Qk" | "-Qu" | "-Sl" | "-Sg" | "-Qq" | "-V"
+                )
             });
             if !read_only {
                 w.effect(Effect::Infra {
@@ -1143,10 +1328,26 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                     secret: "an npm token".to_owned(),
                     local_only: false,
                 }),
-                _ => w.effect(Effect::Exec {
+                // The project's own scripts and builds, and installs from the registry.
+                "install" | "i" | "ci" | "add" | "remove" | "rm" | "uninstall" | "update" | "up" | "run"
+                | "run-script" | "test" | "t" | "start" | "build" | "lint" | "format" | "typecheck" | "check"
+                | "dev" | "ls" | "list" | "why" | "outdated" | "audit" | "view" | "info" | "pack" | "version"
+                | "--version" | "-v" | "help" | "prune" | "dedupe" | "config" | "get" | "bin" | "root" | "exec"
+                | "cache" | "" => w.effect(Effect::Exec {
                     program: format!("{lower} {sub}").trim().to_owned(),
                     source: CodeSource::Workspace,
                 }),
+                // `yarn <script>`: a script of the project's package.json.
+                script
+                    if lower == "yarn"
+                        && script.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_')) =>
+                {
+                    w.effect(Effect::Exec {
+                        program: format!("yarn {script}"),
+                        source: CodeSource::Workspace,
+                    });
+                }
+                other => unmodelled(w, &lower, other),
             }
             Input::Opaque(lower)
         }
@@ -1179,15 +1380,20 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                         recursive: true,
                     });
                 }
-                _ => w.effect(Effect::Exec {
+                "build" | "b" | "test" | "t" | "check" | "c" | "clippy" | "fmt" | "run" | "r" | "doc" | "bench"
+                | "tree" | "metadata" | "update" | "fetch" | "add" | "remove" | "rustc" | "rustdoc" | "nextest"
+                | "llvm-cov" | "generate-lockfile" | "vendor" | "search" | "locate-project" | "pkgid"
+                | "verify-project" | "version" | "--version" | "-V" | "help" | "fix" | "install" | "uninstall"
+                | "init" | "new" | "package" | "" => w.effect(Effect::Exec {
                     program: format!("cargo {sub}").trim().to_owned(),
                     source: CodeSource::Workspace,
                 }),
+                // A third-party subcommand (`cargo foo` runs `cargo-foo`): not read.
+                other => unmodelled(w, "cargo", other),
             }
             Input::Opaque("cargo".to_owned())
         }
-        "pip" | "pip3" | "twine" | "gem" | "poetry" | "flit" | "maturin" | "hatch" | "pdm" | "uv" | "rye"
-        | "dotnet" | "mvn" | "gradle" | "gradlew" | "fastlane" | "pod" => {
+        "pip" | "pip3" | "uv" | "mvn" | "gradle" | "gradlew" => {
             let publishes = args
                 .iter()
                 .any(|a| matches!(a.text.as_str(), "publish" | "upload" | "push" | "deploy" | "release" | "trunk"))
@@ -1198,12 +1404,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                         && a.text.contains("Repository")
                         && !a.text.contains("MavenLocal")
                 });
-            if publishes
-                || (lower == "fastlane"
-                    && args
-                        .iter()
-                        .any(|a| matches!(a.text.as_str(), "beta" | "release" | "deliver" | "pilot" | "supply")))
-            {
+            if publishes {
                 w.effect(Effect::Publish {
                     target: format!("a {lower} package or release"),
                 });
@@ -1215,6 +1416,17 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
         "reins" => reins(w, args),
         "gpg" | "gpg2" => {
             if args.iter().any(|a| {
+                matches!(
+                    a.text.as_str(),
+                    "--recv-keys" | "--send-keys" | "--refresh-keys" | "--search-keys" | "--keyserver"
+                )
+            }) {
+                w.effect(Effect::Network {
+                    host: "a key server".to_owned(),
+                    method: NetMethod::Write,
+                });
+            }
+            if args.iter().any(|a| {
                 matches!(a.text.as_str(), "--export-secret-keys" | "--export-secret-subkeys" | "-d" | "--decrypt")
             }) {
                 secret_to_agent(w, "a GPG secret");
@@ -1222,13 +1434,35 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::Decoded
         }
         "ssh-keygen" => {
-            if let Some(f) = opt_value(args, &["-f"]) {
-                let p = w.path(f);
-                if !(short(args, 'l') || short(args, 'y') || short(args, 'F') || short(args, 'R')) {
-                    w.write(p);
-                } else if short(args, 'y') {
-                    w.read_file(f);
+            let reads = short(args, 'l')
+                || short(args, 'y')
+                || short(args, 'F')
+                || short(args, 'R')
+                || short(args, 'H')
+                || short(args, 'Y')
+                || short(args, 'L');
+            match opt_value(args, &["-f"]) {
+                Some(f) if reads => {
+                    if short(args, 'y') || short(args, 'Y') {
+                        w.read_file(f);
+                    }
                 }
+                Some(f) => {
+                    let p = w.path(f);
+                    w.write(p);
+                }
+                // Without `-f`: a new key in ~/.ssh (asked for interactively), or the user's known hosts.
+                None if !reads => {
+                    let p = w.path(&Exp::lit("~/.ssh/id_new"));
+                    w.write(p);
+                }
+                None => {}
+            }
+            if short(args, 'Y') && args.iter().any(|a| a.text == "sign") {
+                w.effect(Effect::SecretUse {
+                    secret: "an SSH key".to_owned(),
+                    local_only: true,
+                });
             }
             Input::Opaque("ssh-keygen".to_owned())
         }
@@ -1264,10 +1498,35 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             Input::Opaque("a secret".to_owned())
         }
         p if PATTERN_READERS.contains(&p) => {
-            let given = has(args, "-e") || has(args, "-f") || has(args, "--regexp") || has(args, "--file");
-            let mut files = positional(
-                args,
-                &[
+            // Each program's options that take a value (`--name=value` is one word).
+            let values: &[&str] = match p {
+                "grep" | "egrep" | "fgrep" | "zgrep" => &[
+                    "-e",
+                    "-f",
+                    "--regexp",
+                    "--file",
+                    "-A",
+                    "-B",
+                    "-C",
+                    "-m",
+                    "--max-count",
+                    "-d",
+                    "-D",
+                    "--context",
+                    "--after-context",
+                    "--before-context",
+                    "--include",
+                    "--exclude",
+                    "--exclude-dir",
+                    "--exclude-from",
+                    "--label",
+                    "--binary-files",
+                    "--directories",
+                    "--devices",
+                    "--color",
+                    "--colour",
+                ],
+                "rg" | "ag" | "ack" => &[
                     "-e",
                     "-f",
                     "--regexp",
@@ -1279,37 +1538,60 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
                     "--max-count",
                     "-g",
                     "--glob",
+                    "--iglob",
                     "-t",
                     "--type",
                     "-T",
                     "--type-not",
-                    "--arg",
-                    "--argjson",
-                    "--slurpfile",
-                    "--rawfile",
-                    "-v",
-                    "-F",
-                    "--include",
-                    "--exclude",
-                    "--exclude-dir",
-                    "--color",
-                    "--colour",
-                    "-d",
-                    "-D",
-                    "--context",
-                    "--after-context",
-                    "--before-context",
                     "-M",
                     "--max-columns",
                     "-j",
                     "--threads",
                     "--sort",
                     "--sortr",
-                    "--field-match-separator",
                     "-r",
                     "--replace",
+                    "-E",
+                    "--encoding",
+                    "--max-depth",
+                    "-d",
+                    "--max-filesize",
+                    "--engine",
+                    "--colors",
+                    "--color",
+                    "--path-separator",
+                    "--context",
+                    "--after-context",
+                    "--before-context",
                 ],
-            );
+                "jq" | "yq" | "gojq" => {
+                    &["-f", "--from-file", "--indent", "--arg", "--argjson", "--slurpfile", "--rawfile"]
+                }
+                _ => &["-F", "-v", "-f", "--field-separator", "--assign", "--file"],
+            };
+            let given = has(args, "-e")
+                || has(args, "-f")
+                || has(args, "--regexp")
+                || has(args, "--file")
+                || has(args, "--from-file");
+            let mut files = positional(args, values);
+            // `--arg name value`: two words.
+            if matches!(p, "jq" | "yq" | "gojq") {
+                for pair in args
+                    .windows(3)
+                    .filter(|w| matches!(w[0].text.as_str(), "--arg" | "--argjson" | "--slurpfile" | "--rawfile"))
+                {
+                    files.retain(|f| *f != &pair[2]);
+                }
+            }
+            if !given
+                && files.is_empty()
+                && !args.iter().any(|a| {
+                    a.text == "--files" || a.text == "--type-list" || a.text == "--version" || a.text == "--help"
+                })
+            {
+                w.lower(Certainty::None, format!("{p} without a pattern or a program"));
+            }
             if !given && !files.is_empty() {
                 files.remove(0);
             }
@@ -1370,7 +1652,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
             }
             output(p, args)
         }
-        p if TOOLCHAIN.contains(&p) || p.starts_with("llvm-") || p.starts_with("clang-") || p.starts_with("gcc-") => {
+        p if TOOLCHAIN.contains(&p) => {
             toolchain(w, p, args, runs_from_path);
             Input::Opaque(p.to_owned())
         }
@@ -1391,7 +1673,8 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input, piped: bool) ->
 /// `uv run`, `poetry run`, `bundle exec`, `pnpm exec`, `npx`: runners of another program.
 fn is_runner(program: &str, args: &[Exp]) -> bool {
     match program {
-        "npx" | "bunx" => true,
+        "npx" | "bunx" | "uvx" => true,
+        "pipx" => args.first().is_some_and(|a| a.text == "run"),
         "bundle" => args.first().is_some_and(|a| a.text == "exec"),
         "pnpm" => args.first().is_some_and(|a| a.text == "exec" || a.text == "dlx"),
         _ => args.first().is_some_and(|a| a.text == "run"),
@@ -1408,17 +1691,19 @@ fn runner_start(program: &str, args: &[Exp]) -> usize {
     )
 }
 
-/// A server listening for connections: on this computer only when an argument says so (`127.0.0.1`, `localhost`).
-fn server(w: &mut Walk<'_>, args: &[Exp]) {
-    let local = args.iter().any(|a| ["127.0.0.1", "localhost", "[::1]", "::1"].iter().any(|h| a.text.contains(h)));
-    w.effect(Effect::Network {
-        host: if local {
-            "localhost".to_owned()
-        } else {
-            "the local network".to_owned()
-        },
-        method: NetMethod::Connect,
-    });
+/// A listener (a server, `socat TCP-LISTEN`): on this computer only when bound to it; else it makes something here
+/// reachable from the network, which is publishing.
+fn listener(w: &mut Walk<'_>, local: bool, what: &str) {
+    if local {
+        w.effect(Effect::Network {
+            host: "localhost".to_owned(),
+            method: NetMethod::Connect,
+        });
+    } else {
+        w.effect(Effect::Publish {
+            target: format!("{what} on this computer, reachable from the network"),
+        });
+    }
 }
 
 fn settings_write(w: &mut Walk<'_>, what: &str) {
@@ -1437,21 +1722,93 @@ fn system_change(w: &mut Walk<'_>, target: &str) {
     });
 }
 
-/// Programs that can, with some argument, run code, change the system or reach the network: each read by its
-/// arguments. `None`: not one of these.
+/// A form of a program this engine does not model: certainty `None`, so it is asked (programs fail closed).
+fn unmodelled(w: &mut Walk<'_>, program: &str, what: &str) {
+    w.effect(Effect::Exec {
+        program: program.to_owned(),
+        source: CodeSource::Unknown,
+    });
+    w.lower(Certainty::None, format!("what `{program} {what}` does"));
+}
+
+/// Checks a program's options against the ones its model knows: short flags (`flags`), short options with a value
+/// (`values`, attached or not) and long options (with or without `=value`). Any other option makes the request
+/// unreadable: an option Reins doesn't know may change what the program does. Returns whether all were known.
+fn known_options(w: &mut Walk<'_>, program: &str, args: &[Exp], flags: &str, values: &str, long: &[&str]) -> bool {
+    let mut ok = true;
+    let mut k = 0;
+    while k < args.len() {
+        let t = args[k].text.as_str();
+        k += 1;
+        if t == "--" {
+            break;
+        }
+        if let Some(name) = t.strip_prefix("--") {
+            let name = name.split_once('=').map_or(name, |(n, _)| n);
+            if !long.contains(&name) {
+                ok = false;
+                w.lower(Certainty::None, format!("the option --{name} of {program}"));
+            }
+            continue;
+        }
+        let Some(short) = t.strip_prefix('-').filter(|s| !s.is_empty() && !s.starts_with(|c: char| c.is_ascii_digit()))
+        else {
+            continue;
+        };
+        for (i, c) in short.char_indices() {
+            if values.contains(c) {
+                // The rest of the word, or the next word, is its value.
+                if i + c.len_utf8() == short.len() {
+                    k += 1;
+                }
+                break;
+            }
+            if !flags.contains(c) {
+                ok = false;
+                w.lower(Certainty::None, format!("the option -{c} of {program}"));
+                break;
+            }
+        }
+    }
+    ok
+}
+
+/// The few programs outside the file, git, network and build families that the recorded history needs, each closed:
+/// the forms it recognizes, and certainty `None` for anything else. `None`: not one of these.
 #[allow(clippy::too_many_lines, reason = "one arm per program")]
 fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Option<Input> {
+    let _ = input;
     let words: Vec<&str> = args.iter().filter(|a| !a.text.starts_with('-')).map(|a| a.text.as_str()).collect();
     let first = words.first().copied().unwrap_or_default();
-    let flag = |names: &[&str]| {
-        args.iter().any(|a| {
-            names.contains(&a.text.as_str())
-                || names.iter().any(|n| n.starts_with("--") && a.text.starts_with(&format!("{n}=")))
-        })
-    };
     match program {
         "kill" | "pkill" | "killall" => {
-            if args.iter().any(|a| a.text == "1" || a.text == "-1") {
+            known_options(
+                w,
+                program,
+                args,
+                "9fxeinlqrvuowc",
+                "sguUtPGFn",
+                &[
+                    "signal",
+                    "full",
+                    "exact",
+                    "newest",
+                    "oldest",
+                    "list-name",
+                    "list-full",
+                    "echo",
+                    "count",
+                    "ignore-case",
+                    "uid",
+                    "euid",
+                    "group",
+                    "parent",
+                    "session",
+                    "terminal",
+                    "pidfile",
+                ],
+            );
+            if args.iter().any(|a| matches!(a.text.as_str(), "1" | "-1")) {
                 w.effect(Effect::Infra {
                     target: "every process".to_owned(),
                     change: InfraChange::Destroy,
@@ -1461,44 +1818,65 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 settings_write(w, "Stops processes");
             }
         }
-        // BSD `ps e` and `ps -E` show each process's environment.
+        // `ps e`, `ps -E` show each process's environment.
         "ps" => {
-            let bsd =
-                args.first().filter(|a| !a.text.starts_with('-') && a.text.chars().all(|c| c.is_ascii_alphabetic()));
-            if bsd.is_some_and(|a| a.text.contains('e')) || has(args, "-E") {
+            let bsd = args.first().filter(|a| !a.text.starts_with('-'));
+            if let Some(b) = bsd {
+                if !b.text.chars().all(|c| "auxwfjlvsrhTcgnmSU".contains(c) || c == 'e') {
+                    w.lower(Certainty::None, format!("the ps form {}", b.text));
+                } else if b.text.contains('e') {
+                    secret_to_agent(w, "other processes' environments");
+                }
+            }
+            let rest: Vec<Exp> = args.iter().skip(usize::from(bsd.is_some())).cloned().collect();
+            if known_options(
+                w,
+                program,
+                &rest,
+                "AaefHjlLMTwxyFcNdr",
+                "oOpuUgGtCqs",
+                &[
+                    "pid",
+                    "ppid",
+                    "user",
+                    "format",
+                    "sort",
+                    "forest",
+                    "no-headers",
+                    "cols",
+                    "columns",
+                    "width",
+                    "help",
+                    "version",
+                ],
+            ) && has(&rest, "-E")
+            {
                 secret_to_agent(w, "other processes' environments");
             }
         }
         "date" => {
-            if flag(&["-s", "--set"]) || words.iter().any(|x| x.starts_with(|c: char| c.is_ascii_digit())) {
+            known_options(
+                w,
+                program,
+                args,
+                "uRIn",
+                "dfr",
+                &["utc", "iso-8601", "rfc-3339", "rfc-email", "date", "reference", "universal", "set", "debug"],
+            );
+            if args.iter().any(|a| a.text == "-s" || a.text.starts_with("--set"))
+                || words.iter().any(|x| {
+                    !x.starts_with('+')
+                        && !args.windows(2).any(|p| {
+                            (p[0].text == "-d" || p[0].text == "-r" || p[0].text == "--date") && p[1].text == **x
+                        })
+                })
+            {
                 system_change(w, "the system clock");
             }
         }
-        "hostname" => {
-            if !words.is_empty() {
-                system_change(w, "this computer's name");
-            }
-        }
-        "hostnamectl" => {
-            if first.starts_with("set-") || first == "hostname" && words.len() > 1 {
-                system_change(w, "this computer's name");
-            }
-        }
-        "ip" => {
-            let changes = [
-                "add", "del", "delete", "set", "flush", "change", "replace", "append", "prepend", "up", "down", "exec",
-            ];
-            if words.iter().any(|x| changes.contains(x)) {
-                system_change(w, "network settings");
-            }
-        }
-        "ifconfig" => {
-            if words.len() > 1 {
-                system_change(w, "network settings");
-            }
-        }
-        // `alias x='…'`: what the alias would run counts now.
+        // `alias x='…'`: what it would run counts now; `alias x` only prints it.
         "alias" => {
+            known_options(w, program, args, "p", "", &[]);
             for a in args {
                 if let Some((_, body)) = a.text.split_once('=') {
                     let body = body.to_owned();
@@ -1506,219 +1884,103 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                 }
             }
         }
-        "fc" => {
-            if !flag(&["-l"]) {
-                w.lower(Certainty::None, "fc runs commands from the shell's history");
-            }
-        }
-        "dc" => w.lower(Certainty::None, "dc can run shell commands"),
-        "fd" | "fdfind" => {
-            if let Some(k) =
-                args.iter().position(|a| matches!(a.text.as_str(), "-x" | "--exec" | "-X" | "--exec-batch"))
-            {
-                let cmd: Vec<Exp> = args[k + 1..]
+        // The window manager: queries are nothing; `exec` (anywhere, also in `--batch` and after `;`) runs a program;
+        // anything else is not read.
+        "hyprctl" | "swaymsg" => {
+            let raw = args.iter().map(|a| a.text.as_str()).collect::<Vec<_>>().join(" ");
+            let commands: Vec<Vec<&str>> = raw.split(';').map(|c| c.split_whitespace().collect()).collect();
+            let queries = [
+                "clients",
+                "monitors",
+                "workspaces",
+                "activewindow",
+                "activeworkspace",
+                "version",
+                "devices",
+                "layers",
+                "binds",
+                "splash",
+                "systeminfo",
+                "cursorpos",
+                "instances",
+                "globalshortcuts",
+                "rollinglog",
+                "animations",
+                "decorations",
+                "getoption",
+                "workspacerules",
+                "layouts",
+                "configerrors",
+                "-t",
+                "get_tree",
+                "get_outputs",
+                "get_workspaces",
+                "get_version",
+                "-j",
+            ];
+            for cmd in commands.iter().filter(|c| !c.is_empty()) {
+                let words: Vec<&str> = cmd
                     .iter()
-                    .take_while(|a| a.text != ";")
-                    .map(|a| {
-                        if a.text.contains("{}") {
-                            super::shell::unknown("the files fd finds".to_owned())
-                        } else {
-                            a.clone()
-                        }
-                    })
+                    .copied()
+                    .filter(|x| !matches!(*x, "-j" | "--batch" | "-r" | "--instance" | "-q"))
                     .collect();
-                if !cmd.is_empty() {
-                    let _out: Input = run(w, &cmd, Input::None, false);
+                if let Some(at) = words.iter().position(|x| matches!(*x, "exec" | "execr" | "exec-once")) {
+                    let line = words[at + 1..].join(" ");
+                    let known = args.iter().all(Exp::known);
+                    w.run_script(&line, Vec::new());
+                    if !known {
+                        w.lower(
+                            Certainty::None,
+                            format!("a program {program} runs with values that are not in the command"),
+                        );
+                    }
+                } else if words.first().is_none_or(|x| queries.contains(x)) {
+                } else if words.first().is_some_and(|x| *x == "dispatch")
+                    && words.len() <= 4
+                    && args.iter().all(|a| !a.text.contains(['"', '\'', '(', '{']))
+                {
+                    // A window action (focus, move, resize): nothing lasting.
+                } else if words.first().is_some_and(|x| matches!(*x, "keyword" | "reload" | "setcursor")) {
+                    settings_write(w, "Changes the desktop's settings");
+                } else {
+                    unmodelled(w, program, &cmd.join(" "));
                 }
             }
         }
-        "open" | "xdg-open" => {
-            for a in args.iter().filter(|a| !a.text.starts_with('-')) {
-                if let Some(host) = url_host(&a.text) {
+        // Name lookups: they reach the network to resolve a name, nothing more.
+        "dig" | "host" | "nslookup" => {
+            known_options(w, program, args, "46vadrwsTCWNRlx", "pcqykt", &[]);
+            for x in &words {
+                let h = x.trim_start_matches('@');
+                if !h.starts_with('+') {
                     w.effect(Effect::Network {
-                        host,
+                        host: h.to_owned(),
                         method: NetMethod::Read,
                     });
-                } else {
-                    w.effect(Effect::Exec {
-                        program: format!("the app that opens {}", a.text),
-                        source: CodeSource::Unknown,
-                    });
-                    w.lower(Certainty::Partial, format!("what opening {} does", a.text));
                 }
             }
         }
-        "tmux" | "screen" => {
-            let reads = [
-                "ls",
-                "list-sessions",
-                "list-windows",
-                "list-panes",
-                "list-clients",
-                "has-session",
-                "has",
-                "display-message",
-                "display",
-                "capture-pane",
-                "capturep",
-                "show-options",
-                "show",
-                "show-environment",
-                "info",
-                "-ls",
-                "-list",
-            ];
-            if args.is_empty()
-                || reads.contains(&first)
-                || args.iter().any(|a| a.text == "-ls" || a.text == "-list" || a.text == "-V")
-            {
-            } else if words.iter().any(|x| matches!(*x, "send-keys" | "send" | "stuff" | "paste-buffer" | "pasteb"))
-                || args.iter().any(|a| a.text == "-X")
-            {
-                w.lower(Certainty::None, format!("{program} types into another terminal"));
-            } else if words.iter().any(|x| x.starts_with("kill-")) {
-                settings_write(w, &format!("Ends {program} sessions"));
-            } else if let Some(cmd) = words.iter().skip(1).last().filter(|_| {
-                matches!(
-                    first,
-                    "new-session"
-                        | "new"
-                        | "new-window"
-                        | "neww"
-                        | "split-window"
-                        | "splitw"
-                        | "respawn-pane"
-                        | "respawn-window"
-                        | "run-shell"
-                        | "run"
-                )
-            }) {
-                let cmd = (*cmd).to_owned();
-                w.run_script(&cmd, Vec::new());
-            } else if program == "screen" {
-                w.lower(Certainty::Partial, "what screen starts");
-            }
-        }
-        "loginctl" => {
-            if ["terminate", "kill", "poweroff", "reboot", "lock", "suspend", "hibernate", "disable", "enable"]
-                .iter()
-                .any(|v| first.starts_with(v))
-            {
-                settings_write(w, "Changes login sessions");
-            }
-        }
-        "busctl" | "dbus-send" | "gdbus" | "qdbus" => {
-            if words.iter().any(|x| matches!(*x, "call" | "set-property" | "emit")) || program != "busctl" {
-                w.effect(Effect::Exec {
-                    program: format!("a D-Bus method ({program})"),
-                    source: CodeSource::Unknown,
-                });
-                w.lower(Certainty::Partial, "what the D-Bus call does");
-            }
-        }
-        "hyprctl" | "swaymsg" => {
-            if let Some(k) = args.iter().position(|a| a.text == "exec") {
-                let line = args[k + 1..].iter().map(|a| a.text.clone()).collect::<Vec<_>>().join(" ");
-                w.run_script(&line, Vec::new());
-            } else if matches!(first, "keyword" | "setcursor" | "reload" | "--batch" | "output" | "input") {
-                settings_write(w, "Changes the desktop's settings");
-            }
-        }
-        "gsettings" | "dconf" | "kwriteconfig5" | "kwriteconfig6" | "xfconf-query" => {
-            if words
-                .iter()
-                .any(|x| matches!(*x, "set" | "write" | "reset" | "reset-recursively" | "load" | "delete" | "update"))
-                || program.starts_with("kwrite")
-                || flag(&["-s", "--set", "-r", "--reset"])
-            {
-                settings_write(w, "Changes desktop settings");
-            }
-        }
-        "xrandr" | "wlr-randr" | "wpctl" | "amixer" | "playerctl" | "brightnessctl" | "bc" => {}
-        "pactl" => {
-            if first == "load-module"
-                && words.iter().any(|x| {
-                    x.contains("tcp") || x.contains("rtp") || x.contains("native-protocol") || x.contains("zeroconf")
-                })
-            {
-                w.effect(Effect::Network {
-                    host: "the local network".to_owned(),
-                    method: NetMethod::Connect,
-                });
-            }
-        }
-        "nvidia-smi" => {
-            if flag(&[
-                "-pl",
-                "--power-limit",
-                "-r",
-                "--gpu-reset",
-                "-ac",
-                "--applications-clocks",
-                "-lgc",
-                "--lock-gpu-clocks",
-                "-pm",
-                "--persistence-mode",
-                "-c",
-                "--compute-mode",
-                "-e",
-                "--ecc-config",
-            ]) {
-                system_change(w, "the GPU's settings");
-            }
-        }
-        "dig" | "nslookup" | "host" | "ping" | "ping6" | "traceroute" | "mtr" | "whois" | "drill" => {
-            if let Some(h) =
-                words.iter().map(|x| x.trim_start_matches('@')).find(|x| x.contains('.') || x.contains(':'))
-            {
-                w.effect(Effect::Network {
-                    host: h.to_owned(),
-                    method: NetMethod::Read,
-                });
-            }
-        }
-        // Read-only forms only (`sysctl -w`, `name=value` set the kernel).
+        // Read-only forms only: `-w`, `-p` and `name=value` set the kernel.
         "sysctl" => {
-            if flag(&["-w", "--write", "-p", "--load", "--system"]) || words.iter().any(|x| x.contains('=')) {
+            known_options(
+                w,
+                program,
+                args,
+                "anNbeAqwp",
+                "",
+                &["all", "values", "names", "binary", "ignore", "write", "load", "system", "quiet"],
+            );
+            if has(args, "-w")
+                || has(args, "-p")
+                || has(args, "--write")
+                || has(args, "--load")
+                || has(args, "--system")
+                || words.iter().any(|x| x.contains('='))
+            {
                 system_change(w, "kernel settings");
             }
         }
-        "defaults" => {
-            if !matches!(first, "read" | "read-type" | "domains" | "find" | "help") {
-                settings_write(w, "Changes an app's settings");
-            }
-        }
-        "scutil" => {
-            if flag(&["--set"]) {
-                system_change(w, "this computer's network names");
-            } else if !flag(&["--get", "-r", "--dns", "--proxy", "--nwi", "--nc"]) {
-                w.lower(Certainty::Partial, "what an interactive scutil session does");
-            }
-        }
-        "launchctl" => {
-            // Matched on the subcommand itself, never on a joined string.
-            match first {
-                "print" | "list" | "print-disabled" | "print-cache" | "blame" | "version" | "help" | "procinfo"
-                | "dumpstate" | "managerpid" | "manageruid" | "getenv" => {}
-                "unload" | "bootout" | "remove" | "disable" | "stop" | "kill" => {
-                    settings_write(w, "Stops or removes a background job");
-                }
-                _ => {
-                    w.effect(Effect::Exec {
-                        program: "a launchd job".to_owned(),
-                        source: CodeSource::Unknown,
-                    });
-                    w.lower(Certainty::Partial, "what the launchd job runs");
-                }
-            }
-        }
-        "ldd" => {
-            w.effect(Effect::Exec {
-                program: "the program ldd inspects".to_owned(),
-                source: CodeSource::Unknown,
-            });
-            w.lower(Certainty::Partial, "ldd may run the program it inspects");
-        }
+        // The connected Android device (an emulator or a phone).
         "adb" => {
             let device = |w: &mut Walk<'_>, change| {
                 w.effect(Effect::Infra {
@@ -1727,357 +1989,156 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &Input) -> Opti
                     local: true,
                 });
             };
+            // `adb -s SERIAL …`: the device first.
+            let mut words = words.clone();
+            if let Some(k) = args.iter().position(|a| matches!(a.text.as_str(), "-s" | "-t" | "-H" | "-P" | "-L"))
+                && let Some(v) = args.get(k + 1)
+            {
+                words.retain(|x| *x != v.text.as_str());
+            }
+            let first = words.first().copied().unwrap_or_default();
             match first {
+                "devices" | "version" | "get-state" | "get-serialno" | "wait-for-device" | "logcat" | "help"
+                | "start-server" | "kill-server" => {}
                 "uninstall" => device(w, InfraChange::Destroy),
-                "shell"
-                    if words.iter().any(|x| {
-                        matches!(*x, "rm" | "pm" | "settings" | "am" | "cmd" | "input" | "wm" | "setprop" | "svc")
-                    }) =>
-                {
-                    device(w, InfraChange::Apply);
-                }
-                "install" | "install-multiple" | "push" | "sideload" | "root" | "remount" | "reboot" | "emu"
-                | "disable-verity" | "enable-verity" | "tcpip" => device(w, InfraChange::Apply),
+                "install" | "install-multiple" | "push" | "shell" | "emu" | "reboot" | "root" | "unroot"
+                | "forward" | "reverse" | "exec-out" => device(w, InfraChange::Apply),
                 "pull" => {
                     if let Some(d) = words.get(2) {
                         let p = w.path(&Exp::lit(d));
                         w.write(p);
+                    } else {
+                        let p = w.path(&Exp::lit("."));
+                        w.write(p);
                     }
                 }
-                _ => w.effect(Effect::Exec {
-                    program: "adb".to_owned(),
-                    source: CodeSource::Toolchain,
-                }),
+                other => unmodelled(w, program, other),
             }
         }
-        "avdmanager" | "sdkmanager" => {
-            if first == "delete" || flag(&["--uninstall"]) {
-                w.effect(Effect::Infra {
-                    target: "an Android SDK package or emulator".to_owned(),
-                    change: InfraChange::Destroy,
-                    local: true,
-                });
-            } else {
-                toolchain(w, program, args, false);
-            }
-        }
-        "caddy" => {
-            if matches!(first, "run" | "start" | "reverse-proxy" | "file-server" | "respond") {
-                server(w, args);
-            }
-        }
-        "nginx" | "http-server" | "serve" | "live-server" | "httpd" | "lighttpd" | "uvicorn" | "gunicorn"
-        | "hypercorn" | "daphne" | "waitress-serve" => server(w, args),
-        "elixir" | "erl" | "iex" | "mix" | "rails" | "rake" | "jshell" | "django-admin" | "flask" | "groovy"
-        | "scala" | "clojure" | "clj" | "lein" | "racket" | "guile" | "sbcl" | "ocaml" | "Rscript" | "julia"
-        | "lua" | "luajit" | "php" | "tclsh" | "expect" | "osascript" => {
-            let inline = flag(&["-e", "-eval", "--eval", "-c", "--command", "-r", "-x"])
-                || matches!(first, "runner" | "r" | "eval");
-            let interactive = matches!(first, "console" | "c" | "shell" | "dbconsole" | "dbshell" | "db")
-                || (args.is_empty()
-                    && matches!(
-                        program,
-                        "elixir"
-                            | "erl"
-                            | "iex"
-                            | "jshell"
-                            | "groovy"
-                            | "scala"
-                            | "clojure"
-                            | "clj"
-                            | "racket"
-                            | "guile"
-                            | "sbcl"
-                            | "ocaml"
-                            | "Rscript"
-                            | "julia"
-                            | "lua"
-                            | "luajit"
-                            | "php"
-                            | "tclsh"
-                            | "expect"
-                            | "osascript"
-                    ));
-            if inline {
-                w.lower(Certainty::None, format!("{program} runs code given on the command line"));
-            } else if interactive && (args.is_empty() || !matches!(input, Input::None)) {
-                w.lower(Certainty::None, format!("{program} runs code from its input"));
-            } else if words
-                .iter()
-                .any(|x| ["drop", "reset", "purge", "flush", "truncate", "rollback"].iter().any(|d| x.contains(d)))
-            {
-                w.effect(Effect::Infra {
-                    target: "the project's database".to_owned(),
-                    change: InfraChange::Destroy,
-                    local: true,
-                });
-            } else if matches!(first, "server" | "s" | "run" | "runserver" | "phx.server")
-                && matches!(program, "rails" | "flask" | "django-admin" | "mix")
-            {
-                server(w, args);
-            } else if matches!(program, "mix" | "rake" | "rails" | "django-admin" | "flask" | "lein") {
-                w.effect(Effect::Exec {
-                    program: format!("{program} {first}").trim().to_owned(),
-                    source: CodeSource::Workspace,
-                });
-            } else {
-                // A script file: the project's own when it is in the workspace.
-                match words.first() {
-                    Some(_) => {
-                        let f = args.iter().find(|a| !a.text.starts_with('-')).cloned().unwrap_or_else(|| Exp::lit(""));
-                        let rest_at = args.iter().position(|a| *a == f).map_or(args.len(), |k| k + 1);
-                        run_file(w, &f, &args[rest_at..], Lang::Shell);
-                    }
-                    None => unknown_program(w, program),
-                }
-            }
-        }
-        "stripe" => match first {
-            "get" | "list" | "logs" | "status" | "version" | "help" | "open" | "events" | "config" => {
-                w.effect(Effect::DataRead {
-                    service: "Stripe".to_owned(),
-                    resource: first.to_owned(),
-                });
-            }
-            "listen" => w.effect(Effect::Network {
-                host: "api.stripe.com".to_owned(),
-                method: NetMethod::Connect,
-            }),
-            "login" | "logout" => w.effect(Effect::SecretUse {
-                secret: "a Stripe key".to_owned(),
-                local_only: false,
-            }),
-            _ => {
-                if words.iter().any(|x| {
-                    ["confirm", "capture", "charges", "payouts", "refunds", "transfers", "payment_intents"]
-                        .iter()
-                        .any(|m| x.contains(m))
-                }) {
-                    w.effect(Effect::Money {
-                        amount: None,
-                        merchant: Some("Stripe".to_owned()),
-                    });
-                }
-                w.effect(Effect::Network {
-                    host: "api.stripe.com".to_owned(),
-                    method: NetMethod::Write,
-                });
-            }
-        },
-        "ngrok" | "cloudflared" | "localtunnel" | "lt" | "bore" | "frpc" | "pagekite" => {
-            if matches!(first, "version" | "help" | "update" | "diagnose" | "completion")
-                || flag(&["--version", "-v", "--help"]) && words.is_empty()
-            {
-            } else if matches!(first, "login" | "authtoken" | "config") {
-                w.effect(Effect::SecretUse {
-                    secret: format!("a {program} credential"),
-                    local_only: false,
-                });
-            } else {
-                // A tunnel makes something on this computer reachable from the internet.
-                w.effect(Effect::Publish {
-                    target: format!("this computer through a {program} tunnel"),
-                });
-            }
-        }
-        "code" | "code-insiders" | "codium" | "cursor" | "idea" | "studio" | "subl" | "zed" | "windsurf"
-        | "webstorm" | "pycharm" | "clion" | "goland" => {
-            if flag(&["--install-extension", "--uninstall-extension", "--update-extensions"]) {
-                w.effect(Effect::Exec {
-                    program: format!("an extension for {program}"),
-                    source: CodeSource::Downloaded,
-                });
-            } else if matches!(first, "tunnel" | "serve-web") {
-                w.effect(Effect::Publish {
-                    target: format!("this computer through {program} {first}"),
-                });
-            } else if !flag(&["--list-extensions", "--version", "-v", "--help", "--status"]) {
-                w.effect(Effect::Exec {
-                    program: program.to_owned(),
-                    source: CodeSource::Toolchain,
-                });
-            }
-        }
-        "xcode-select" => {
-            if flag(&["-s", "--switch", "--install", "-r", "--reset"]) {
-                system_change(w, "the active developer tools");
-            }
-        }
-        "qemu-img" => {
-            if matches!(
-                first,
-                "create" | "convert" | "resize" | "commit" | "rebase" | "amend" | "snapshot" | "dd" | "bitmap"
-            ) && let Some(target) = args
-                .iter()
-                .rev()
-                .find(|a| !a.text.starts_with('-') && !a.text.ends_with(['G', 'M', 'K', 'T']) && a.text != first)
-            {
-                let p = w.path(target);
-                w.write(p);
-            }
-        }
+        // Addresses by type: listeners publish (unless bound here), connections reach their host, files are read and
+        // written, EXEC/SYSTEM run their command; any other address type is not read.
         "socat" => {
-            for a in args.iter().filter(|a| !a.text.starts_with('-')) {
-                let t = a.text.to_ascii_uppercase();
-                if t.starts_with("EXEC:") || t.starts_with("SYSTEM:") {
-                    let cmd = a
-                        .text
-                        .split_once(':')
-                        .map(|(_, c)| c.split(',').next().unwrap_or(c))
-                        .unwrap_or_default()
-                        .to_owned();
-                    w.run_script(&cmd, Vec::new());
-                } else if t.contains("-LISTEN:") || t.starts_with("LISTEN") {
-                    let local = t.contains("BIND=127.") || t.contains("BIND=LOCALHOST") || t.starts_with("UNIX");
-                    w.effect(Effect::Network {
-                        host: if local {
-                            "localhost".to_owned()
+            known_options(w, program, args, "dDvxbslhuUgL46", "TtbL", &[]);
+            for a in args.iter().filter(|a| !a.text.starts_with('-') || a.text == "-") {
+                let text = a.text.as_str();
+                let (kind, rest) = text.split_once(':').unwrap_or((text, ""));
+                let kind = kind.to_ascii_uppercase();
+                let options = rest.split(',').skip(1).map(str::to_ascii_lowercase).collect::<Vec<_>>();
+                let bound_here = options.iter().any(|o| {
+                    o.starts_with("bind=127.")
+                        || o == "bind=localhost"
+                        || o.starts_with("bind=[::1]")
+                        || o.starts_with("range=127.")
+                });
+                let target = rest.split(',').next().unwrap_or_default();
+                match kind.as_str() {
+                    "-" | "STDIO" | "STDIN" | "STDOUT" | "STDERR" => {}
+                    k if k.ends_with("-LISTEN")
+                        || k.ends_with("-L")
+                        || k.ends_with("-RECVFROM")
+                        || k.ends_with("-RECV") =>
+                    {
+                        let local = bound_here || k.starts_with("UNIX") || k.starts_with("ABSTRACT");
+                        listener(w, local, "a socat listener");
+                    }
+                    "TCP" | "TCP4" | "TCP6" | "UDP" | "UDP4" | "UDP6" | "OPENSSL" | "SSL" | "SCTP" | "SOCKS4"
+                    | "SOCKS4A" | "SOCKS5" | "PROXY" | "UDP-SENDTO" | "UDP-DATAGRAM" => {
+                        w.effect(Effect::Network {
+                            host: target.split(':').next().unwrap_or(target).to_ascii_lowercase(),
+                            method: NetMethod::Connect,
+                        });
+                    }
+                    "OPEN" | "FILE" | "GOPEN" | "PIPE" | "CREATE" | "CREAT" => {
+                        let e = Exp::lit(target);
+                        if kind != "CREATE" && kind != "CREAT" {
+                            w.read_file(&e);
+                        }
+                        let p = w.path(&e);
+                        w.write(p);
+                    }
+                    "EXEC" | "SYSTEM" => {
+                        if a.known() {
+                            let cmd = target.to_owned();
+                            w.run_script(&cmd, Vec::new());
                         } else {
-                            "the local network".to_owned()
-                        },
-                        method: NetMethod::Connect,
-                    });
-                } else if let Some(rest) = ["TCP:", "TCP4:", "TCP6:", "UDP:", "OPENSSL:", "SSL:"]
-                    .iter()
-                    .find_map(|p| t.strip_prefix(p).map(|_| &a.text[p.len()..]))
-                {
-                    w.effect(Effect::Network {
-                        host: rest.split(':').next().unwrap_or(rest).to_ascii_lowercase(),
-                        method: NetMethod::Connect,
-                    });
+                            w.lower(Certainty::None, "a program socat runs with values that are not in the command");
+                        }
+                    }
+                    _ => unmodelled(w, program, text),
                 }
             }
         }
         "tailscale" => match first {
-            "status" | "ip" | "ping" | "version" | "whois" | "netcheck" | "dns" | "exit-node" | "bugreport"
-            | "debug" | "" => {}
-            "funnel" => w.effect(Effect::Publish {
-                target: "this computer through Tailscale Funnel".to_owned(),
-            }),
-            "serve" => w.effect(Effect::Network {
-                host: "your tailnet".to_owned(),
-                method: NetMethod::Connect,
-            }),
-            "file" => w.effect(Effect::Network {
-                host: "a device on your tailnet".to_owned(),
-                method: NetMethod::Write,
-            }),
-            _ => system_change(w, "this computer's Tailscale connection"),
+            "status" | "ip" | "version" | "whois" | "netcheck" | "ping" | "" => {}
+            other => unmodelled(w, program, other),
         },
-        "wayvnc" | "x11vnc" | "vncserver" | "tigervncserver" | "krfb" | "rustdesk" => w.effect(Effect::Publish {
-            target: "this computer's screen over the network".to_owned(),
-        }),
-        "docker-compose" => return Some(super::infra::containers(w, program, args)),
-        "nix" | "nix-shell" | "nix-env" => {
-            if matches!(first, "run" | "shell" | "develop")
-                && words.iter().any(|x| x.contains('#') || x.contains("://"))
-            {
-                w.effect(Effect::Exec {
-                    program: words.iter().find(|x| x.contains('#')).copied().unwrap_or("a package").to_owned(),
-                    source: CodeSource::Downloaded,
+        // Services: their status is nothing; anything else changes what runs on this computer.
+        "systemctl" => {
+            let reads = [
+                "status",
+                "is-active",
+                "is-enabled",
+                "is-failed",
+                "list-units",
+                "list-unit-files",
+                "show",
+                "cat",
+                "list-timers",
+                "list-sockets",
+                "list-dependencies",
+                "get-default",
+                "help",
+                "",
+            ];
+            known_options(
+                w,
+                program,
+                args,
+                "qalt",
+                "pHMn",
+                &[
+                    "user",
+                    "system",
+                    "no-pager",
+                    "all",
+                    "type",
+                    "state",
+                    "quiet",
+                    "now",
+                    "plain",
+                    "full",
+                    "lines",
+                    "output",
+                    "property",
+                    "value",
+                    "no-legend",
+                    "failed",
+                    "machine",
+                    "host",
+                ],
+            );
+            if !reads.contains(&first) {
+                w.effect(Effect::Infra {
+                    target: format!("the service {}", words.get(1).copied().unwrap_or(first)),
+                    change: InfraChange::Apply,
+                    local: has(args, "--user"),
                 });
-            } else if let Some(k) =
-                args.iter().position(|a| a.text == "--run" || a.text == "--command" || a.text == "-c")
-            {
-                if let Some(cmd) = args.get(k + 1) {
-                    let cmd = cmd.text.clone();
-                    w.run_script(&cmd, Vec::new());
-                }
-            } else {
-                toolchain(w, program, args, false);
             }
         }
-        "asdf" | "mise" | "rtx" | "pyenv" | "nvm" | "fnm" | "volta" | "corepack" | "rbenv" | "jenv" | "sdk"
-        | "proto" => {
-            if matches!(first, "exec" | "x" | "run") && program != "pyenv" || program == "pyenv" && first == "exec" {
-                let start = args
-                    .iter()
-                    .position(|a| a.text == "--")
-                    .map_or_else(|| args.iter().position(|a| a.text == first).map_or(args.len(), |k| k + 1), |k| k + 1);
-                if start < args.len() {
-                    return Some(run(w, &args[start..], Input::None, false));
-                }
-            }
-            toolchain(w, program, args, false);
-        }
-        "pipx" | "uvx" => {
-            let start = if program == "pipx" {
-                usize::from(first == "run")
-            } else {
-                0
-            };
-            if program == "uvx" || first == "run" {
-                let at =
-                    start + after_options(&args[start.min(args.len())..], "p", &["with", "python", "from", "spec"], 0);
-                if at < args.len() {
-                    return Some(run(w, &args[at..], Input::None, false));
-                }
-            }
-            toolchain(w, program, args, false);
-        }
-        "gdb" | "lldb" | "cgdb" => {
-            if flag(&["-p", "--pid", "--attach-pid", "-attach"]) || words.contains(&"attach") {
-                secret_to_agent(w, "another process's memory");
-            }
-            if flag(&[
-                "-ex",
-                "--eval-command",
-                "-x",
-                "--command",
-                "-batch",
-                "--batch",
-                "-o",
-                "--one-line",
-                "-s",
-                "--source",
-            ]) {
-                w.lower(Certainty::None, format!("{program} runs debugger commands, which can run anything"));
-            }
-            w.effect(Effect::Exec {
-                program: program.to_owned(),
-                source: CodeSource::Toolchain,
-            });
-        }
-        "ollama" | "vllm" | "llama-server" | "llama-cli" | "lms" => match first {
-            "pull" | "run" => w.effect(Effect::Network {
-                host: "the model registry".to_owned(),
-                method: NetMethod::Read,
-            }),
-            "rm" => settings_write(w, "Deletes a local model"),
-            "push" => w.effect(Effect::Publish {
-                target: "a model".to_owned(),
-            }),
-            "serve" | "" => server(w, args),
-            _ => {}
-        },
-        "zeron" | "claude" | "codex" | "gemini" | "cursor-agent" | "grok" | "aider" | "opencode" | "goose" | "amp" => {
-            w.effect(Effect::Exec {
-                program: format!("another AI agent ({program})"),
-                source: CodeSource::Unknown,
-            });
-            let unbounded = args.iter().any(|a| {
-                ["dangerously", "yolo", "bypass", "full-auto", "--auto-approve"].iter().any(|k| a.text.contains(k))
-            });
-            if unbounded {
-                w.lower(Certainty::None, format!("{program} runs with its own approvals turned off"));
-            } else if !(args.is_empty() || flag(&["--version", "-v", "--help", "-h"])) {
-                w.lower(Certainty::Partial, format!("what {program} does on its own"));
-            }
-        }
-        "elevenlabs" => w.effect(Effect::Network {
-            host: "api.elevenlabs.io".to_owned(),
-            method: NetMethod::Write,
-        }),
         _ => return None,
     }
     Some(Input::Opaque(program.to_owned()))
 }
 
-/// A sed script that runs commands (`e`, `s///e`) or writes files (`w`, `W`, `s///w`), read command by command (an
-/// `s` command's text is skipped, so a `;` or a `w` inside it is text).
-fn sed_runs_or_writes(script: &str) -> bool {
+/// What a sed script does beyond editing its input: whether it runs commands (`e`, `s///e`), and the files it writes
+/// (`w file`, `W file`, `s///w file`) and reads (`r file`, `R file`). Read command by command: an `s` command's text is
+/// skipped, so a `;` or a `w` inside it is text.
+fn sed_script(script: &str) -> (bool, Vec<String>, Vec<String>) {
     let c: Vec<char> = script.chars().collect();
     let n = c.len();
+    let mut runs = false;
+    let mut writes = Vec::new();
+    let mut reads = Vec::new();
     let mut i = 0;
     // Skips a delimited section starting after its opening `delim`; returns the index after the closing one.
     let section = |mut k: usize, delim: char| -> usize {
@@ -2113,6 +2174,11 @@ fn sed_runs_or_writes(script: &str) -> bool {
             return k;
         }
     };
+    // The rest of the line, trimmed (a file name).
+    let line = |k: usize| -> (String, usize) {
+        let end = (k..n).find(|&j| c[j] == '\n').unwrap_or(n);
+        (c[k..end].iter().collect::<String>().trim().to_owned(), end)
+    };
     while i < n {
         while i < n && (c[i].is_whitespace() || matches!(c[i], ';' | '{' | '}')) {
             i += 1;
@@ -2129,7 +2195,19 @@ fn sed_runs_or_writes(script: &str) -> bool {
         };
         i += 1;
         match cmd {
-            'e' | 'w' | 'W' => return true,
+            'e' => {
+                runs = true;
+                i = line(i).1;
+            }
+            'w' | 'W' | 'r' | 'R' => {
+                let (file, end) = line(i);
+                if matches!(cmd, 'w' | 'W') {
+                    writes.push(file);
+                } else {
+                    reads.push(file);
+                }
+                i = end;
+            }
             's' | 'y' => {
                 let Some(&delim) = c.get(i) else {
                     break;
@@ -2138,21 +2216,20 @@ fn sed_runs_or_writes(script: &str) -> bool {
                 i = section(i, delim);
                 if cmd == 's' {
                     let start = i;
-                    while i < n && !matches!(c[i], ';' | '\n' | '}') {
+                    while i < n && !matches!(c[i], ';' | '\n' | '}' | 'w') {
                         i += 1;
                     }
                     let flags: String = c[start..i].iter().collect();
-                    if flags.contains('e') || flags.contains('w') {
-                        return true;
+                    runs |= flags.contains('e');
+                    if i < n && c[i] == 'w' {
+                        let (file, end) = line(i + 1);
+                        writes.push(file);
+                        i = end;
                     }
                 }
             }
-            // Text or a file name to the end of the line.
-            'a' | 'i' | 'c' | 'r' | 'R' | ':' => {
-                while i < n && c[i] != '\n' {
-                    i += 1;
-                }
-            }
+            // Text to the end of the line.
+            'a' | 'i' | 'c' | ':' => i = line(i).1,
             'b' | 't' | 'T' => {
                 while i < n && !matches!(c[i], ';' | '\n' | '}') {
                     i += 1;
@@ -2161,15 +2238,598 @@ fn sed_runs_or_writes(script: &str) -> bool {
             _ => {}
         }
     }
-    false
+    (runs, writes, reads)
 }
 
+/// Wrappers in [`OPTIONS`]: only the options before the program they run are theirs.
+const WRAPPERS: &[&str] = &["env", "nice", "timeout", "sudo", "xargs", "nohup", "stdbuf", "setsid"];
+
+/// The options each modelled program has: (program, short flags, short options with a value, long options).
+type Options = (&'static str, &'static str, &'static str, &'static [&'static str]);
+const OPTIONS: &[Options] = &[
+    (
+        "rm",
+        "rfRidIv",
+        "",
+        &[
+            "recursive",
+            "force",
+            "interactive",
+            "dir",
+            "verbose",
+            "one-file-system",
+            "no-preserve-root",
+            "preserve-root",
+            "help",
+            "version",
+        ],
+    ),
+    ("rmdir", "pv", "", &["parents", "verbose", "ignore-fail-on-non-empty"]),
+    ("unlink", "", "", &[]),
+    (
+        "cp",
+        "rRaifnpuvLPHdlsxTb",
+        "tS",
+        &[
+            "recursive",
+            "archive",
+            "force",
+            "interactive",
+            "no-clobber",
+            "preserve",
+            "no-preserve",
+            "update",
+            "verbose",
+            "dereference",
+            "no-dereference",
+            "link",
+            "symbolic-link",
+            "target-directory",
+            "no-target-directory",
+            "parents",
+            "backup",
+            "suffix",
+            "reflink",
+            "sparse",
+            "one-file-system",
+            "remove-destination",
+            "strip-trailing-slashes",
+            "attributes-only",
+            "copy-contents",
+            "debug",
+        ],
+    ),
+    (
+        "mv",
+        "finuvbT",
+        "tS",
+        &[
+            "force",
+            "interactive",
+            "no-clobber",
+            "update",
+            "verbose",
+            "backup",
+            "suffix",
+            "target-directory",
+            "no-target-directory",
+            "strip-trailing-slashes",
+            "exchange",
+            "no-copy",
+            "debug",
+        ],
+    ),
+    (
+        "ln",
+        "sfnvirTLPb",
+        "tS",
+        &[
+            "symbolic",
+            "force",
+            "no-dereference",
+            "verbose",
+            "interactive",
+            "relative",
+            "target-directory",
+            "no-target-directory",
+            "logical",
+            "physical",
+            "backup",
+            "suffix",
+        ],
+    ),
+    (
+        "install",
+        "dDcCpsvbT",
+        "mogtS",
+        &[
+            "directory",
+            "mode",
+            "owner",
+            "group",
+            "target-directory",
+            "no-target-directory",
+            "verbose",
+            "compare",
+            "preserve-timestamps",
+            "strip",
+            "backup",
+            "suffix",
+        ],
+    ),
+    ("mkdir", "pv", "m", &["parents", "verbose", "mode"]),
+    ("touch", "acmhf", "dtr", &["date", "reference", "no-create", "time", "no-dereference"]),
+    // Modes may start with a dash (`chmod -x f`).
+    (
+        "chmod",
+        "RvcfHLPrwxXstugoa",
+        "",
+        &["recursive", "verbose", "changes", "silent", "quiet", "reference", "preserve-root", "no-preserve-root"],
+    ),
+    (
+        "chown",
+        "RvcfhHLP",
+        "",
+        &[
+            "recursive",
+            "verbose",
+            "changes",
+            "silent",
+            "quiet",
+            "reference",
+            "dereference",
+            "no-dereference",
+            "from",
+            "preserve-root",
+        ],
+    ),
+    (
+        "chgrp",
+        "RvcfhHLP",
+        "",
+        &[
+            "recursive",
+            "verbose",
+            "changes",
+            "silent",
+            "quiet",
+            "reference",
+            "dereference",
+            "no-dereference",
+            "preserve-root",
+        ],
+    ),
+    ("truncate", "co", "sr", &["no-create", "io-blocks", "size", "reference"]),
+    ("tee", "aip", "", &["append", "ignore-interrupts", "output-error"]),
+    (
+        "zip",
+        "rqvjmTXDyuFgld0123456789AJ",
+        "xinbtZsP",
+        &[
+            "recurse-paths",
+            "quiet",
+            "verbose",
+            "junk-paths",
+            "move",
+            "exclude",
+            "include",
+            "symlinks",
+            "test",
+            "delete",
+            "update",
+            "freshen",
+            "grow",
+            "latest-time",
+            "no-dir-entries",
+        ],
+    ),
+    ("unzip", "lotqvjnoaCLXKZ", "dxP", &[]),
+    (
+        "gzip",
+        "dcfklnNqrtv123456789",
+        "S",
+        &[
+            "decompress",
+            "stdout",
+            "force",
+            "keep",
+            "list",
+            "no-name",
+            "name",
+            "quiet",
+            "recursive",
+            "test",
+            "verbose",
+            "best",
+            "fast",
+            "suffix",
+        ],
+    ),
+    ("awk", "", "Fv", &["field-separator", "assign"]),
+    ("base64", "di", "w", &["decode", "ignore-garbage", "wrap", "help", "version"]),
+    (
+        "gpg",
+        "dekKsbacvqnNy",
+        "ruoRfi",
+        &[
+            "decrypt",
+            "encrypt",
+            "symmetric",
+            "sign",
+            "clearsign",
+            "clear-sign",
+            "detach-sign",
+            "verify",
+            "armor",
+            "recipient",
+            "local-user",
+            "output",
+            "batch",
+            "yes",
+            "quiet",
+            "verbose",
+            "list-keys",
+            "list-secret-keys",
+            "fingerprint",
+            "import",
+            "export",
+            "export-secret-keys",
+            "export-secret-subkeys",
+            "homedir",
+            "pinentry-mode",
+            "passphrase-fd",
+            "no-tty",
+            "trust-model",
+            "status-fd",
+            "with-colons",
+            "version",
+            "help",
+            "dearmor",
+            "enarmor",
+        ],
+    ),
+    (
+        "grep",
+        "rRinlLcvwxoqsEFGPHhabzZUITy",
+        "efmABCdD",
+        &[
+            "recursive",
+            "dereference-recursive",
+            "ignore-case",
+            "line-number",
+            "files-with-matches",
+            "files-without-match",
+            "count",
+            "invert-match",
+            "word-regexp",
+            "line-regexp",
+            "only-matching",
+            "quiet",
+            "silent",
+            "no-messages",
+            "extended-regexp",
+            "fixed-strings",
+            "basic-regexp",
+            "perl-regexp",
+            "with-filename",
+            "no-filename",
+            "byte-offset",
+            "text",
+            "binary-files",
+            "null",
+            "null-data",
+            "regexp",
+            "file",
+            "max-count",
+            "after-context",
+            "before-context",
+            "context",
+            "include",
+            "exclude",
+            "exclude-dir",
+            "exclude-from",
+            "color",
+            "colour",
+            "label",
+            "line-buffered",
+            "initial-tab",
+            "devices",
+            "directories",
+            "help",
+            "version",
+        ],
+    ),
+    (
+        "rg",
+        "iSsFwxvcClLnNoqUuHz0.aIp",
+        "eAfBCgmtTjMrEd",
+        &[
+            "ignore-case",
+            "smart-case",
+            "case-sensitive",
+            "fixed-strings",
+            "word-regexp",
+            "line-regexp",
+            "invert-match",
+            "count",
+            "count-matches",
+            "files-with-matches",
+            "files-without-match",
+            "line-number",
+            "no-line-number",
+            "only-matching",
+            "quiet",
+            "multiline",
+            "multiline-dotall",
+            "unrestricted",
+            "hidden",
+            "no-ignore",
+            "no-ignore-vcs",
+            "with-filename",
+            "no-filename",
+            "null",
+            "files",
+            "type",
+            "type-not",
+            "glob",
+            "iglob",
+            "max-count",
+            "max-depth",
+            "max-filesize",
+            "after-context",
+            "before-context",
+            "context",
+            "regexp",
+            "file",
+            "threads",
+            "replace",
+            "json",
+            "vimgrep",
+            "heading",
+            "no-heading",
+            "color",
+            "colors",
+            "sort",
+            "sortr",
+            "follow",
+            "pcre2",
+            "trim",
+            "column",
+            "stats",
+            "debug",
+            "help",
+            "version",
+            "max-columns",
+            "max-columns-preview",
+            "no-messages",
+            "passthru",
+            "text",
+            "search-zip",
+            "pretty",
+            "fixed-strings",
+            "word-regexp",
+            "engine",
+            "path-separator",
+            "field-match-separator",
+            "field-context-separator",
+            "byte-offset",
+        ],
+    ),
+    (
+        "jq",
+        "rjcnseaSCMR",
+        "f",
+        &[
+            "raw-output",
+            "join-output",
+            "compact-output",
+            "null-input",
+            "slurp",
+            "exit-status",
+            "ascii-output",
+            "sort-keys",
+            "color-output",
+            "monochrome-output",
+            "raw-input",
+            "arg",
+            "argjson",
+            "slurpfile",
+            "rawfile",
+            "args",
+            "jsonargs",
+            "tab",
+            "indent",
+            "from-file",
+            "seq",
+            "stream",
+            "help",
+            "version",
+            "raw-output0",
+        ],
+    ),
+    ("ssh-keygen", "qyleEFRHcpBDkLuMa", "tbfNCYnIOVzmsrwP", &[]),
+    ("ssh", "46AaCfGgKkMNnqsTtVvXxYy", "BbcDEeFIiJLlmOoPpRSWw", &[]),
+    ("scp", "346ABCOpqRrsTv", "cDFiJlPSoX", &[]),
+    (
+        "rsync",
+        "vqcarRbuLlHpEoXAgtDOJmSzhPnWxCiy08",
+        "eBfTMs",
+        &[
+            "archive",
+            "verbose",
+            "quiet",
+            "recursive",
+            "delete",
+            "delete-after",
+            "delete-before",
+            "delete-during",
+            "delete-delay",
+            "delete-excluded",
+            "exclude",
+            "include",
+            "exclude-from",
+            "include-from",
+            "filter",
+            "files-from",
+            "progress",
+            "partial",
+            "partial-dir",
+            "human-readable",
+            "stats",
+            "dry-run",
+            "checksum",
+            "compress",
+            "compress-level",
+            "links",
+            "hard-links",
+            "perms",
+            "times",
+            "owner",
+            "group",
+            "devices",
+            "specials",
+            "existing",
+            "ignore-existing",
+            "update",
+            "inplace",
+            "append",
+            "append-verify",
+            "size-only",
+            "omit-dir-times",
+            "no-perms",
+            "no-owner",
+            "no-group",
+            "chmod",
+            "chown",
+            "rsh",
+            "rsync-path",
+            "itemize-changes",
+            "info",
+            "out-format",
+            "log-file",
+            "timeout",
+            "contimeout",
+            "bwlimit",
+            "backup",
+            "backup-dir",
+            "suffix",
+            "remove-source-files",
+            "prune-empty-dirs",
+            "relative",
+            "no-relative",
+            "mkpath",
+            "one-file-system",
+            "safe-links",
+            "copy-links",
+            "copy-unsafe-links",
+            "keep-dirlinks",
+            "max-size",
+            "min-size",
+            "max-delete",
+            "force",
+            "ignore-errors",
+            "numeric-ids",
+            "whole-file",
+            "no-whole-file",
+            "sparse",
+            "temp-dir",
+            "fuzzy",
+            "compare-dest",
+            "copy-dest",
+            "link-dest",
+            "protect-args",
+            "secluded-args",
+            "ipv4",
+            "ipv6",
+            "port",
+            "password-file",
+            "help",
+            "version",
+            "no-motd",
+            "info",
+            "debug",
+            "executability",
+            "acls",
+            "xattrs",
+        ],
+    ),
+    ("ssh-add", "lLdDDxXcqkKe", "Est", &[]),
+    (
+        "env",
+        "i0v",
+        "uCPS",
+        &[
+            "ignore-environment",
+            "null",
+            "unset",
+            "chdir",
+            "split-string",
+            "debug",
+            "help",
+            "version",
+            "block-signal",
+            "default-signal",
+            "ignore-signal",
+            "list-signal-handling",
+        ],
+    ),
+    ("nice", "", "n", &["adjustment"]),
+    ("timeout", "v", "sk", &["preserve-status", "foreground", "verbose", "signal", "kill-after"]),
+    (
+        "sudo",
+        "AbBEHiKklLnPSsVv",
+        "ugChpUrtDRT",
+        &[
+            "preserve-env",
+            "login",
+            "shell",
+            "non-interactive",
+            "stdin",
+            "reset-timestamp",
+            "background",
+            "set-home",
+            "user",
+            "group",
+            "host",
+            "prompt",
+            "other-user",
+            "role",
+            "type",
+            "chdir",
+            "chroot",
+            "close-from",
+        ],
+    ),
+    (
+        "xargs",
+        "0prtx",
+        "IinPLdEase",
+        &[
+            "null",
+            "no-run-if-empty",
+            "verbose",
+            "interactive",
+            "exit",
+            "open-tty",
+            "replace",
+            "max-args",
+            "max-procs",
+            "max-lines",
+            "delimiter",
+            "eof",
+            "arg-file",
+            "max-chars",
+        ],
+    ),
+];
+
+/// A program with no model: not read, so it is asked (01 §2.4: certainty `None` names what couldn't be read).
 fn unknown_program(w: &mut Walk<'_>, program: &str) {
     w.effect(Effect::Exec {
         program: program.to_owned(),
         source: CodeSource::Unknown,
     });
-    w.lower(Certainty::Partial, format!("what `{program}` does"));
+    w.lower(Certainty::None, format!("what `{program}` does (Reins has no model of it)"));
 }
 
 /// A secret printed into the agent's context (08 R4: a secret read).
@@ -2336,6 +2996,28 @@ fn remote_spec(text: &str) -> Option<(String, String)> {
 }
 
 fn copy_like(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Input {
+    // The program that carries the copy (`rsync -e`, `--rsh`, `--rsync-path`, `scp -S`): ssh is read as ssh, any other
+    // program is not read.
+    let carrier = args
+        .windows(2)
+        .find(|p| {
+            matches!(p[0].text.as_str(), "-e" | "--rsh" | "--rsync-path" | "-S")
+                && (program == "rsync" || p[0].text == "-S")
+        })
+        .map(|p| p[1].text.clone())
+        .or_else(|| {
+            args.iter().find_map(|a| {
+                a.text.strip_prefix("--rsh=").or_else(|| a.text.strip_prefix("--rsync-path=")).map(str::to_owned)
+            })
+        });
+    if let Some(c) = carrier
+        && !(c == "ssh" || c.starts_with("ssh ") || c == "rsync" || c.starts_with("sudo rsync"))
+    {
+        w.lower(Certainty::None, format!("{program} runs `{c}` to copy"));
+    }
+    if args.windows(2).any(|p| p[0].text == "-o" && p[1].text.to_ascii_lowercase().starts_with("proxycommand")) {
+        w.lower(Certainty::None, format!("{program} runs a program on this computer that its options name"));
+    }
     let value_opts: &[&str] = match program {
         "scp" => &["-P", "-i", "-o", "-F", "-J", "-l", "-c", "-S"],
         "rsync" => &[
@@ -2431,6 +3113,13 @@ fn copy_like(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Input {
         w.write(p);
         return Input::None;
     }
+    if program == "rsync" && has(args, "--remove-source-files") {
+        let sources: Vec<_> = pos.iter().map(|s| w.path(s)).collect();
+        w.effect(Effect::FileDelete {
+            paths: sources,
+            recursive: true,
+        });
+    }
     let p = w.path(&dest);
     if program == "rsync" && args.iter().any(|a| a.text.starts_with("--delete")) {
         w.effect(Effect::FileDelete {
@@ -2461,8 +3150,100 @@ fn is_executable_name(name: &str) -> bool {
     .any(|e| n.ends_with(e))
 }
 
+/// `find`'s tests, options and actions (with how many words follow each); any other `-word` is not read.
+const FIND_WORDS: &[(&str, usize)] = &[
+    ("-name", 1),
+    ("-iname", 1),
+    ("-path", 1),
+    ("-ipath", 1),
+    ("-wholename", 1),
+    ("-iwholename", 1),
+    ("-regex", 1),
+    ("-iregex", 1),
+    ("-regextype", 1),
+    ("-type", 1),
+    ("-xtype", 1),
+    ("-size", 1),
+    ("-mtime", 1),
+    ("-mmin", 1),
+    ("-atime", 1),
+    ("-amin", 1),
+    ("-ctime", 1),
+    ("-cmin", 1),
+    ("-newer", 1),
+    ("-newermt", 1),
+    ("-anewer", 1),
+    ("-cnewer", 1),
+    ("-maxdepth", 1),
+    ("-mindepth", 1),
+    ("-user", 1),
+    ("-group", 1),
+    ("-uid", 1),
+    ("-gid", 1),
+    ("-perm", 1),
+    ("-links", 1),
+    ("-inum", 1),
+    ("-samefile", 1),
+    ("-lname", 1),
+    ("-ilname", 1),
+    ("-used", 1),
+    ("-printf", 1),
+    ("-depth", 0),
+    ("-prune", 0),
+    ("-print", 0),
+    ("-print0", 0),
+    ("-ls", 0),
+    ("-quit", 0),
+    ("-empty", 0),
+    ("-readable", 0),
+    ("-writable", 0),
+    ("-executable", 0),
+    ("-not", 0),
+    ("-a", 0),
+    ("-and", 0),
+    ("-o", 0),
+    ("-or", 0),
+    ("-true", 0),
+    ("-false", 0),
+    ("-follow", 0),
+    ("-L", 0),
+    ("-P", 0),
+    ("-H", 0),
+    ("-xdev", 0),
+    ("-mount", 0),
+    ("-daystart", 0),
+    ("-noleaf", 0),
+    ("-ignore_readdir_race", 0),
+    ("-nouser", 0),
+    ("-nogroup", 0),
+    ("-delete", 0),
+    ("-exec", 0),
+    ("-execdir", 0),
+    ("-ok", 0),
+    ("-okdir", 0),
+    ("-fprint", 1),
+    ("-fprint0", 1),
+    ("-fprintf", 2),
+    ("-fls", 1),
+];
+
 fn find(w: &mut Walk<'_>, args: &[Exp], piped: bool) -> Input {
     let _ = piped;
+    let mut k = 0;
+    while k < args.len() {
+        let t = args[k].text.as_str();
+        if matches!(t, "-exec" | "-execdir" | "-ok" | "-okdir") {
+            k = args[k + 1..].iter().position(|x| x.text == ";" || x.text == "+").map_or(args.len(), |p| k + 2 + p);
+            continue;
+        }
+        if t.starts_with('-') && t.len() > 1 {
+            match FIND_WORDS.iter().find(|(name, _)| *name == t) {
+                Some((_, n)) => k += n,
+                None => w.lower(Certainty::None, format!("the find expression {t}")),
+            }
+        }
+        k += 1;
+    }
     // Roots: the words before the first expression.
     let roots: Vec<Exp> = args
         .iter()
@@ -2525,8 +3306,123 @@ fn find(w: &mut Walk<'_>, args: &[Exp], piped: bool) -> Input {
     Input::Opaque("a list of files".to_owned())
 }
 
+/// curl's and wget's options this model reads (with or without a value); any other option is not read.
+const CURL_LONG: &[&str] = &[
+    "silent",
+    "show-error",
+    "location",
+    "insecure",
+    "fail",
+    "fail-with-body",
+    "include",
+    "head",
+    "verbose",
+    "output",
+    "remote-name",
+    "remote-name-all",
+    "data",
+    "data-binary",
+    "data-raw",
+    "data-urlencode",
+    "data-ascii",
+    "json",
+    "request",
+    "header",
+    "user",
+    "form",
+    "form-string",
+    "upload-file",
+    "user-agent",
+    "referer",
+    "cookie",
+    "cookie-jar",
+    "write-out",
+    "max-time",
+    "connect-timeout",
+    "retry",
+    "retry-delay",
+    "retry-max-time",
+    "retry-all-errors",
+    "retry-connrefused",
+    "proxy",
+    "compressed",
+    "get",
+    "http1.1",
+    "http2",
+    "ipv4",
+    "ipv6",
+    "globoff",
+    "no-progress-meter",
+    "progress-bar",
+    "create-dirs",
+    "max-redirs",
+    "oauth2-bearer",
+    "cacert",
+    "resolve",
+    "url",
+    "range",
+    "continue-at",
+    "limit-rate",
+    "no-buffer",
+    "keepalive-time",
+    "tlsv1.2",
+    "tlsv1.3",
+    "unix-socket",
+    "dump-header",
+    "stderr",
+    "trace-ascii",
+    "netrc",
+    "netrc-optional",
+    "noproxy",
+    "basic",
+    "digest",
+    "anyauth",
+    "ssl-no-revoke",
+    "path-as-is",
+    "help",
+    "version",
+    "url-query",
+    "variable",
+    "expand-url",
+    // wget
+    "quiet",
+    "output-document",
+    "directory-prefix",
+    "post-data",
+    "post-file",
+    "body-data",
+    "body-file",
+    "method",
+    "no-check-certificate",
+    "timeout",
+    "tries",
+    "continue",
+    "no-verbose",
+    "show-progress",
+    "recursive",
+    "level",
+    "no-parent",
+    "mirror",
+    "page-requisites",
+    "convert-links",
+    "adjust-extension",
+    "spider",
+    "server-response",
+    "no-clobber",
+    "user-agent",
+    "header",
+    "content-disposition",
+    "trust-server-names",
+];
+
 fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input {
     let _ = piped;
+    let (flags, values) = if program == "wget" {
+        ("qvcrNkpmSnbi46xEKF", "OoaPtTUdlA")
+    } else {
+        ("sSLkfiIvOGgnqZNj46#lRJpBMa0123", "odXHuFTAebcwmxEKCrzYyUQDt")
+    };
+    known_options(w, program, args, flags, values, CURL_LONG);
     let hosts: Vec<String> = args.iter().filter_map(|a| url_host(&a.text)).collect();
     let hosts = if hosts.is_empty() {
         // `curl host/path` without a scheme.
@@ -2727,6 +3623,22 @@ fn network(w: &mut Walk<'_>, program: &str, args: &[Exp], piped: bool) -> Input 
 
 fn ssh(w: &mut Walk<'_>, args: &[Exp], input: Input) -> Input {
     const VALUES: &str = "bcDEeFIiJLlmOopQRSWw";
+    // Options that run a program on this computer (`ProxyCommand`, `LocalCommand`, a config file that may set them).
+    let runs_local = args.windows(2).any(|p| {
+        p[0].text == "-o" && {
+            let o = p[1].text.to_ascii_lowercase();
+            o.starts_with("proxycommand")
+                || o.starts_with("localcommand")
+                || o.starts_with("permitlocalcommand")
+                || o.starts_with("knownhostscommand")
+                || o.starts_with("match")
+        }
+    }) || args
+        .iter()
+        .any(|a| a.text == "-F" || a.text.starts_with("-oProxyCommand") || a.text.starts_with("-oLocalCommand"));
+    if runs_local {
+        w.lower(Certainty::None, "ssh runs a program on this computer that its options name");
+    }
     let mut k = 0;
     let mut key = None;
     let mut tunnel = false;
@@ -2778,7 +3690,7 @@ fn ssh(w: &mut Walk<'_>, args: &[Exp], input: Input) -> Input {
                     method: NetMethod::Connect,
                 });
                 if !tunnel {
-                    w.lower(Certainty::Partial, "what an interactive ssh session does");
+                    w.lower(Certainty::None, "what an interactive ssh session does");
                 }
             }
         }
@@ -2815,7 +3727,9 @@ fn reins(w: &mut Walk<'_>, args: &[Exp]) -> Input {
                 let _out: Input = run(w, &args[k + 1..], Input::None, false);
             }
         }
-        _ => {}
+        // A question for the owner, and Reins's own status.
+        ["ask" | "status" | "version" | "--version" | "help" | "--help" | "doctor", ..] | [] => {}
+        [other, ..] => unmodelled(w, "reins", other),
     }
     Input::None
 }

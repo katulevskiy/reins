@@ -745,6 +745,13 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// A variable this line set: `Some(Some(value))`, `Some(None)` when set to a value not known, `None` when the line
+    /// never set it (nor the caller's environment).
+    #[allow(clippy::option_option, reason = "never set, set to a value not known, or set to a value")]
+    pub fn var_state(&self, name: &str) -> Option<Option<String>> {
+        self.vars.get(name).cloned()
+    }
+
     pub fn set_var(&mut self, name: &str, value: Option<String>) {
         self.vars.insert(name.to_owned(), value);
     }

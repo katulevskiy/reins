@@ -425,7 +425,7 @@ impl Parser {
                 self.i += 2;
                 self.separators(false);
                 if let Some(p) = self.pipeline(terms) {
-                    pipelines.push(p)
+                    pipelines.push(p);
                 } else {
                     self.problem("a `&&` or `||` with nothing after it".to_owned());
                     break;
@@ -459,7 +459,7 @@ impl Parser {
                 }
                 self.separators(false);
                 if let Some(c) = self.command(terms) {
-                    commands.push(c)
+                    commands.push(c);
                 } else {
                     self.problem("a `|` with nothing after it".to_owned());
                     break;
