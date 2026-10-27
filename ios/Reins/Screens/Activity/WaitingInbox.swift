@@ -1,8 +1,9 @@
 import SwiftUI
 
-// "Waiting for you" (decisions v2, 03 §5.2): requests that became tickets. Nobody waits on them, so they are not cards
-// in the stack but rows above the river, the soonest due first, grouped by who asks. Each opens the approval sheet;
-// several of one kind from one AI can be answered together.
+// "Waiting for you" (decisions v2, 03 §5.2): requests that became tickets, and what Overnight parked for the morning.
+// Nobody waits on them, so they are not cards in the stack but rows above the river, the soonest due first, grouped by
+// who asks and the task it works on. Each opens the approval sheet; several of one kind from one AI can be answered
+// together, and a group's routine parks with "Approve all" (never what is hard or L3: those stay one by one).
 
 /// The waiting list split into Instant cards and tickets, the tickets grouped and batched (pure, unit-tested).
 enum TicketInbox {
@@ -24,22 +25,38 @@ enum TicketInbox {
         var id: String { "\(connectionId)|\(key)" }
     }
 
-    /// One AI's tickets, the soonest due first, and its batches.
+    /// One AI's tickets under one task (or under none), the soonest due first, and its batches.
     struct Group: Identifiable, Equatable {
         var connectionId: String
         var label: String
+        /// The task its agent works on (the core's `taskId`), and its title as the agent named it.
+        var taskId: String? = nil
+        var taskTitle: String? = nil
         var items: [PendingItem]
         var batches: [Batch]
 
-        var id: String { connectionId }
+        var id: String { "\(connectionId)|\(taskId ?? "")" }
+
+        /// What "Approve all" covers: the parks the core may approve together (soft and below L3).
+        var approvable: [String] { items.filter(TicketInbox.approvableTogether).map(\.id) }
     }
 
-    /// What the stack shows: everything that is not a ticket, in the core's order.
-    static func instant(_ pending: [PendingItem]) -> [PendingItem] { pending.filter { $0.ticket == nil } }
+    /// Under "Waiting for you": a ticket, or something Overnight parked even before it has one. Never a task proposal
+    /// (its own card).
+    static func inInbox(_ item: PendingItem) -> Bool { item.taskProposal == nil && (item.ticket != nil || item.parkedUntil != nil) }
 
-    /// The tickets, the soonest due first (then the oldest, then by id, so the order never jumps).
+    /// What the stack shows: everything that is not in the inbox nor a task proposal, in the core's order.
+    static func instant(_ pending: [PendingItem]) -> [PendingItem] { pending.filter { !inInbox($0) && $0.taskProposal == nil } }
+
+    /// The agents' task proposals, in the core's order (`TaskProposalCard`).
+    static func proposals(_ pending: [PendingItem]) -> [PendingItem] { pending.filter { $0.taskProposal != nil } }
+
+    /// When it is due: its ticket's deadline, else (parked, no ticket yet) the morning.
+    static func dueAt(_ item: PendingItem) -> Int64 { item.ticket?.deadline ?? item.parkedUntil ?? .max }
+
+    /// The tickets and parks, the soonest due first (then the oldest, then by id, so the order never jumps).
     static func tickets(_ pending: [PendingItem]) -> [PendingItem] {
-        pending.compactMap { item in item.ticket.map { (item, $0.deadline) } }
+        pending.filter(inInbox).map { ($0, dueAt($0)) }
             .sorted { a, b in
                 if a.1 != b.1 { return a.1 < b.1 }
                 if a.0.createdAt != b.0.createdAt { return a.0.createdAt < b.0.createdAt }
@@ -48,19 +65,38 @@ enum TicketInbox {
             .map(\.0)
     }
 
-    /// The tickets by who asks (one connection each, so two AIs of the same name never mix), the group with the soonest
-    /// deadline first.
+    /// The tickets by who asks and the task it works on (one connection each, so two AIs of the same name never mix),
+    /// the group with the soonest deadline first.
     static func groups(_ pending: [PendingItem]) -> [Group] {
         var order: [String] = []
         var by: [String: [PendingItem]] = [:]
         for item in tickets(pending) {
-            if by[item.connectionId] == nil { order.append(item.connectionId) }
-            by[item.connectionId, default: []].append(item)
+            let key = "\(item.connectionId)|\(item.taskId ?? "")"
+            if by[key] == nil { order.append(key) }
+            by[key, default: []].append(item)
         }
-        return order.compactMap { id in
-            guard let items = by[id], let first = items.first else { return nil }
-            return Group(connectionId: id, label: first.connectionLabel, items: items, batches: batches(items))
+        return order.compactMap { key in
+            guard let items = by[key], let first = items.first else { return nil }
+            let title = items.lazy.compactMap(\.taskTitle).first
+            return Group(
+                connectionId: first.connectionId, label: first.connectionLabel, taskId: first.taskId, taskTitle: title, items: items,
+                batches: batches(items)
+            )
         }
+    }
+
+    /// "Approve all" may cover it: parked by Overnight, and what the matrix asked is soft and below L3 (the core's
+    /// `batchable`; `approveAll` approves only those).
+    static func approvableTogether(_ item: PendingItem) -> Bool {
+        item.kind == .request && item.batchable && item.parkedUntil != nil && item.taskProposal == nil
+    }
+
+    /// "Approve all 3".
+    static func approveAllTitle(_ g: Group) -> String { "Approve all \(g.approvable.count)" }
+
+    /// "Fix CI": a task's title as the agent named it, one short clean line; nil without one.
+    static func taskTitle(_ g: Group) -> String? {
+        g.taskTitle.map { untrustedName($0, limit: 60) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// What makes tickets the same kind: the service, the action and the operation.
@@ -124,6 +160,7 @@ struct WaitingInbox: View {
         case who(TicketInbox.Group)
         case ticket(PendingItem)
         case batch(TicketInbox.Batch)
+        case approveAll(TicketInbox.Group)
 
         var id: String {
             switch self {
@@ -131,6 +168,7 @@ struct WaitingInbox: View {
             case let .who(g): "who:\(g.id)"
             case let .ticket(item): "ticket:\(item.id)"
             case let .batch(b): "batch:\(b.id)"
+            case let .approveAll(g): "approveAll:\(g.id)"
             }
         }
 
@@ -141,7 +179,7 @@ struct WaitingInbox: View {
             case .title: (false, 62)
             case .who: (index > 1, 14)
             case .ticket: (index > 0, 62)
-            case .batch: (true, 62)
+            case .batch, .approveAll: (true, 62)
             }
         }
     }
@@ -152,6 +190,7 @@ struct WaitingInbox: View {
             out.append(.who(g))
             out += g.items.map(Line.ticket)
             out += g.batches.map(Line.batch)
+            if !g.approvable.isEmpty { out.append(.approveAll(g)) }
         }
         return out
     }
@@ -203,6 +242,16 @@ struct WaitingInbox: View {
                     .font(RFont.sans(14, .semibold))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
+                if let task = TicketInbox.taskTitle(group) {
+                    // The task as the agent named it: its own run, after Reins' word.
+                    HStack(spacing: 4) {
+                        Image(systemName: "scope").font(.system(size: 11, weight: .semibold))
+                        Text(TaskText.taskWord).font(RFont.sans(12.5, .semibold))
+                        Text(verbatim: task).font(RFont.sans(12.5)).lineLimit(1)
+                    }
+                    .foregroundStyle(Palette.ink2)
+                    .accessibilityIdentifier("waitingTask:\(group.id)")
+                }
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -214,6 +263,8 @@ struct WaitingInbox: View {
             TicketRow(item: item, now: now)
         case let .batch(batch):
             BatchRow(batch: batch)
+        case let .approveAll(group):
+            ApproveAllRow(group: group)
         }
     }
 }
@@ -248,14 +299,23 @@ private struct TicketRow: View {
                             .lineLimit(2)
                             .environment(\.layoutDirection, .leftToRight)
                     }
-                    if let ticket = item.ticket {
+                    let parked = OvernightDigestNotice.isParked(item, now: now)
+                    if item.ticket != nil || parked {
                         HStack(spacing: 6) {
-                            DueText(deadline: ticket.deadline, now: now)
-                                .accessibilityIdentifier("ticketDue:\(item.id)")
-                            if let state = TicketText.state(ticket) {
+                            if let ticket = item.ticket {
+                                DueText(deadline: ticket.deadline, now: now)
+                                    .accessibilityIdentifier("ticketDue:\(item.id)")
+                            }
+                            if parked {
+                                Pill(AutopilotText.parkedWord, tone: .night)
+                                    .accessibilityIdentifier("parked:\(item.id)")
+                            }
+                            if let ticket = item.ticket, let state = TicketText.state(ticket) {
                                 Pill(state, tone: state == "Stale" ? .warning : .violet)
                             }
                         }
+                    }
+                    if let ticket = item.ticket {
                         TicketNotes(ticket: ticket, id: item.id, compact: true)
                     }
                 }
@@ -364,6 +424,67 @@ private struct AgentSays: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(TicketText.agentSaysLabel): \(text)")
+    }
+}
+
+/// "Approve all 3" under one AI's task: its routine parks, one owner check for the lot (the core approves only what is
+/// soft and below L3); what is hard stays above, one by one.
+private struct ApproveAllRow: View {
+    var group: TicketInbox.Group
+    @Environment(AppModel.self) private var model
+    @State private var busy = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 4)
+            Button {
+                busy = true
+                Task {
+                    await InboxActions.approveAll(model, group: group)
+                    busy = false
+                }
+            } label: {
+                Label { Text(TicketInbox.approveAllTitle(group)) } icon: { BiometryMark(size: 15) }
+            }
+            .buttonStyle(SignalButtonStyle(.inverse, size: .small, fill: false))
+            .fixedSize()
+            .accessibilityIdentifier("approveAll:\(group.id)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .disabled(busy || untrustedName(group.label, limit: WaitCardIdentity.limit).isEmpty)
+    }
+}
+
+/// What the inbox does with the core (testable with the demo core).
+@MainActor
+enum InboxActions {
+    /// "Approve all": the owner's check (one for the lot), then the core approves the group's routine parks. Returns
+    /// how many were approved; nil when the owner did not confirm or it failed (a few words say why).
+    @discardableResult
+    static func approveAll(_ app: AppModel, group: TicketInbox.Group) async -> UInt32? {
+        let count = group.approvable.count
+        guard count > 0 else { return nil }
+        let what = count == 1 ? "the request" : "\(count) requests"
+        switch await OwnerPrompt.confirm(app, reason: "Approve \(what) from \(untrusted(group.label))") {
+        case .confirmed: break
+        case .cancelled: return nil
+        case .unavailable:
+            app.feedback.play(.error)
+            app.notice = OwnerPrompt.unavailableMessage
+            return nil
+        }
+        do {
+            let approved = try await app.core.approveAll(connectionId: group.connectionId, taskId: group.taskId)
+            app.feedback.play(.approved)
+            await app.refreshPending()
+            return approved
+        } catch {
+            app.feedback.play(.error)
+            app.notice = "Not approved: \(decisionErrorMessage(error))"
+            await app.refreshPending()
+            return nil
+        }
     }
 }
 

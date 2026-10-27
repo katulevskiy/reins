@@ -33,13 +33,16 @@ enum TicketReminders {
     }
 
     /// Every reminder of the tickets in `pending` that wait for the reviewer (not past their deadline, not approved,
-    /// not waiting for the agent's answer to a Why?), whether its time has come or not.
+    /// not waiting for the agent's answer to a Why?), whether its time has come or not. A ticket Overnight parked is
+    /// reminded of only after the morning (`parkedUntil`).
     static func all(_ pending: [PendingItem], now: Int64) -> [Reminder] {
         pending.flatMap { item -> [Reminder] in
             guard item.kind == .request, let t = item.ticket, t.deadline > now, !["approved", "needs_info"].contains(t.state) else { return [] }
             let title = AskLabels.pending(item, field: FieldKind.of(ActionKind.of(item.action))).text
             let who = untrustedName(item.connectionLabel, limit: 40)
-            return times(deferredAt: t.deferredAt, deadline: t.deadline).map { mark in
+            // Parked by Overnight: the reminders fall in what is left of the window after the morning, never before.
+            let start = max(t.deferredAt, item.parkedUntil ?? t.deferredAt)
+            return times(deferredAt: start, deadline: t.deadline).map { mark in
                 Reminder(id: item.id, percent: mark.percent, fireAt: mark.at, deadline: t.deadline, title: title, who: who)
             }
         }

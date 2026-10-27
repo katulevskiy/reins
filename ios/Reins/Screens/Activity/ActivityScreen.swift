@@ -339,12 +339,16 @@ struct ActivityScreen: View {
             // Tickets wait under "Waiting for you", not in the stack: nobody waits on them.
             let instant = TicketInbox.instant(model.pending)
             let waiting = TicketInbox.groups(model.pending)
-            if !instant.isEmpty || !model.autoQuestions.isEmpty {
-                // What waits, then what Auto asks (`QuestionCards`).
+            let proposals = TicketInbox.proposals(model.pending)
+            if !instant.isEmpty || !model.autoQuestions.isEmpty || !proposals.isEmpty {
+                // What waits, then the agents' task proposals (`TaskProposalCards`), then what Auto asks (`QuestionCards`).
                 VStack(spacing: 10) {
                     if !instant.isEmpty {
                         WaitStack(groups: WaitGroup.of(instant), suggestions: suggestions)
                             .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: instant.map(\.id))
+                    }
+                    if !proposals.isEmpty {
+                        TaskProposalCards(items: proposals)
                     }
                     if !model.autoQuestions.isEmpty {
                         QuestionCards(questions: model.autoQuestions)
@@ -368,6 +372,11 @@ struct ActivityScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                     .accessibilityIdentifier("pond")
+            }
+            if !model.tasks.isEmpty {
+                // Live tasks with Stop, and those that ended today, quietly.
+                TaskChips(tasks: model.tasks)
+                    .padding(.top, 8)
             }
             if !waiting.isEmpty {
                 WaitingInbox(groups: waiting)

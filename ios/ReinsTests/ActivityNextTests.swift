@@ -7,7 +7,7 @@ final class ActivityNextTests: XCTestCase {
     private func settings(_ mode: AutopilotMode, bypassUntil: Int64? = nil, overnightUntil: Int64? = nil) -> AutopilotSettings {
         AutopilotSettings(
             mode: mode, baseMode: .manual, bypassUntil: bypassUntil, bypassSince: nil, overnightUntil: overnightUntil, overnightSince: nil,
-            overnightWhenRisky: .wait, defaultProfileId: "personal", wifiOnly: true,
+            defaultProfileId: "personal", wifiOnly: true,
             model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 0, downloadedBytes: 0, error: nil, runtimeReady: true, risk: true, update: false),
             connections: []
         )

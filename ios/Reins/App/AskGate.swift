@@ -16,9 +16,10 @@ enum AskGate {
     }
 
     /// The item to pop up by itself: the first one that waits for the owner and has not popped up before. Never a
-    /// ticket: nobody waits on it, it waits under "Waiting for you" (and one moved there with Later stays there).
+    /// ticket nor what Overnight parked: nobody waits on them, they wait under "Waiting for you" (and one moved there
+    /// with Later stays there). Never a task proposal: its card is where it is narrowed and decided.
     static func next(_ waiting: [PendingItem], presented: Set<String>) -> PendingItem? {
-        waiting.first { $0.ticket == nil && !presented.contains($0.id) }
+        waiting.first { $0.ticket == nil && $0.parkedUntil == nil && $0.taskProposal == nil && !presented.contains($0.id) }
     }
 
     /// Whether the sheet open on `open` is the ask a mode or Autopilot just decided (`decided`): it closes.

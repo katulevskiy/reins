@@ -244,15 +244,15 @@ struct TrustScreen: View {
 
     // MARK: A running mode
 
-    /// What the running mode adds under its field: what a bypass or a lockdown decided, as a stack; what Overnight does
-    /// with what is too risky.
+    /// What the running mode adds under its field: what a bypass or a lockdown decided, as a stack; how long what
+    /// Overnight parks waits after the morning.
     @ViewBuilder
     private func runningMiddle(_ mode: TrustRunning, _ s: AutopilotSettings) -> some View {
         switch mode {
         case .overnight:
             VStack(spacing: 0) {
-                SectionHeader("Too risky", glyph: .warning)
-                WhenRiskyPicker(selected: s.overnightWhenRisky) { risky in Task { await ap.setOvernightWhenRisky(risky) } }
+                SectionHeader(AutopilotText.overnightExpiryTitle, glyph: .timer)
+                ExpiryPicker(selected: s.overnightExpiryHours) { hours in Task { await ap.setOvernightExpiry(hours) } }
                     .padding(.horizontal, 16)
             }
             .plainRow(EdgeInsets())

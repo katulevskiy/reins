@@ -123,7 +123,7 @@ final class ActivityFlowTests: XCTestCase {
         shot(app, "activity-quick-bypass-sheet")
     }
 
-    /// Overnight from the menu opens its own sheet: its lengths, what to do with what is too risky, the hold.
+    /// Overnight from the menu opens its own sheet: its lengths, how long what it parks waits, the hold.
     func testTheQuickMenuOffersOvernight() {
         let app = launch()
         let pill = element(app, "modePill")
@@ -132,7 +132,7 @@ final class ActivityFlowTests: XCTestCase {
         element(app, "quick:OVERNIGHT").tap()
         XCTAssertTrue(element(app, "confirmOvernight").waitForExistence(timeout: 5), "the Overnight sheet")
         XCTAssertTrue(element(app, "overnight:custom").exists, "with its custom lengths")
-        XCTAssertTrue(element(app, "whenRisky").exists, "and what to do with what is too risky")
+        XCTAssertTrue(element(app, "overnightExpiry").exists, "and how long what it parks waits")
         shot(app, "activity-quick-overnight-sheet")
     }
 

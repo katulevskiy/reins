@@ -15,7 +15,8 @@ import Foundation
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 /// `-demoAutoSetup`: Auto's setup is not done yet, so picking Auto guides through it first. `-demoQuestions`: Auto
-/// asks who a few things are (the question cards in Activity).
+/// asks who a few things are (the question cards in Activity). `-demoOvernight`: Overnight parked a few requests for
+/// the morning (Cursor's under its task "Fix CI"), Claude proposes a task, and one task ended today.
 enum DemoCore {
     static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
@@ -41,7 +42,8 @@ enum DemoCore {
             passkeysOffline: args.contains("-demoPasskeysOffline"),
             quiet: args.contains("-demoQuiet"),
             autoSetupDone: !args.contains("-demoAutoSetup"),
-            questions: args.contains("-demoQuestions")
+            questions: args.contains("-demoQuestions"),
+            overnight: args.contains("-demoOvernight")
         )
     }
 }
@@ -109,7 +111,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var wifiOnly = true
         /// "Update automatically" (on by default, as in the core).
         var autoUpdate = true
-        var overnightWhenRisky: OvernightRisky = .wait
+        /// How long what Overnight parks waits after the morning (the core's default, 12 h).
+        var overnightExpiryHours: UInt32 = 12
+        /// Tasks: live ones, then those that ended (`-demoOvernight` seeds one of each).
+        var tasks: [TaskView] = []
+        var nextTask = 1
         var suggestions: [String: SuggestionView] = [:]
         var arriveAt: Int64?
         var nextGrant = 100
@@ -160,7 +166,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
         keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
-        quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false
+        quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false, overnight: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
@@ -251,6 +257,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.syncedFails = args.contains("-demoSyncedPushFails")
         }
         if args.contains("-demoTickets") { Self.seedTickets(&s, now: now) }
+        if overnight && !quiet { Self.seedOvernight(&s, now: now) }
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -980,6 +987,53 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// The task Cursor works under in `-demoOvernight`.
+    static let demoTaskId = "tk_democi"
+
+    /// `-demoOvernight`: the night's parks (two of Cursor's under its task, one routine; My ChatGPT's email to a work
+    /// person, hard; a Telegram message not yet a ticket), Claude's task proposal, a live task and one that ended.
+    private static func seedOvernight(_ s: inout State, now: Int64) {
+        let morning = now + 6 * 3_600
+        let expiry = Int64(s.overnightExpiryHours) * 3_600
+        s.tasks = [
+            TaskView(id: demoTaskId, connectionId: "c5", connectionLabel: "Cursor", title: "Fix CI", reason: "The login test fails on main.",
+                     repos: ["octo/app"], branches: ["fix/*"], paths: [], people: [], operations: ["git_push", "file_write"], ceiling: 1,
+                     budget: 20, usesLeft: 13, startedAt: now - 40 * 60, endsAt: now + 200 * 60, endedAt: nil, startedBy: "agent",
+                     auto: 7, asked: 0, parked: 2),
+            TaskView(id: "tk_demotidy", connectionId: "c1", connectionLabel: "Claude", title: "Tidy branches", reason: nil,
+                     repos: ["octo/app"], branches: ["chore/*"], paths: [], people: [], operations: ["git_ref_delete"], ceiling: 1,
+                     budget: nil, usesLeft: nil, startedAt: now - 5 * 3_600, endsAt: now - 3 * 3_600, endedAt: now - 3 * 3_600,
+                     startedBy: "you", auto: 12, asked: 1, parked: 0),
+        ]
+        for i in s.pending.indices where s.pending[i].kind == .request {
+            let id = s.pending[i].id
+            guard ["req10", "req11", "req2", "req9"].contains(id) else { continue }
+            s.pending[i].parkedUntil = morning
+            s.pending[i].canDefer = false
+            if id == "req10" || id == "req11" {
+                s.pending[i].taskId = demoTaskId
+                s.pending[i].taskTitle = "Fix CI"
+            }
+            s.pending[i].batchable = id == "req10" || id == "req9"
+            if id != "req9" { makeTicket(&s.pending[i], state: "deferred", deferredAt: now - 3_600, deadline: morning + expiry) }
+        }
+        let v = DemoData.view(
+            "req40", conn: "c1", label: "Claude", kind: .write, action: "write", service: "tasks", account: nil,
+            createdAt: now - 20, waitUntil: now + 240, op: "propose", preview: ["Start a task: Release v2.1"], noStanding: true,
+            opTitle: "Start a task"
+        )
+        s.views[v.requestId] = v
+        var item = DemoData.item(v, title: "Claude proposes a task: Release v2.1", subtitle: "Release v2.1")
+        item.taskProposal = TaskView(
+            id: "", connectionId: "c1", connectionLabel: "Claude", title: "Release v2.1",
+            reason: "Tag the release, push the changelog and open the release PR. Ceiling L3 please.",
+            repos: ["octo/app", "octo/site"], branches: ["release/*", "main"], paths: ["/Users/me/src/app"],
+            people: ["ann@corp.example"], operations: ["git_push", "file_write", "message"], ceiling: 2, budget: 30, usesLeft: nil,
+            startedAt: now, endsAt: now + 4 * 3_600, endedAt: nil, startedBy: "agent", auto: 0, asked: 0, parked: 0
+        )
+        s.pending.insert(item, at: 0)
+    }
+
     func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
@@ -1701,7 +1755,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 mode: global, baseMode: Self.globalBase(s), bypassUntil: running ? s.apGlobal.bypassUntil : nil,
                 bypassSince: running ? s.apGlobal.bypassSince : nil,
                 overnightUntil: night ? s.apGlobal.overnightUntil ?? .max : nil, overnightSince: night ? s.apGlobal.overnightSince : nil,
-                overnightWhenRisky: s.overnightWhenRisky,
+                overnightExpiryHours: s.overnightExpiryHours,
                 defaultProfileId: defaultId, wifiOnly: s.wifiOnly, autoUpdate: s.autoUpdate, model: s.model, connections: rows
             )
         }
@@ -1800,11 +1854,156 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// A change either way asks the owner first, as in the core.
-    func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck) async throws {
-        if locked({ $0.overnightWhenRisky }) == risky { return }
-        try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
-        locked { $0.overnightWhenRisky = risky }
+    /// As the core: 1 to 48 hours, no owner check (an expired item is not approved).
+    func setOvernightExpiry(hours: UInt32) async throws {
+        guard (1...48).contains(hours) else { throw CoreError.Invalid(reason: "parked requests expire after 1 to 48 hours") }
+        locked { $0.overnightExpiryHours = hours }
+    }
+
+    // ---- Overnight's parks and tasks (Decisions v2 P5) ---------------------------------------------------------------
+
+    /// As the core: what Overnight parked and still waits, grouped by agent and task in arrival order; `at` is the
+    /// earliest morning still to come.
+    func overnightDigest() async throws -> OvernightDigest? {
+        locked { s in Self.digest(s.pending, now: Self.now()) }
+    }
+
+    static func digest(_ pending: [PendingItem], now: Int64) -> OvernightDigest? {
+        let parked = pending.filter { $0.kind == .request && $0.parkedUntil != nil }.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+        guard !parked.isEmpty else { return nil }
+        var groups: [DigestGroup] = []
+        for item in parked {
+            if let i = groups.firstIndex(where: { $0.connectionId == item.connectionId && $0.taskId == item.taskId }) {
+                groups[i].requestIds.append(item.id)
+                groups[i].batchable += item.batchable ? 1 : 0
+            } else {
+                groups.append(DigestGroup(connectionId: item.connectionId, connectionLabel: item.connectionLabel, taskId: item.taskId,
+                                          taskTitle: item.taskTitle, requestIds: [item.id], batchable: item.batchable ? 1 : 0))
+            }
+        }
+        let body = groups.map { g in
+            let who = g.connectionLabel.isEmpty ? "an AI" : g.connectionLabel
+            return g.taskTitle.map { "\(g.requestIds.count) from \(who) (\($0))" } ?? "\(g.requestIds.count) from \(who)"
+        }.joined(separator: ", ")
+        return OvernightDigest(
+            at: parked.compactMap(\.parkedUntil).filter { $0 > now }.min(), total: UInt32(parked.count), title: "\(parked.count) waiting",
+            body: body, groups: groups
+        )
+    }
+
+    /// As the core: approves one agent's parked requests under one task that "Approve all" may cover; the rest stays.
+    func approveAll(connectionId: String, taskId: String?) async throws -> UInt32 {
+        let ids = locked { s in
+            s.pending.filter { $0.parkedUntil != nil && $0.batchable && $0.connectionId == connectionId && $0.taskId == taskId }.map(\.id)
+        }
+        var approved: UInt32 = 0
+        for id in ids {
+            if (try? await approve(requestId: id, choice: ApprovalChoice(selectedMessageIds: [], standing: nil))) != nil { approved += 1 }
+        }
+        return approved
+    }
+
+    /// Live tasks, then those that ended in the last day.
+    func tasks() async throws -> [TaskView] {
+        locked { s in
+            let now = Self.now()
+            let live = s.tasks.filter { $0.endedAt == nil && $0.endsAt > now }
+            let ended = s.tasks.compactMap { t -> TaskView? in
+                if t.endedAt == nil && t.endsAt > now { return nil }
+                var t = t
+                if t.endedAt == nil { t.endedAt = t.endsAt }
+                return (t.endedAt ?? 0) > now - 86_400 ? t : nil
+            }
+            return live + ended.sorted { ($0.endedAt ?? 0) > ($1.endedAt ?? 0) }
+        }
+    }
+
+    /// As the core: the owner's check first (a task loosens), then one live task per connection.
+    func startTask(draft: TaskView, owner: OwnerCheck) async throws -> TaskView {
+        try Self.checkEnvelope(draft)
+        try await Self.confirmOwner(owner, "Start the task \(untrusted(draft.title))")
+        return locked { s in Self.addTask(&s, draft, startedBy: draft.startedBy.isEmpty ? "you" : draft.startedBy) }
+    }
+
+    /// Stop: ends it now, never asked.
+    func endTask(id: String) async throws {
+        try locked { s in
+            guard let i = s.tasks.firstIndex(where: { $0.id == id }) else { throw CoreError.NotFound }
+            if s.tasks[i].endedAt == nil { s.tasks[i].endedAt = Self.now() }
+        }
+    }
+
+    /// As the core: the draft may only narrow the proposal; the owner confirms; then the proposal is approved and the
+    /// task starts as narrowed.
+    func approveTask(requestId: String, draft: TaskView, owner: OwnerCheck) async throws {
+        let proposed: TaskView? = locked { s in s.pending.first { $0.id == requestId }?.taskProposal }
+        guard let proposed else { throw CoreError.NotFound }
+        let narrowed = try Self.narrow(proposed, draft)
+        try await Self.confirmOwner(owner, "Approve the task \(untrusted(narrowed.title))")
+        try await approve(requestId: requestId, choice: ApprovalChoice(selectedMessageIds: [], standing: nil))
+        locked { s in _ = Self.addTask(&s, narrowed, startedBy: "agent") }
+    }
+
+    /// The last task a test or the demo approved or started.
+    var lastTask: TaskView? { locked { $0.tasks.last } }
+
+    private static func checkEnvelope(_ t: TaskView) throws {
+        guard t.ceiling <= 2 else { throw CoreError.Invalid(reason: "a task reaches people at most") }
+        let length = t.endsAt - t.startedAt
+        guard length >= 15 * 60, length <= 24 * 3_600 else { throw CoreError.Invalid(reason: "a task lasts 15 minutes to 24 hours") }
+    }
+
+    /// The core's `narrow`: every list a subset and never emptied (people may be), ceiling, length and budget no higher.
+    static func narrow(_ p: TaskView, _ e: TaskView) throws -> TaskView {
+        func subset(_ a: [String], _ b: [String]) -> Bool { a.allSatisfy(b.contains) }
+        guard e.connectionId == p.connectionId else { throw CoreError.Invalid(reason: "A task stays with the agent that proposed it.") }
+        guard subset(e.repos, p.repos), subset(e.branches, p.branches), subset(e.paths, p.paths), subset(e.people, p.people),
+              subset(e.operations, p.operations) else { throw CoreError.Invalid(reason: "Only remove from what the agent asked for.") }
+        func emptied(_ a: [String], _ b: [String]) -> Bool { a.isEmpty && !b.isEmpty }
+        if emptied(e.repos, p.repos) || emptied(e.branches, p.branches) || emptied(e.paths, p.paths) || emptied(e.operations, p.operations) {
+            throw CoreError.Invalid(reason: "Leave at least one, or deny the task.")
+        }
+        guard e.ceiling <= p.ceiling else { throw CoreError.Invalid(reason: "The ceiling can only go down.") }
+        let length = e.endsAt - e.startedAt
+        guard length <= p.endsAt - p.startedAt, length >= 15 * 60 else {
+            throw CoreError.Invalid(reason: "The length can only be shortened, to 15 minutes at least.")
+        }
+        if let pb = p.budget, (e.budget ?? .max) > pb || e.budget == 0 { throw CoreError.Invalid(reason: "The budget can only go down.") }
+        var out = p
+        out.title = e.title
+        out.repos = e.repos
+        out.branches = e.branches
+        out.paths = e.paths
+        out.people = e.people
+        out.operations = e.operations
+        out.ceiling = e.ceiling
+        out.endsAt = p.startedAt + length
+        out.budget = e.budget
+        out.usesLeft = e.budget
+        return out
+    }
+
+    @discardableResult
+    private static func addTask(_ s: inout State, _ draft: TaskView, startedBy: String) -> TaskView {
+        let now = Self.now()
+        for i in s.tasks.indices where s.tasks[i].connectionId == draft.connectionId && s.tasks[i].endedAt == nil {
+            s.tasks[i].endedAt = now
+        }
+        var t = draft
+        t.id = "tk_demo\(s.nextTask)"
+        s.nextTask += 1
+        let length = draft.endsAt - draft.startedAt
+        t.startedAt = now
+        t.endsAt = now + length
+        t.endedAt = nil
+        t.startedBy = startedBy
+        t.usesLeft = draft.budget
+        t.auto = 0
+        t.asked = 0
+        t.parked = 0
+        if t.connectionLabel.isEmpty { t.connectionLabel = s.connections.first { $0.id == t.connectionId }?.label ?? "" }
+        s.tasks.append(t)
+        return t
     }
 
     // ---- Auto's setup, the matrix and its questions (Decisions v2) ----------------------------------------------------
