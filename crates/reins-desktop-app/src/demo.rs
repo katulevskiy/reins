@@ -388,6 +388,7 @@ impl Demo {
                         confidence: 71,
                     }),
                     effects: None,
+                    nets: None,
                 }
             })
             .collect()

@@ -1,5 +1,5 @@
-//! Where nets keep what they saved: `$XDG_DATA_HOME/reins/nets` (default `~/.local/share/reins/nets`), one folder per
-//! plan.
+//! Where nets keep what they saved: `nets` in the state folder (`~/.local/state/reins/nets`, next to the activity
+//! log), one folder per plan.
 //!
 //! ```text
 //! nets/<plan>/plan.json                 what was netted (the hook writes it)
@@ -201,17 +201,17 @@ impl Store {
         }
     }
 
-    /// `$REINS_NETS_DIR`, else `$XDG_DATA_HOME/reins/nets`, else `~/.local/share/reins/nets` (on Windows
-    /// `%LOCALAPPDATA%\reins\nets`).
+    /// The store of this computer's Reins: `$REINS_NETS_DIR`, else `nets` in the state folder (next to the activity
+    /// log: `~/.local/state/reins/nets`).
+    #[must_use]
+    pub fn open(paths: &crate::config::Paths) -> Self {
+        Self::at(&env_dir("REINS_NETS_DIR").unwrap_or_else(|| paths.state_dir.join("nets")))
+    }
+
+    /// [`Self::open`] with the folders from the environment.
     pub fn open_default() -> Result<Self, String> {
-        let root = env_dir("REINS_NETS_DIR")
-            .or_else(|| env_dir("XDG_DATA_HOME").map(|d| d.join("reins").join("nets")))
-            .or_else(|| cfg!(windows).then(|| env_dir("LOCALAPPDATA").map(|d| d.join("reins").join("nets"))).flatten())
-            .or_else(|| {
-                crate::config::home_dir().ok().map(|h| h.join(".local").join("share").join("reins").join("nets"))
-            })
-            .ok_or_else(|| "no home folder for the Reins trash".to_owned())?;
-        Ok(Self::at(&root))
+        let paths = crate::config::Paths::from_env().map_err(|e| e.to_string())?;
+        Ok(Self::open(&paths))
     }
 
     /// A store whose device check is `device_of` (tests: "another disk").

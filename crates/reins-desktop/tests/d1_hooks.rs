@@ -277,3 +277,127 @@ fn the_command_line_reads_stdin_and_answers() {
     assert_ne!(code, 0);
     assert!(err.contains("unknown harness"), "{err}");
 }
+
+/// A folder outside the OS temp folder (which is scratch: nothing there is netted).
+fn project() -> (tempfile::TempDir, std::path::PathBuf, Config) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let proj = std::fs::canonicalize(dir.path()).unwrap().join("proj");
+    std::fs::create_dir_all(proj.join("notes")).unwrap();
+    std::fs::write(proj.join("notes/todo.md"), "keep me").unwrap();
+    let mut config = Config::default();
+    config.workspace.roots = vec![std::fs::canonicalize(dir.path()).unwrap().to_string_lossy().into_owned()];
+    (dir, proj, config)
+}
+
+fn bash(harness: &str, cwd: &std::path::Path, command: &str) -> String {
+    match harness {
+        "cursor" => json!({"hook_event_name": "beforeShellExecution", "command": command, "cwd": cwd}).to_string(),
+        "gemini" => json!({"hook_event_name": "BeforeTool", "tool_name": "run_shell_command", "cwd": cwd,
+            "tool_input": {"command": command, "description": "clean"}})
+        .to_string(),
+        _ => json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": cwd,
+            "tool_input": {"command": command, "description": "Delete notes", "timeout": 120_000}})
+        .to_string(),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_approved_delete_runs_with_its_net_and_restores() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let (_dir, proj, config) = project();
+    let input = bash("claude", &proj, "rm -rf notes");
+    let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    assert_eq!(code, 0);
+    let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+    let hso = &out["hookSpecificOutput"];
+    assert_eq!(hso["permissionDecision"], "allow");
+    let rewritten = hso["updatedInput"]["command"].as_str().expect("the netted command").to_owned();
+    assert!(rewritten.ends_with(" net run --plan ") || rewritten.contains(" net run --plan "), "{rewritten}");
+    assert!(rewritten.ends_with("-- rm -rf notes"), "{rewritten}");
+    assert_eq!(hso["updatedInput"]["description"], "Delete notes", "the rest of the input is kept");
+    // The phone was asked about exactly the netted command, and told about the net.
+    let asked = mock.with(|s| s.calls.last().cloned()).unwrap();
+    let detail = asked["detail"].as_str().unwrap();
+    assert!(detail.contains("\nNet: Keeps 1 deleted path in the Reins trash"), "{detail}");
+    assert!(detail.contains(&format!("Netted command:\n{rewritten}")), "{detail}");
+    // Activity has the net.
+    let log = journal::read(&app.paths, 10, 3_600);
+    let net = log[0].nets.clone().expect("Netted in Activity");
+    assert_eq!(net.kinds, vec![reins_policy::effects::nets::NetKind::Trash]);
+
+    // The harness runs it (with the real `reins` in place of this test program).
+    let exe = std::env::current_exe().unwrap();
+    let command = rewritten.replace(&*exe.to_string_lossy(), env!("CARGO_BIN_EXE_reins"));
+    let ran = std::process::Command::new("sh")
+        .args(["-c", &command])
+        .current_dir(&proj)
+        .env("REINS_NETS_DIR", app.paths.state_dir.join("nets"))
+        .status()
+        .unwrap();
+    assert!(ran.success());
+    assert!(!proj.join("notes").exists());
+    let store = reins_desktop::nets::Store::open(&app.paths);
+    reins_desktop::nets::restore(&store, &net.plan).unwrap();
+    assert_eq!(std::fs::read_to_string(proj.join("notes/todo.md")).unwrap(), "keep me");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn nets_go_back_only_with_an_allow_and_where_the_harness_can_take_them() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let (_dir, proj, config) = project();
+    let run = |h: Harness, input: String| {
+        let (paths, config) = (app.paths.clone(), config.clone());
+        async move {
+            let (out, _, _) = hooks::run(h, input.as_bytes(), &paths, &config, &NoPrompter).await;
+            out.map(|o| serde_json::from_str::<Value>(&o).unwrap())
+        }
+    };
+    let codex = run(Harness::Codex, bash("codex", &proj, "rm -rf notes")).await.unwrap();
+    assert!(codex["hookSpecificOutput"]["updatedInput"]["command"].as_str().unwrap().ends_with("-- rm -rf notes"));
+    let gemini = run(Harness::Gemini, bash("gemini", &proj, "rm -rf notes")).await.unwrap();
+    assert_eq!(gemini["decision"], "allow");
+    assert!(gemini["hookSpecificOutput"]["tool_input"]["command"].as_str().unwrap().ends_with("-- rm -rf notes"));
+    // Cursor's shell hook can't change a command: no net, nothing said about one.
+    let cursor = run(Harness::Cursor, bash("cursor", &proj, "rm -rf notes")).await.unwrap();
+    assert_eq!(cursor["permission"], "allow");
+    assert!(cursor.get("updated_input").is_none());
+    // Denied: no rewrite.
+    mock.plan(&[Step::Denied(Some("No."))]);
+    let denied = run(Harness::ClaudeCode, bash("claude", &proj, "rm -rf notes")).await.unwrap();
+    assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(denied["hookSpecificOutput"].get("updatedInput").is_none());
+    // Not asked (nothing risky): no output at all, no rewrite.
+    assert!(run(Harness::ClaudeCode, bash("claude", &proj, "ls notes")).await.is_none());
+    // Nothing to keep (scratch only): asked, approved, unchanged.
+    let scratch = run(Harness::ClaudeCode, bash("claude", &proj, "rm -rf /tmp/reins-nets-test-nothing")).await.unwrap();
+    assert!(scratch["hookSpecificOutput"].get("updatedInput").is_none(), "{scratch}");
+    let log = journal::read(&app.paths, 20, 3_600);
+    assert_eq!(log.iter().filter(|e| e.nets.is_some()).count(), 2, "Codex and Gemini");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_approved_file_change_keeps_a_copy_first() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let (_dir, proj, config) = project();
+    std::fs::write(proj.join(".env"), "TOKEN=old").unwrap();
+    let input = json!({"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": proj,
+        "tool_input": {"file_path": proj.join(".env"), "content": "TOKEN=new"}})
+    .to_string();
+    let (out, _, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+    assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "allow");
+    assert!(out["hookSpecificOutput"].get("updatedInput").is_none(), "a file tool is not rewritten");
+    let log = journal::read(&app.paths, 10, 3_600);
+    let net = log[0].nets.clone().expect("a snapshot");
+    // The tool writes; the copy brings the old content back.
+    std::fs::write(proj.join(".env"), "TOKEN=new").unwrap();
+    let store = reins_desktop::nets::Store::open(&app.paths);
+    reins_desktop::nets::restore(&store, &net.plan).unwrap();
+    assert_eq!(std::fs::read_to_string(proj.join(".env")).unwrap(), "TOKEN=old");
+}

@@ -6,6 +6,7 @@
 //! saved things back, and [`Store::prune`] drops them after their keeping time.
 
 pub mod git;
+pub mod hook;
 pub mod rm;
 pub mod store;
 

@@ -138,7 +138,9 @@ pub fn prefix(reins: &str, plan: &str) -> String {
 /// A plan id: what may follow `--plan` (letters, digits, `-`, `_`; 6 to 64 of them).
 #[must_use]
 pub fn valid_plan_id(id: &str) -> bool {
-    (6..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    (6..=64).contains(&id.len())
+        && id.as_bytes()[0].is_ascii_alphanumeric()
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 // ---- The rewrite and its proof ----

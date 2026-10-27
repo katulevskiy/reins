@@ -154,6 +154,21 @@ pub struct Entry {
     /// certainty and one line per effect. Shown in Activity; it decides nothing yet.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub effects: Option<reins_policy::effects::Summary>,
+    /// The safety net applied to it (Decisions v2 P3): what was kept, and the id `reins net restore` takes.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub nets: Option<NetRecord>,
+}
+
+/// A safety net applied to a request, as Activity shows it ("Netted · Restore").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetRecord {
+    /// The plan id (`reins net restore <plan>`).
+    pub plan: String,
+    pub kinds: Vec<reins_policy::effects::nets::NetKind>,
+    /// One line per net ("Keeps 2 deleted paths in the Reins trash for 7 days").
+    pub lines: Vec<String>,
+    /// Unix seconds until which it can be restored (the trash's keeping time; refs last longer).
+    pub until: i64,
 }
 
 /// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
@@ -250,6 +265,7 @@ impl Entry {
             autopilot: None,
             leaning: None,
             effects: None,
+            nets: None,
         }
     }
 
@@ -292,6 +308,13 @@ impl Entry {
     #[must_use]
     pub fn effects(mut self, effects: Option<reins_policy::effects::Summary>) -> Self {
         self.effects = effects;
+        self
+    }
+
+    /// The safety net applied to it.
+    #[must_use]
+    pub fn nets(mut self, nets: Option<NetRecord>) -> Self {
+        self.nets = nets;
         self
     }
 
