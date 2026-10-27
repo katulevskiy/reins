@@ -126,6 +126,7 @@ struct GuardianNoticeList: View {
                 .accessibilityIdentifier("guardianNotice:\(n.id)")
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("guardianNotices")
     }
 }

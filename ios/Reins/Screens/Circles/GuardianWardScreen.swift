@@ -133,6 +133,7 @@ struct GuardianWardScreen: View {
             if let view = vm.view { Text(GuardianLogic.leaveMessage(view)) }
         }
         .presentationFeedback(confirmingLeave)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("guardianWardScreen")
     }
 

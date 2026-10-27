@@ -156,6 +156,7 @@ struct CirclesScreen: View {
             Text(person.mine ? "Nothing goes to them any more." : "You no longer decide for them.")
         }
         .presentationFeedback(ending != nil)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("circlesScreen")
     }
 
@@ -225,6 +226,8 @@ struct CirclesScreen: View {
                 }
             }
         }
+        // A container first: an identifier on the group alone replaces every row's own ("circlePerson:l6").
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(id)
     }
 }

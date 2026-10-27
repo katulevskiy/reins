@@ -164,6 +164,7 @@ struct AddCircleSheet: View {
         .interactiveDismissDisabled(vm.busy)
         .task(id: vm.start?.id) { await vm.poll(model) }
         .onDisappear { Task { await vm.cancel(model) } }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("addCircleSheet")
     }
 
