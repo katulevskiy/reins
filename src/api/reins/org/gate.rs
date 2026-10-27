@@ -133,6 +133,19 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
         } => true,
         Existing::NoAccount => false,
     };
+    // A family (P7) has no identity provider: its members joined by an invitation with a new account, and sign in as
+    // they signed up. Nobody joins by signing in (`family::join` is the only way in).
+    if org.identity == IdentityKind::FamilyInvite || org.tier == Tier::Family {
+        return if active {
+            Ok(Decision::Managed {
+                org: org.org_uuid.clone(),
+                jit: false,
+                verified: false,
+            })
+        } else {
+            Err(NOT_THIS_WAY.to_owned())
+        };
+    }
     // Not set up: only its members (its creator) get in, as they signed in before.
     if org.identity == IdentityKind::None {
         return if active {
@@ -150,7 +163,7 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
     let through_workos_org = org.workos_org_id.is_some() && sign_in.organization_id == org.workos_org_id.as_deref();
     let through_org = through_workos_org
         && match org.identity {
-            IdentityKind::None => false,
+            IdentityKind::None | IdentityKind::FamilyInvite => false,
             IdentityKind::Sso => sign_in.method == Some("SSO"),
             IdentityKind::GoogleWorkspace => sign_in.method == Some("GoogleOAuth"),
             IdentityKind::GithubOrg => sign_in.method == Some("GitHubOAuth") && sign_in.github_member == Some(true),
@@ -202,7 +215,7 @@ pub async fn hint_for(domain: &str, conn: &DbConn) -> Option<OrgHint> {
         IdentityKind::Sso => None,
         IdentityKind::GoogleWorkspace => Some("GoogleOAuth"),
         IdentityKind::GithubOrg => Some("GitHubOAuth"),
-        IdentityKind::None => return None,
+        IdentityKind::None | IdentityKind::FamilyInvite => return None,
     };
     org.workos_org_id.map(|id| OrgHint {
         organization_id: Some(id),
@@ -437,6 +450,26 @@ mod tests {
             jit,
             verified: true,
         })
+    }
+
+    #[test]
+    fn a_family_lets_in_its_members_only_and_nobody_joins_by_signing_in() {
+        let mut o = org(IdentityKind::FamilyInvite, Tier::Family);
+        o.workos_org_id = None;
+        o.domains.clear();
+        let member = decide(Some(&o), MEMBER, &via("GoogleOAuth", None));
+        assert_eq!(
+            member,
+            Ok(Decision::Managed {
+                org: "o1".to_owned(),
+                jit: false,
+                verified: false,
+            }),
+            "a member signs in as they signed up, never as an org-verified identity"
+        );
+        assert_eq!(decide(Some(&o), Existing::NoAccount, &via("GoogleOAuth", None)).unwrap_err(), NOT_THIS_WAY);
+        assert_eq!(decide(Some(&o), Existing::NotMember, &via("GoogleOAuth", None)), Ok(Decision::Personal));
+        assert!(decide(Some(&o), Existing::Member { active: false }, &via("GoogleOAuth", None)).is_err());
     }
 
     #[test]

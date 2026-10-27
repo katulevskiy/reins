@@ -10,7 +10,7 @@
 //!   and the action must still be valid (the last Org owner is never removed or demoted).
 
 use diesel::prelude::*;
-use reins_proto::org::{AdminAction, Capability, IdentityKind, Role, Subject};
+use reins_proto::org::{AdminAction, Capability, IdentityKind, Role, Subject, Tier};
 use serde_json::json;
 
 use super::{
@@ -376,6 +376,9 @@ fn validate(
             directory_id,
             github_org,
         } => {
+            if tenant.tier() == Tier::Family || *identity == IdentityKind::FamilyInvite {
+                return Err(OrgError::Invalid("A family's members join by invitation only."));
+            }
             if !tenant.tier().allows(*identity) {
                 return Err(OrgError::Invalid("This plan signs in with Google Workspace or a GitHub organization."));
             }
@@ -410,6 +413,9 @@ fn validate(
         AdminAction::SetTier {
             tier,
         } => {
+            if (*tier == Tier::Family) != (tenant.tier() == Tier::Family) {
+                return Err(OrgError::Invalid("A family stays a family, and an organization can't become one."));
+            }
             if !tier.allows(tenant.identity()) {
                 return Err(OrgError::Invalid("Change how members sign in first: this plan has no SSO."));
             }

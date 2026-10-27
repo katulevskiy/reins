@@ -15,24 +15,30 @@ pub enum Tier {
     Business,
     /// Business, dedicated or self-hosted.
     Enterprise,
+    /// Enforceable guardianship (08 R7, P7): the guardians are the org, the children its members. No domain and no
+    /// identity provider: members join by an invitation bound to their exact email, with a new account (08 R6).
+    Family,
 }
 
 impl Tier {
-    pub const ALL: [Self; 3] = [Self::Team, Self::Business, Self::Enterprise];
+    pub const ALL: [Self; 4] = [Self::Team, Self::Business, Self::Enterprise, Self::Family];
 
-    /// Whether members of a tenant on this tier may sign in with `identity`.
+    /// Whether members of a tenant on this tier may sign in with `identity`. A family takes invitations only, and no
+    /// other tier takes them.
     #[must_use]
     pub fn allows(self, identity: IdentityKind) -> bool {
-        match identity {
-            IdentityKind::None | IdentityKind::GoogleWorkspace | IdentityKind::GithubOrg => true,
-            IdentityKind::Sso => self != Self::Team,
+        match (self, identity) {
+            (Self::Family, i) => i == IdentityKind::FamilyInvite,
+            (_, IdentityKind::FamilyInvite) => false,
+            (_, IdentityKind::None | IdentityKind::GoogleWorkspace | IdentityKind::GithubOrg) => true,
+            (_, IdentityKind::Sso) => self != Self::Team,
         }
     }
 
     /// Whether the tier provisions members from a directory (SCIM).
     #[must_use]
     pub fn scim(self) -> bool {
-        self != Self::Team
+        matches!(self, Self::Business | Self::Enterprise)
     }
 
     #[must_use]
@@ -41,6 +47,7 @@ impl Tier {
             Self::Team => "team",
             Self::Business => "business",
             Self::Enterprise => "enterprise",
+            Self::Family => "family",
         }
     }
 
@@ -55,6 +62,7 @@ impl Tier {
             Self::Team => "Team",
             Self::Business => "Business",
             Self::Enterprise => "Enterprise",
+            Self::Family => "Family",
         }
     }
 }
@@ -71,16 +79,18 @@ pub enum IdentityKind {
     GithubOrg,
     /// SAML or OIDC through the tenant's WorkOS organization (Business, Enterprise).
     Sso,
+    /// A family's invitation (P7): bound to one exact email and a new account; the sign-in itself is the ordinary one.
+    FamilyInvite,
 }
 
 impl IdentityKind {
-    pub const ALL: [Self; 4] = [Self::None, Self::GoogleWorkspace, Self::GithubOrg, Self::Sso];
+    pub const ALL: [Self; 5] = [Self::None, Self::GoogleWorkspace, Self::GithubOrg, Self::Sso, Self::FamilyInvite];
 
     /// The WorkOS `authentication_method` values a sign-in through this identity has.
     #[must_use]
     pub fn workos_methods(self) -> &'static [&'static str] {
         match self {
-            Self::None => &[],
+            Self::None | Self::FamilyInvite => &[],
             Self::GoogleWorkspace => &["GoogleOAuth"],
             Self::GithubOrg => &["GitHubOAuth"],
             Self::Sso => &["SSO"],
@@ -94,6 +104,7 @@ impl IdentityKind {
             Self::GoogleWorkspace => "google_workspace",
             Self::GithubOrg => "github_org",
             Self::Sso => "sso",
+            Self::FamilyInvite => "family_invite",
         }
     }
 
@@ -109,6 +120,7 @@ impl IdentityKind {
             Self::GoogleWorkspace => "Google Workspace",
             Self::GithubOrg => "GitHub organization",
             Self::Sso => "SSO (SAML or OIDC)",
+            Self::FamilyInvite => "Family invitation",
         }
     }
 }
@@ -184,6 +196,19 @@ impl Role {
     #[must_use]
     pub fn is_privileged(self) -> bool {
         matches!(self, Self::OrgOwner | Self::SecurityAdmin | Self::ConnectionAdmin | Self::PolicyAuthor)
+    }
+}
+
+/// What a family's guardians hold (P7): they own the family, set its policy, connect its members' accounts and approve.
+pub const GUARDIAN_ROLES: [Role; 4] = [Role::OrgOwner, Role::SecurityAdmin, Role::ConnectionAdmin, Role::Approver];
+
+/// A role's name in a family (`tier == Family`): every guardian role reads "Guardian", the rest "Family member".
+#[must_use]
+pub fn family_role_label(role: Role) -> &'static str {
+    if GUARDIAN_ROLES.contains(&role) {
+        "Guardian"
+    } else {
+        "Family member"
     }
 }
 
@@ -754,7 +779,7 @@ mod tests {
         assert!(Tier::Team.allows(IdentityKind::GithubOrg));
         assert!(!Tier::Team.allows(IdentityKind::Sso));
         for tier in [Tier::Business, Tier::Enterprise] {
-            for id in IdentityKind::ALL {
+            for id in IdentityKind::ALL.into_iter().filter(|i| *i != IdentityKind::FamilyInvite) {
                 assert!(tier.allows(id), "{tier:?} {id:?}");
             }
             assert!(tier.scim());
@@ -764,6 +789,39 @@ mod tests {
             assert_eq!(Tier::parse(t.as_str()), Some(t));
         }
         assert_eq!(serde_json::to_string(&IdentityKind::GithubOrg).unwrap(), "\"github_org\"");
+    }
+
+    #[test]
+    fn family_allows_only_invites() {
+        assert!(Tier::ALL.contains(&Tier::Family));
+        assert_eq!((Tier::Family.label(), Tier::Family.as_str()), ("Family", "family"));
+        assert!(!Tier::Family.scim(), "a family has no directory");
+        for id in IdentityKind::ALL {
+            assert_eq!(Tier::Family.allows(id), id == IdentityKind::FamilyInvite, "{id:?}");
+        }
+        assert_eq!(Tier::parse("family"), Some(Tier::Family));
+        assert_eq!(IdentityKind::parse("family_invite"), Some(IdentityKind::FamilyInvite));
+        assert!(IdentityKind::FamilyInvite.workos_methods().is_empty(), "membership comes from the invitation");
+    }
+
+    #[test]
+    fn other_tiers_refuse_family_invites() {
+        for tier in [Tier::Team, Tier::Business, Tier::Enterprise] {
+            assert!(!tier.allows(IdentityKind::FamilyInvite), "{tier:?}");
+        }
+    }
+
+    #[test]
+    fn guardian_roles_label_as_guardian() {
+        for role in GUARDIAN_ROLES {
+            assert_eq!(family_role_label(role), "Guardian");
+        }
+        assert_eq!(family_role_label(Role::Member), "Family member");
+        // Guardians can do what a family needs: invite, set the policy, connect accounts, approve.
+        for cap in [Capability::ManageMembers, Capability::ActivatePolicy, Capability::ManageConnections, Capability::Approve]
+        {
+            assert!(GUARDIAN_ROLES.iter().any(|r| role_grants(*r, cap)), "{cap:?}");
+        }
     }
 
     #[test]
