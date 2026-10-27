@@ -546,38 +546,159 @@ fn allowed_program(program: &str) -> bool {
     !program.is_empty() && (SAFE_BUILTINS.contains(&program) || !BUILTINS.contains(&program))
 }
 
-/// A word with nothing computed in it: literal text, quoted text, or a leading `~` (the home folder, from an
-/// environment the script can't change, since it assigns nothing). With `globs`, also a glob: only for `rm` and `git`
-/// operands, which the net reads again; anywhere else a glob could turn into an option (`printf -*` → `-v NAME`).
-fn plain_word(w: &Word, globs: bool) -> bool {
-    w.0.iter()
-        .all(|p| matches!(p, Part::Lit(_) | Part::Quoted(_) | Part::Tilde(_)) || (globs && matches!(p, Part::Glob(_))))
+/// A name a netted script may assign, or loop over: one letter. No shell (bash, zsh, dash, ksh) gives a one-letter name
+/// a meaning, and neither git nor `reins` reads one, so setting it can't change what a later command word runs, where
+/// it looks, or what the net's runtime sees (`PATH`, `IFS`, `HOME`, `CDPATH`, zsh's `path` or `functions` all have
+/// longer names).
+fn assignable(name: &str) -> bool {
+    name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic()
 }
 
-/// Whether a script may be netted at all. Fail closed by design: every command in it is a simple command whose words
-/// are all plain ([`plain_word`]) and whose program passes [`allowed_program`], with no assignment, no heredoc, and only plain
-/// redirection targets; lists, pipelines, `&&` and `||` join them. No function, loop, conditional, subshell,
-/// substitution or arithmetic, and globs only in `rm` and `git` words.
-/// Anything else keeps its level and is asked as it would be without a net.
-fn allowed(script: &Script) -> bool {
-    script.0.iter().all(|ao| {
-        ao.pipelines.iter().all(|p| {
-            p.commands.iter().all(|c| match c {
+/// A word with nothing computed in it but variables the script itself set: literal text, quoted text, a leading `~`
+/// (the home folder, from an environment the script can't change: it assigns no name that could), and `$x` or `${x}`
+/// for a name in `known`. With `globs`, also a glob: only for `rm` and `git` operands, which the net reads again;
+/// anywhere else a glob could turn into an option (`printf -*` → `-v NAME`).
+fn plain_word(w: &Word, globs: bool, known: &[String]) -> bool {
+    w.0.iter().all(|p| match p {
+        Part::Lit(_) | Part::Quoted(_) | Part::Tilde(_) => true,
+        Part::Glob(_) => globs,
+        Part::Var(n) | Part::Split(n) => known.contains(n),
+        _ => false,
+    })
+}
+
+/// A value a netted script may give a variable: literal text, quoted text or a leading `~`, with no glob or blank in
+/// it (expanded unquoted, it stays one word and names no other file).
+fn plain_value(w: &Word) -> bool {
+    w.0.iter().all(|p| match p {
+        Part::Lit(t) | Part::Quoted(t) => !t.contains(|c: char| c.is_whitespace() || matches!(c, '*' | '?' | '[')),
+        Part::Tilde(None) => true,
+        _ => false,
+    })
+}
+
+/// Whether one `&&`/`||` list may be netted, with `known` the variables the script set before it (updated with the
+/// ones it sets); `sure`: an assignment first in it surely runs in this shell (it is a top-level command not sent to
+/// the background with `&`). Fail closed by design: every command in it is
+/// - a simple command whose program is literal and passes [`allowed_program`], whose words are all plain
+///   ([`plain_word`]), with no assignment, no heredoc, and only plain redirection targets;
+/// - an assignment of a plain value ([`plain_value`]) to a one-letter name ([`assignable`]). The name is known after it
+///   only when the assignment surely runs: alone, first in its list, with `sure`. Anywhere else it is unknown from
+///   then on;
+/// - a `for` over plain values with a one-letter variable, whose body passes the same rules.
+///
+/// Pipelines, `&&` and `||` join them. No function, `while`, conditional, subshell, substitution or arithmetic, and
+/// globs only in `rm` and `git` words. Anything else keeps its level and is asked as it would be without a net.
+fn allowed_list(ao: &ast::AndOr, known: &mut Vec<String>, sure: bool) -> bool {
+    for (i, p) in ao.pipelines.iter().enumerate() {
+        let sure = sure && i == 0 && p.commands.len() == 1;
+        for c in &p.commands {
+            match c {
+                Command::Simple(s) if s.words.is_empty() => {
+                    if !s.heredocs.is_empty()
+                        || !s.redirects.is_empty()
+                        || s.assigns.is_empty()
+                        || !s.assigns.iter().all(|(n, v)| assignable(n) && plain_value(v))
+                    {
+                        return false;
+                    }
+                    for (n, _) in &s.assigns {
+                        known.retain(|k| k != n);
+                        if sure {
+                            known.push(n.clone());
+                        }
+                    }
+                }
                 Command::Simple(s) => {
                     let Some(Some(program)) = s.words.first().map(Word::literal) else {
                         return false;
                     };
                     let globs = matches!(program.as_str(), "rm" | "git");
-                    allowed_program(&program)
+                    if !(allowed_program(&program)
                         && s.assigns.is_empty()
                         && s.heredocs.is_empty()
-                        && s.words.iter().all(|w| plain_word(w, globs))
-                        && s.redirects.iter().all(|r| plain_word(&r.target, false))
+                        && s.words.iter().all(|w| plain_word(w, globs, known))
+                        && s.redirects.iter().all(|r| plain_word(&r.target, false, known)))
+                    {
+                        return false;
+                    }
                 }
-                _ => false,
-            })
-        })
-    })
+                Command::For {
+                    var,
+                    words: Some(words),
+                    body,
+                    redirects,
+                } => {
+                    if !assignable(var)
+                        || !words.iter().all(plain_value)
+                        || !redirects.iter().all(|r| plain_word(&r.target, false, known))
+                    {
+                        return false;
+                    }
+                    // A name the body sets has the last run's value when the next run starts: unknown in the body,
+                    // and after it.
+                    let mut set = vec![var.clone()];
+                    visit_script(body, &mut |c: &Command| {
+                        if let Command::Simple(s) = c {
+                            set.extend(s.assigns.iter().map(|(n, _)| n.clone()));
+                        }
+                    });
+                    known.retain(|k| !set.contains(k));
+                    let mut inner = known.clone();
+                    inner.push(var.clone());
+                    // The body's own `&` is not in the syntax tree: nothing it assigns is sure.
+                    if !body.0.iter().all(|ao| allowed_list(ao, &mut inner, false)) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
+}
+
+/// The leading top-level commands of `command` that may be netted ([`allowed_list`]): where they end (a byte offset:
+/// the separator after the last one, or the end). A net applies only in them: what comes after runs once they are done
+/// (or, after `&`, in a shell they no longer share), so nothing in it can change what they run, and it keeps its own
+/// level. `None` when none may be netted, or the ends can't be found.
+fn allowed_end(command: &str, script: &Script) -> Option<usize> {
+    // Where each top-level command ends: the syntax tree keeps no offsets.
+    let mut ends: Vec<usize> = Vec::new();
+    let mut tries = 0;
+    for (i, _) in command.char_indices().filter(|(_, c)| matches!(c, ';' | '&' | '\n')) {
+        if ends.len() >= script.0.len() {
+            break;
+        }
+        tries += 1;
+        if tries > 4_096 {
+            return None;
+        }
+        let p = ast::parse(&command[..i]);
+        // A cut before a trailing `&` reads as the same command run in the foreground.
+        let mut want = script.0[..=ends.len()].to_vec();
+        if let Some(last) = want.last_mut() {
+            last.background = false;
+        }
+        if p.complete && p.script.0 == want {
+            ends.push(i);
+        }
+    }
+    let mut known = Vec::new();
+    let mut end = None;
+    for (n, ao) in script.0.iter().enumerate() {
+        // The last one may end at the end of the text; any other must have been found.
+        let at = match ends.get(n) {
+            Some(e) => *e,
+            None if n + 1 == script.0.len() => command.len(),
+            None => break,
+        };
+        if !allowed_list(ao, &mut known, !ao.background) {
+            break;
+        }
+        end = Some(at);
+    }
+    end
 }
 
 /// Places in `text` where `word` stands alone as a token: after the start, a blank, `;&|(){}!` or a backtick, and
@@ -655,15 +776,20 @@ pub fn rewrite(
         return None;
     }
     let original = ast::parse(command);
-    // Keywords the syntax tree keeps no word for (`time`, `coproc`): anywhere they stand alone as a word, no net.
-    let keywords = ["time", "coproc"].iter().any(|k| !candidates(command, k).is_empty());
-    if !original.complete || keywords || !allowed(&original.script) {
+    if !original.complete {
+        return None;
+    }
+    // Only the leading top-level commands that pass the allowlist are netted.
+    let end = allowed_end(command, &original.script)?;
+    // Keywords the syntax tree keeps no word for (`time`, `coproc`): anywhere they stand alone as a word among them,
+    // no net.
+    if ["time", "coproc"].iter().any(|k| candidates(command, k).into_iter().any(|i| i < end)) {
         return None;
     }
     let pre = prefix(r);
     let kept: Vec<usize> = candidates(command, word)
         .into_iter()
-        .filter(|&i| proven(&original.script, &insert_at(command, &[i], &pre), r, 1, wanted))
+        .filter(|&i| i < end && proven(&original.script, &insert_at(command, &[i], &pre), r, 1, wanted))
         .collect();
     if kept.is_empty() {
         return None;
@@ -1121,7 +1247,7 @@ fn cd_targets(script: &Script, ctx: &Context) -> Vec<String> {
         if let Command::Simple(s) = c
             && let Some(Some(program)) = s.words.first().map(Word::literal)
             && matches!(program.as_str(), "cd" | "pushd")
-            && let Some(Some(target)) = s.words.get(1).map(Word::literal)
+            && let Some(Some(target)) = s.words.get(1).map(cd_word)
         {
             let from: Vec<String> = out.clone();
             for base in from {
@@ -1134,6 +1260,15 @@ fn cd_targets(script: &Script, ctx: &Context) -> Vec<String> {
     });
     out.retain(|d| d.starts_with('/'));
     out
+}
+
+/// A `cd` target as written, when it is literal but for a leading unquoted `~` (the home folder, which
+/// [`super::normalize`] reads from the plan's home). A quoted or escaped `~` is a folder named `~`: not read.
+fn cd_word(w: &Word) -> Option<String> {
+    match w.0.split_first() {
+        Some((Part::Tilde(None), rest)) => Word(rest.to_vec()).literal().map(|r| format!("~{r}")),
+        _ => w.literal().filter(|t| !t.starts_with('~')),
+    }
 }
 
 /// The git net of the command that starts at `at` (for its words only).

@@ -222,6 +222,35 @@ fn secrets_by_name() {
     assert!(a.floor.is_empty(), "{a:?}");
 }
 
+/// Listing tools read names, sizes, times and links, never contents: a secret's name is no secret read. Contents
+/// they do read (a list of names, an option's file) still are.
+#[test]
+fn listing_reads_no_secret() {
+    for cmd in [
+        "du -sh /home/me/Downloads/* 2>/dev/null | sort -rh | head -20",
+        "ls -la ~/.aws/credentials ~/.ssh/id_ed25519",
+        "stat -c %s ~/.ssh/id_rsa",
+        "readlink -f ~/.config/gcloud/credentials.db",
+    ] {
+        let a = run(cmd);
+        assert!(a.floor.is_empty() && a.certainty == Certainty::Full, "{cmd}: {a:?}");
+    }
+    for cmd in [
+        "cat /home/me/Downloads/*",
+        "du --files0-from=/home/me/.ssh/id_ed25519",
+        "du --files0-from /home/me/.ssh/id_ed25519",
+        "du --files0=/home/me/.ssh/id_ed25519",
+        "du --f /home/me/.ssh/id_ed25519",
+        "du --fil=/home/me/.ssh/id_ed25519 -s",
+        "wc --files0 /home/me/.ssh/id_ed25519",
+        "du -X ~/.ssh/id_rsa .",
+        "wc -l --files0-from=list.txt",
+        "sort --files0-from=list.txt",
+    ] {
+        assert!(run(cmd).floor.contains(&Floor::SecretRead), "{cmd}: {:?}", run(cmd));
+    }
+}
+
 #[test]
 fn python_edits_are_writes_in_the_workspace() {
     let a = run(
@@ -410,7 +439,29 @@ fn security_review_findings() {
     assert!(run("make deploy").floor.contains(&Floor::Publish));
     assert_eq!(level("hyprctl dispatch exec rm -rf ~/Documents"), Level::L3);
     assert_eq!(level("hyprctl --batch 'keyword x 1; dispatch exec rm -rf ~/Documents'"), Level::L3);
-    assert_eq!(run("hyprctl dispatch 'hl.dsp.window.float({ x = 1 })'").certainty, Certainty::None);
+    // The Lua form: one window call with literal values is a window action; anything else in it is not read.
+    for cmd in [
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 })'",
+        "hyprctl dispatch 'hl.dsp.window.resize({ x = 1000, y = 680, window = \"pid:1234\" })'",
+        "hyprctl dispatch 'hl.dsp.window.center({ window = \"pid:1234\" })' >/dev/null",
+    ] {
+        let a = run(cmd);
+        assert!(a.effects.is_empty() && a.certainty == Certainty::Full, "{cmd}: {a:?}");
+    }
+    for cmd in [
+        "hyprctl dispatch 'hl.dsp.exec_cmd(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = os.execute(\"rm -rf ~\") })'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }) or os.execute(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }); os.execute(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 }); clients = os.execute(\"rm -rf ~\")'",
+        "hyprctl dispatch 'hl.dsp.window.float({ x = 1 });clients -j'",
+        "hyprctl dispatch 'hl.dsp.window.float({ w = \"a\" .. x })'",
+        "hyprctl dispatch 'hl.dsp.window.float({ w = [[a]] })'",
+        "hyprctl dispatch 'hl.dsp.window.close({ window = \"pid:1\" })'",
+        "hyprctl dispatch \"hl.dsp.window.float({ window = \\\"$W\\\" })\"",
+    ] {
+        assert_eq!(run(cmd).certainty, Certainty::None, "{cmd}: {:?}", run(cmd));
+    }
     assert_eq!(run("hyprctl clients -j").effects, vec![]);
     // 4. Settings: only the read-only forms are nothing.
     assert_eq!(run("sysctl kernel.hostname").effects, vec![]);
@@ -780,4 +831,21 @@ proptest::proptest! {
         });
         proptest::prop_assert!(a.level >= Level::L0);
     }
+}
+
+/// A `cd` in a pipeline or in a list sent to the background runs in a shell of its own: what follows stays where it
+/// was.
+#[test]
+fn a_cd_in_a_pipeline_or_the_background_moves_no_one() {
+    for cmd in [
+        "cd /home/me/Pictures | true; rm -rf build",
+        "cd /home/me/Pictures & rm -rf build",
+        "cd /home/me/Pictures && sleep 1 & rm -rf build",
+    ] {
+        let d = deletes(&run(cmd));
+        assert_eq!(d.first().map(|x| x.0.as_str()), Some("/home/me/Documents/dev/app/build"), "{cmd}: {d:?}");
+    }
+    // In the foreground it does move.
+    let d = deletes(&run("cd /home/me/Pictures; rm -rf build"));
+    assert_eq!(d.first().map(|x| x.0.as_str()), Some("/home/me/Pictures/build"), "{d:?}");
 }

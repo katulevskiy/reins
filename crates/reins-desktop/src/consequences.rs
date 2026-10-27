@@ -170,7 +170,7 @@ fn shadow_of(
 ) -> Shadow {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let at = match (cwd, command) {
-        (Some(c), Some(cmd)) => graph::repo_at(cmd, c, git_top(c).as_deref(), &home),
+        (Some(c), Some(cmd)) => graph::repo_at_in(cmd, c, git_top(c).as_deref(), &home, &real_path),
         _ => graph::RepoAt::Cwd,
     };
     // The repository the command acts in: the worktree's, a leading `cd`'s target, or none.
@@ -180,9 +180,13 @@ fn shadow_of(
         graph::RepoAt::Unknown => None,
     };
     // The agent's environment can point git elsewhere, or set its configuration: then nothing is known.
-    let env_redirects = std::env::vars_os().any(|(k, _)| {
+    let env_redirects = std::env::vars_os().any(|(k, v)| {
         let k = k.to_string_lossy();
-        k == "GIT_DIR" || k == "GIT_WORK_TREE" || k.starts_with("GIT_CONFIG")
+        k == "GIT_DIR"
+            || k == "GIT_WORK_TREE"
+            || k == "GIT_COMMON_DIR"
+            || k.starts_with("GIT_CONFIG")
+            || (k == "CDPATH" && !v.is_empty())
     });
     let head = dir.filter(|_| !env_redirects).and_then(|d| {
         let head = crate::hooks::git_head(Path::new(&d))?;
@@ -192,6 +196,17 @@ fn shadow_of(
         (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
     });
     shadow_net(config, a, head.as_ref(), connection, now, netted)
+}
+
+/// `path`'s real place: the deepest folder of it that exists, with symlinks resolved, and the rest as written.
+fn real_path(path: &str) -> Option<String> {
+    let p = Path::new(path);
+    let (base, rest) = p.ancestors().find_map(|a| std::fs::canonicalize(a).ok().map(|r| (r, p.strip_prefix(a))))?;
+    let rest = rest.ok()?;
+    if rest.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    Some(base.join(rest).to_string_lossy().into_owned())
 }
 
 /// `git remote get-url --push origin` in `dir`: where git would push `origin` (no hooks or programs run for it).
@@ -542,6 +557,26 @@ mod tests {
         assert_eq!(git_push_url(&d).as_deref(), Some("https://evil.example/x/y"));
         assert_eq!(zone(), Zone::Outside);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A symlink inside the repository that leads out of it is not the repository; a folder the command makes is.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_the_worktree_is_another_place() {
+        let base =
+            std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("reins-symlink-{}", std::process::id()));
+        let repo = base.join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(base.join("other")).unwrap();
+        std::os::unix::fs::symlink(base.join("other"), repo.join("link")).unwrap();
+        let cwd = repo.to_string_lossy().into_owned();
+        let at = |cmd: &str| graph::repo_at_in(cmd, &cwd, Some(&cwd), "/home/me", &real_path);
+        assert_eq!(at("cd link && git push origin feat/x"), graph::RepoAt::Unknown);
+        assert_eq!(at("cd link/deeper && git push origin feat/x"), graph::RepoAt::Unknown);
+        assert_eq!(at("cd src && git push origin feat/x"), graph::RepoAt::Cwd);
+        assert_eq!(at("mkdir -p new && cd new && git push origin feat/x"), graph::RepoAt::Cwd);
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
