@@ -227,6 +227,8 @@ pub enum CircleError {
     Stale,
     #[error("the roster does not chain from the pinned entry")]
     BrokenChain,
+    #[error("this is not newer than what was accepted before")]
+    Replayed,
 }
 
 // ---- checks -------------------------------------------------------------------------------------------------------
@@ -403,6 +405,12 @@ impl Arrangement {
 pub fn arrangement_body(a: &Arrangement) -> Result<String, ValidationError> {
     a.validate()?;
     serde_json::to_string(a).map_err(|e| invalid("arrangement", e.to_string()))
+}
+
+/// The SHA-256 (hex) of a signed arrangement's body: what a [`LinkChange`] names.
+#[must_use]
+pub fn arrangement_hash(body: &str) -> String {
+    hex32(&sha256(body.as_bytes()))
 }
 
 /// What the helper's owner key signs: context `reins/circle-arrangement/v1` and the body's SHA-256.
@@ -798,6 +806,12 @@ pub enum Side {
 pub struct LinkChange {
     pub v: u32,
     pub link: String,
+    /// [`arrangement_hash`] of the signed arrangement it changes: a change of one arrangement means nothing for
+    /// another, or for a later revision.
+    pub arrangement: String,
+    /// 1, 2, …: one more than the last change of this link either side accepted. A change that isn't strictly newer is
+    /// a replay ([`SignedChange::verify`]).
+    pub seq: u64,
     pub state: LinkState,
     pub by: Side,
     pub at: i64,
@@ -808,6 +822,10 @@ impl LinkChange {
         crate::check_version(self.v)?;
         if !valid_id(&self.link) {
             return Err(invalid("link", "must be 32 lowercase hex characters"));
+        }
+        digest("arrangement", &self.arrangement)?;
+        if self.seq == 0 {
+            return Err(invalid("seq", "starts at 1"));
         }
         if self.by == Side::Helper && self.state != LinkState::Ended {
             return Err(invalid("state", "a helper can only end an arrangement"));
@@ -839,14 +857,24 @@ impl SignedChange {
         Ok(c)
     }
 
-    /// The change, if `key` (the changer's pinned owner key) signed it.
+    /// The change, if `key` (the changer's pinned owner key) signed it, for this arrangement (`arrangement`: its
+    /// [`arrangement_hash`]), and it is strictly newer than `last_seq` (the last change this phone accepted for the
+    /// link; 0 for none). An older or repeated change is [`CircleError::Replayed`].
     pub fn verify(
         &self,
         key: &str,
+        arrangement: &str,
+        last_seq: u64,
         verify: impl Fn(&[u8; 32], &[u8], &[u8; 64]) -> bool,
     ) -> Result<LinkChange, CircleError> {
         let c = self.change()?;
         verify_sig(key, &change_message(&self.body), &self.sig, &verify)?;
+        if c.arrangement != arrangement {
+            return Err(CircleError::Mismatch("arrangement"));
+        }
+        if c.seq <= last_seq {
+            return Err(CircleError::Replayed);
+        }
         Ok(c)
     }
 }
@@ -914,7 +942,77 @@ pub struct ReviewCard {
     pub deadline: i64,
 }
 
+/// Longest card fields (characters).
+pub const MAX_CARD_TITLE: usize = 200;
+pub const MAX_CARD_LINE: usize = 300;
+pub const MAX_CARD_DETAIL: usize = 2_000;
+pub const MAX_CARD_SHORT: usize = 120;
+pub const MAX_ACCOUNT_CHARS: usize = 254;
+
+/// Whether `c` may stand in signed text a person reads: no control character (a newline only where `newlines`), and
+/// nothing that hides or reorders text (bidi controls, zero-width characters: [`crate::payments::is_format_char`]).
+fn shown_char(c: char, newlines: bool) -> bool {
+    (!c.is_control() || (newlines && c == '\n')) && !crate::payments::is_format_char(c)
+}
+
+/// Text that may be empty: at most `max` characters, every one [`shown_char`].
+fn shown(field: &'static str, value: &str, max: usize, newlines: bool) -> Result<(), ValidationError> {
+    if value.chars().count() > max {
+        return Err(invalid(field, format!("at most {max} characters")));
+    }
+    if !value.chars().all(|c| shown_char(c, newlines)) {
+        return Err(invalid(field, "must not contain control or invisible formatting characters"));
+    }
+    Ok(())
+}
+
+/// `value` with every character [`shown_char`] refuses removed, cut to `max` characters: what a signer writes, so
+/// that the receiver's check ([`shown`]) passes.
+#[must_use]
+pub fn shown_text(value: &str, max: usize, newlines: bool) -> String {
+    value.chars().filter(|c| shown_char(*c, newlines)).take(max).collect()
+}
+
 impl ReviewCard {
+    /// Every text field within its length, with no control, bidi or invisible character (empty is allowed, except
+    /// the title).
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        clean("card.title", &self.title, MAX_CARD_TITLE)?;
+        shown("card.subtitle", &self.subtitle, MAX_CARD_LINE, false)?;
+        shown("card.headline", &self.headline, MAX_CARD_LINE, false)?;
+        shown("card.service", &self.service, MAX_CARD_SHORT, false)?;
+        if let Some(account) = &self.account {
+            shown("card.account", account, MAX_ACCOUNT_CHARS, false)?;
+        }
+        shown("card.agent", &self.agent, MAX_CARD_SHORT, false)?;
+        shown("card.line", &self.line, MAX_CARD_LINE, false)?;
+        if let Some(detail) = &self.detail {
+            shown("card.detail", detail, MAX_CARD_DETAIL, true)?;
+        }
+        Ok(())
+    }
+
+    /// The same card with every text field made valid ([`shown_text`]): what the owner's phone signs.
+    #[must_use]
+    pub fn cleaned(self) -> Self {
+        let title = shown_text(&self.title, MAX_CARD_TITLE, false);
+        Self {
+            title: if title.is_empty() {
+                "Request".to_owned()
+            } else {
+                title
+            },
+            subtitle: shown_text(&self.subtitle, MAX_CARD_LINE, false),
+            headline: shown_text(&self.headline, MAX_CARD_LINE, false),
+            service: shown_text(&self.service, MAX_CARD_SHORT, false),
+            account: self.account.map(|a| shown_text(&a, MAX_ACCOUNT_CHARS, false)),
+            agent: shown_text(&self.agent, MAX_CARD_SHORT, false),
+            line: shown_text(&self.line, MAX_CARD_LINE, false),
+            detail: self.detail.map(|d| shown_text(&d, MAX_CARD_DETAIL, true)),
+            ..self
+        }
+    }
+
     /// The card a helper with `redaction` may see.
     #[must_use]
     pub fn redacted(mut self, redaction: Redaction) -> Self {
@@ -934,6 +1032,44 @@ pub struct Notice {
     pub at: i64,
 }
 
+impl Notice {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        clean("notice.text", &self.text, MAX_CARD_LINE)?;
+        if let Some(outcome) = &self.outcome {
+            shown("notice.outcome", outcome, MAX_CARD_SHORT, false)?;
+        }
+        Ok(())
+    }
+}
+
+/// The other side's current approval phone, as [`peer_keys`] verified it: what a packet or an answer must name and be
+/// signed by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Signer<'a> {
+    pub device_id: &'a str,
+    pub sign_pub: &'a str,
+    pub epoch: u64,
+    pub entry_hash: &'a str,
+}
+
+impl Signer<'_> {
+    /// A message names the entry it was signed under. An older entry (a stale chain, a phone since replaced) or one
+    /// the verified chain never reached are both refused.
+    fn check(&self, device_id: &str, epoch: u64, entry_hash: &str) -> Result<(), CircleError> {
+        if epoch < self.epoch {
+            return Err(CircleError::NotCurrentSigner);
+        }
+        if epoch > self.epoch || entry_hash != self.entry_hash {
+            // The signer says its roster is newer than the chain this phone was shown: the chain is stale.
+            return Err(CircleError::BrokenChain);
+        }
+        if device_id != self.device_id {
+            return Err(CircleError::NotCurrentSigner);
+        }
+        Ok(())
+    }
+}
+
 /// What the owner's approval phone signs into a packet.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PacketBody {
@@ -950,9 +1086,11 @@ pub struct PacketBody {
     pub card: Option<ReviewCard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<Notice>,
-    /// The owner's approval phone (its Vaultwarden device id) and its roster epoch.
+    /// The owner's approval phone (its Vaultwarden device id), its roster epoch and that entry's hash: the receiver
+    /// refuses a roster that doesn't reach this entry, so a stale chain can't vouch for a signer.
     pub device_id: String,
     pub epoch: u64,
+    pub entry_hash: String,
     pub at: i64,
 }
 
@@ -966,18 +1104,17 @@ impl PacketBody {
         if !valid_nonce16(&self.nonce) {
             return Err(invalid("nonce", "must be 16 bytes, base64url"));
         }
-        match self.kind {
-            PacketKind::Review if self.card.is_none() || self.notice.is_some() => {
-                return Err(invalid("card", "a review carries a card and no notice"));
-            }
-            PacketKind::Notice if self.notice.is_none() || self.card.is_some() => {
-                return Err(invalid("notice", "a notice carries a notice and no card"));
-            }
-            _ => {}
+        match (self.kind, &self.card, &self.notice) {
+            (PacketKind::Review, Some(card), None) => card.validate()?,
+            (PacketKind::Notice, None, Some(notice)) => notice.validate()?,
+            (PacketKind::Review, ..) => return Err(invalid("card", "a review carries a card and no notice")),
+            (PacketKind::Notice, ..) => return Err(invalid("notice", "a notice carries a notice and no card")),
         }
+        clean("device_id", &self.device_id, 64)?;
         if self.epoch == 0 {
             return Err(invalid("epoch", "starts at 1"));
         }
+        digest("entry_hash", &self.entry_hash)?;
         Ok(())
     }
 }
@@ -1005,17 +1142,16 @@ impl SignedPacket {
         Ok(b)
     }
 
-    /// The body, if the owner's current approval phone (`signer`: device id, signing key, epoch) signed it.
+    /// The body, if the owner's current approval phone signed it, at the roster entry the receiver verified as
+    /// current ([`peer_keys`]).
     pub fn verify(
         &self,
-        signer: (&str, &str, u64),
+        signer: &Signer<'_>,
         verify: impl Fn(&[u8; 32], &[u8], &[u8; 64]) -> bool,
     ) -> Result<PacketBody, CircleError> {
         let b = self.body()?;
-        if b.device_id != signer.0 || b.epoch != signer.2 {
-            return Err(CircleError::NotCurrentSigner);
-        }
-        verify_sig(signer.1, &packet_message(&self.body), &self.sig, &verify)?;
+        signer.check(&b.device_id, b.epoch, &b.entry_hash)?;
+        verify_sig(signer.sign_pub, &packet_message(&self.body), &self.sig, &verify)?;
         Ok(b)
     }
 }
@@ -1105,8 +1241,9 @@ pub struct CircleAnswer {
     pub at: i64,
     /// 16 random bytes of the answer's own.
     pub nonce: String,
-    /// The helper's roster epoch and approval phone when it signed.
+    /// The helper's approval phone, and its roster epoch and entry hash when it signed (see [`PacketBody::entry_hash`]).
     pub epoch: u64,
+    pub entry_hash: String,
     pub device_id: String,
 }
 
@@ -1126,6 +1263,8 @@ impl CircleAnswer {
         if self.epoch == 0 {
             return Err(invalid("epoch", "starts at 1"));
         }
+        digest("entry_hash", &self.entry_hash)?;
+        clean("device_id", &self.device_id, 64)?;
         Ok(())
     }
 }
@@ -1183,8 +1322,8 @@ pub struct Expect<'a> {
     pub packet_nonce: &'a str,
     pub created_at: i64,
     pub deadline: i64,
-    /// The helper's current approval phone: device id, signing key, roster epoch ([`peer_keys`]).
-    pub signer: (&'a str, &'a str, u64),
+    /// The helper's current approval phone ([`peer_keys`]).
+    pub signer: Signer<'a>,
 }
 
 /// The answer, if it is the helper's current approval phone's answer to exactly this packet, in its window.
@@ -1208,13 +1347,11 @@ pub fn check_answer(
     if a.packet_nonce != expect.packet_nonce {
         return Err(CircleError::Mismatch("nonce"));
     }
-    if a.device_id != expect.signer.0 || a.epoch != expect.signer.2 {
-        return Err(CircleError::NotCurrentSigner);
-    }
+    expect.signer.check(&a.device_id, a.epoch, &a.entry_hash)?;
     if a.at < expect.created_at - ANSWER_SKEW_SECS || a.at > expect.deadline + ANSWER_SKEW_SECS {
         return Err(CircleError::Stale);
     }
-    verify_sig(expect.signer.1, &answer_message(&s.body), &s.sig, &verify)?;
+    verify_sig(expect.signer.sign_pub, &answer_message(&s.body), &s.sig, &verify)?;
     Ok(a)
 }
 
@@ -1237,17 +1374,46 @@ pub enum PeerKeys {
     },
 }
 
+impl PeerKeys {
+    /// The approval phone to verify a message against; `None` while suspended.
+    #[must_use]
+    pub fn signer(&self) -> Option<Signer<'_>> {
+        match self {
+            Self::Current {
+                device_id,
+                sign_pub,
+                epoch,
+                hash,
+                ..
+            } => Some(Signer {
+                device_id,
+                sign_pub,
+                epoch: *epoch,
+                entry_hash: hash,
+            }),
+            Self::OwnerChanged {
+                ..
+            } => None,
+        }
+    }
+}
+
 /// Verifies `chain` (the peer's roster, oldest first) from the anchor this phone pinned or last verified (`known`:
 /// epoch and entry hash) and returns its current approval phone. Every entry after the anchor must verify against the
-/// one before it ([`verify_step`]) and keep `pinned_owner`.
+/// one before it ([`verify_step`]) and keep `pinned_owner`. The head must be at least `seen_epoch` (the newest epoch
+/// this phone ever verified for the peer): a server showing an older head (a rollback) is refused.
 pub fn peer_keys(
     pinned_owner: &str,
     known: (u64, &str),
+    seen_epoch: u64,
     chain: &[RosterEntry],
     verify: impl Fn(&[u8; 32], &[u8], &[u8; 64]) -> bool,
 ) -> Result<PeerKeys, CircleError> {
     if chain.len() > MAX_PEER_CHAIN {
         return Err(CircleError::BrokenChain);
+    }
+    if chain.last().is_none_or(|head| head.epoch < seen_epoch.max(known.0)) {
+        return Err(CircleError::Replayed);
     }
     let start = chain.iter().position(|e| e.epoch == known.0).ok_or(CircleError::BrokenChain)?;
     let anchor = &chain[start];
@@ -1472,6 +1638,15 @@ mod tests {
 
     type Change = Box<dyn Fn(&mut CircleAnswer)>;
 
+    fn signer<'a>(sign_pub: &'a str, epoch: u64, entry_hash: &'a str) -> Signer<'a> {
+        Signer {
+            device_id: "dana-phone",
+            sign_pub,
+            epoch,
+            entry_hash,
+        }
+    }
+
     fn answer() -> CircleAnswer {
         CircleAnswer {
             v: 1,
@@ -1484,6 +1659,7 @@ mod tests {
             at: 150,
             nonce: encode_nonce16(&[2; 16]),
             epoch: 4,
+            entry_hash: hex32(&[4; 32]),
             device_id: "alex-phone".to_owned(),
         }
     }
@@ -1501,6 +1677,7 @@ mod tests {
         let sign_pub = key(33);
         let digest = hex32(&[7; 32]);
         let nonce = encode_nonce16(&[1; 16]);
+        let head = hex32(&[4; 32]);
         let expect = Expect {
             arrangement: "0123456789abcdef0123456789abcdef",
             packet: "fedcba9876543210fedcba9876543210",
@@ -1508,7 +1685,12 @@ mod tests {
             packet_nonce: &nonce,
             created_at: 100,
             deadline: 400,
-            signer: ("alex-phone", &sign_pub, 4),
+            signer: Signer {
+                device_id: "alex-phone",
+                sign_pub: &sign_pub,
+                epoch: 4,
+                entry_hash: &head,
+            },
         };
         let good = answer();
         assert_eq!(check_answer(&signed_answer(&good, 33), &expect, fake_verify).unwrap(), good);
@@ -1524,6 +1706,9 @@ mod tests {
             (Box::new(|a| a.packet_nonce = encode_nonce16(&[9; 16])), CircleError::Mismatch("nonce")),
             (Box::new(|a| a.device_id = "alex-viewer".to_owned()), CircleError::NotCurrentSigner),
             (Box::new(|a| a.epoch = 3), CircleError::NotCurrentSigner),
+            // The answer names a newer roster entry than the chain this phone was shown: the chain is stale.
+            (Box::new(|a| a.epoch = 5), CircleError::BrokenChain),
+            (Box::new(|a| a.entry_hash = hex32(&[5; 32])), CircleError::BrokenChain),
             (Box::new(|a| a.at = 400 + ANSWER_SKEW_SECS + 1), CircleError::Stale),
             (Box::new(|a| a.at = 100 - ANSWER_SKEW_SECS - 1), CircleError::Stale),
         ];
@@ -1562,6 +1747,7 @@ mod tests {
             notice: None,
             device_id: "dana-phone".to_owned(),
             epoch: 2,
+            entry_hash: hex32(&[2; 32]),
             at: 100,
         };
         let json = serde_json::to_string(&body).unwrap();
@@ -1569,10 +1755,54 @@ mod tests {
             sig: sign(21, &packet_message(&json)),
             body: json,
         };
-        let k = key(21);
-        assert_eq!(p.verify(("dana-phone", &k, 2), fake_verify).unwrap(), body);
-        assert_eq!(p.verify(("dana-phone", &k, 3), fake_verify), Err(CircleError::NotCurrentSigner));
-        assert_eq!(p.verify(("dana-phone", &key(22), 2), fake_verify), Err(CircleError::BadSignature));
+        let (k, other) = (key(21), key(22));
+        let (h2, h3) = (hex32(&[2; 32]), hex32(&[3; 32]));
+        let (k, other, h2, h3) = (k.as_str(), other.as_str(), h2.as_str(), h3.as_str());
+        assert_eq!(p.verify(&signer(k, 2, h2), fake_verify).unwrap(), body);
+        // The receiver knows a newer entry: this phone was replaced.
+        assert_eq!(p.verify(&signer(k, 3, h3), fake_verify), Err(CircleError::NotCurrentSigner));
+        // The receiver was shown an older head than the signer's: refused as stale.
+        assert_eq!(p.verify(&signer(k, 1, h2), fake_verify), Err(CircleError::BrokenChain));
+        assert_eq!(p.verify(&signer(k, 2, h3), fake_verify), Err(CircleError::BrokenChain));
+        assert_eq!(p.verify(&signer(other, 2, h2), fake_verify), Err(CircleError::BadSignature));
+        // Card text with a bidi override or a control character is refused; the signer's cleaned card passes.
+        let mut sly = body;
+        let card = sly.card.as_mut().unwrap();
+        card.subtitle = "to ann@acme.com\u{202e}moc.live".to_owned();
+        assert!(sly.validate().is_err());
+        let card = sly.card.take().unwrap().cleaned();
+        assert_eq!(card.subtitle, "to ann@acme.commoc.live");
+        sly.card = Some(card);
+        assert!(sly.validate().is_ok());
+        let mut sly2 = sly.clone();
+        sly2.card.as_mut().unwrap().title = "Send\u{0007}".to_owned();
+        assert!(sly2.validate().is_err());
+        let mut long = sly.clone();
+        long.card.as_mut().unwrap().line = "x".repeat(MAX_CARD_LINE + 1);
+        assert!(long.validate().is_err());
+        // Newlines are allowed in the detail only.
+        let mut multi = sly.clone();
+        multi.card.as_mut().unwrap().detail = Some("To: a\nSubject: b".to_owned());
+        assert!(multi.validate().is_ok());
+        multi.card.as_mut().unwrap().headline = "a\nb".to_owned();
+        assert!(multi.validate().is_err());
+        // Empty optional fields are fine.
+        let mut bare = sly;
+        let c = bare.card.as_mut().unwrap();
+        c.subtitle.clear();
+        c.headline.clear();
+        c.detail = None;
+        assert!(bare.validate().is_ok());
+        // A notice is checked the same way.
+        let mut notice = bare.clone();
+        notice.kind = PacketKind::Notice;
+        notice.card = None;
+        notice.notice = Some(Notice {
+            text: "Bypass on\u{200b}".to_owned(),
+            outcome: None,
+            at: 1,
+        });
+        assert!(notice.validate().is_err());
     }
 
     #[test]
@@ -1602,7 +1832,7 @@ mod tests {
         let h1 = e1.hash_hex().unwrap();
         let chain = vec![e1.clone(), e2.clone(), e3.clone()];
         // A handover verifies through the chain and names the new primary.
-        match peer_keys(&pinned, (1, &h1), &chain, fake_verify).unwrap() {
+        match peer_keys(&pinned, (1, &h1), 1, &chain, fake_verify).unwrap() {
             PeerKeys::Current {
                 device_id,
                 epoch,
@@ -1617,26 +1847,31 @@ mod tests {
         }
         // From a later anchor too.
         let h2 = e2.hash_hex().unwrap();
-        assert!(matches!(peer_keys(&pinned, (2, &h2), &chain, fake_verify), Ok(PeerKeys::Current { .. })));
+        assert!(matches!(peer_keys(&pinned, (2, &h2), 2, &chain, fake_verify), Ok(PeerKeys::Current { .. })));
         // A wrong anchor hash, a missing anchor, another pinned key.
-        assert_eq!(peer_keys(&pinned, (1, &h2), &chain, fake_verify), Err(CircleError::BrokenChain));
-        assert_eq!(peer_keys(&pinned, (5, &h1), &chain, fake_verify), Err(CircleError::BrokenChain));
-        assert_eq!(peer_keys(&key(99), (1, &h1), &chain, fake_verify), Err(CircleError::Mismatch("owner key")));
+        assert_eq!(peer_keys(&pinned, (1, &h2), 1, &chain, fake_verify), Err(CircleError::BrokenChain));
+        assert_eq!(peer_keys(&pinned, (2, &h1), 1, &chain, fake_verify), Err(CircleError::BrokenChain));
+        assert_eq!(peer_keys(&key(99), (1, &h1), 1, &chain, fake_verify), Err(CircleError::Mismatch("owner key")));
         // A tampered later entry.
         let mut bad = e3.clone();
         bad.primary = member("evil", 9);
         assert_eq!(
-            peer_keys(&pinned, (1, &h1), &[e1.clone(), e2.clone(), bad], fake_verify),
+            peer_keys(&pinned, (1, &h1), 1, &[e1.clone(), e2.clone(), bad], fake_verify),
             Err(CircleError::BrokenChain)
         );
         // A recovery (a new owner key) suspends.
         let e4 = next(&e3, RosterReason::Recovery, member("n", 7), vec![], 77);
         assert_eq!(
-            peer_keys(&pinned, (1, &h1), &[e1, e2, e3, e4], fake_verify),
+            peer_keys(&pinned, (1, &h1), 1, &[e1.clone(), e2.clone(), e3.clone(), e4], fake_verify),
             Ok(PeerKeys::OwnerChanged {
                 epoch: 4
             })
         );
+        // A rollback: this phone saw epoch 3, the server now shows a chain ending at 2 (before the handover).
+        assert_eq!(peer_keys(&pinned, (1, &h1), 3, &[e1.clone(), e2.clone()], fake_verify), Err(CircleError::Replayed));
+        // A chain ending before the anchor itself.
+        let h3 = e3.hash_hex().unwrap();
+        assert_eq!(peer_keys(&pinned, (3, &h3), 3, &[e1, e2], fake_verify), Err(CircleError::Replayed));
     }
 
     #[test]
@@ -1655,9 +1890,12 @@ mod tests {
 
     #[test]
     fn a_helper_can_only_end() {
+        let hash = arrangement_hash("{}");
         let mut c = LinkChange {
             v: 1,
             link: "0123456789abcdef0123456789abcdef".to_owned(),
+            arrangement: hash.clone(),
+            seq: 3,
             state: LinkState::Paused,
             by: Side::Helper,
             at: 1,
@@ -1670,8 +1908,41 @@ mod tests {
             sig: sign(80, &change_message(&body)),
             body,
         };
-        assert_eq!(s.verify(&key(80), fake_verify).unwrap(), c);
-        assert_eq!(s.verify(&key(50), fake_verify), Err(CircleError::BadSignature));
+        assert_eq!(s.verify(&key(80), &hash, 2, fake_verify).unwrap(), c);
+        assert_eq!(s.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::BadSignature));
+    }
+
+    #[test]
+    fn link_changes_are_not_replayed() {
+        let hash = arrangement_hash("{\"a\":1}");
+        let change = |seq: u64, state: LinkState| {
+            let c = LinkChange {
+                v: 1,
+                link: "0123456789abcdef0123456789abcdef".to_owned(),
+                arrangement: hash.clone(),
+                seq,
+                state,
+                by: Side::Owner,
+                at: 1,
+            };
+            let body = serde_json::to_string(&c).unwrap();
+            SignedChange {
+                sig: sign(50, &change_message(&body)),
+                body,
+            }
+        };
+        let pause = change(1, LinkState::Paused);
+        let resume = change(2, LinkState::Active);
+        assert!(pause.verify(&key(50), &hash, 0, fake_verify).is_ok());
+        assert!(resume.verify(&key(50), &hash, 1, fake_verify).is_ok());
+        // An old pause, played again after the resume, is refused; so is the same change twice.
+        assert_eq!(pause.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::Replayed));
+        assert_eq!(resume.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::Replayed));
+        // A change of another arrangement (or another revision of it) means nothing here.
+        let other = arrangement_hash("{\"a\":2}");
+        assert_eq!(pause.verify(&key(50), &other, 0, fake_verify), Err(CircleError::Mismatch("arrangement")));
+        // seq 0 is never valid.
+        assert!(change(0, LinkState::Paused).change().is_err());
     }
 
     #[test]
