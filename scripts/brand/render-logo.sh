@@ -29,8 +29,8 @@
 #            assets/icons/logos/reins.svg                                    the in-app mark (flat icon, vector)
 #            assets/icons/tray-on.png                                        the macOS template: the black R, 36 px
 #            assets/icons/tray-{bypass,overnight,lockdown}.png               macOS, the white R on the mode's colour
-#            assets/icons/tray-color-{on,bypass,overnight,lockdown}.png      Windows and Linux, 64 px
-#            (tray-*-{waiting,paused,pair}: status shields, scripts/package/icons.sh)
+#            assets/icons/tray-{waiting,paused,pair}.png                     macOS, the R with the state's badge
+#            assets/icons/tray-color-{on,bypass,...,pair}.png                Windows and Linux, 64 px
 #   Docs     docs/assets/logo.svg, logo.png                                  the README mark (rounded, 256 px)
 set -euo pipefail
 
@@ -138,20 +138,40 @@ w["foreground"] = svg("0 0 108 108", f'<g transform="{fg_place}">{r_group}</g>')
 # How a themed launcher shows the monochrome layer (for the contact sheet): a tinted R on a pale circle.
 w["themed"] = svg("18 18 72 72", f'<circle cx="54" cy="54" r="36" fill="#D9E2FF"/><g transform="{fg_place}">'
                   f'<path d="{sil}" fill="#1B2D53" fill-rule="evenodd"/></g>')
-# The tray: the R's silhouette, `h` of a 24 grid tall, on a plate or alone.
-def tray(fill, plate, h):
+# The tray: the R's silhouette, `h` of a 24 grid tall, on a plate or alone. A state that needs the user adds a badge in
+# the bottom-right corner (a white disc cut out of the plate, the state's sign in the plate's colour): it is what
+# tells paused from Bypass (both red) and needs-you from Lockdown (both amber) at 16 to 22 px.
+BADGE = {
+    # waiting: a clock's hands
+    "clock": '<path d="M17.6 15.2V17.9H19.8" fill="none" stroke="{c}" stroke-width="1.3" stroke-linecap="round" '
+             'stroke-linejoin="round"/>',
+    # paused: two bars
+    "pause": '<rect x="15.75" y="15.5" width="1.3" height="4.2" rx="0.4" fill="{c}"/>'
+             '<rect x="18.15" y="15.5" width="1.3" height="4.2" rx="0.4" fill="{c}"/>',
+    # needs the user: an exclamation mark
+    "alert": '<rect x="16.95" y="14.9" width="1.3" height="3.1" rx="0.65" fill="{c}"/>'
+             '<circle cx="17.6" cy="19.75" r="0.8" fill="{c}"/>',
+}
+def tray(fill, plate, h, badge=None):
     s = h / (y1 - y0)
-    g = f'<g transform="translate(12 12) scale({s:.5f}) translate({-cx:g} {-cy:g})">'
+    at = "11 11" if badge else "12 12"  # with a badge, the R steps up and left to keep its leg
+    g = f'<g transform="translate({at}) scale({s:.5f}) translate({-cx:g} {-cy:g})">'
     if fill == "colour":
         body = g + r_flat + "</g>"
     else:
         body = g + f'<path d="{sil}" fill="{fill}" fill-rule="evenodd"/></g>'
     rect = f'<rect x="1" y="1" width="22" height="22" rx="5.5" fill="{plate}"/>' if plate else ""
+    if badge:
+        body += (f'<circle cx="17.6" cy="17.6" r="5.7" fill="{plate}"/><circle cx="17.6" cy="17.6" r="4.6" fill="#FFFFFF"/>'
+                 + BADGE[badge].replace("{c}", plate))
     return svg("0 0 24 24", rect + body)
 w["tray-template"] = tray("#000000", None, 20)
 w["tray-plate-on"] = tray("colour", "#16151B", 15)
 for mode, colour in (("bypass", "#B91C1C"), ("overnight", "#5B43E8"), ("lockdown", "#A16207")):
     w[f"tray-plate-{mode}"] = tray("#FFFFFF", colour, 14)
+for state, colour, badge in (("waiting", "#C2410C", "clock"), ("paused", "#B91C1C", "pause"),
+                             ("pair", "#A16207", "alert")):
+    w[f"tray-plate-{state}"] = tray("#FFFFFF", colour, 13, badge)
 for name, text in w.items():
     (work / f"{name}.svg").write_text(text)
 
@@ -258,9 +278,9 @@ for s in 128 256; do svg "$work/full-rounded.svg" "$s" "$work/ico-$s.png"; done
 magick "$work"/ico-{16,24,32,48,64,128,256}.png "$root/crates/reins-desktop-app/packaging/windows/Reins.ico"
 svg "$work/tray-template.svg" 36 "$icons/tray-on.png"
 svg "$work/tray-plate-on.svg" 64 "$icons/tray-color-on.png"
-for mode in bypass overnight lockdown; do
-    svg "$work/tray-plate-$mode.svg" 36 "$icons/tray-$mode.png"
-    svg "$work/tray-plate-$mode.svg" 64 "$icons/tray-color-$mode.png"
+for state in bypass overnight lockdown waiting paused pair; do
+    svg "$work/tray-plate-$state.svg" 36 "$icons/tray-$state.png"
+    svg "$work/tray-plate-$state.svg" 64 "$icons/tray-color-$state.png"
 done
 
 # ---- docs ------------------------------------------------------------------------------------------------------------
@@ -329,6 +349,19 @@ if [[ -n "$sheet" ]]; then
         fi
     done
     magick "${extras[@]}" +append "$work/extras.png"
-    magick -background '#2A2A30' "${rows[@]}" "$work/extras.png" -gravity west -append +repage "$sheet"
+    # The tray at the sizes it is shown (16 and 22 px), in pairs that share a colour: Bypass and paused, Lockdown and
+    # needs-you; then on, Overnight and waiting.
+    small=()
+    for size in 16 22; do
+        for t in bypass paused lockdown pair on overnight waiting; do
+            svg "$work/tray-plate-$t.svg" "$size" "$work/s-$t-$size.png"
+            magick -size 64x96 xc:'#2A2A30' "$work/s-$t-$size.png" -gravity center -composite "$work/sc-$t-$size.png"
+            small+=("$work/sc-$t-$size.png")
+        done
+        magick -size 40x96 xc:'#2A2A30' "$work/gap-$size.png"
+        small+=("$work/gap-$size.png")
+    done
+    magick "${small[@]}" +append "$work/small.png"
+    magick -background '#2A2A30' "${rows[@]}" "$work/extras.png" "$work/small.png" -gravity west -append +repage "$sheet"
     echo "contact sheet: $sheet"
 fi

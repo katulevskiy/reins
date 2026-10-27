@@ -1,8 +1,8 @@
 //! The tray (Windows, Linux) or menu bar (macOS) icon, as the Next menu bar board draws it (`DeskNext-MenuBar.png`):
 //! the Reins R while Reins is on (in ink on macOS, with how many wait, or a pause's clock, beside it; on a running mode's
-//! colour while one runs), and a status shield on the field's colour when something needs you: orange while a request
-//! waits on the phone, red while git is paused, amber when Reins needs the user (not paired, or the background service
-//! is not running). On macOS the ink R is a template image (the menu bar colours it); the coloured ones are drawn as
+//! colour while one runs), and on the field's colour with a badge in its corner when something needs you: orange with a
+//! clock while a request waits on the phone, red with pause bars while git is paused, amber with "!" when Reins needs
+//! the user (not paired, or the background service is not running). On macOS the ink R is a template image (the menu bar colours it); the coloured ones are drawn as
 //! they are.
 //!
 //! Native menus cannot be styled, so the menu follows the board in words and order: two status lines (the first opens
