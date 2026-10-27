@@ -212,7 +212,8 @@ pub const REINS_STATE: BuiltinGroup = BuiltinGroup {
     destructive: false,
     every_time: true,
     commands: &[],
-    files: &["reins/session.json", "reins/control.token", "reins/phone-key.json"],
+    // config.toml: what this computer lets Auto do (`[auto]`); an agent changing it is asked about.
+    files: &["reins/session.json", "reins/control.token", "reins/phone-key.json", "reins/config.toml"],
 };
 
 /// Every built-in group, what cannot be undone first.

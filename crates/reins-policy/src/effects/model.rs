@@ -326,3 +326,84 @@ lenient!(
         Unreadable
     ]
 );
+/// An effect's kind, for rules that name kinds (`docs/design/decisions-v2/02-policy-and-authority.md` §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectKind {
+    FileRead,
+    FileWrite,
+    FileDelete,
+    GitPush,
+    GitRefDelete,
+    Message,
+    Publish,
+    Permission,
+    Money,
+    SecretOut,
+    SecretUse,
+    Network,
+    Infra,
+    Exec,
+    DataRead,
+    DataWrite,
+    Unknown,
+}
+
+impl Effect {
+    #[must_use]
+    pub fn kind(&self) -> EffectKind {
+        match self {
+            Self::FileRead {
+                ..
+            } => EffectKind::FileRead,
+            Self::FileWrite {
+                ..
+            } => EffectKind::FileWrite,
+            Self::FileDelete {
+                ..
+            } => EffectKind::FileDelete,
+            Self::GitPush {
+                ..
+            } => EffectKind::GitPush,
+            Self::GitRefDelete {
+                ..
+            } => EffectKind::GitRefDelete,
+            Self::Message {
+                ..
+            } => EffectKind::Message,
+            Self::Publish {
+                ..
+            } => EffectKind::Publish,
+            Self::Permission {
+                ..
+            } => EffectKind::Permission,
+            Self::Money {
+                ..
+            } => EffectKind::Money,
+            Self::SecretOut {
+                ..
+            } => EffectKind::SecretOut,
+            Self::SecretUse {
+                ..
+            } => EffectKind::SecretUse,
+            Self::Network {
+                ..
+            } => EffectKind::Network,
+            Self::Infra {
+                ..
+            } => EffectKind::Infra,
+            Self::Exec {
+                ..
+            } => EffectKind::Exec,
+            Self::DataRead {
+                ..
+            } => EffectKind::DataRead,
+            Self::DataWrite {
+                ..
+            } => EffectKind::DataWrite,
+            Self::Unknown {
+                ..
+            } => EffectKind::Unknown,
+        }
+    }
+}

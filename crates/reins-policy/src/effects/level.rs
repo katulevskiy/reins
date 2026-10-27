@@ -155,7 +155,15 @@ pub fn level_of(e: &Effect) -> Level {
 #[must_use]
 pub fn local_host(host: &str) -> bool {
     let h = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
-    h == "localhost" || h.ends_with(".localhost") || h == "::1" || h.starts_with("127.") || h == "0.0.0.0"
+    if h == "localhost" || h.ends_with(".localhost") {
+        return true;
+    }
+    // An address literal only: `127.evil.io` is a name, not the loopback.
+    match h.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(a)) => a.is_loopback() || a.is_unspecified(),
+        Ok(std::net::IpAddr::V6(a)) => a.is_loopback(),
+        Err(_) => false,
+    }
 }
 
 /// The always-ask reason an effect carries, if any (08 R4).
@@ -423,5 +431,20 @@ mod tests {
         assert!(none.needs_human());
         let twice = Analysis::new(vec![push(false, false), push(false, false)], Certainty::Full, vec![]);
         assert_eq!(twice.effects.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod local_host_tests {
+    use super::local_host;
+
+    #[test]
+    fn only_loopback_literals_are_local() {
+        for h in ["localhost", "a.localhost", "127.0.0.1", "127.1.2.3", "[::1]", "::1", "0.0.0.0", "LOCALHOST"] {
+            assert!(local_host(h), "{h}");
+        }
+        for h in ["127.evil.io", "127.0.0.1.evil.io", "localhost.evil.io", "128.0.0.1", "0.0.0.0.example", "::2"] {
+            assert!(!local_host(h), "{h}");
+        }
     }
 }
