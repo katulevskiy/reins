@@ -2,6 +2,10 @@
 //! phone (which classifies a hook's question itself rather than trusting the computer's label). Command patterns are
 //! shell words: the first names the program (`git`, `/usr/bin/git` and `sudo git` all count), the others must appear
 //! among its arguments in that order. See `reins_desktop::guard` for the rules.
+//!
+//! [`ast`] reads a command line as a syntax tree, for the consequence engine.
+
+pub mod ast;
 
 /// The words of `text`, lowercased (runs of letters, digits and `_`).
 pub fn text_words(text: &str) -> Vec<String> {

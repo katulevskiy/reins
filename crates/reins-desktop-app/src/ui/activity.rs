@@ -459,6 +459,16 @@ impl Root {
                         .child(wrapped(&details)),
                 )
             })
+            .when_some(e.effects.as_ref().map(effects_text), |c, text| {
+                c.child(
+                    div()
+                        .mt(px(10.0))
+                        .text_size(px(13.0))
+                        .line_height(px(19.0))
+                        .text_color(pal.ink_meta())
+                        .child(wrapped(&text)),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -794,6 +804,27 @@ impl Root {
 }
 
 /// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
+/// What a request does, as the consequence engine read it on this computer: the level, then one line per effect, and
+/// what could not be read. Decides nothing yet (Decisions v2 P1).
+fn effects_text(s: &reins_policy::effects::Summary) -> String {
+    use reins_policy::effects::Certainty;
+    let mut out = vec![match s.certainty {
+        Certainty::Full => format!("What it does · {}", s.level.label()),
+        Certainty::Partial => format!("What it does · {} · partly read", s.level.label()),
+        Certainty::None => "What it does · couldn't be read".to_owned(),
+    }];
+    out.extend(s.lines.iter().cloned());
+    if let Some(first) = s.unresolved.first() {
+        let more = s.unresolved.len() - 1;
+        out.push(if more > 0 {
+            format!("Couldn't read {first} and {more} more")
+        } else {
+            format!("Couldn't read {first}")
+        });
+    }
+    out.join("\n")
+}
+
 fn is_push(e: &Entry) -> bool {
     e.kind == Kind::Git && e.what.starts_with("push to ")
 }
@@ -962,6 +993,19 @@ mod tests {
         let mut e = Entry::new(kind, "x");
         e.outcome = outcome;
         e
+    }
+
+    #[test]
+    fn effects_read_as_a_level_and_plain_lines() {
+        let ctx = reins_policy::effects::Context::new(
+            "/home/me/Documents/dev/app",
+            reins_policy::effects::Workspace::standard("/home/me"),
+        );
+        let s = reins_policy::effects::analyze_command("rm -rf target/a target/b && rm -rf \"$X\"", &ctx).summary();
+        let text = effects_text(&s);
+        assert!(text.starts_with("What it does · Recoverable · partly read"), "{text}");
+        assert!(text.contains("Deletes 2 paths in build output"), "{text}");
+        assert!(text.contains("Couldn't read the value of $X"), "{text}");
     }
 
     #[test]

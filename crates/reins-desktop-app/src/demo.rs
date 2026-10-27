@@ -387,6 +387,7 @@ impl Demo {
                         leaning: Leaning::Ask,
                         confidence: 71,
                     }),
+                    effects: None,
                 }
             })
             .collect()

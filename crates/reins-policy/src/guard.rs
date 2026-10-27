@@ -399,6 +399,20 @@ pub fn read(texts: &[&str], fragments: &[&str]) -> Reading {
     }
 }
 
+/// Every built-in group anything in `texts` matches, in [`BUILTIN`] order: labels for people (Decisions v2 keeps the
+/// groups as labels, never as triggers). Read leniently: certainty plays no part.
+#[must_use]
+pub fn labels(texts: &[&str]) -> Vec<&'static BuiltinGroup> {
+    let mut found: Vec<Classified> = Vec::new();
+    for text in texts {
+        let parsed = parse(text);
+        let flat = text_words(text);
+        found.extend(parsed.segments.iter().zip(&parsed.programs).flat_map(|(seg, w)| matches_of(seg, w, &flat)));
+        found.extend(text.lines().filter_map(|l| classify_file(l.trim())));
+    }
+    BUILTIN.iter().filter(|g| found.iter().any(|c| c.group.id == g.id)).collect()
+}
+
 /// The rules a command read with certainty matches: its words (from any word on) and its redirections' targets.
 fn strict_matches(seg: &crate::strict::Seg, flat: &[String]) -> Vec<Classified> {
     let written = seg.words.first().map_or("", String::as_str);
@@ -646,6 +660,13 @@ mod tests {
         {
             assert!(id(text).is_some(), "{text}");
         }
+    }
+
+    #[test]
+    fn labels_are_every_group_matched() {
+        let ids = |t: &str| labels(&[t]).iter().map(|g| g.id).collect::<Vec<_>>();
+        assert_eq!(ids("cat .env; git push --force"), vec!["git-history", "env-files"]);
+        assert!(ids("cargo test").is_empty());
     }
 
     #[test]

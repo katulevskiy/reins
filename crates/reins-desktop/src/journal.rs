@@ -150,6 +150,10 @@ pub struct Entry {
     /// would learn how to word its next ask; the app asks the server for it instead.
     #[serde(skip)]
     pub leaning: Option<Lean>,
+    /// What the request does, as the consequence engine read it on this computer (Decisions v2): its level, its
+    /// certainty and one line per effect. Shown in Activity; it decides nothing yet.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub effects: Option<reins_policy::effects::Summary>,
 }
 
 /// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
@@ -245,6 +249,7 @@ impl Entry {
             request_id: None,
             autopilot: None,
             leaning: None,
+            effects: None,
         }
     }
 
@@ -280,6 +285,13 @@ impl Entry {
     #[must_use]
     pub fn detail(mut self, detail: Option<&str>) -> Self {
         self.detail = detail.filter(|d| !d.trim().is_empty()).map(|d| cut(d.trim_end(), MAX_DETAIL, false));
+        self
+    }
+
+    /// What the request does (see [`Entry::effects`]).
+    #[must_use]
+    pub fn effects(mut self, effects: Option<reins_policy::effects::Summary>) -> Self {
+        self.effects = effects;
         self
     }
 
@@ -519,6 +531,32 @@ mod tests {
         assert!(std::fs::metadata(&file).unwrap().len() < 1_000);
         let read = read(&paths, 10, 3_600);
         assert!(read.iter().any(|e| e.id == first.id) && read.iter().any(|e| e.id == second.id));
+    }
+
+    #[test]
+    fn effects_are_kept_and_older_lines_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        paths.ensure().unwrap();
+        let j = Journal::new(&paths);
+        let ctx = reins_policy::effects::Context::new(
+            "/home/me/Documents/dev/app",
+            reins_policy::effects::Workspace::standard("/home/me"),
+        );
+        let summary = reins_policy::effects::analyze_command("rm -rf target", &ctx).summary();
+        let e = Entry::new(Kind::Command, "rm").effects(Some(summary.clone()));
+        j.record(&e);
+        let read = read(&paths, 10, i64::MAX);
+        assert_eq!(read[0].effects.as_ref(), Some(&summary));
+        // A line from before effects, and one whose effects a newer app wrote in another shape.
+        let old: Entry =
+            serde_json::from_str(r#"{"id":"a","at":1,"kind":"ask","what":"x","outcome":"approved"}"#).unwrap();
+        assert!(old.effects.is_none());
+        let newer: Entry = serde_json::from_str(
+            r#"{"id":"a","at":1,"kind":"ask","what":"x","outcome":"approved","effects":{"level":"L9"}}"#,
+        )
+        .unwrap();
+        assert!(newer.effects.is_none());
     }
 
     #[test]
