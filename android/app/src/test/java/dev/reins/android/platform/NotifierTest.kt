@@ -49,17 +49,14 @@ class NotifierTest {
     }
 
     @Test
-    fun `a request a mode decides after it was asked takes its ask away and leaves only the decision`() {
+    fun `a request a mode decides after it was asked takes its ask away and leaves nothing`() {
         val decided = java.util.concurrent.CopyOnWriteArrayList<String>()
         val notifier = AppNotifier(context, onDecided = { decided += it }) { changes.incrementAndGet() }
         notifier.createChannels()
         // Asked while it waited (Manual), then a bypass started and approved it.
         notifier.itemPending(TestData.pending("req1"))
         notifier.autoDecided(TestData.autoDecision(id = "req1", decidedBy = "bypass"))
-        val left = shadowOf(manager).allNotifications.filter { (it.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0 }
-        assertEquals(1, left.size)
-        assertTrue("only the quiet decision: ${left.single().channelId}", left.single().channelId.startsWith("autopilot-approved-"))
-        assertTrue("no ask is left to act on", left.none { it.extras.getString(AppNotifier.EXTRA_ITEM) == "req1" })
+        assertTrue("nothing is left: the ask is withdrawn and a decision is never a notification", shadowOf(manager).allNotifications.isEmpty())
         assertEquals(listOf("req1"), decided)
     }
 

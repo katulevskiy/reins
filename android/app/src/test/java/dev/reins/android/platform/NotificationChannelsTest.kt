@@ -105,7 +105,7 @@ class NotificationChannelsTest {
         Foreground.focused = true
         notifier.autoDecided(TestData.autoDecision("req2"))
         assertEquals(0, posted().size)
-        assertTrue(heard.played(Event.AutoApproved))
+        assertFalse("an automatic approval is silent", heard.played(Event.AutoApproved))
         assertFalse(dev.reins.android.feedback.Cue.Request in heard.cues)
     }
 

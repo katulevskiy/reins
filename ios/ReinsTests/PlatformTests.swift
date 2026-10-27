@@ -211,17 +211,19 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.userInfo[NotificationKey.link] as? String, "reins://activity?id=14")
     }
 
-    func testAnAutomaticDenialClicksUnderTheAutopilotSwitch() {
+    func testAnAutomaticDenialIsAsQuietAsAnApproval() {
+        // A decision needs nothing from the owner: never a sound, a banner or a lit screen, whatever the verdict.
         let c = NotificationContent.decision(decision(.deny), settings: FeedbackSettings())
         XCTAssertEqual(c.body, "Denied by Autopilot · 97%")
-        XCTAssertNotNil(c.sound)
-        XCTAssertEqual(c.interruptionLevel, .active)
-        var s = FeedbackSettings()
-        s.autopilotSounds = false
-        // Still felt under Haptics, like the Android channel's short tick.
-        XCTAssertEqual(NotificationSoundFile.file(NotificationSoundFile.denied, .autopilot, s), NotificationSoundFile.silent)
-        s.haptics = false
-        XCTAssertNil(NotificationContent.decision(decision(.deny), settings: s).sound)
+        XCTAssertNil(c.sound)
+        XCTAssertEqual(c.interruptionLevel, .passive)
+        XCTAssertEqual(c.relevanceScore, 0)
+    }
+
+    func testTheAppSweepsEveryDeliveredDecision() {
+        let now = Date()
+        XCTAssertTrue(NotificationSweep.isStale(category: NotificationCategory.autopilot.rawValue, id: "r1", date: now, waiting: [], now: now))
+        XCTAssertTrue(NotificationSweep.isStale(category: NotificationCategory.autopilot.rawValue, id: "r1", date: now, waiting: ["r1"], now: now))
     }
 
     func testBypassAndLockdownSayWhoDecided() {

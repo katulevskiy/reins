@@ -235,9 +235,14 @@ enum NotificationContent {
         c.body = [NotificationText.decisionTitle(d), NotificationText.decisionDetail(d) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
         c.categoryIdentifier = NotificationCategory.autopilot.rawValue
         c.threadIdentifier = NotificationCategory.autopilot.thread
-        c.interruptionLevel = approved ? .passive : .active
-        c.relevanceScore = approved ? 0.1 : 0.3
-        c.sound = approved ? nil : NotificationSoundFile.sound(NotificationSoundFile.denied, .autopilot, settings)
+        // A decision needs nothing from the owner, so it never alerts: no sound, no banner, no lit screen. The extension
+        // has to show something for a push it can't silence (that needs Apple's filtering entitlement), and the app
+        // sweeps these away as soon as it runs (`NotificationSweep.isStale`).
+        _ = approved
+        _ = settings
+        c.interruptionLevel = .passive
+        c.relevanceScore = 0
+        c.sound = nil
         var info: [String: Any] = [NotificationKey.link: DeepLink.home.url.absoluteString]
         if let entry = d.activityId {
             info[NotificationKey.activity] = entry
@@ -376,6 +381,8 @@ enum NotificationSweep {
     /// owner's list. One about an item that waits is kept. "Autopilot has still to decide" is never in that list: it goes
     /// when the app decides or asks (`AppNotifier`), or when the request's time is up.
     static func isStale(category: String, id: String, date: Date, waiting: Set<String>, now: Date) -> Bool {
+        // A mode's or Autopilot's decision has nothing to offer once the app runs: it is in Activity.
+        if category == NotificationCategory.autopilot.rawValue { return true }
         guard itemCategories.contains(category), !waiting.contains(id) else { return false }
         if category == NotificationCategory.deciding.rawValue { return date < now.addingTimeInterval(-decidingLifetime) }
         return date < now.addingTimeInterval(-unreadGrace)
