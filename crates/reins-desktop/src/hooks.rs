@@ -688,8 +688,13 @@ pub async fn run(
         } => Kind::File,
         _ => Kind::Command,
     };
-    let entry =
-        Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
+    // What it does, for Activity (Decisions v2 P1: shown, not deciding).
+    let effects = crate::consequences::of_action(config, &call.action, call.cwd.as_deref(), head.as_ref());
+    let entry = Entry::new(kind, &q.question)
+        .source(Some(harness.label()))
+        .service(Some(&m.topic))
+        .detail(q.detail.as_deref())
+        .effects(effects);
     // stderr: the harness's log, and its transcript where it shows hook output.
     let tell = |line: &str| eprintln!("{line}");
     let (answer, timed_out) =
