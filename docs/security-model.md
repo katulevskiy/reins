@@ -425,6 +425,32 @@ action, grants are narrow and time-boxed, Autopilot judges each request, and an 
 container) keeps the agent from the files at all. Smarter, context-aware judgment of commands is coming from
 Autopilot's risk model. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
 
+### Safety nets
+
+When a hook's request is allowed, the desktop app can make it recoverable first (Decisions v2 P3,
+[01 §5](design/decisions-v2/01-decision-engine.md), [08 R2](design/decisions-v2/08-review-resolutions.md)).
+
+What it does:
+
+- **Deletes:** `rm` becomes `reins net run … -- rm`, which moves what it deletes into the Reins trash
+  (`~/.local/state/reins/nets`, kept 7 days).
+- **Destructive git:** `branch -D`, `reset --hard`, `worktree remove --force`, `clean -f` and force pushes keep a
+  backup ref (30 days) or a trashed copy first.
+- **File tools:** they get a copy of the file they change.
+
+A rewrite replaces one command word, and only after the syntax tree shows nothing else changed. Commands that could
+give that word another meaning are never rewritten:
+
+- a function or alias named like it;
+- `eval` or `source`;
+- a command word that isn't literal.
+
+A net that can't be made deletes nothing and leaves the request at its own level.
+
+Nets are a guardrail, not a boundary. An agent running as the same user can delete without a hook, or edit the
+trash. The phone shows the net it is told about read-only, and never asks less because of it. The net travels as its
+own argument, which only the hook sets. `reins ask`'s words are the agent's own, so they can't claim one.
+
 ## Autopilot
 
 Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It is limited three ways.
