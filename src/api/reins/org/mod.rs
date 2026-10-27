@@ -38,6 +38,8 @@ pub mod github;
 pub mod invariants;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod kms;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod posture;
 pub mod scim;
 pub mod tenant;
 pub mod workos_api;
