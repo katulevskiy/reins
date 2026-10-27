@@ -433,20 +433,22 @@ fn visit_command(c: &Command, f: &mut dyn FnMut(&Command)) {
 /// The command words a netted script may hold: the netted programs, and commands that can't change what a later
 /// command word runs or where it looks (no builtin that sets variables, defines functions or aliases, or runs text).
 const ALLOWED: &[&str] = &[
-    "rm", "git", "cd", "pwd", "echo", "printf", "ls", "test", "[", "true", "false", ":", "mkdir", "cat", "grep", "wc",
-    "head", "tail", "sleep", "du", "df",
+    "rm", "git", "cd", "pwd", "echo", "ls", "test", "[", "true", "false", ":", "mkdir", "cat", "grep", "wc", "head",
+    "tail", "sleep", "du", "df",
 ];
 
-/// A word with nothing computed in it: literal text, quoted text, a glob or a leading `~` (expanded by the shell from
-/// names and the environment the script can't change, since it assigns nothing).
-fn plain_word(w: &Word) -> bool {
-    w.0.iter().all(|p| matches!(p, Part::Lit(_) | Part::Quoted(_) | Part::Glob(_) | Part::Tilde(_)))
+/// A word with nothing computed in it: literal text, quoted text, or a leading `~` (the home folder, from an
+/// environment the script can't change, since it assigns nothing). With `globs`, also a glob: only for `rm` and `git`
+/// operands, which the net reads again; anywhere else a glob could turn into an option (`printf -*` → `-v NAME`).
+fn plain_word(w: &Word, globs: bool) -> bool {
+    w.0.iter()
+        .all(|p| matches!(p, Part::Lit(_) | Part::Quoted(_) | Part::Tilde(_)) || (globs && matches!(p, Part::Glob(_))))
 }
 
 /// Whether a script may be netted at all. Fail closed by design: every command in it is a simple command whose words
 /// are all plain ([`plain_word`]) and whose program is in [`ALLOWED`], with no assignment, no heredoc, and only plain
 /// redirection targets; lists, pipelines, `&&` and `||` join them. No function, loop, conditional, subshell,
-/// substitution or arithmetic; `printf -v` and `test`/`[` with `-v` (they set or read variables by name) are out too.
+/// substitution or arithmetic, and globs only in `rm` and `git` words.
 /// Anything else keeps its level and is asked as it would be without a net.
 fn allowed(script: &Script) -> bool {
     script.0.iter().all(|ao| {
@@ -456,18 +458,12 @@ fn allowed(script: &Script) -> bool {
                     let Some(Some(program)) = s.words.first().map(Word::literal) else {
                         return false;
                     };
-                    let options_ok = !matches!(program.as_str(), "printf")
-                        || s.words
-                            .iter()
-                            .skip(1)
-                            .filter_map(Word::literal)
-                            .all(|w| !(w.starts_with('-') && w.contains('v')));
+                    let globs = matches!(program.as_str(), "rm" | "git");
                     ALLOWED.contains(&program.as_str())
-                        && options_ok
                         && s.assigns.is_empty()
                         && s.heredocs.is_empty()
-                        && s.words.iter().all(plain_word)
-                        && s.redirects.iter().all(|r| plain_word(&r.target))
+                        && s.words.iter().all(|w| plain_word(w, globs))
+                        && s.redirects.iter().all(|r| plain_word(&r.target, false))
                 }
                 _ => false,
             })

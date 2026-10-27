@@ -131,11 +131,17 @@ fn only_plain_allowlisted_scripts_are_netted() {
         "cargo build && rm -rf old",
         // a heredoc
         "cat <<EOF > f\nx\nEOF\nrm -rf old",
+        // globs outside rm and git (`printf -*` could expand to `-v NAME`), and printf at all
+        "printf -* x; rm -rf old",
+        "printf '%s' done; rm -rf old",
+        "ls -*; rm -rf old",
+        "echo * > out; rm -rf old",
+        "rm -rf old > *.log",
     ] {
         let p = plan(c);
         assert!(p.is_none(), "{c}: {p:?}");
     }
-    assert!(plan("printf '%s\\n' done; rm -rf old; ls").is_some(), "plain printf and ls are fine");
+    assert!(plan("echo done; rm -rf old ./*.tmp; ls ~/x").is_some(), "plain words, and globs in rm, are fine");
 }
 
 #[test]
