@@ -30,6 +30,7 @@ use tokio::sync::watch;
 use super::{
     OrgError, audit,
     kms::{self, KeyPurpose},
+    routing,
 };
 use crate::db::{
     DbConnInner,
@@ -72,7 +73,8 @@ pub struct LeaseAsk {
     pub box_key: String,
 }
 
-fn member_policy(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<MemberPolicy>, OrgError> {
+/// The member's own stricter policy, when they set one.
+pub fn member_policy_of(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<MemberPolicy>, OrgError> {
     Ok(reins_org_keys::q_member_policy(c, org, user)?.and_then(|row| serde_json::from_str(&row.body).ok()))
 }
 
@@ -111,7 +113,8 @@ fn retention_secs(c: &mut DbConnInner, org: &str) -> Result<i64, OrgError> {
     Ok(reins_org::q_org(c, org)?.map_or(30, |t| i64::from(t.body_retention_days)) * 86_400)
 }
 
-/// Whoever can satisfy one of `obligations` now and has a device that may decide.
+/// Whoever can satisfy one of `obligations` now from their standing and has a device that may decide.
+#[cfg(test)]
 pub fn eligible_reviewers(
     c: &mut DbConnInner,
     org: &str,
@@ -130,6 +133,31 @@ pub fn eligible_reviewers(
         .collect())
 }
 
+/// What a request brings besides its call (O3): the agent's reason, and what the dynamic routing sources said
+/// ([`routing::prefetch`]).
+#[derive(Clone, Copy)]
+pub struct Extra<'a> {
+    pub reason: Option<&'a str>,
+    pub touches: &'a routing::Touches,
+    pub dynamic: &'a routing::Dynamic,
+}
+
+static NO_TOUCHES: LazyLock<routing::Touches> = LazyLock::new(routing::Touches::default);
+static NO_DYNAMIC: LazyLock<routing::Dynamic> = LazyLock::new(routing::Dynamic::new);
+
+impl Default for Extra<'_> {
+    fn default() -> Self {
+        Self {
+            reason: None,
+            touches: &NO_TOUCHES,
+            dynamic: &NO_DYNAMIC,
+        }
+    }
+}
+
+/// The longest reason kept.
+pub const MAX_REASON: usize = reins_policy::org::MAX_REASON;
+
 /// Evaluates and records one Managed request of `user` through `connection` (its id and label).
 #[allow(clippy::too_many_arguments, reason = "one request's parts")]
 pub fn submit(
@@ -143,6 +171,25 @@ pub fn submit(
     lease: Option<&LeaseAsk>,
     now: i64,
 ) -> Result<Submitted, OrgError> {
+    submit_with(c, org, user, connection, agent_label, tool, args, lease, &Extra::default(), now)
+}
+
+/// [`submit`] with a reason and the routing sources' answers.
+#[allow(clippy::too_many_arguments, reason = "one request's parts")]
+pub fn submit_with(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    connection: &str,
+    agent_label: &str,
+    tool: &str,
+    args: &Value,
+    lease: Option<&LeaseAsk>,
+    extra: &Extra<'_>,
+    now: i64,
+) -> Result<Submitted, OrgError> {
+    // A reason beyond what a permit accepts isn't kept (and can't satisfy one).
+    let reason = extra.reason.map(str::trim).filter(|r| !r.is_empty() && r.chars().count() <= MAX_REASON);
     if !reins_proto::managed::ids_ok(&[org, user, connection, tool]) {
         return Err(OrgError::Invalid("That request can't be read."));
     }
@@ -163,20 +210,17 @@ pub fn submit(
     c.transaction(|c| {
         let (policy, _) = super::policy::active(c, org)?
             .ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
-        let member = member_policy(c, org, user)?;
-        let verdict = evaluate_managed(
-            &ManagedRequest {
-                org,
-                member: user,
-                connection,
-                tool,
-                args,
-                now,
-                reason: None,
-            },
-            &policy,
-            member.as_ref(),
-        );
+        let member = member_policy_of(c, org, user)?;
+        let managed = ManagedRequest {
+            org,
+            member: user,
+            connection,
+            tool,
+            args,
+            now,
+            reason,
+        };
+        let verdict = evaluate_managed(&managed, &policy, member.as_ref());
         let id = format!("or_{}", crate::util::get_uuid());
         let trace = trace_of(&verdict);
         let window = verdict.obligations.iter().map(|o| i64::try_from(o.spec.window()).unwrap_or(0)).max().unwrap_or(0);
@@ -211,7 +255,11 @@ pub fn submit(
             resolved: None,
         };
         reins_org_request::q_insert_request(c, &row)?;
-        let body = canonical_json(&json!({"tool": tool, "args": args}));
+        let mut body = json!({"tool": tool, "args": args});
+        if let Some(r) = reason {
+            body["reason"] = json!(r);
+        }
+        let body = canonical_json(&body);
         let (key_id, sealed) = kms::seal_data(c, org, &format!("{id}/request"), body.as_bytes(), now)?;
         reins_org_request::q_put_body(
             c,
@@ -260,6 +308,7 @@ pub fn submit(
             now,
         )?;
         let mut notify = Vec::new();
+        let mut expires_at = row.expires_at;
         let state = match verdict.outcome {
             ManagedOutcome::Auto => {
                 finalize(c, org, &row, Vec::new(), now)?;
@@ -288,7 +337,25 @@ pub fn submit(
                     &json!({"request": request, "policy": pol, "expires_at": row.expires_at}),
                     now,
                 )?;
-                notify = eligible_reviewers(c, org, user, &verdict.obligations, now)?;
+                let resources = routing::resources_of(&policy, &managed);
+                let ctx = routing::Ctx {
+                    org,
+                    requester: user,
+                    policy: &policy,
+                    resources: &resources,
+                    touches: extra.touches,
+                    dynamic: extra.dynamic,
+                };
+                let routed = routing::open(c, &id, &ctx, &verdict.obligations, now)?;
+                if !routed.resolved.is_empty() {
+                    let text = serde_json::to_string(&routed.resolved).unwrap_or_default();
+                    reins_org_request::q_set_resolved(c, org, &id, &text)?;
+                }
+                if routed.expires_at != row.expires_at {
+                    reins_org_request::q_set_expiry(c, org, &id, routed.expires_at)?;
+                    expires_at = routed.expires_at;
+                }
+                notify = routed.notify.into_iter().collect();
                 st::REVIEWING
             }
         };
@@ -297,7 +364,7 @@ pub fn submit(
             state: state.to_owned(),
             outcome: verdict.outcome,
             explain: verdict.explain.clone(),
-            expires_at: row.expires_at,
+            expires_at,
             instant: verdict.outcome == ManagedOutcome::Review
                 && verdict.obligations.iter().all(|o| o.spec.class == ReviewClass::Instant),
             notify,
@@ -351,6 +418,22 @@ pub fn finalize(
         None => None,
     };
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
+    let resolved =
+        routing::stored(row.resolved.as_deref()).into_iter().map(|(k, v)| (k, v.into_iter().collect())).collect();
+    let reason = match reins_org_request::q_body(c, org, &row.uuid, "request")? {
+        Some(body) => {
+            let plain = kms::open_data(c, org, &body.key_id, &format!("{}/request", row.uuid), &body.sealed)?;
+            serde_json::from_slice::<Value>(&plain)
+                .ok()
+                .and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_owned))
+        }
+        None => None,
+    };
+    let valid = obligations
+        .iter()
+        .filter_map(|o| o.spec.approval_valid_secs)
+        .min()
+        .map_or(VALID_SECS, |s| i64::try_from(s).unwrap_or(VALID_SECS).min(VALID_SECS));
     let record = DecisionRecord {
         v: reins_proto::managed::DECISION_VERSION,
         org: org.to_owned(),
@@ -369,11 +452,11 @@ pub fn finalize(
         obligations: obligations.iter().map(|o| o.id.clone()).collect(),
         approvals,
         lease,
-        resolved: std::collections::BTreeMap::new(),
-        reason: None,
+        resolved,
+        reason,
         evaluated_at: row.created_at,
         decided_at: now,
-        valid_until: now + VALID_SECS,
+        valid_until: now + valid,
     };
     let env = kms::envelope(
         c,

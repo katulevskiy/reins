@@ -68,6 +68,8 @@ pub enum DirAction {
         email: String,
         name: Option<String>,
         active: bool,
+        /// The directory's `manager_email` custom attribute (O3), lowercase.
+        manager_email: Option<String>,
     },
     DeleteUser {
         directory_id: String,
@@ -139,6 +141,10 @@ pub fn plan(event: &Event) -> DirAction {
                 email,
                 name: user_name(d),
                 active: str_at(d, "state").as_deref() == Some("active"),
+                manager_email: d
+                    .get("custom_attributes")
+                    .and_then(|a| str_at(a, "manager_email"))
+                    .map(|e| e.trim().to_lowercase()),
             }
         }
         "dsync.user.deleted" => match (dir_of(d), str_at(d, "id")) {
@@ -293,8 +299,15 @@ pub fn apply(c: &mut DbConnInner, action: &DirAction, now: i64) -> Result<Vec<Re
             email,
             name,
             active,
+            manager_email,
             ..
-        } => upsert_user(c, org, user_id, email, name.as_deref(), *active, now),
+        } => {
+            let removals = upsert_user(c, org, user_id, email, name.as_deref(), *active, now)?;
+            if *active && let Some(m) = membership_by_external(c, org, user_id)? {
+                directory_manager(c, org, m.user_uuid.as_ref(), manager_email.as_deref(), now)?;
+            }
+            Ok(removals)
+        }
         DirAction::DeleteUser {
             user_id,
             ..
@@ -382,6 +395,39 @@ pub fn apply(c: &mut DbConnInner, action: &DirAction, now: i64) -> Result<Vec<Re
         }
         DirAction::Ignore => Ok(Vec::new()),
     }
+}
+
+/// Sets a member's manager from the directory: only an active member of the same tenant (never someone outside it,
+/// never themselves). Anything else clears a manager the directory had set, so a stale link can't route a review.
+fn directory_manager(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    manager_email: Option<&str>,
+    now: i64,
+) -> Result<(), OrgError> {
+    use crate::db::models::reins_org_routing::{self as routing, manager_source};
+    let manager = match manager_email {
+        Some(e) => {
+            let found: Option<String> =
+                users::table.filter(users::email.eq(e)).select(users::uuid).first(c).optional()?;
+            match found {
+                Some(m) if m != user && super::member_of(c, org, &m)?.is_some() => Some(m),
+                _ => None,
+            }
+        }
+        None => None,
+    };
+    let current = routing::q_person(c, org, user)?;
+    let from_directory = current.as_ref().is_none_or(|p| p.manager_source.as_deref() != Some(manager_source::ADMIN));
+    if !from_directory || current.as_ref().and_then(|p| p.manager_user.as_deref()) == manager.as_deref() {
+        return Ok(());
+    }
+    routing::q_edit_person(c, org, user, now, |p| {
+        p.manager_source = manager.as_ref().map(|_| manager_source::DIRECTORY.to_owned());
+        p.manager_user = manager;
+    })?;
+    Ok(())
 }
 
 fn upsert_user(
@@ -1003,6 +1049,7 @@ mod tests {
                 email: "dana@acme.com".to_owned(),
                 name: Some("Dana Lee".to_owned()),
                 active: true,
+                manager_email: None,
             }
         );
         let added = plan(&ev(
@@ -1393,5 +1440,31 @@ mod tests {
         let enabled: bool =
             users::table.filter(users::uuid.eq(m.user_uuid.to_string())).select(users::enabled).first(&mut c).unwrap();
         assert!(enabled);
+    }
+
+    #[test]
+    fn managers_come_from_the_directory_within_the_tenant() {
+        use crate::db::models::reins_org_routing::q_person;
+        let mut c = db();
+        bound_tenant(&mut c);
+        let with_manager = |id: &str, email: &str, manager: &str| {
+            let mut u = dir_user(id, email, "active");
+            u["custom_attributes"] = json!({"manager_email": manager});
+            u
+        };
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_mia", "mia@acme.com", "active")));
+        run(&mut c, &ev("dsync.user.created", with_manager("directory_user_lee", "lee@acme.com", "Mia@Acme.com")));
+        let (lee, mia) =
+            (member_by_email(&mut c, "lee@acme.com").unwrap(), member_by_email(&mut c, "mia@acme.com").unwrap());
+        let person = q_person(&mut c, "o1", lee.user_uuid.as_ref()).unwrap().unwrap();
+        assert_eq!(person.manager_user.as_deref(), Some(mia.user_uuid.to_string().as_str()));
+        assert_eq!(person.manager_source.as_deref(), Some("directory"));
+        // A manager outside the tenant is ignored, and clears the directory's earlier word.
+        add_user(&mut c, "boss", "boss@other.com");
+        run(&mut c, &ev("dsync.user.updated", with_manager("directory_user_lee", "lee@acme.com", "boss@other.com")));
+        assert_eq!(q_person(&mut c, "o1", lee.user_uuid.as_ref()).unwrap().unwrap().manager_user, None);
+        // Nor is anyone their own manager.
+        run(&mut c, &ev("dsync.user.updated", with_manager("directory_user_lee", "lee@acme.com", "lee@acme.com")));
+        assert_eq!(q_person(&mut c, "o1", lee.user_uuid.as_ref()).unwrap().unwrap().manager_user, None);
     }
 }

@@ -21,7 +21,10 @@ use super::{
 };
 use crate::db::{
     DbConnInner,
-    models::reins_org::{self, ReinsOrgDevice, state},
+    models::{
+        reins_org::{self, ReinsOrgDevice, state},
+        reins_org_routing,
+    },
     schema::{reins_org_devices, reins_org_members, users},
 };
 
@@ -37,6 +40,11 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
         .select((reins_org_members::user_uuid, reins_org_members::membership_uuid))
         .order(reins_org_members::user_uuid.asc())
         .load(c)?;
+    let active: std::collections::BTreeSet<String> = rows.iter().map(|(u, _)| u.clone()).collect();
+    let managers: std::collections::BTreeMap<String, String> = reins_org_routing::q_people(c, org)?
+        .into_iter()
+        .filter_map(|p| p.manager_user.filter(|m| active.contains(m) && *m != p.user_uuid).map(|m| (p.user_uuid, m)))
+        .collect();
     let mut members = Vec::with_capacity(rows.len());
     for (user, membership) in rows {
         let email: String =
@@ -52,6 +60,7 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
             .filter(reins_org_devices::revoked_at.is_null())
             .order(reins_org_devices::device_uuid.asc())
             .load(c)?;
+        let manager = managers.get(&user).cloned();
         members.push(RosterMember {
             user,
             email,
@@ -65,7 +74,7 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
                     may_decide: posture::may_decide(d, &rule, now).is_ok(),
                 })
                 .collect(),
-            manager: None,
+            manager,
             passkeys: Vec::new(),
         });
     }
@@ -74,7 +83,10 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
         version: u64::try_from(now).unwrap_or(0),
         issued_at: now,
         members,
-        backups: std::collections::BTreeMap::new(),
+        backups: reins_org_routing::q_group_settings(c, org)?
+            .into_iter()
+            .filter_map(|g| g.backup_group.map(|b| (g.group_uuid, b)))
+            .collect(),
     })
 }
 

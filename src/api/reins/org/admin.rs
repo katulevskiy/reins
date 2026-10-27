@@ -60,6 +60,10 @@ pub fn target_roles(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Res
         },
         AdminAction::RemoveMember {
             member,
+        }
+        | AdminAction::SetManager {
+            member,
+            ..
         } => reins_org::q_roles_of(c, org, member)?,
         AdminAction::ConfirmDirectoryRemovals {
             ..
@@ -462,6 +466,72 @@ fn validate(
             Some(e) if e.revoked_at.is_none() => Ok(()),
             _ => Err(OrgError::NotFound),
         },
+        AdminAction::SetManager {
+            member,
+            manager,
+        } => {
+            if tenant.tier().scim() {
+                return Err(OrgError::Invalid("Managers come from your directory."));
+            }
+            active_member(c, org, member)?;
+            if let Some(m) = manager {
+                active_member(c, org, m)?;
+                if m == member {
+                    return Err(OrgError::Invalid("Nobody is their own manager."));
+                }
+            }
+            Ok(())
+        }
+        AdminAction::SetGroupRouting {
+            group,
+            backup,
+            window_secs,
+        } => {
+            group_exists(c, org, group)?;
+            if let Some(b) = backup {
+                group_exists(c, org, b)?;
+                if b == group {
+                    return Err(OrgError::Invalid("A group can't be its own backup."));
+                }
+            }
+            if window_secs.is_some_and(|w| w == 0 || w > reins_policy::org::DEFERRED_MAX_SECS) {
+                return Err(OrgError::Invalid("A window is 1 second to 7 days."));
+            }
+            Ok(())
+        }
+        AdminAction::SetGithubReader {
+            app_id,
+            installation_id,
+        } => {
+            if *app_id == 0 || *installation_id == 0 || i64::try_from(*app_id.max(installation_id)).is_err() {
+                return Err(OrgError::Invalid("Give the GitHub App's id and its installation id."));
+            }
+            Ok(())
+        }
+        AdminAction::SetOnCallSource {
+            alias,
+            schedule_id,
+            ..
+        } => {
+            if !super::routing::oncall::alias_ok(alias) {
+                return Err(OrgError::Invalid("Name it with 1-64 of a-z, 0-9, . _ and -."));
+            }
+            if !super::routing::oncall::schedule_ok(schedule_id) {
+                return Err(OrgError::Invalid("That isn't a schedule id."));
+            }
+            Ok(())
+        }
+        AdminAction::SetApprovalChannel {
+            channel: kind,
+            enabled,
+        } => {
+            let installed = crate::db::models::reins_org_routing::q_channel_for_use(c, org, kind.as_str())?
+                .is_some_and(|ch| ch.sealed.is_some());
+            if *enabled && !installed {
+                return Err(OrgError::Invalid("Install it first."));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -637,6 +707,21 @@ fn apply(
                 now,
             )?;
         }
+        AdminAction::SetManager {
+            ..
+        }
+        | AdminAction::SetGroupRouting {
+            ..
+        }
+        | AdminAction::SetGithubReader {
+            ..
+        }
+        | AdminAction::SetOnCallSource {
+            ..
+        }
+        | AdminAction::SetApprovalChannel {
+            ..
+        } => super::routing::apply_admin(c, org, action, actor, now)?,
         AdminAction::RemoveExecutor {
             executor_id,
         } => {

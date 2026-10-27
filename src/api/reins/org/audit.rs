@@ -42,6 +42,12 @@ pub mod kinds {
     pub const REVIEW_APPROVED: &str = "review.approved";
     pub const REVIEW_DENIED: &str = "review.denied";
     pub const REVIEW_EXPIRED: &str = "review.expired";
+    /// O3: whom an obligation's relationships, on-call schedule or escalation step named, with the source's evidence.
+    pub const REVIEW_RESOLVED: &str = "review.resolved";
+    /// O3: an obligation's window passed and it reached its next reviewers.
+    pub const REVIEW_ESCALATED: &str = "review.escalated";
+    /// O3: managers, group backups, on-call sources, channels or the GitHub reader changed (a two-person change).
+    pub const ROUTING_CHANGED: &str = "routing.changed";
     pub const REQUEST_CANCELLED: &str = "request.cancelled";
     pub const REQUEST_EXECUTED: &str = "request.executed";
     pub const REQUEST_FAILED: &str = "request.failed";

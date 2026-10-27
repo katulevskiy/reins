@@ -7,7 +7,9 @@
 //! (`ReviewDecision::Propose`) before anyone can approve them. Two device keys are needed, so one person with two
 //! accounts can't approve with one phone.
 
-use reins_policy::org::{Approval, Met, Obligation, OrgPolicy, PostureRule, Reviewers, obligations_met};
+use reins_policy::org::{
+    Approval, Met, Obligation, OrgPolicy, PostureRule, ResolvedSets, Reviewers, obligations_met_resolved,
+};
 use reins_proto::{
     managed::{
         RequestBody, ReviewAnswer, ReviewDecision, ReviewItem, ReviewSignature, ReviewSubject, change_digest,
@@ -17,7 +19,7 @@ use reins_proto::{
 };
 use serde_json::{Value, json};
 
-use super::{OrgError, admin, audit, decisions, kms, member_of, posture};
+use super::{OrgError, admin, audit, decisions, kms, member_of, posture, routing};
 use crate::db::{
     DbConnInner, DbPool,
     models::{
@@ -91,13 +93,6 @@ fn connection_label(c: &mut DbConnInner, connection: &str) -> Result<String, Org
         .unwrap_or_default())
 }
 
-fn group_name(c: &mut DbConnInner, org: &str, group: &str) -> Result<String, OrgError> {
-    Ok(reins_org::q_groups(c, org)?
-        .into_iter()
-        .find(|(id, _, _)| id == group)
-        .map_or_else(|| "a group".to_owned(), |g| g.1))
-}
-
 /// Who an obligation asks, in short words ("Security", "You").
 fn requires(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result<String, OrgError> {
     Ok(match &o.spec.reviewers {
@@ -108,15 +103,33 @@ fn requires(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result
                 "The requester".to_owned()
             }
         }
-        Reviewers::Group(g) => group_name(c, org, g)?,
-        Reviewers::Role(r) => r.label().to_owned(),
-        Reviewers::Members(_) => "Named reviewers".to_owned(),
-        other => super::routing::label(c, org, other)?,
+        other => routing::label(c, org, other)?,
+    })
+}
+
+/// One line for a waiting obligation ("2 of Finance", "On-call: payments").
+fn need_line(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result<String, OrgError> {
+    let who = requires(c, org, o, own)?;
+    Ok(if o.spec.quorum > 1 {
+        format!("{} of {who}", o.spec.quorum)
+    } else {
+        who
     })
 }
 
 /// Every approval of a request as policy weighs it: from members still active, with their current groups and roles.
 fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, Vec<ReviewSignature>), OrgError> {
+    let (met, signatures, _) = weigh_counted(c, org, row)?;
+    Ok((met, signatures))
+}
+
+/// [`weigh`], with how many eligible approvals each obligation has.
+fn weigh_counted(
+    c: &mut DbConnInner,
+    org: &str,
+    row: &ReinsOrgRequest,
+) -> Result<(Met, Vec<ReviewSignature>, std::collections::BTreeMap<String, usize>), OrgError> {
+    let resolved: ResolvedSets = routing::stored(row.resolved.as_deref());
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
     let mut people: Vec<(String, Vec<String>, Vec<Role>, bool)> = Vec::new();
     let mut signatures = Vec::new();
@@ -146,7 +159,20 @@ fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, 
             approve: *approve,
         })
         .collect();
-    Ok((obligations_met(&obligations, &row.user_uuid, &approvals), signatures))
+    let counts = obligations
+        .iter()
+        .map(|o| {
+            let n = approvals
+                .iter()
+                .filter(|a| {
+                    a.approve
+                        && o.spec.eligible_resolved(a.member, a.groups, a.roles, &row.user_uuid, resolved.get(&o.id))
+                })
+                .count();
+            (o.id.clone(), n)
+        })
+        .collect();
+    Ok((obligations_met_resolved(&obligations, &row.user_uuid, &approvals, &resolved), signatures, counts))
 }
 
 /// The open reviews `user` can answer in `org` (and their own to confirm).
@@ -163,12 +189,16 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
             continue;
         }
         let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
-        let Met::Waiting(waiting) = weigh(c, org, &row)?.0 else {
+        let resolved = routing::stored(row.resolved.as_deref());
+        let (Met::Waiting(waiting), _, counts) = weigh_counted(c, org, &row)? else {
             continue;
         };
         let mine: Vec<&Obligation> = obligations
             .iter()
-            .filter(|o| waiting.contains(&o.id) && o.spec.eligible(user, &groups, &roles, &row.user_uuid))
+            .filter(|o| {
+                waiting.contains(&o.id)
+                    && o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id))
+            })
             .collect();
         let Some(first) = mine.first() else {
             continue;
@@ -178,6 +208,17 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
         let plain = kms::open_data(c, org, &body.key_id, &format!("{}/request", row.uuid), &body.sealed)?;
         let call: Value = serde_json::from_slice(&plain).map_err(|e| OrgError::Internal(e.to_string()))?;
         let trace: Value = serde_json::from_str(&row.trace).unwrap_or_default();
+        let mut needs = Vec::new();
+        for o in obligations.iter().filter(|o| waiting.contains(&o.id)) {
+            needs.push(need_line(c, org, o, own)?);
+        }
+        let progress = if first.spec.quorum > 1 {
+            format!("{} of {}", counts.get(&first.id).copied().unwrap_or(0), first.spec.quorum)
+        } else {
+            String::new()
+        };
+        let step = escalated_to(c, org, &row.uuid, &waiting)?;
+        let urgent = obligations.iter().any(|o| waiting.contains(&o.id) && o.spec.urgent);
         out.push(ReviewItem {
             id: row.uuid.clone(),
             subject: ReviewSubject::Request,
@@ -206,11 +247,11 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
             zone: trace["zone"].as_str().unwrap_or_default().to_owned(),
             expires_at: row.expires_at,
             own,
-            needs: Vec::new(),
-            progress: String::new(),
-            step: None,
-            urgent: false,
-            reason: None,
+            needs,
+            progress,
+            step,
+            urgent,
+            reason: call["reason"].as_str().map(str::to_owned),
         });
     }
     for change in reins_org::q_pending_changes(c, org)? {
@@ -237,6 +278,17 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
         out.push(change_item(c, org, &org_name, &change, action, own)?);
     }
     Ok(out)
+}
+
+/// Where an escalation took a request's waiting obligations ("Escalated to Security admin"), if anywhere.
+fn escalated_to(c: &mut DbConnInner, org: &str, request: &str, waiting: &[String]) -> Result<Option<String>, OrgError> {
+    let steps = crate::db::models::reins_org_routing::q_steps(c, request)?;
+    let last =
+        steps.iter().filter(|s| s.step > 0 && waiting.contains(&s.obligation)).max_by_key(|s| (s.started_at, s.step));
+    match last.and_then(|s| serde_json::from_str::<Reviewers>(&s.reviewers).ok()) {
+        Some(r) => Ok(Some(format!("Escalated to {}", routing::label(c, org, &r)?))),
+        None => Ok(None),
+    }
 }
 
 fn change_item(
@@ -383,7 +435,9 @@ fn answer_request(
     }
     let (groups, roles) = standing(c, org, user)?.ok_or(OrgError::NotFound)?;
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
-    if !obligations.iter().any(|o| o.spec.eligible(user, &groups, &roles, &row.user_uuid)) {
+    let resolved = routing::stored(row.resolved.as_deref());
+    if !obligations.iter().any(|o| o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id)))
+    {
         return Err(OrgError::Forbidden);
     }
     record_answer(c, org, id, user, dev, ans)?;
@@ -613,7 +667,13 @@ pub(crate) mod tests {
         reins_org_request::q_request(c, "o1", id).unwrap().unwrap()
     }
 
-    fn approve_as(c: &mut DbConnInner, phone: &Phone, user: &str, id: &str, now: i64) -> Result<Answered, OrgError> {
+    pub fn approve_as(
+        c: &mut DbConnInner,
+        phone: &Phone,
+        user: &str,
+        id: &str,
+        now: i64,
+    ) -> Result<Answered, OrgError> {
         let r = row(c, id);
         let a = phone.answer("o1", ReviewSubject::Request, id, &r.digest, ReviewDecision::Approve, &r.snapshot, now);
         answer(c, "o1", user, &phone.device, id, &a, now)
@@ -734,6 +794,17 @@ pub(crate) mod tests {
         let a = kim.answer("o1", ReviewSubject::Request, &s.id, &r.digest, ReviewDecision::Deny, &r.snapshot, 101);
         assert!(matches!(answer(&mut c, "o1", "kim", "kim-phone", &s.id, &a, 101).unwrap(), Answered::Denied));
         assert_eq!(row(&mut c, &s.id).state, request_state::DENIED);
+    }
+
+    pub fn change_answer_as(
+        c: &mut DbConnInner,
+        phone: &Phone,
+        user: &str,
+        id: &str,
+        d: ReviewDecision,
+        now: i64,
+    ) -> Result<Answered, OrgError> {
+        change_answer(c, phone, user, id, d, now)
     }
 
     fn change_answer(

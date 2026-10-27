@@ -407,6 +407,7 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => (format!("Remove executor {}", e(executor_id)), field("Executor", "registered", "removed")),
+        other => (e(&action_title(other)), String::new()),
     };
     format!("<div>{title}</div>{fields}")
 }
@@ -464,6 +465,39 @@ pub fn action_title(action: &AdminAction) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => format!("Remove executor {executor_id}"),
+        AdminAction::SetManager {
+            manager,
+            ..
+        } => if manager.is_some() {
+            "Set a manager"
+        } else {
+            "Clear a manager"
+        }
+        .to_owned(),
+        AdminAction::SetGroupRouting {
+            ..
+        } => "Group backup and window".to_owned(),
+        AdminAction::SetGithubReader {
+            app_id,
+            ..
+        } => format!("GitHub reader app {app_id}"),
+        AdminAction::SetOnCallSource {
+            alias,
+            provider,
+            ..
+        } => format!("On-call {alias} ({})", provider.label()),
+        AdminAction::SetApprovalChannel {
+            channel: kind,
+            enabled,
+        } => format!(
+            "{} reviews {}",
+            kind.label(),
+            if *enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ),
     }
 }
 
