@@ -1204,10 +1204,15 @@ impl Engine {
                     s.reason = format!("Waited: {why}");
                     self.ap_wait(&subject, &s)
                 }
+                // Auto never denies (Decisions v2): what Auto's own rule would deny waits for the owner.
                 overnight::Gate::Hold(overnight::Hold::Auto {
                     deny: true,
                     ..
-                }) => Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Overnight(None))).await,
+                }) => {
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("{} — asks you", s.reason);
+                    self.ap_wait(&subject, &s)
+                }
                 overnight::Gate::Hold(overnight::Hold::Auto {
                     why,
                     deny: false,
@@ -1264,13 +1269,11 @@ impl Engine {
                     s.reason = format!("{} — paused: unusual volume from this connection", s.reason);
                     self.ap_pause_notice(&subject, now, "unusual volume");
                 }
-                // Denying stays conservative: a class that earned it (10 decisions, no wrong denial), else only what the
-                // risk head is sure is catastrophic.
-                Verdict::Deny if gate.deny || (gate.deny_catastrophic && decide::surely_catastrophic(readable)) => {
-                    return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Autopilot)).await;
-                }
+                // Auto never denies (Decisions v2, 01 §6): only explicit rules deny. What the model would deny waits
+                // for the owner, as an ask.
                 Verdict::Deny => {
-                    s.reason = format!("{} — denies this kind on its own after more of your answers", s.reason);
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("{} — asks you", s.reason);
                 }
                 Verdict::Ask => {}
             }
