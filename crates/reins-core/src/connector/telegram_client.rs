@@ -326,6 +326,7 @@ impl Grammers {
 
     fn chat_of(peer: &Peer, last: Option<&grammers_client::message::Message>) -> Option<Chat> {
         let id = peer.id().bot_api_dialog_id()?.to_string();
+        let is_self = matches!(peer, Peer::User(u) if u.is_self());
         let (kind, title) = match peer {
             Peer::User(u) => (
                 if u.is_bot() {
@@ -350,6 +351,7 @@ impl Grammers {
             username: peer.username().map(str::to_owned),
             last: last.map(|m| m.text().to_owned()).unwrap_or_default(),
             date: last.map_or(0, |m| m.date().timestamp()),
+            is_self,
         })
     }
 

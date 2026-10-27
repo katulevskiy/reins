@@ -6,7 +6,7 @@ use std::sync::Arc;
 use reins_proto::connector::{ConnectorCall, TELEGRAM};
 use serde_json::{Map, json};
 
-use super::{Connector, Item, LoginProgress, Preview, looks_like_code};
+use super::{Connector, Item, LoginProgress, Party, Preview, looks_like_code};
 use crate::types::GmailStatus;
 use crate::{CoreError, text};
 
@@ -26,6 +26,8 @@ pub struct Chat {
     /// The last message, one line.
     pub last: String,
     pub date: i64,
+    /// The account's own chat (Saved Messages).
+    pub is_self: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -133,6 +135,27 @@ impl Telegram {
 impl Connector for Telegram {
     fn service(&self) -> &'static str {
         TELEGRAM
+    }
+
+    /// The chat a send to `written` would reach (resolved exactly as [`Connector::perform`] resolves it), by its id.
+    async fn party(&self, account: &str, written: &str) -> Result<Option<Party>, CoreError> {
+        let chat = match self.resolve(account, written).await {
+            Ok(chat) => chat,
+            Err(CoreError::Service {
+                ..
+            }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let label = match (&chat.username, chat.is_self) {
+            (_, true) => "Saved Messages".to_owned(),
+            (Some(u), _) => format!("@{u}"),
+            (None, _) => text::one_line(&chat.title),
+        };
+        Ok(Some(Party {
+            id: chat.id,
+            label,
+            own: chat.is_self,
+        }))
     }
 
     async fn fetch(&self, account: &str, call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {

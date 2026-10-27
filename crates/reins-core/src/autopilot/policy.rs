@@ -37,6 +37,14 @@ const PROPOSALS_KEY: &str = "autopilot.world_proposals";
 const QUESTIONS_KEY: &str = "autopilot.questions";
 const SETUP_KEY: &str = "autopilot.setup_done";
 const DECIDES_KEY: &str = "autopilot.matrix_decides";
+/// What GitHub said each login is (login → its account id, or none, and when), sealed.
+const GITHUB_IDS_KEY: &str = "autopilot.github_ids";
+/// The connected GitHub accounts' own ids (login → id), as their tokens' `GET /user` said.
+const GITHUB_SELF_KEY: &str = "autopilot.github_self";
+/// How long what GitHub said a login is holds before it is asked again.
+pub const GITHUB_ID_SECS: i64 = 3600;
+/// Logins looked up at most per request (the rest stay unresolved, so Outside).
+const MAX_LOOKUPS: usize = 8;
 /// Open questions kept at most.
 pub const MAX_QUESTIONS: usize = 50;
 /// "Ask me next time" pauses Auto for that zone and kind of effect this long (01 §7).
@@ -230,7 +238,238 @@ pub fn matrix_view(n: &MatrixNote) -> MatrixView {
     }
 }
 
+/// What GitHub said one login is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct LoginSeen {
+    /// The account id, `None` when no account has that login.
+    id: Option<String>,
+    at: i64,
+}
+
+/// A request as the matrix reads it: its parties by the services' stable ids.
+pub(crate) struct Identified {
+    /// The request, with a Telegram chat as written replaced by the id of the chat a send would reach.
+    pub request: RelayRequest,
+    /// Login → GitHub account id, for the logins the request names that GitHub could tell.
+    pub github_ids: BTreeMap<String, String>,
+}
+
+/// A GitHub owner fact kept by its login (before ids), on github.com.
+fn legacy_github_login(key: &str) -> bool {
+    !key.is_empty() && !key.starts_with('#') && !key.contains('/') && !key.contains('.')
+}
+
 impl Engine {
+    /// Before the matrix reads a request: who its parties are, by id, through the services that connect them
+    /// (Telegram resolves a chat exactly as a send would; GitHub says which account a login is now). What can't be
+    /// told stays as written, so Outside. Also moves facts kept by a handle or a login onto ids as they're learned.
+    pub(crate) async fn ap_identify(&self, request: &RelayRequest, now: i64) -> Identified {
+        let telegram = self.connectors.get(reins_proto::connector::TELEGRAM);
+        let github = self.connectors.get(reins_proto::connector::GITHUB);
+        self.ap_identify_with(request, now, telegram.as_deref(), github.as_deref()).await
+    }
+
+    pub(crate) async fn ap_identify_with(
+        &self,
+        request: &RelayRequest,
+        now: i64,
+        telegram: Option<&dyn crate::connector::Connector>,
+        github: Option<&dyn crate::connector::Connector>,
+    ) -> Identified {
+        let mut out = Identified {
+            request: request.clone(),
+            github_ids: BTreeMap::new(),
+        };
+        if let (Some(tg), ToolCall::Connector(call)) = (telegram, &mut out.request.call)
+            && call.service == reins_proto::connector::TELEGRAM
+            && call.op == "send"
+            && let Some(written) = call.str_arg("chat").map(str::to_owned)
+            && let Some(account) = request
+                .account
+                .clone()
+                .or_else(|| self.accounts_of(reins_proto::connector::TELEGRAM).into_iter().next())
+        {
+            match tg.party(&account, &written).await {
+                Ok(Some(party)) => {
+                    if let Err(e) = self.ap_learn_chat(&written, &party) {
+                        log::warn!("Auto could not keep what Telegram said of a chat: {e}");
+                    }
+                    call.args.insert("chat".to_owned(), serde_json::Value::String(party.id));
+                }
+                Ok(None) => {}
+                Err(e) => log::info!("Auto could not ask Telegram who a chat is: {e}"),
+            }
+        }
+        if let Some(gh) = github
+            && let Some(account) = request
+                .account
+                .clone()
+                .filter(
+                    |_| matches!(&request.call, ToolCall::Connector(c) if c.service == reins_proto::connector::GITHUB),
+                )
+                .or_else(|| self.accounts_of(reins_proto::connector::GITHUB).into_iter().next())
+        {
+            let mut logins: BTreeSet<String> = self.ap_github_logins(&out.request);
+            if let Ok(snap) = self.ap_snapshot() {
+                logins.extend(snap.facts.owners.keys().filter(|k| legacy_github_login(k)).cloned());
+            }
+            out.github_ids = self.ap_github_ids(gh, &account, logins, now).await;
+            if let Err(e) = self.ap_migrate_github_facts(&out.github_ids) {
+                log::warn!("Auto could not move GitHub facts onto ids: {e}");
+            }
+        }
+        out
+    }
+
+    /// The GitHub logins a request names (its repositories' owners).
+    fn ap_github_logins(&self, request: &RelayRequest) -> BTreeSet<String> {
+        let Ok(Some(reading)) = request_analysis(request) else {
+            return BTreeSet::new();
+        };
+        let resolved = graph::request_zone(
+            &reading.analysis,
+            &Facts::default(),
+            &graph::Base {
+                repo: reading.base.as_deref(),
+                remotes: None,
+                bare_host: reading.bare_host,
+            },
+        );
+        let mut logins: BTreeSet<String> = resolved
+            .parts
+            .iter()
+            .chain(reading.base.iter())
+            .filter_map(|p| graph::parse_repo(p, reading.bare_host))
+            .filter(|r| r.host == graph::GITHUB)
+            .map(|r| r.owner)
+            .collect();
+        logins.extend(
+            resolved
+                .unknown
+                .iter()
+                .filter(|u| u.kind == FactKind::Owner && legacy_github_login(&u.key))
+                .map(|u| u.key.clone()),
+        );
+        logins
+    }
+
+    /// Login → account id for `logins`, from what GitHub said within [`GITHUB_ID_SECS`], else asked now (at most
+    /// [`MAX_LOOKUPS`]). A login GitHub can't tell about is left out.
+    async fn ap_github_ids(
+        &self,
+        gh: &dyn crate::connector::Connector,
+        account: &str,
+        logins: BTreeSet<String>,
+        now: i64,
+    ) -> BTreeMap<String, String> {
+        let mut seen: BTreeMap<String, LoginSeen> = self.ap_sealed(GITHUB_IDS_KEY).unwrap_or_default();
+        let mut own: BTreeMap<String, String> = self.ap_sealed(GITHUB_SELF_KEY).unwrap_or_default();
+        let (mut changed, mut asked) = (false, 0);
+        let mut ids = BTreeMap::new();
+        for login in logins {
+            let fresh = seen.get(&login).filter(|s| now - s.at < GITHUB_ID_SECS).cloned();
+            let found = match fresh {
+                Some(s) => s.id,
+                None if asked < MAX_LOOKUPS => {
+                    asked += 1;
+                    match gh.party(account, &login).await {
+                        Ok(party) => {
+                            let id = party.as_ref().map(|p| p.id.clone());
+                            if let Some(p) = party.filter(|p| p.own) {
+                                own.insert(login.clone(), p.id);
+                            }
+                            seen.insert(
+                                login.clone(),
+                                LoginSeen {
+                                    id: id.clone(),
+                                    at: now,
+                                },
+                            );
+                            changed = true;
+                            id
+                        }
+                        Err(e) => {
+                            log::info!("Auto could not ask GitHub who {login} is: {e}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            if let Some(id) = found {
+                ids.insert(login, id);
+            }
+        }
+        if changed {
+            seen.retain(|_, s| now - s.at < 7 * GITHUB_ID_SECS);
+            if let Err(e) =
+                self.ap_put_sealed(GITHUB_IDS_KEY, &seen).and_then(|()| self.ap_put_sealed(GITHUB_SELF_KEY, &own))
+            {
+                log::warn!("Auto could not keep what GitHub said: {e}");
+            }
+        }
+        ids
+    }
+
+    /// The account id GitHub gives `login` now, through the first connected GitHub account.
+    async fn ap_github_ids_now(&self, login: &str, now: i64) -> Option<String> {
+        let gh = self.connectors.get(reins_proto::connector::GITHUB)?;
+        let account = self.accounts_of(reins_proto::connector::GITHUB).into_iter().next()?;
+        let logins = BTreeSet::from([login.to_owned()]);
+        self.ap_github_ids(gh.as_ref(), &account, logins, now).await.remove(login)
+    }
+
+    /// GitHub owner facts kept by login move onto the account's id once GitHub said which account the login is (the
+    /// login stays as its label). Nothing changes zone.
+    fn ap_migrate_github_facts(&self, ids: &BTreeMap<String, String>) -> Result<(), CoreError> {
+        let mut snap = self.ap_snapshot()?;
+        let legacy: Vec<(String, Zone)> =
+            snap.facts.owners.iter().filter(|(k, _)| legacy_github_login(k)).map(|(k, z)| (k.clone(), *z)).collect();
+        let mut changed = false;
+        for (login, zone) in legacy {
+            let Some(id) = ids.get(&login) else {
+                continue;
+            };
+            snap.facts.owners.remove(&login);
+            if !snap.facts.owners.contains_key(&graph::github_owner_key(id)) {
+                snap.facts.set_github_owner(id, &login, zone);
+            }
+            changed = true;
+        }
+        if changed {
+            self.ap_put_snapshot(&snap)?;
+        }
+        Ok(())
+    }
+
+    /// What Telegram said of a chat a request named: the owner's own chat (Saved Messages) is Mine, by its id; a fact
+    /// kept by the handle the request used moves onto the id; the id gets the handle or the title as its label.
+    fn ap_learn_chat(&self, written: &str, party: &crate::connector::Party) -> Result<(), CoreError> {
+        let Some(id) = graph::key(&party.id) else {
+            return Ok(());
+        };
+        let mut snap = self.ap_snapshot()?;
+        let before = snap.facts.clone();
+        if party.own && snap.facts.get(FactKind::Chat, &id).is_none() {
+            snap.facts.set(FactKind::Chat, &id, Zone::Mine);
+        }
+        if let Some(handle) = graph::key(written).filter(|h| *h != id) {
+            for kind in [FactKind::Chat, FactKind::Person] {
+                if let Some(zone) = snap.facts.get(kind, &handle) {
+                    snap.facts.remove(kind, &handle);
+                    if snap.facts.get(FactKind::Chat, &id).is_none() {
+                        snap.facts.set(FactKind::Chat, &id, zone);
+                    }
+                }
+            }
+        }
+        snap.facts.set_label(FactKind::Chat, &id, &party.label);
+        if snap.facts != before {
+            self.ap_put_snapshot(&snap)?;
+        }
+        Ok(())
+    }
+
     /// What the matrix says of a request, with what it named that Auto doesn't know. `seen`: the owner approved its
     /// target before. A request is evaluated against this core's own snapshot: each profile (Personal, or an org's
     /// Managed one) runs its own core on its own store (`crate::profiles`), and a connection pairs with exactly one, so
@@ -242,11 +481,24 @@ impl Engine {
         now: i64,
         overnight: bool,
     ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
+        self.ap_evaluate_identified(request, &BTreeMap::new(), seen, now, overnight)
+    }
+
+    /// [`Engine::ap_evaluate`] with what GitHub said each login the request names is ([`Engine::ap_identify`]).
+    pub(crate) fn ap_evaluate_identified(
+        &self,
+        request: &RelayRequest,
+        github_ids: &BTreeMap<String, String>,
+        seen: bool,
+        now: i64,
+        overnight: bool,
+    ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
         let Some(reading) = request_analysis(request).map_err(CoreError::invalid)? else {
             return Ok(None);
         };
         let analysis = reading.analysis;
         let mut snap = self.ap_snapshot()?;
+        snap.facts.github_ids.clone_from(github_ids);
         // The live tasks are part of what the request is evaluated against (and of the snapshot's hash).
         self.ap_tasks_into(&mut snap, now);
         let resolved = graph::request_zone(
@@ -367,6 +619,7 @@ impl Engine {
                 zone,
             });
         };
+        let own_ids: BTreeMap<String, String> = self.ap_sealed(GITHUB_SELF_KEY).unwrap_or_default();
         for a in self.store.accounts()? {
             match a.service.as_str() {
                 crate::views::SERVICE_GMAIL => {
@@ -380,8 +633,24 @@ impl Engine {
                         }
                     }
                 }
-                reins_proto::connector::GITHUB if snap.facts.get(FactKind::Owner, &a.account).is_none() => {
-                    snap.facts.set(FactKind::Owner, &a.account, Zone::Mine);
+                reins_proto::connector::GITHUB => {
+                    // By the account's id once GitHub said it (`GET /user`); by its login until then (moved onto the
+                    // id when GitHub is next asked).
+                    match own_ids.get(&a.account.to_ascii_lowercase()) {
+                        Some(id) => {
+                            let k = graph::github_owner_key(id);
+                            if !snap.facts.owners.contains_key(&k) {
+                                snap.facts.set_github_owner(id, &a.account, Zone::Mine);
+                            }
+                            if snap.facts.owners.get(&a.account.to_ascii_lowercase()) == Some(&Zone::Mine) {
+                                snap.facts.remove(FactKind::Owner, &a.account);
+                            }
+                        }
+                        None if snap.facts.get(FactKind::Owner, &a.account).is_none() => {
+                            snap.facts.set(FactKind::Owner, &a.account, Zone::Mine);
+                        }
+                        None => {}
+                    }
                 }
                 _ => {}
             }
@@ -439,11 +708,12 @@ impl Engine {
     pub fn auto_setup(&self) -> Result<AutoSetup, CoreError> {
         let now = unix_now();
         let (snap, proposals, counts) = self.ap_refresh_world(now)?;
-        let count = |kind: FactKind, key: &str| counts.get(&(kind, key.to_owned())).copied().unwrap_or(0);
+        let label = |kind: FactKind, key: &str| snap.facts.label(kind, key).unwrap_or(key).to_owned();
+        let count = |kind: FactKind, key: &str| counts.get(&(kind, label(kind, key))).copied().unwrap_or(0);
         let item = |kind: FactKind, key: &str, zone: Zone, confirmed: bool| WorldItem {
             kind: kind.into(),
             key: key.to_owned(),
-            label: key.to_owned(),
+            label: label(kind, key),
             service: service_of(kind, key).to_owned(),
             zone: zone.into(),
             confirmed,
@@ -509,12 +779,22 @@ impl Engine {
         if zone < current(&snap.facts, kind, &k) {
             confirm(owner, &format!("Treat {k} as {}", zone.label())).await?;
         }
+        // A GitHub login is kept by the account it names now (its id), the login only its label; by the login when
+        // GitHub can't be asked (it moves onto the id later).
+        let github_id = if kind == FactKind::Owner && legacy_github_login(&k) {
+            self.ap_github_ids_now(&k, unix_now()).await
+        } else {
+            None
+        };
         // Read again after the check: another change may have landed meanwhile.
         let mut snap = self.ap_snapshot()?;
         if kind == FactKind::Person {
             snap.facts.own_addresses.remove(&k);
         }
-        if !snap.facts.set(kind, &k, zone) {
+        if let Some(id) = github_id {
+            snap.facts.owners.remove(&k);
+            snap.facts.set_github_owner(&id, &k, zone);
+        } else if !snap.facts.set(kind, &k, zone) {
             return Err(CoreError::invalid("a public mail domain can't have a zone"));
         }
         self.ap_put_snapshot(&snap)?;
@@ -653,7 +933,9 @@ impl Engine {
             .map(|q| AutoQuestion {
                 id: q.id,
                 kind: q.kind.into(),
-                key: q.key,
+                // What the card names it (a chat's handle or title; the id stays in the store, and the answer goes to
+                // it by the question's id).
+                key: snap.facts.label(q.kind, &q.key).map_or(q.key.clone(), str::to_owned),
                 service: q.service,
                 connection_label: q.connection_label,
                 request_id: q.request_id,

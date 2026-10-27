@@ -336,6 +336,47 @@ impl Connector for GitHub {
         GITHUB
     }
 
+    /// The GitHub account a login names now, by its stable id. The connected account itself is read as the token's
+    /// own user (`GET /user`), so a login the owner gave up and someone else took is never theirs.
+    async fn party(&self, account: &str, written: &str) -> Result<Option<super::Party>, CoreError> {
+        let login = written.trim().to_ascii_lowercase();
+        let ok = !login.is_empty()
+            && login.len() <= 39
+            && login.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && !login.starts_with('-');
+        if !ok {
+            return Ok(None);
+        }
+        let token = self.token(account)?;
+        let own = login == account.to_ascii_lowercase();
+        let path = if own {
+            "/user".to_owned()
+        } else {
+            format!("/users/{login}")
+        };
+        let options = Options {
+            allow: &[404],
+            ..Options::default()
+        };
+        let reply = self.send(&token, Method::GET, &path, &[], None, &options).await?;
+        if reply.status == 404 {
+            return Ok(None);
+        }
+        let user = reply.json;
+        let (Some(id), Some(now)) = (user["id"].as_u64(), user["login"].as_str()) else {
+            return Ok(None);
+        };
+        // The token's user under another login now: the account was renamed, and `login` isn't it any more.
+        if own && !now.eq_ignore_ascii_case(&login) {
+            return Ok(None);
+        }
+        Ok(Some(super::Party {
+            id: id.to_string(),
+            label: now.to_ascii_lowercase(),
+            own,
+        }))
+    }
+
     async fn fetch(&self, account: &str, call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {
         let token = self.token(account)?;
         let t = token.as_str();

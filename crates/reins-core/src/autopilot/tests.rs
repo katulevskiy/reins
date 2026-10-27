@@ -4246,9 +4246,11 @@ async fn held_execution_history_keeps_account_inspection_and_braking_available()
 // ---- Decisions v2: the matrix in shadow and deciding, the setup, questions, "Ask me next time" ------------------------
 
 mod decisions_v2 {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
-    use reins_policy::context::Zone;
+    use reins_policy::context::{FactKind, Zone};
     use reins_policy::effects::EffectKind;
     use reins_policy::matrix::{Issuer, Rule, Then, When};
 
@@ -4352,6 +4354,149 @@ mod decisions_v2 {
         let entry = env.core.activity(1).await.unwrap().remove(0);
         assert_eq!(entry.decided_by, "rule");
         assert_eq!(entry.autopilot.unwrap().matrix.unwrap().line, "Deny · No mail from agents");
+    }
+
+    /// A connector that says who parties are, as a script says.
+    struct Parties {
+        service: &'static str,
+        known: Mutex<BTreeMap<String, crate::connector::Party>>,
+    }
+
+    impl Parties {
+        fn new(service: &'static str, known: &[(&str, &str, &str, bool)]) -> Self {
+            let p = Self {
+                service,
+                known: Mutex::new(BTreeMap::new()),
+            };
+            for (written, id, label, own) in known {
+                p.say(written, id, label, *own);
+            }
+            p
+        }
+
+        fn say(&self, written: &str, id: &str, label: &str, own: bool) {
+            self.known.lock().unwrap().insert(
+                written.to_owned(),
+                crate::connector::Party {
+                    id: id.to_owned(),
+                    label: label.to_owned(),
+                    own,
+                },
+            );
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::connector::Connector for Parties {
+        fn service(&self) -> &'static str {
+            self.service
+        }
+        async fn party(&self, _account: &str, written: &str) -> Result<Option<crate::connector::Party>, CoreError> {
+            Ok(self.known.lock().unwrap().get(written).cloned())
+        }
+        async fn status(&self, _account: &str) -> crate::types::GmailStatus {
+            crate::types::GmailStatus::Ready
+        }
+    }
+
+    fn tg_send(chat: &str) -> Value {
+        json!({"tool": "connector", "service": "telegram", "op": "send", "args": {"chat": chat, "text": "hi"}})
+    }
+
+    fn gh_issue(repo: &str) -> Value {
+        json!({"tool": "connector", "service": "github", "op": "create_issue", "args": {"repo": repo, "title": "x"}})
+    }
+
+    #[tokio::test]
+    async fn a_telegram_chat_is_judged_by_the_id_a_send_would_reach() {
+        let env = env(false).await;
+        env.store().add_account("telegram", "+15550100", 1).unwrap();
+        let engine_arc = env.core.engine();
+        let engine = &*engine_arc;
+        // Before ids: the owner had zoned a handle.
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.facts.people.insert("@pal".to_owned(), Zone::Friends);
+        engine.ap_put_snapshot(&snap).unwrap();
+        let tg = Parties::new(
+            "telegram",
+            &[
+                ("@pal", "123456", "@pal", false),
+                ("Pal", "123456", "@pal", false),
+                ("me", "42", "Saved Messages", true),
+            ],
+        );
+        let judge = |written: &str| {
+            let r = request("r", OLD, tg_send(written));
+            let tg = &tg;
+            async move {
+                let id = engine.ap_identify_with(&r, unix_now(), Some(tg), None).await;
+                engine.ap_evaluate_identified(&id.request, &id.github_ids, false, unix_now(), false).unwrap().unwrap()
+            }
+        };
+        // The handle's fact moved onto the chat's id; a name that reaches the same chat is the same party.
+        for written in ["@pal", "Pal"] {
+            let (note, unknown) = judge(written).await;
+            assert_eq!((note.zone, unknown.len()), (Zone::Friends, 0), "{written}");
+        }
+        let facts = engine.ap_snapshot().unwrap().facts;
+        assert_eq!(facts.chats.get("123456"), Some(&Zone::Friends));
+        assert_eq!(facts.people.get("@pal"), None, "kept by id now");
+        assert_eq!(facts.label(FactKind::Chat, "123456"), Some("@pal"));
+        // The owner's own chat (Saved Messages) is Mine, by the account's id.
+        let (note, _) = judge("me").await;
+        assert_eq!(note.zone, Zone::Mine);
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("42"), Some(&Zone::Mine));
+        // A chat Telegram can't find stays as written: Outside, and no question about a name.
+        let (note, unknown) = judge("Someone").await;
+        assert_eq!((note.zone, unknown.len()), (Zone::Outside, 0));
+        // A new chat is a question by its id, shown by its handle.
+        tg.say("@new", "777", "@new", false);
+        let (note, unknown) = judge("@new").await;
+        assert_eq!(note.zone, Zone::Outside);
+        engine.ap_note_unknowns(&unknown, "Claude", "r", unix_now()).unwrap();
+        let q = env.core.auto_questions().await.unwrap().into_iter().find(|q| q.id.ends_with(":777")).unwrap();
+        assert_eq!(q.key, "@new");
+        env.core.answer_auto_question(q.id, ZoneChoice::Friends, owner_yes()).await.unwrap();
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("777"), Some(&Zone::Friends));
+    }
+
+    #[tokio::test]
+    async fn github_owners_are_kept_by_account_id_and_a_taken_login_is_outside() {
+        let env = env(false).await;
+        env.store().add_account("github", "dkat", 1).unwrap();
+        let engine_arc = env.core.engine();
+        let engine = &*engine_arc;
+        // Before ids: facts by login.
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.facts.owners.insert("octo".to_owned(), Zone::Friends);
+        snap.facts.owners.insert("dkat".to_owned(), Zone::Mine);
+        engine.ap_put_snapshot(&snap).unwrap();
+        let gh = Parties::new("github", &[("dkat", "583231", "dkat", true), ("octo", "77", "octo", false)]);
+        let now = unix_now();
+        let judge = |repo: &str, at: i64| {
+            let r = request("r", OLD, gh_issue(repo));
+            let gh = &gh;
+            async move {
+                let id = engine.ap_identify_with(&r, at, None, Some(gh)).await;
+                engine.ap_evaluate_identified(&id.request, &id.github_ids, false, at, false).unwrap().unwrap().0
+            }
+        };
+        assert_eq!(judge("octo/x", now).await.zone, Zone::Friends);
+        // Migrated: kept by the accounts' ids, the logins only their labels.
+        let facts = engine.ap_snapshot().unwrap().facts;
+        assert_eq!((facts.owners.get("#77"), facts.owners.get("octo")), (Some(&Zone::Friends), None));
+        assert_eq!((facts.owners.get("#583231"), facts.owners.get("dkat")), (Some(&Zone::Mine), None));
+        assert_eq!(facts.label(FactKind::Owner, "#77"), Some("octo"));
+        assert_eq!(judge("dkat/reins", now).await.zone, Zone::Mine);
+        // The setup lists it by its label, and the own account isn't put back by its login.
+        let world = env.core.auto_setup().await.unwrap().world;
+        let me = world.iter().find(|w| w.key == "#583231").unwrap();
+        assert_eq!((me.label.as_str(), me.zone), ("dkat", ZoneChoice::Mine));
+        assert!(!world.iter().any(|w| w.key == "dkat"), "{world:?}");
+        // Later the login `octo` is someone else's: GitHub is asked again after an hour, and it's Outside.
+        gh.say("octo", "999", "octo", false);
+        assert_eq!(judge("octo/x", now + 60).await.zone, Zone::Friends, "within the hour, as GitHub said");
+        assert_eq!(judge("octo/x", now + crate::autopilot::policy::GITHUB_ID_SECS + 1).await.zone, Zone::Outside);
     }
 
     #[tokio::test]
