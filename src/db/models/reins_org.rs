@@ -74,6 +74,8 @@ pub struct ReinsOrg {
     pub created_by: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// How long request bodies are kept: 0, 30 or 365 days (06 §4).
+    pub body_retention_days: i32,
 }
 
 impl ReinsOrg {
@@ -153,6 +155,19 @@ pub struct ReinsOrgDevice {
     pub posture_at: i64,
     pub enrolled_at: i64,
     pub revoked_at: Option<i64>,
+    /// What verifying its platform attestation found (O2): `unverified`, `verified`, `failed` or `none`.
+    pub attestation_state: String,
+    /// What the attestation said (security level, boot state), as JSON.
+    pub attestation_detail: Option<String>,
+}
+
+/// [`ReinsOrgDevice::attestation_state`] values.
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod attestation {
+    pub const UNVERIFIED: &str = "unverified";
+    pub const VERIFIED: &str = "verified";
+    pub const FAILED: &str = "failed";
+    pub const NONE: &str = "none";
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -755,6 +770,7 @@ pub(crate) mod tests {
             created_by: "u1".to_owned(),
             created_at: 1,
             updated_at: 1,
+            body_retention_days: 30,
         }
     }
 
@@ -1020,6 +1036,8 @@ pub(crate) mod tests {
             posture_at: 1,
             enrolled_at: 1,
             revoked_at: None,
+            attestation_state: attestation::UNVERIFIED.to_owned(),
+            attestation_detail: None,
         };
         assert!(q_enroll_device(&mut c, &dev("u1", "d1")).unwrap());
         assert!(q_enroll_device(&mut c, &dev("u1", "d1")).unwrap(), "a new key for an enrolled device");

@@ -189,6 +189,8 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
         posture_at: now,
         enrolled_at: now,
         revoked_at: None,
+        attestation_state: reins_org::attestation::UNVERIFIED.to_owned(),
+        attestation_detail: None,
     };
     let kinds: Vec<_> = request.attestations.iter().map(|a| a.kind).collect();
     let detail = json!({"device": device, "hardware": request.hardware, "attestations": kinds,
