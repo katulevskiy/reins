@@ -57,6 +57,8 @@ pub mod contexts {
     pub const HANDOVER_REQUEST: &str = "reins/handover-request/v1";
     /// A viewer's supported policy versions, independently bound to its exact handover request.
     pub const HANDOVER_POLICY_SUPPORT: &str = "reins/handover-policy-support/v1";
+    /// One event of an organization's admin log, chained to the one before ([`crate::org::event_hash`]).
+    pub const ORG_EVENT: &str = "reins/org-event/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,

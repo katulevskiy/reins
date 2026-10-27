@@ -172,10 +172,18 @@ impl Role {
         }
     }
 
-    /// The roles whose grant and removal only an Org owner may propose or approve.
+    /// The roles whose grant and removal only an Org owner may propose or approve. They are granted to people only,
+    /// never to a group (a group's members come from the identity provider).
     #[must_use]
     pub fn is_admin(self) -> bool {
         matches!(self, Self::OrgOwner | Self::SecurityAdmin)
+    }
+
+    /// The roles that configure the org, its policy or its connections: acting *on* someone who holds one (removing
+    /// them) is an admin action of its own ([`AdminAction::capability`]).
+    #[must_use]
+    pub fn is_privileged(self) -> bool {
+        matches!(self, Self::OrgOwner | Self::SecurityAdmin | Self::ConnectionAdmin | Self::PolicyAuthor)
     }
 }
 
@@ -274,9 +282,13 @@ pub enum AdminAction {
 }
 
 impl AdminAction {
-    /// What the proposer and the approver must both be able to do.
+    /// What the proposer and the approver must both be able to do. An action's risk depends on whom it touches, so
+    /// `target_roles` are the roles the subject holds now (a member's direct and group roles; a group's roles; empty
+    /// for actions without a subject): removing a member who holds a privileged role takes [`Capability::AssignAdmins`],
+    /// as granting that role would.
     #[must_use]
-    pub fn capability(&self) -> Capability {
+    pub fn capability(&self, target_roles: &[Role]) -> Capability {
+        let touches_privileged = target_roles.iter().any(|r| r.is_privileged());
         match self {
             Self::GrantRole {
                 role,
@@ -306,8 +318,28 @@ impl AdminAction {
             } => Capability::SetUpOrg,
             Self::RemoveMember {
                 ..
-            } => Capability::ManageMembers,
+            } => {
+                if touches_privileged {
+                    Capability::AssignAdmins
+                } else {
+                    Capability::ManageMembers
+                }
+            }
         }
+    }
+
+    /// Shapes refused whoever proposes them: an admin role granted to a group (anyone the identity provider adds to
+    /// it would become an admin without an admin's approval).
+    pub fn check_shape(&self) -> Result<(), &'static str> {
+        if let Self::GrantRole {
+            subject: Subject::Group(_),
+            role,
+        } = self
+            && role.is_admin()
+        {
+            return Err("Org owner and Security admin are given to people, not groups");
+        }
+        Ok(())
     }
 }
 
@@ -482,22 +514,130 @@ pub enum ProfileRef {
     Managed(String),
 }
 
-/// The profile a git remote at `host`, repository `path` (`owner/name`) belongs to: an org's when the host is one of
-/// its hosts, or the host is `github.com` and the owner is one of its GitHub organizations; else Personal.
-#[must_use]
-pub fn route_remote(bindings: &[(String, OrgRoutes)], host: &str, path: &str) -> ProfileRef {
+/// A git remote reduced to what routing compares: the host (lowercase, no user, port or trailing dot; every
+/// GitHub-owned host as `github.com`) and the repository path (no leading or trailing slashes, no `.git`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remote {
+    pub host: String,
+    pub path: String,
+}
+
+/// Whether `host` (lowercase) is GitHub's own: `github.com` and any of its subdomains (`www`, `ssh`, `api`). They all
+/// name the same owners, so an org's GitHub organization is matched on every one of them.
+fn github_owned(host: &str) -> bool {
+    host == "github.com" || host.ends_with(".github.com")
+}
+
+/// The host part of an authority (`user@host:port`, `[v6]:port`), lowercase, without the trailing dot.
+fn bare_host(authority: &str) -> String {
+    let after_user = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(rest) = after_user.strip_prefix('[') {
+        rest.split_once(']').map_or(rest, |(h, _)| h)
+    } else {
+        after_user.split_once(':').map_or(after_user, |(h, _)| h)
+    };
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    let owner = path.trim_start_matches('/').split('/').next().unwrap_or_default();
+    if github_owned(&host) {
+        "github.com".to_owned()
+    } else {
+        host
+    }
+}
+
+fn clean_path(path: &str) -> String {
+    let path = path.split(['?', '#']).next().unwrap_or_default().trim().trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path).trim_end_matches('/');
+    path.to_owned()
+}
+
+impl Remote {
+    /// Parses the remote forms git accepts: `https://[user@]host[:port]/path`, `ssh://[user@]host[:port]/path`,
+    /// `git://…`, and the scp form `[user@]host:path`. `None` for a local path or anything else.
+    #[must_use]
+    pub fn parse(url: &str) -> Option<Self> {
+        let url = url.trim();
+        let (authority, path) = if let Some((scheme, rest)) = url.split_once("://") {
+            if !matches!(scheme.to_ascii_lowercase().as_str(), "https" | "http" | "ssh" | "git" | "git+ssh") {
+                return None;
+            }
+            rest.split_once('/').unwrap_or((rest, ""))
+        } else {
+            // scp form: a colon before any slash, and not a Windows drive letter.
+            let colon = url.find(':')?;
+            if url[..colon].contains('/') || colon < 2 {
+                return None;
+            }
+            (&url[..colon], &url[colon + 1..])
+        };
+        let host = bare_host(authority);
+        if host.is_empty() {
+            return None;
+        }
+        Some(Self {
+            host,
+            path: clean_path(path),
+        })
+    }
+
+    /// From a host and path already split (the desktop proxy's routes), normalized the same way.
+    #[must_use]
+    pub fn from_parts(host: &str, path: &str) -> Self {
+        Self {
+            host: bare_host(host),
+            path: clean_path(path),
+        }
+    }
+}
+
+/// The profile `remote` belongs to: an org's when its host is one of the org's hosts, or it is on GitHub and its owner
+/// is one of the org's GitHub organizations (case-insensitive, on every GitHub-owned host); else Personal.
+#[must_use]
+pub fn route_remote(bindings: &[(String, OrgRoutes)], remote: &Remote) -> ProfileRef {
+    let owner = remote.path.split('/').next().unwrap_or_default();
     for (org, routes) in bindings {
-        if routes.hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+        if routes.hosts.iter().any(|h| bare_host(h) == remote.host) {
             return ProfileRef::Managed(org.clone());
         }
-        if host == "github.com" && !owner.is_empty() && routes.github_orgs.iter().any(|o| o.eq_ignore_ascii_case(owner))
+        if remote.host == "github.com"
+            && !owner.is_empty()
+            && routes.github_orgs.iter().any(|o| o.trim().eq_ignore_ascii_case(owner))
         {
             return ProfileRef::Managed(org.clone());
         }
     }
     ProfileRef::Personal
+}
+
+/// The `prev_hash` of an org's first event.
+pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// One admin event as it is chained: the fields in this order, then the previous event's hash.
+#[derive(Clone, Copy, Debug)]
+pub struct EventFields<'a> {
+    pub org: &'a str,
+    pub seq: i64,
+    pub at: i64,
+    pub kind: &'a str,
+    pub actor: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    /// The stored detail text (JSON), byte for byte.
+    pub detail: &'a str,
+}
+
+/// The hash of an admin event (lowercase hex SHA-256 of its canonical encoding and `prev_hash`). O2's audit log and
+/// `reins-audit verify` recompute it to find an edited, removed or reordered event.
+#[must_use]
+pub fn event_hash(event: &EventFields<'_>, prev_hash: &str) -> String {
+    let mut c = crate::canon::Canon::new(crate::canon::contexts::ORG_EVENT);
+    c.str(event.org).i64(event.seq).i64(event.at).str(event.kind);
+    for v in [event.actor, event.subject] {
+        match v {
+            Some(v) => c.bool(true).str(v),
+            None => c.bool(false),
+        };
+    }
+    c.str(event.detail).str(prev_hash);
+    crate::canon::hex32(&crate::canon::sha256(&c.finish()))
 }
 
 #[cfg(test)]
@@ -546,22 +686,15 @@ mod tests {
             subject: Subject::Member("m1".to_owned()),
             role,
         };
-        assert_eq!(grant(Role::SecurityAdmin).capability(), Capability::AssignAdmins);
-        assert_eq!(grant(Role::OrgOwner).capability(), Capability::AssignAdmins);
-        assert_eq!(grant(Role::Auditor).capability(), Capability::AssignRoles);
+        assert_eq!(grant(Role::SecurityAdmin).capability(&[]), Capability::AssignAdmins);
+        assert_eq!(grant(Role::OrgOwner).capability(&[]), Capability::AssignAdmins);
+        assert_eq!(grant(Role::Auditor).capability(&[]), Capability::AssignRoles);
         assert_eq!(
             AdminAction::SetTier {
                 tier: Tier::Business
             }
-            .capability(),
+            .capability(&[]),
             Capability::SetUpOrg
-        );
-        assert_eq!(
-            AdminAction::RemoveMember {
-                member: "m".to_owned()
-            }
-            .capability(),
-            Capability::ManageMembers
         );
         let json = serde_json::to_value(grant(Role::Approver)).unwrap();
         assert_eq!(
@@ -570,6 +703,41 @@ mod tests {
                                             "role": "approver"})
         );
         assert_eq!(serde_json::from_value::<AdminAction>(json).unwrap(), grant(Role::Approver));
+    }
+
+    #[test]
+    fn removing_a_privileged_member_takes_what_making_one_takes() {
+        let remove = AdminAction::RemoveMember {
+            member: "m".to_owned(),
+        };
+        assert_eq!(remove.capability(&[]), Capability::ManageMembers);
+        assert_eq!(remove.capability(&[Role::Member, Role::Approver, Role::Auditor]), Capability::ManageMembers);
+        for privileged in [Role::OrgOwner, Role::SecurityAdmin, Role::ConnectionAdmin, Role::PolicyAuthor] {
+            assert_eq!(remove.capability(&[Role::Member, privileged]), Capability::AssignAdmins, "{privileged:?}");
+        }
+        // A Security admin manages members but cannot remove another Security admin.
+        assert!(role_grants(Role::SecurityAdmin, Capability::ManageMembers));
+        assert!(!role_grants(Role::SecurityAdmin, remove.capability(&[Role::SecurityAdmin])));
+        assert!(role_grants(Role::OrgOwner, remove.capability(&[Role::SecurityAdmin])));
+    }
+
+    #[test]
+    fn admin_roles_go_to_people_not_groups() {
+        let to_group = |role| AdminAction::GrantRole {
+            subject: Subject::Group("g".to_owned()),
+            role,
+        };
+        assert!(to_group(Role::OrgOwner).check_shape().is_err());
+        assert!(to_group(Role::SecurityAdmin).check_shape().is_err());
+        assert!(to_group(Role::Approver).check_shape().is_ok());
+        assert!(
+            AdminAction::RevokeRole {
+                subject: Subject::Group("g".to_owned()),
+                role: Role::OrgOwner
+            }
+            .check_shape()
+            .is_ok()
+        );
     }
 
     #[test]
@@ -615,14 +783,114 @@ mod tests {
             },
         )];
         let managed = ProfileRef::Managed("o1".to_owned());
-        assert_eq!(route_remote(&bindings, "github.com", "Acme/api"), managed);
-        assert_eq!(route_remote(&bindings, "GitHub.com.", "/acme/api"), managed);
-        assert_eq!(route_remote(&bindings, "gitlab.acme.com", "team/sub/repo"), managed);
-        assert_eq!(route_remote(&bindings, "github.com", "dkat/reins"), ProfileRef::Personal);
-        assert_eq!(route_remote(&bindings, "github.com.evil.io", "acme/x"), ProfileRef::Personal);
-        assert_eq!(route_remote(&bindings, "gitlab.com", "acme/x"), ProfileRef::Personal);
-        assert_eq!(route_remote(&bindings, "github.com", "acmes/x"), ProfileRef::Personal);
-        assert_eq!(route_remote(&[], "github.com", "acme/api"), ProfileRef::Personal);
+        let route = |url: &str| route_remote(&bindings, &Remote::parse(url).expect(url));
+        for url in [
+            "https://github.com/Acme/api",
+            "https://github.com/acme/api.git",
+            "https://github.com/acme/api/",
+            "https://dana:token@github.com/acme/api.git",
+            "https://GITHUB.COM./ACME/api",
+            "https://github.com:443/acme/api",
+            "https://www.github.com/acme/api",
+            "git@github.com:acme/api.git",
+            "git@GitHub.com:/acme/api",
+            "ssh://git@github.com/acme/api.git",
+            "ssh://git@ssh.github.com:443/acme/api.git",
+            "ssh.github.com:acme/api",
+            "git://github.com/acme/api",
+            "https://gitlab.acme.com/team/sub/repo.git",
+            "git@gitlab.acme.com:team/repo",
+            "ssh://git@GitLab.Acme.com:2222/team/repo",
+        ] {
+            assert_eq!(route(url), managed, "{url}");
+        }
+        for url in [
+            "https://github.com/dkat/reins",
+            "https://github.com.evil.com/acme/api",
+            "git@github.com.evil.com:acme/api",
+            "https://evilgithub.com/acme/api",
+            "https://gitlab.com/acme/x",
+            "https://github.com/acmes/x",
+            "https://github.com/x/acme",
+            "https://gitlab.acme.com.evil.io/team/repo",
+        ] {
+            assert_eq!(route(url), ProfileRef::Personal, "{url}");
+        }
+        assert_eq!(route_remote(&[], &Remote::parse("https://github.com/acme/api").unwrap()), ProfileRef::Personal);
+        assert_eq!(route_remote(&bindings, &Remote::from_parts("SSH.GitHub.com:443", "/acme/api.git/")), managed);
+    }
+
+    #[test]
+    fn remotes_parse_or_are_refused() {
+        assert_eq!(
+            Remote::parse("ssh://git@ssh.github.com:443/acme/api.git"),
+            Some(Remote {
+                host: "github.com".to_owned(),
+                path: "acme/api".to_owned()
+            })
+        );
+        assert_eq!(Remote::parse("https://[::1]:8080/a/b").unwrap().host, "::1");
+        for bad in ["/home/dana/repo", "C:/repo", "file:///repo", "../repo", "", "ftp://github.com/acme/api"] {
+            assert_eq!(Remote::parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn event_hashes_cover_every_field_and_the_chain() {
+        let e = EventFields {
+            org: "o1",
+            seq: 1,
+            at: 10,
+            kind: "org.created",
+            actor: Some("u1"),
+            subject: None,
+            detail: "{}",
+        };
+        let h = event_hash(&e, GENESIS_HASH);
+        assert_eq!(h.len(), 64);
+        assert_eq!(h, event_hash(&e, GENESIS_HASH));
+        assert_ne!(
+            h,
+            event_hash(
+                &EventFields {
+                    seq: 2,
+                    ..e
+                },
+                GENESIS_HASH
+            )
+        );
+        assert_ne!(
+            h,
+            event_hash(
+                &EventFields {
+                    actor: None,
+                    ..e
+                },
+                GENESIS_HASH
+            )
+        );
+        assert_ne!(
+            h,
+            event_hash(
+                &EventFields {
+                    actor: None,
+                    subject: Some("u1"),
+                    ..e
+                },
+                GENESIS_HASH
+            )
+        );
+        assert_ne!(
+            h,
+            event_hash(
+                &EventFields {
+                    detail: "{ }",
+                    ..e
+                },
+                GENESIS_HASH
+            )
+        );
+        assert_ne!(h, event_hash(&e, &h));
     }
 
     fn enrollment() -> EnrollmentRequest {
