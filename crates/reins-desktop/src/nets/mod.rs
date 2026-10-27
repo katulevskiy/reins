@@ -198,7 +198,13 @@ pub fn run(plan: &str, store: &Path, argv: &[OsString]) -> u8 {
             let scratch = |p: &Path| is_scratch(&record, p);
             rm::rm(&store, plan, rest, &cwd, &rm::Scratch(&scratch), &mut std::io::stdout(), &mut std::io::stderr())
         }
-        "git" => git::git(&store, plan, rest, &cwd, &mut std::io::stderr()),
+        "git" => {
+            git::use_env(git::GitEnv {
+                program: record.git.clone(),
+                vars: record.env,
+            });
+            git::git(&store, plan, rest, &cwd, &mut std::io::stderr())
+        }
         _ => {
             eprintln!("reins: net run knows rm and git only; nothing was run.");
             git::REFUSED

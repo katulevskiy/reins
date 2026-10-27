@@ -412,3 +412,37 @@ fn net_run_goes_by_its_plan() {
     assert!(refusal(Some(&plan), "rm", &e.work.join(".."), now).is_some(), "another folder");
     assert!(refusal(Some(&plan), "rm", &e.work, now + PLAN_SECS + 1).is_some(), "too old");
 }
+
+#[test]
+fn force_push_pins_follow_the_users_leases() {
+    let e = env();
+    let r = repo(&e);
+    let bare = e.work.join("remote.git");
+    git(&e.work, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&r, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&r, &["push", "-q", "origin", "main:feat", "main:other"]);
+    git(&r, &["fetch", "-q", "origin"]);
+    let tracking = git(&r, &["rev-parse", "refs/remotes/origin/feat"]);
+    let shape = |line: &str| {
+        reins_policy::effects::nets::git_shape(&line.split_whitespace().map(str::to_owned).collect::<Vec<_>>()).unwrap()
+    };
+    let kept = vec![("feat".to_owned(), Some("a".repeat(40))), ("other".to_owned(), None)];
+    // No lease: each destination pinned to what was kept.
+    let p = git::pins(&shape("push --force origin main:feat main:other"), &r, &kept).unwrap();
+    assert_eq!(
+        p,
+        vec![
+            format!("--force-with-lease=refs/heads/feat:{}", "a".repeat(40)),
+            "--force-with-lease=refs/heads/other:".to_owned()
+        ]
+    );
+    // The user's own `ref:oid` decides for that ref; the other is still pinned.
+    let p = git::pins(&shape("push --force-with-lease=feat:abc origin main:feat main:other"), &r, &kept).unwrap();
+    assert_eq!(p, vec!["--force-with-lease=refs/heads/other:".to_owned()]);
+    // A bare lease means "as my tracking ref says": pinned to that.
+    let p = git::pins(&shape("push --force-with-lease origin main:feat"), &r, &kept[..1]).unwrap();
+    assert_eq!(p, vec![format!("--force-with-lease=refs/heads/feat:{tracking}")]);
+    // `--no-force-with-lease` would undo a pin: not a shape the net runs.
+    let (code, err) = net_git(&e, &r, "push --force origin main:feat --no-force-with-lease");
+    assert_eq!(code, git::REFUSED, "{err}");
+}

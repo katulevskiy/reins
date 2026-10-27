@@ -395,6 +395,7 @@ impl Demo {
                         lines: vec!["Keeps 1 deleted path in the Reins trash for 7 days".to_owned()],
                         until: at + 7 * 86_400,
                         ran: true,
+                        kept: true,
                     }),
                 }
             })

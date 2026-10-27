@@ -376,11 +376,22 @@ fn environment_the_command_sets_is_never_trusted() {
         "PATH=/x:$PATH rm -rf old",
         "GIT_DIR=/x git branch -D a",
         "local HOME=/x; rm -rf old",
+        "for HOME in /x; do rm -rf old; done",
+        "for GIT_DIR in /x; do git branch -D a; done",
+        "read HOME < f; rm -rf old",
+        "mapfile -t PATH < f; rm -rf old",
+        "read -r \"$v\" < f; rm -rf old",
+        "printf -v HOME %s /x; rm -rf old",
+        "unset HOME; rm -rf old",
+        "set -a; . ./env; rm -rf old",
+        "set -ea; rm -rf old",
+        "set -o allexport; rm -rf old",
     ] {
         let p = plan(c);
         assert!(p.is_none(), "{c}: {p:?}");
     }
     assert!(plan("FOO=1 rm -rf old").is_some(), "other names are fine");
+    assert!(plan("printf '%s' \"$x\"; set -e; rm -rf old").is_some(), "printf without -v, set -e");
 }
 
 #[test]

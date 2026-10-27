@@ -151,9 +151,24 @@ pub fn plan(config: &Config, paths: &crate::config::Paths, call: &HookCall, head
             cwds: net.plan.cwds.clone(),
             home,
             scratch,
+            git: find_program("git").unwrap_or_default(),
+            env: std::env::vars()
+                .filter(|(k, _)| k.starts_with("GIT_") || k.starts_with("XDG_") || k == "HOME")
+                .collect(),
         })
         .ok()?;
     Some(net)
+}
+
+/// `program` as `PATH` (the hook's, the harness's) finds it, absolute.
+fn find_program(program: &str) -> Option<String> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .filter(|d| d.is_absolute())
+        .map(|d| d.join(program))
+        .find(|p| p.is_file())
+        .and_then(|p| p.to_str().map(str::to_owned))
 }
 
 /// The question's `net` argument: one line per net.
@@ -181,5 +196,6 @@ pub fn record(net: &HookNet) -> NetRecord {
         lines: net.plan.lines(),
         until: crate::now_unix() + super::store::TRASH_DAYS * 86_400,
         ran: false,
+        kept: false,
     }
 }

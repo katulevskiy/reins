@@ -231,25 +231,31 @@ fn a_snapshot_comes_back_with_its_mode() {
 }
 
 #[test]
-fn the_trash_keeps_a_quota_and_drops_the_oldest_first() {
+fn the_trash_keeps_a_quota_and_never_drops_what_it_promised() {
     let (_d, s, work) = store();
     let s = s.with_quota(100);
-    for (i, n) in ["a", "b", "c"].iter().enumerate() {
+    for (i, n) in ["a", "b"].iter().enumerate() {
         std::fs::write(work.join(n), vec![b'x'; 40]).unwrap();
         s.trash(&format!("plan0{i}"), &work.join(n), None).unwrap();
     }
-    // 40 + 40 + 40 > 100: the oldest plan's item went.
-    assert!(s.items("plan00").is_empty());
-    assert_eq!((s.items("plan01").len(), s.items("plan02").len()), (1, 1));
-    // Larger than the whole quota: nothing moves, and it says so.
+    // 40 + 40 + 40 > 100, and nothing kept has expired: not netted, nothing moved, nothing dropped.
+    std::fs::write(work.join("c"), vec![b'x'; 40]).unwrap();
+    assert!(matches!(s.trash("plan02", &work.join("c"), None), Err(NetError::TooLarge)));
+    assert!(work.join("c").exists());
+    assert_eq!((s.items("plan00").len(), s.items("plan01").len()), (1, 1));
+    // Larger than the whole quota: the same.
     std::fs::write(work.join("big"), vec![b'x'; 200]).unwrap();
     assert!(matches!(s.trash("plan03", &work.join("big"), None), Err(NetError::TooLarge)));
-    assert!(work.join("big").exists());
-    // A plan never drops its own items to make room.
-    std::fs::write(work.join("d"), vec![b'x'; 90]).unwrap();
-    assert!(
-        matches!(s.trash("plan02", &work.join("d"), None), Err(NetError::TooLarge)) || s.items("plan01").is_empty()
-    );
+    // An expired item may go to make room.
+    let old = s.items("plan00").remove(0);
+    let path = s.root().join("plan00/items").join(&old.id).join("item.json");
+    let expired = Item {
+        at: old.at - TRASH_DAYS * DAY - 1,
+        ..old
+    };
+    std::fs::write(&path, serde_json::to_vec(&expired).unwrap()).unwrap();
+    s.trash("plan02", &work.join("c"), None).unwrap();
+    assert!(s.items("plan00").is_empty());
 }
 
 #[test]

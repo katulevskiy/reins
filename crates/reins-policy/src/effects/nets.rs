@@ -468,6 +468,32 @@ fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
             }
         }
         Command::Simple(s) if s.assigns.iter().any(|(n, _)| sensitive(n)) => found = true,
+        // Other ways to set them: `read`/`mapfile`/`readarray` targets, `printf -v`, `unset`, `getopts`, and
+        // `set -a`/`set -o allexport` (every later assignment exported).
+        Command::Simple(s)
+            if {
+                let w: Vec<Option<String>> = s.words.iter().map(Word::literal).collect();
+                let args = || w.iter().skip(1).flatten();
+                match w.first().cloned().flatten().as_deref() {
+                    Some("read" | "mapfile" | "readarray" | "unset" | "getopts") => {
+                        args().any(|a| sensitive(a)) || w.iter().skip(1).any(Option::is_none)
+                    }
+                    Some("printf") => w
+                        .iter()
+                        .position(|a| a.as_deref() == Some("-v"))
+                        .is_some_and(|i| w.get(i + 1).is_none_or(|t| t.as_deref().is_none_or(&sensitive))),
+                    Some("set") => args()
+                        .any(|a| a == "allexport" || (a.starts_with('-') && !a.starts_with("--") && a.contains('a'))),
+                    _ => false,
+                }
+            } =>
+        {
+            found = true;
+        }
+        Command::For {
+            var,
+            ..
+        } if sensitive(var) => found = true,
         Command::Simple(s)
             if s.words
                 .iter()

@@ -15,8 +15,44 @@ use super::store::{Item, NetError, RefBackup, Store, WorktreeInfo};
 /// Exit code when the net refuses to run anything.
 pub const REFUSED: u8 = 125;
 
+/// The git a netted command runs and its environment, as the hook recorded them in the plan (`reins net run` sets it
+/// once, before anything runs): an absolute program, and exactly the hook's `GIT_*`, `HOME` and `XDG_*` values, so
+/// nothing the command's own environment says can change which git runs or what it reads.
+#[derive(Clone, Debug, Default)]
+pub struct GitEnv {
+    pub program: String,
+    pub vars: Vec<(String, String)>,
+}
+
+static GIT_ENV: std::sync::OnceLock<GitEnv> = std::sync::OnceLock::new();
+
+/// Sets the git and environment every git this process runs uses (once; later calls change nothing).
+pub fn use_env(env: GitEnv) {
+    let _set = GIT_ENV.set(env);
+}
+
+/// A git command with the plan's program and environment (without one set: `git` as found, as the process has it).
+fn git_command() -> Command {
+    let Some(env) = GIT_ENV.get() else {
+        return Command::new("git");
+    };
+    let mut c = Command::new(if env.program.is_empty() {
+        "git"
+    } else {
+        env.program.as_str()
+    });
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if k.starts_with("GIT_") || k.starts_with("XDG_") || k.starts_with("REINS_") || k == "HOME" {
+            c.env_remove(k.as_ref());
+        }
+    }
+    c.envs(env.vars.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    c
+}
+
 fn git_in(globals: &[String], cwd: &Path) -> Command {
-    let mut c = Command::new("git");
+    let mut c = git_command();
     c.current_dir(cwd).args(globals);
     c
 }
@@ -29,7 +65,7 @@ fn read(globals: &[String], cwd: &Path, args: &[&str]) -> Option<String> {
 
 /// Runs git with the user's own words, its output passed through; its exit code.
 fn run_as_written(args: &[String], cwd: &Path) -> u8 {
-    match Command::new("git").current_dir(cwd).args(args).status() {
+    match git_command().current_dir(cwd).args(args).status() {
         Ok(s) => exit_code(s),
         Err(_) => 127,
     }
@@ -115,12 +151,9 @@ pub fn git(store: &Store, plan: &str, args: &[OsString], cwd: &Path, err: &mut d
         GitNet::WorktreeRemove => return worktree_remove(store, plan, &shape, &words, cwd, err),
         GitNet::Clean => return clean(store, plan, &shape, cwd, err),
         // The push is pinned to the tips it kept: its words, with a lease per destination after `push`.
-        // A push with its own lease keeps it (it already refuses a tip that moved); the backup is taken first either way.
-        GitNet::ForcePush => force_push(store, plan, &shape, cwd).map(|leases| {
-            if !shape.rest.iter().any(|a| a.starts_with("--force-with-lease")) {
-                let at = shape.globals.len() + 1;
-                words.splice(at..at, leases);
-            }
+        // Kept first, then pinned: the leases go after everything the user wrote.
+        GitNet::ForcePush => force_push(store, plan, &shape, cwd).and_then(|kept| pins(&shape, cwd, &kept)).map(|p| {
+            words.extend(p);
         }),
     };
     if let Err(why) = kept {
@@ -491,7 +524,12 @@ fn clean(store: &Store, plan: &str, shape: &GitShape, cwd: &Path, err: &mut dyn 
 /// URL into a backup ref (by URL, so no remote-tracking ref moves and a bare `--force-with-lease` still means what it
 /// did). Returns the leases that pin the push to exactly those tips (`refs/heads/X:<oid>`, or `refs/heads/X:` for one
 /// that isn't there yet), so a tip that moves in between makes the push fail instead of going unkept.
-fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result<Vec<String>, String> {
+fn force_push(
+    store: &Store,
+    plan: &str,
+    shape: &GitShape,
+    cwd: &Path,
+) -> Result<Vec<(String, Option<String>)>, String> {
     let ops = operands(&shape.rest);
     let Some((remote, specs)) = ops.split_first() else {
         return Err("no remote".to_owned());
@@ -532,7 +570,7 @@ fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result
         }
         let Some(old) = head else {
             // No such branch there yet: nothing to lose, and it must still not be there when the push lands.
-            leases.push(format!("--force-with-lease={full}:"));
+            leases.push((dst, None));
             continue;
         };
         let backup = Store::backup_ref(plan);
@@ -560,9 +598,50 @@ fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result
                 },
             )
             .map_err(|e| e.to_string())?;
-        leases.push(format!("--force-with-lease={full}:{oid}"));
+        leases.push((dst, Some(oid)));
     }
     Ok(leases)
+}
+
+/// The leases that pin a force push to what the net kept, appended after the user's own words (so nothing the user
+/// wrote can undo them). Per destination branch:
+/// - the user's own `--force-with-lease=<ref>:<oid>` for it: theirs decides, no pin;
+/// - the user's bare `--force-with-lease`, or `--force-with-lease=<ref>`: pinned to what that lease expects, the
+///   remote-tracking ref (no tracking ref: not netted);
+/// - no lease: pinned to the tip the net kept (or to "not there" for a new branch).
+pub(crate) fn pins(shape: &GitShape, cwd: &Path, kept: &[(String, Option<String>)]) -> Result<Vec<String>, String> {
+    let remote = operands(&shape.rest).first().copied().unwrap_or_default().to_owned();
+    let short = |r: &str| r.strip_prefix("refs/heads/").unwrap_or(r).to_owned();
+    let mut bare = false;
+    let mut tracked: Vec<String> = Vec::new();
+    let mut explicit: Vec<String> = Vec::new();
+    for a in &shape.rest {
+        if a == "--force-with-lease" {
+            bare = true;
+        } else if let Some(spec) = a.strip_prefix("--force-with-lease=") {
+            match spec.split_once(':') {
+                Some((r, _)) => explicit.push(short(r)),
+                None => tracked.push(short(spec)),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (dst, oid) in kept {
+        if explicit.contains(dst) {
+            continue;
+        }
+        let expect = if bare || tracked.contains(dst) {
+            let tracking = format!("refs/remotes/{remote}/{dst}");
+            Some(
+                read(&shape.globals, cwd, &["rev-parse", "--verify", "--quiet", &tracking])
+                    .ok_or_else(|| format!("no {tracking} for the lease to go by"))?,
+            )
+        } else {
+            oid.clone()
+        };
+        out.push(format!("--force-with-lease=refs/heads/{dst}:{}", expect.unwrap_or_default()));
+    }
+    Ok(out)
 }
 
 /// A branch name that is free in `repo`: `name`, else `name-restored`, `name-restored-2`, …

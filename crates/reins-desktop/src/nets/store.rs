@@ -133,6 +133,12 @@ pub struct PlanRecord {
     pub home: String,
     #[serde(default)]
     pub scratch: Vec<String>,
+    /// The git the hook found (absolute), and the hook's `GIT_*`, `HOME` and `XDG_*` values: what a netted git runs
+    /// with.
+    #[serde(default)]
+    pub git: String,
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 /// A plan's nets, for lists.
@@ -318,13 +324,13 @@ impl Store {
         self.quota.unwrap_or_else(|| disk_bytes(&self.real_root()).map_or(u64::MAX, |b| b / 10))
     }
 
-    /// Makes room for `bytes` more in the trash, dropping the oldest items of other plans first. `Err`: it can't fit
-    /// (larger than the quota, or only `plan`'s own items would have to go).
+    /// Makes room for `bytes` more in the trash, dropping only expired items. `Err`: it can't fit.
     fn make_room(&self, plan: &str, bytes: u64) -> Result<(), NetError> {
         let quota = self.quota();
         if bytes > quota {
             return Err(NetError::TooLarge);
         }
+        let now = crate::now_unix();
         let mut all: Vec<(String, Item)> = std::fs::read_dir(&self.root)
             .into_iter()
             .flatten()
@@ -334,15 +340,14 @@ impl Store {
             .flat_map(|p| self.items(&p).into_iter().map(move |i| (p.clone(), i)))
             .collect();
         let mut used: u64 = all.iter().map(|(_, i)| i.bytes).sum();
+        // Only what is past its keeping time may go to make room, oldest first: an earlier approval was promised the
+        // rest. What still doesn't fit is not netted (and is asked at its own level).
         all.sort_by_key(|(_, i)| i.at);
         for (p, i) in all {
             if used.saturating_add(bytes) <= quota {
                 break;
             }
-            if p == plan {
-                continue;
-            }
-            if self.drop_item(&p, &i.id) {
+            if p != plan && now - i.at >= TRASH_DAYS * DAY && self.drop_item(&p, &i.id) {
                 used = used.saturating_sub(i.bytes);
             }
         }

@@ -173,6 +173,9 @@ pub struct NetRecord {
     /// then Activity says the net was not applied.
     #[serde(skip)]
     pub ran: bool,
+    /// Something is still kept for it (read with `ran`): a net that ran with nothing kept any more is gone.
+    #[serde(skip)]
+    pub kept: bool,
 }
 
 /// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
@@ -433,6 +436,7 @@ pub fn read(paths: &Paths, limit: usize, stale_after: i64) -> Vec<Entry> {
     let store = crate::nets::Store::open(paths);
     for n in entries.iter_mut().filter_map(|e| e.nets.as_mut()) {
         n.ran = store.ran(&n.plan);
+        n.kept = !store.items(&n.plan).is_empty() || !store.refs(&n.plan).is_empty();
     }
     entries
 }

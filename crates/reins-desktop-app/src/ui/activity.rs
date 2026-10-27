@@ -826,7 +826,7 @@ fn net_state(net: &NetRecord, now: i64, restored: bool, restoring: bool) -> NetS
         NetState::Restored
     } else if restoring {
         NetState::Restoring
-    } else if now >= net.until {
+    } else if now >= net.until || !net.kept {
         NetState::Gone
     } else {
         NetState::Restore
@@ -1095,6 +1095,7 @@ mod tests {
             lines: vec!["Keeps 2 deleted paths in the Reins trash for 7 days".to_owned()],
             until: 1_000,
             ran: true,
+            kept: true,
         };
         let planned = NetRecord {
             ran: false,
@@ -1106,6 +1107,11 @@ mod tests {
         assert_eq!(net_state(&net, 10, true, false), NetState::Restored);
         assert_eq!(net_state(&net, 1_000, false, false), NetState::Gone);
         assert_eq!(net_state(&net, 1_000, true, false), NetState::Restored);
+        let dropped = NetRecord {
+            kept: false,
+            ..net
+        };
+        assert_eq!(net_state(&dropped, 10, false, false), NetState::Gone, "dropped early: Kept copy gone");
     }
 
     #[test]
