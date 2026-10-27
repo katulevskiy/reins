@@ -405,6 +405,17 @@ async fn post_roster(
     if primary_moved {
         announce_new_primary(&headers, &entry, replaced, now, &conn, pool.inner()).await?;
     }
+    // A ward's guardians hear of a new approval phone, a phone removed or a recovery (08 R7); their phones check it
+    // against the chain they pinned.
+    if matches!(entry.reason, RosterReason::Handover | RosterReason::Recovery | RosterReason::Remove) {
+        let notice = reins_proto::circle::GuardianNoticeKind::RosterChanged {
+            reason: entry.reason,
+            epoch: entry.epoch,
+        };
+        if super::guardian_notices::notify_guardians(&user, &notice, &conn).await > 0 {
+            super::guardian_notices::push_pending(&conn, pool.inner()).await;
+        }
+    }
     HUB.live.bump(&user);
     // Every other member learns of the new epoch on its next poll; wake the viewers too.
     let members = ReinsMember::all(&user, &conn).await.map_err(|e| internal(&e))?;

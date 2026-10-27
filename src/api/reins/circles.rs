@@ -15,7 +15,11 @@
 //!   `POST …/packets/<id>/answer`, `GET …/answers`, `POST …/answers/seen`): sealed reviews to the helper's approval
 //!   phone and sealed answers back.
 //!
-//! Pushes carry only ids (`PushKind::Circle`); only a review waiting for a helper, and a guardianship ending, alert.
+//! Pushes carry only ids (`PushKind::Circle`); only a review waiting for a helper, and a guardian notice that needs the
+//! guardian ([`super::guardian_notices`]), alert.
+//!
+//! Guardian links (P7, 04 §4): every change is logged (`reins_circle_changes`) with when it arrived; a ward's end
+//! request keeps the link until its `effective_at`, then the sweep ends it ([`guardian_next`]).
 
 use std::{
     collections::HashSet,
@@ -27,9 +31,9 @@ use reins_proto::{
     PROTOCOL_VERSION,
     canon::{hex32, parse_sig, sha256, strict_ed25519_key},
     circle::{
-        self, AnswerItem, CircleKind, InboxItem, InviteAccept, InviteActivate, InviteChallenge, InviteCreated,
-        InviteOpened, InviteReveal, InviteState, InviteStatus, JoinBody, LinkState, LinkView, NewAnswer, NewInvite,
-        NewPacket, PacketKind, PacketState, Seen, Side, SignedChange,
+        self, AnswerItem, CircleKind, GuardianChange, GuardianNoticeKind, InboxItem, InviteAccept, InviteActivate,
+        InviteChallenge, InviteCreated, InviteOpened, InviteReveal, InviteState, InviteStatus, JoinBody, LinkState,
+        LinkView, LoggedChange, NewAnswer, NewInvite, NewPacket, PacketKind, PacketState, Seen, Side, SignedChange,
     },
     device::codes,
     pairing::{PushKind, PushMessage},
@@ -51,7 +55,10 @@ use crate::{
     auth::{ClientIp, Headers},
     db::{
         DbConn, DbPool,
-        models::{ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket, ReinsDevice, User, UserId, reins_circle},
+        models::{
+            ReinsCircleChange, ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket, ReinsDevice, User, UserId,
+            reins_circle,
+        },
     },
 };
 
@@ -120,7 +127,7 @@ pub fn alerts(id: &str) -> bool {
 }
 
 /// Flags `user`'s news and pushes its approval device.
-async fn wake(user: &str, id: &str, wake: Wake, conn: &DbConn, pool: &DbPool) {
+pub(crate) async fn wake(user: &str, id: &str, wake: Wake, conn: &DbConn, pool: &DbPool) {
     HUB.circles.flag(user);
     let user_uuid = UserId::from(user.to_owned());
     if let Some(device) = ReinsDevice::find_by_user(&user_uuid, conn).await {
@@ -530,6 +537,7 @@ async fn post_activate(
         last_change: None,
         created_at: now,
         updated_at: now,
+        effective_at: None,
     };
     link.insert(&conn).await.map_err(|e| internal(&e))?;
     wake(&helper, &link.id, Wake::News, &conn, pool.inner()).await;
@@ -595,7 +603,16 @@ async fn get_links(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResul
                 link.helper_copy.clone()
             },
             change: link.last_change.as_deref().and_then(|c| serde_json::from_str(c).ok()),
-            changes: Vec::new(),
+            changes: ReinsCircleLink::changes(&link.id, &conn)
+                .await
+                .into_iter()
+                .filter_map(|c| {
+                    Some(LoggedChange {
+                        change: serde_json::from_str(&c.change_body).ok()?,
+                        at: c.at,
+                    })
+                })
+                .collect(),
             updated_at: link.updated_at,
         });
     }
@@ -624,6 +641,47 @@ pub fn change_allowed(from: LinkState, to: LinkState, by: Side) -> bool {
     }
 }
 
+/// Where a Guardian link goes for a change (its kind is in clear, its terms are sealed: the phones check the notice,
+/// this checks the shape, defence in depth). `None`: refused.
+/// - The ward never pauses or ends one directly: it asks with an `EndRequested`, kept in force until `effective_at`
+///   (an end due already ends it now). It may resume one a P6 phone paused.
+/// - The guardian leaves at once, or consents (an end at once).
+/// - Other steps keep the state.
+#[must_use]
+pub fn guardian_next(from: LinkState, change: &circle::LinkChange, now: i64) -> Option<(LinkState, Option<i64>)> {
+    if from == LinkState::Ended {
+        return None;
+    }
+    match (&change.guardian, change.by, change.state) {
+        (None, Side::Helper, LinkState::Ended) => Some((LinkState::Ended, None)),
+        (None, Side::Owner, LinkState::Active) if from == LinkState::Paused => Some((LinkState::Active, None)),
+        (None, ..) => None,
+        (
+            Some(GuardianChange::EndRequested {
+                effective_at,
+            }),
+            ..,
+        ) => {
+            // Its time is checked against ours: a backdated request would skip its notice.
+            if change.at.abs_diff(now) > circle::ANSWER_SKEW_SECS.unsigned_abs() {
+                return None;
+            }
+            if *effective_at <= now {
+                Some((LinkState::Ended, Some(*effective_at)))
+            } else {
+                Some((from, Some(*effective_at)))
+            }
+        }
+        (
+            Some(GuardianChange::EndConsented {
+                ..
+            }),
+            ..,
+        ) => Some((LinkState::Ended, None)),
+        (Some(_), ..) => Some((from, None)),
+    }
+}
+
 #[post("/reins/api/circles/links/<id>/change", data = "<data>")]
 async fn post_change(
     id: &str,
@@ -649,10 +707,17 @@ async fn post_change(
     if change.link != link.id || change.by != side {
         return Err(bad_request("This change is for another arrangement or side"));
     }
+    let kind = CircleKind::parse(&link.kind).unwrap_or(CircleKind::Watcher);
+    change.validate_for(kind).map_err(|e| bad_request(e.to_string()))?;
     let from = LinkState::parse(&link.state).unwrap_or(LinkState::Ended);
-    if !change_allowed(from, change.state, side) {
+    let now = now_unix();
+    let (to, effective_at) = if kind == CircleKind::Guardian {
+        guardian_next(from, &change, now).ok_or_else(|| conflict("A guardianship can't change that way"))?
+    } else if change_allowed(from, change.state, side) {
+        (change.state, None)
+    } else {
         return Err(conflict("This arrangement can't change that way"));
-    }
+    };
     let last_seq = link
         .last_change
         .as_deref()
@@ -667,17 +732,26 @@ async fn post_change(
     if !ed25519_ok(&owner_pub, &circle::change_message(&signed.body), &signed.sig) {
         return Err(bad_request("The change is not signed by this account's owner key"));
     }
-    let now = now_unix();
     let from_state = link.state.clone();
-    change.state.as_str().clone_into(&mut link.state);
-    link.last_change = Some(serde_json::to_string(&signed).unwrap_or_default());
+    to.as_str().clone_into(&mut link.state);
+    let body = serde_json::to_string(&signed).unwrap_or_default();
+    link.last_change = Some(body.clone());
     link.updated_at = now;
-    match link.update(&from_state, &conn).await {
+    if effective_at.is_some() {
+        link.effective_at = effective_at;
+    }
+    let logged = ReinsCircleChange {
+        link_id: link.id.clone(),
+        seq: i64::try_from(change.seq).unwrap_or(i64::MAX),
+        change_body: body,
+        at: now,
+    };
+    match link.update_with_change(&from_state, &logged, &conn).await {
         Ok(true) => {}
         Ok(false) => return Err(conflict("This arrangement changed meanwhile")),
         Err(e) => return Err(internal(&e)),
     }
-    if change.state != LinkState::Active {
+    if to != LinkState::Active {
         ReinsCirclePacket::withdraw_for_link(&link.id, now, &conn).await.map_err(|e| internal(&e))?;
     }
     let peer = if side == Side::Owner {
@@ -685,14 +759,15 @@ async fn post_change(
     } else {
         &link.owner_uuid
     };
-    // A guardian learns at once that the ward ended the guardianship (08 R7: tamper-evident); everything else is
-    // quiet news.
-    let how = if link.kind == CircleKind::Guardian.as_str() && side == Side::Owner && change.state == LinkState::Ended {
-        Wake::Alert
-    } else {
-        Wake::News
-    };
-    wake(peer, &link.id, how, &conn, pool.inner()).await;
+    wake(peer, &link.id, Wake::News, &conn, pool.inner()).await;
+    // A guardian hears of every change the ward makes (08 R7: tamper-evident); one that needs them alerts.
+    if kind == CircleKind::Guardian && side == Side::Owner {
+        let notice = GuardianNoticeKind::LinkChanged {
+            change: signed,
+        };
+        super::guardian_notices::write(&link.helper_uuid, &link.id, &notice, &conn).await;
+        super::guardian_notices::push_pending(&conn, pool.inner()).await;
+    }
     Ok(Status::NoContent)
 }
 
@@ -886,6 +961,25 @@ pub async fn sweep(pool: &DbPool, now: i64, purge: bool) {
             HUB.circles.flag(&invite.owner_uuid);
         }
     }
+    // Guardianships whose notice ran out end now; the guardian is told with the request that started it.
+    for mut link in ReinsCircleLink::ending_due(now, &conn).await {
+        let from = link.state.clone();
+        LinkState::Ended.as_str().clone_into(&mut link.state);
+        link.updated_at = now;
+        if matches!(link.update(&from, &conn).await, Ok(true)) {
+            if let Err(e) = ReinsCirclePacket::withdraw_for_link(&link.id, now, &conn).await {
+                warn!("Reins: could not withdraw the packets of an ended guardianship: {e:?}");
+            }
+            if let Some(change) = link.last_change.as_deref().and_then(|c| serde_json::from_str(c).ok()) {
+                let notice = GuardianNoticeKind::LinkChanged {
+                    change,
+                };
+                super::guardian_notices::write(&link.helper_uuid, &link.id, &notice, &conn).await;
+            }
+            wake(&link.owner_uuid, &link.id, Wake::News, &conn, pool).await;
+        }
+    }
+    super::guardian_notices::push_pending(&conn, pool).await;
     if purge && let Err(e) = reins_circle::purge(now, &conn).await {
         warn!("Reins: could not purge Circle rows: {e:?}");
     }
@@ -920,17 +1014,13 @@ pub async fn end_all_for(user: &str, conn: &DbConn, pool: &DbPool) {
             if let Err(e) = ReinsCirclePacket::withdraw_for_link(&link.id, now, conn).await {
                 warn!("Reins: could not withdraw the packets of an ended Circle link: {e:?}");
             }
-            let (peer, how) = if link.owner_uuid == user {
-                let how = if link.kind == CircleKind::Guardian.as_str() {
-                    Wake::Alert
-                } else {
-                    Wake::News
-                };
-                (link.helper_uuid.clone(), how)
+            // A guardian is alerted by the notice the reset wrote first (`guardian_notices`).
+            let peer = if link.owner_uuid == user {
+                link.helper_uuid.clone()
             } else {
-                (link.owner_uuid.clone(), Wake::News)
+                link.owner_uuid.clone()
             };
-            wake(&peer, &link.id, how, conn, pool).await;
+            wake(&peer, &link.id, Wake::News, conn, pool).await;
         }
     }
 }
