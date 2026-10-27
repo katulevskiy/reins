@@ -24,7 +24,7 @@ final class AppHost {
         // UI tests: start from the default sounds and haptics, whatever an earlier (interrupted) run left saved.
         if ProcessInfo.processInfo.arguments.contains("-resetFeedback") { FeedbackSettings().save() }
         #endif
-        // The wallpaper's old key, read once: the image it kept becomes the theme's choice, with no effect and no added fade.
+        // The wallpaper's earlier keys, read once: what they kept becomes the theme's choice, looking as it did.
         WallpaperChoice.migrate()
         let feedback: Feedback = AppFeedback.make()
         if Self.isDemo, let demo = DemoCore.make() {
