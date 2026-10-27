@@ -342,15 +342,14 @@ final class SsoSignIn {
     }
 }
 
-/// The shield and the name (the privacy cover).
+/// The R and the name (the privacy cover). `ReinsMark` has a light and a dark drawing (scripts/brand/render-logo.sh).
 struct BrandMark: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "checkmark.shield.fill")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Palette.violet)
+            Image("ReinsMark")
+                .resizable()
+                .scaledToFit()
                 .frame(width: 56, height: 56)
-                .background(Palette.violetWash, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .accessibilityHidden(true)
                 .padding(.bottom, 6)
             Text("Reins")
