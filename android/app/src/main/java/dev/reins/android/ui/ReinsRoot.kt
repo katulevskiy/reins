@@ -434,6 +434,7 @@ private fun TabContent(
             onVaultPasskeys = { app.open(Route.VaultPasskeys) },
             onDevices = { app.open(Route.Devices) },
             onAddWorkAccount = { app.open(Route.AddWorkAccount) },
+            onOrgReviews = { app.open(Route.OrgReviews) },
             onSignalGallery = { app.open(Route.SignalGallery) },
             authenticator = authenticator,
         )
@@ -460,6 +461,16 @@ private fun PageContent(
     when (route) {
         Route.AddWorkAccount -> dev.reins.android.ui.settings.AddWorkAccountScreen(
             viewModel(key = "addWorkAccount") { dev.reins.android.ui.settings.AddWorkAccountViewModel(container) },
+            onBack = { app.back() },
+        )
+        Route.OrgReviews -> dev.reins.android.ui.org.OrgReviewsScreen(
+            viewModel(key = "orgReviews") {
+                dev.reins.android.ui.org.OrgReviewsViewModel(
+                    container.core,
+                    dev.reins.android.profiles.WorkProfiles.active,
+                    dev.reins.android.profiles.ProfilesProvider.deviceKeys,
+                )
+            },
             onBack = { app.back() },
         )
         Route.Devices -> DevicesScreen(

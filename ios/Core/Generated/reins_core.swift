@@ -3334,6 +3334,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func orgChallenge() async throws  -> String
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+    func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws 
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -3348,6 +3353,19 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Reports the enrolled device's posture now (at start-up and when it changes).
      */
     func orgReportPosture(posture: PostureInput) async throws 
+    
+    /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+    func orgReviews() async throws  -> [OrgReviewView]
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws 
     
     /**
      * Whether `server_url` offers organizations ("Add work account" is shown only then).
@@ -5353,6 +5371,25 @@ open func orgChallenge()async throws  -> String  {
 }
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+open func orgDecide(id: String, approve: Bool, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_decide(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -5400,6 +5437,47 @@ open func orgReportPosture(posture: PostureInput)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_org_report_posture(
                         self.uniffiCloneHandle(),FfiConverterTypePostureInput_lower(posture)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+open func orgReviews()async throws  -> [OrgReviewView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_reviews(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeOrgReviewView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+open func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_set_member_policy(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterUInt64.lower(version),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -15214,6 +15292,154 @@ public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> Rus
 
 
 /**
+ * One review waiting for this member, as the phone shows and signs it. `lines` are built on the phone from what
+ * the digest covers, never taken from the server.
+ */
+public struct OrgReviewView: Equatable, Hashable {
+    public var id: String
+    public var kind: OrgReviewKind
+    public var orgName: String
+    /**
+     * The requester's or proposer's email.
+     */
+    public var requester: String
+    /**
+     * The agent connection's label (requests).
+     */
+    public var connection: String
+    /**
+     * The server's short title.
+     */
+    public var title: String
+    public var lines: [String]
+    /**
+     * Who must approve ("Security", "You").
+     */
+    public var requires: String
+    public var level: String
+    public var zone: String
+    /**
+     * The request or change digest the phone recomputed.
+     */
+    public var digest: String
+    /**
+     * The policy snapshot hash (requests); empty for changes.
+     */
+    public var snapshot: String
+    public var expiresAt: Int64
+    /**
+     * Your own: your request, or your change to confirm.
+     */
+    public var own: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: OrgReviewKind, orgName: String, 
+        /**
+         * The requester's or proposer's email.
+         */requester: String, 
+        /**
+         * The agent connection's label (requests).
+         */connection: String, 
+        /**
+         * The server's short title.
+         */title: String, lines: [String], 
+        /**
+         * Who must approve ("Security", "You").
+         */requires: String, level: String, zone: String, 
+        /**
+         * The request or change digest the phone recomputed.
+         */digest: String, 
+        /**
+         * The policy snapshot hash (requests); empty for changes.
+         */snapshot: String, expiresAt: Int64, 
+        /**
+         * Your own: your request, or your change to confirm.
+         */own: Bool) {
+        self.id = id
+        self.kind = kind
+        self.orgName = orgName
+        self.requester = requester
+        self.connection = connection
+        self.title = title
+        self.lines = lines
+        self.requires = requires
+        self.level = level
+        self.zone = zone
+        self.digest = digest
+        self.snapshot = snapshot
+        self.expiresAt = expiresAt
+        self.own = own
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrgReviewView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewView {
+        return
+            try OrgReviewView(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeOrgReviewKind.read(from: &buf), 
+                orgName: FfiConverterString.read(from: &buf), 
+                requester: FfiConverterString.read(from: &buf), 
+                connection: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                requires: FfiConverterString.read(from: &buf), 
+                level: FfiConverterString.read(from: &buf), 
+                zone: FfiConverterString.read(from: &buf), 
+                digest: FfiConverterString.read(from: &buf), 
+                snapshot: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                own: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrgReviewView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeOrgReviewKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.orgName, into: &buf)
+        FfiConverterString.write(value.requester, into: &buf)
+        FfiConverterString.write(value.connection, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.requires, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
+        FfiConverterString.write(value.zone, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterString.write(value.snapshot, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterBool.write(value.own, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lift(_ buf: RustBuffer) throws -> OrgReviewView {
+    return try FfiConverterTypeOrgReviewView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lower(_ value: OrgReviewView) -> RustBuffer {
+    return FfiConverterTypeOrgReviewView.lower(value)
+}
+
+
+/**
  * The work account's organization, as the app shows it.
  */
 public struct OrgView: Equatable, Hashable {
@@ -22797,6 +23023,81 @@ public func FfiConverterTypeModelUpdateOutcome_lower(_ value: ModelUpdateOutcome
 
 
 /**
+ * What an org review is about.
+ */
+
+public enum OrgReviewKind: Equatable, Hashable {
+    
+    /**
+     * An agent's request.
+     */
+    case request
+    /**
+     * A pending admin change.
+     */
+    case change
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OrgReviewKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewKind: FfiConverterRustBuffer {
+    typealias SwiftType = OrgReviewKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .request
+        
+        case 2: return .change
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OrgReviewKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .request:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .change:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lift(_ buf: RustBuffer) throws -> OrgReviewKind {
+    return try FfiConverterTypeOrgReviewKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lower(_ value: OrgReviewKind) -> RustBuffer {
+    return FfiConverterTypeOrgReviewKind.lower(value)
+}
+
+
+
+/**
  * What Overnight does with a request its risk model rates catastrophic.
  */
 
@@ -26124,6 +26425,31 @@ fileprivate struct FfiConverterSequenceTypeNeighbourView: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeOrgReviewView: FfiConverterRustBuffer {
+    typealias SwiftType = [OrgReviewView]
+
+    public static func write(_ value: [OrgReviewView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeOrgReviewView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [OrgReviewView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [OrgReviewView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeOrgReviewView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePaymentMethodView: FfiConverterRustBuffer {
     typealias SwiftType = [PaymentMethodView]
 
@@ -27081,6 +27407,38 @@ public func orgEnrollmentMessage(challenge: String) -> Data  {
     )
 })
 }
+/**
+ * The bytes the enrolled device key signs to set the member's own policy
+ * (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
+ * replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.
+ */
+public func orgMemberPolicyMessage(orgId: String, member: String, version: UInt64, at: Int64, body: String) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_member_policy_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(member),
+        FfiConverterUInt64.lower(version),
+        FfiConverterInt64.lower(at),
+        FfiConverterString.lower(body),uniffiCallStatus
+    )
+})
+}
+/**
+ * The bytes the enrolled device key signs to answer an org review (`reins_proto::managed::review_message`):
+ * approve or deny, and `Propose` to confirm your own admin change. `org_id` is the work account's org.
+ */
+public func orgReviewMessage(orgId: String, review: OrgReviewView, approve: Bool, at: Int64) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_review_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterTypeOrgReviewView_lower(review),
+        FfiConverterBool.lower(approve),
+        FfiConverterInt64.lower(at),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -27107,6 +27465,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_member_policy_message() != 56035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_review_message() != 16415) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
@@ -27334,6 +27698,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_org_decide() != 11544) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_org_enroll() != 20244) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27341,6 +27708,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_reviews() != 62660) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_set_member_policy() != 64873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {

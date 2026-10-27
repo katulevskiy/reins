@@ -469,6 +469,36 @@ class AppNotifier(
         manager.notify(target.id, id, notification)
     }
 
+    /**
+     * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
+     * channel; tapping opens that profile's reviews. Says nothing of the review itself.
+     */
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) {
+        onChanged()
+        if (!manager.areNotificationsEnabled()) return
+        val open = PendingIntent.getActivity(
+            context,
+            notificationId(reviewId),
+            WorkProfiles.stamp(
+                context,
+                Intent(context, MainActivity::class.java)
+                    .setAction(ACTION_OPEN_ORG_REVIEWS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                target.id,
+            ),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(context, channel(context, Kind.Approvals, settings(), silent = false, profile = target))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(if (target.managed) target.label else "Reins")
+            .setContentText("A review waits for you.")
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        manager.notify(target.id, notificationId(reviewId), notification)
+    }
+
     /** Takes away every notification of this profile (signing out), and none of another's. */
     fun cancelOwn() {
         manager.activeNotifications.filter { it.tag == tag }.forEach { manager.cancel(it.tag, it.id) }
@@ -547,6 +577,8 @@ class AppNotifier(
         const val ACTION_OPEN_ACTIVITY = "dev.reins.android.OPEN_ACTIVITY"
         const val EXTRA_ACTIVITY_ID = "activity"
         const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
+        /** A work profile's org reviews ([orgReview]). */
+        const val ACTION_OPEN_ORG_REVIEWS = "dev.reins.android.OPEN_ORG_REVIEWS"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4

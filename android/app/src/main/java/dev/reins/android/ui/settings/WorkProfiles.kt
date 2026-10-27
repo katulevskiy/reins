@@ -53,7 +53,7 @@ import kotlinx.coroutines.withContext
  * only where the server has organizations, or the phone already has a work profile.
  */
 @Composable
-fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit) {
+fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit, onReviews: () -> Unit = {}) {
     val activity = LocalContext.current as? Activity
     val profiles by produceState(emptyList<AccountProfile>(), container) {
         value = withContext(Dispatchers.IO) { runCatching { container.profiles.list() }.getOrDefault(emptyList()) }
@@ -61,9 +61,17 @@ fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit
     val offered by produceState(false, server) {
         value = runCatching { container.core.orgsOffered(server) }.getOrDefault(false)
     }
+    // A work profile's org reviews (O2): the row and its count; the Personal profile asks nothing.
+    val managed = WorkProfiles.active.managed
+    val reviews by produceState<Int?>(null, container, managed) {
+        if (managed) value = runCatching { container.core.orgReviews().size }.getOrNull()
+    }
     if (!offered && profiles.none { it.kind == ProfileKind.MANAGED }) return
     val active = WorkProfiles.active.id
     SettingsGroup(header = "Profiles", glyph = Glyph.Person) {
+        if (managed) {
+            SetRow("Reviews", Glyph.ShieldCheck, Modifier.testTag("orgReviewsRow"), value = reviews?.takeIf { it > 0 }?.toString(), onClick = onReviews)
+        }
         profiles.forEach { p ->
             val managed = p.kind == ProfileKind.MANAGED
             SetRow(

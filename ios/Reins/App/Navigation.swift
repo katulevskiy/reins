@@ -42,6 +42,8 @@ enum Route: Hashable {
     case wallpaper
     /// Settings > Devices: the account's phones (sign out a lost one) and computers.
     case devices
+    /// Settings > Profiles > Reviews (a work profile's): the org reviews waiting for this member.
+    case orgReviews
     /// Integrations > Password vault > Open the vault.
     case vault
     /// Vault > Add: what kind of item.

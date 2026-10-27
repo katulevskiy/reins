@@ -224,6 +224,10 @@ class MainSafeCore(
     override suspend fun orgChallenge(): String = io { orgChallenge() }
     override suspend fun orgEnroll(challenge: String, input: dev.reins.core.EnrollInput) = io { orgEnroll(challenge, input) }
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) = io { orgReportPosture(posture) }
+    override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = io { orgReviews() }
+    override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) = io { orgDecide(id, approve, at, signature) }
+    override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) =
+        io { orgSetMemberPolicy(body, version, at, signature) }
     override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }
 
     override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =

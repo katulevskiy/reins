@@ -320,6 +320,13 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func orgReportPosture(posture: PostureInput) async throws {}
 
+    /// The demo is a Personal account: no org, no reviews.
+    func orgReviews() async throws -> [OrgReviewView] { [] }
+
+    func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
+
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws { throw CoreError.NotFound }
+
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
         guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
         return SsoStart(url: "\(serverUrl)/identity/connect/authorize?demo=1", callbackScheme: "com.reins2fa.app", state: "demo-state", verifier: "demo-verifier")

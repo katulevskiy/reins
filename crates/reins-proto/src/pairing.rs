@@ -186,6 +186,8 @@ mod tests {
         assert_eq!(alert.sync_head(), Some((43, true)));
         let handover: PushMessage = serde_json::from_value(json!({"t": "handover", "id": "h1"})).unwrap();
         assert_eq!(handover.t, PushKind::Handover);
+        let review: PushMessage = serde_json::from_value(json!({"t": "orgreview", "id": "or_1"})).unwrap();
+        assert_eq!(review.t, PushKind::OrgReview);
         assert_eq!(handover.sync_head(), None);
         for bad in ["", "x", "1:alertx", ":alert", "-1"] {
             let p = PushMessage {

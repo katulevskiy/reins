@@ -830,6 +830,8 @@ impl Engine {
             }
             "blob" => self.handle_blob_push(id).await,
             "join" => self.fetch_and_park_join(id).await,
+            // The app shows the work profile's reviews (`org_reviews`); nothing to fetch and park here.
+            "orgreview" => check_id(id),
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;

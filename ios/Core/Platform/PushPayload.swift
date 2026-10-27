@@ -7,7 +7,10 @@ struct PushPayload: Equatable {
     var kind: String
     var id: String
 
-    static let kinds: Set<String> = ["req", "pair", "blob", "replaced"]
+    /// An org review waits for this member (O2): the app opens the work profile's reviews; the core fetches nothing.
+    static let orgReview = "orgreview"
+
+    static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview]
 
     init?(kind: String?, id: String?) {
         guard let kind, let id, Self.kinds.contains(kind) else { return nil }
@@ -56,5 +59,8 @@ struct PushPayload: Equatable {
     }
 
     /// Where tapping the notification goes.
-    var link: DeepLink? { itemKind.map { .item(kind: $0, id: id) } }
+    var link: DeepLink? {
+        if kind == Self.orgReview { return .orgReviews }
+        return itemKind.map { .item(kind: $0, id: id) }
+    }
 }
