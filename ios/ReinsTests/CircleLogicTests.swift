@@ -21,7 +21,10 @@ final class CircleLogicTests: XCTestCase {
     private func person(
         _ id: String, peer: String, role: CircleRole = .cosign, mine: Bool = true, state: CircleLinkState = .active
     ) -> CirclePerson {
-        CirclePerson(linkId: id, peer: peer, role: role, mine: mine, scopeLine: "Money", deferred: true, windowSecs: 14_400, state: state, since: 0)
+        CirclePerson(
+            linkId: id, peer: peer, role: role, mine: mine, scopeLine: "Money", deferred: true, windowSecs: 14_400, state: state, since: 0,
+            ending: nil, needsConsent: false
+        )
     }
 
     private func progress(
@@ -117,8 +120,8 @@ final class CircleLogicTests: XCTestCase {
 
     func testNoticesAreNewestFirst() {
         let notices = [
-            CircleNoticeView(id: "1", person: "dana@x.com", text: "Bypass on", outcome: nil, at: 10),
-            CircleNoticeView(id: "2", person: "dana@x.com", text: "Bypass off", outcome: nil, at: 20),
+            CircleNoticeView(id: "1", person: "dana@x.com", text: "Bypass on", outcome: nil, at: 10, lines: []),
+            CircleNoticeView(id: "2", person: "dana@x.com", text: "Bypass off", outcome: nil, at: 20, lines: []),
         ]
         XCTAssertEqual(CircleLogic.notices(notices).map(\.id), ["2", "1"])
     }

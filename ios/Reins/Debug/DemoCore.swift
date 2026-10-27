@@ -2524,6 +2524,27 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func circleNotices() async throws -> [CircleNoticeView] { circles.noticeList() }
 
+    func guardianProposeMinor(linkId: String) async throws {
+        try await latency()
+        try circles.proposeMinor(linkId)
+    }
+
+    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput) async throws {
+        try await latency()
+        try circles.acceptMinor(linkId, signal: signal)
+    }
+
+    func guardianConsentEnd(linkId: String) async throws {
+        try await latency()
+        try circles.consentEnd(linkId)
+    }
+
+    func guardianSetDigest(linkId: String, on: Bool) async throws { try circles.setDigest(linkId, on: on) }
+
+    func guardianNotices(refresh: Bool) async throws -> [GuardianNoticeView] { circles.guardianNoticeList() }
+
+    func guardianWardView(linkId: String) async throws -> WardView { try circles.wardView(linkId) }
+
     func circleAnswer(reviewId: String, approve: Bool, note: String?) async throws {
         try await latency()
         try circles.answer(reviewId, approve: approve)

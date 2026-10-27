@@ -14,6 +14,8 @@ enum DeepLink: Equatable {
     case home
     /// A work profile's org reviews (Settings > Reviews).
     case orgReviews
+    /// Settings > Circles (a guardianship's notice, and its Allow).
+    case circles
 
     static let scheme = "reins"
 
@@ -41,6 +43,8 @@ enum DeepLink: Equatable {
             c.host = "home"
         case .orgReviews:
             c.host = "org-reviews"
+        case .circles:
+            c.host = "circles"
         }
         return c.url!
     }
@@ -69,6 +73,7 @@ enum DeepLink: Equatable {
             self = .pair(code: code)
         case "home": self = .home
         case "org-reviews": self = .orgReviews
+        case "circles": self = .circles
         default: return nil
         }
     }

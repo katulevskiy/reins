@@ -99,9 +99,13 @@ enum CircleLogic {
     /// a summary for a guardian, never anything for a watcher (04 §5).
     static func fullCardsByDefault(_ role: CircleRole) -> Bool { role == .delegate || role == .cosign }
 
-    /// What the Add screen sends: the class's default window, no fallback, the role's default view of the card.
-    static func draft(role: CircleRole, preset: CircleScopePreset, deferred: Bool) -> CircleDraft {
-        CircleDraft(role: role, preset: preset, deferred: deferred, windowSecs: nil, fallBackToMe: false, fullCards: fullCardsByDefault(role))
+    /// What the Add screen sends: the class's default window, no fallback, the role's default view of the card. A
+    /// guardianship's notice is the ward's pick (`GuardianLogic.draft`).
+    static func draft(role: CircleRole, preset: CircleScopePreset, deferred: Bool, noticeDays: UInt8? = nil) -> CircleDraft {
+        CircleDraft(
+            role: role, preset: preset, deferred: deferred, windowSecs: nil, fallBackToMe: false, fullCards: fullCardsByDefault(role),
+            noticeDays: role == .guardian ? noticeDays.flatMap { GuardianLogic.noticeChoices.contains($0) ? $0 : nil } : nil
+        )
     }
 
     /// "2 min", "4 h", "2 d".
@@ -153,13 +157,19 @@ enum CircleLogic {
         }
     }
 
-    /// The owner pauses and resumes what they set up; nothing ended can be.
-    static func canPause(_ p: CirclePerson) -> Bool { p.mine && (p.state == .active || p.state == .paused) }
+    /// The owner pauses and resumes what they set up; nothing ended can be. Never a ward its own guardianship (04 §4:
+    /// it can't be removed silently; the core refuses too).
+    static func canPause(_ p: CirclePerson) -> Bool {
+        p.mine && !GuardianLogic.isWard(p) && (p.state == .active || p.state == .paused)
+    }
 
-    /// Ending is the owner's word; a helper leaves.
-    static func endTitle(_ p: CirclePerson) -> String { p.mine ? "End" : "Leave" }
+    /// Ending is the owner's word; a helper leaves, and so does a ward.
+    static func endTitle(_ p: CirclePerson) -> String { p.mine && !GuardianLogic.isWard(p) ? "End" : "Leave" }
 
-    static func canEnd(_ p: CirclePerson) -> Bool { p.state != .ended }
+    /// Anything not ended; a ward's guardianship once only (it is ending, or waits for the guardian, after).
+    static func canEnd(_ p: CirclePerson) -> Bool {
+        p.state != .ended && !(GuardianLogic.isWard(p) && (p.ending != nil || p.needsConsent))
+    }
 
     // MARK: The owner's card
 
