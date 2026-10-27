@@ -33,14 +33,22 @@ fn zone_name(zone: Zone) -> String {
     serde_json::to_value(zone).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
 }
 
-/// Whether `scope` covers the request. Each non-empty list must hold the request's value.
+/// Whether an arrangement of `kind` with `scope` covers the request. Each non-empty list must hold the request's
+/// value.
 ///
-/// Unknown always widens an obligation's reach, never narrows it: a request whose effects couldn't be read
-/// (certainty `None`, or an `unknown` effect) has a guessed kind, zone and level, so it is inside every effect, zone and
-/// level filter (it counts as L3 anywhere). The connection and the account are known facts and still filter.
+/// A request whose effects couldn't be read (certainty `None`, or an `unknown` effect) has a guessed kind, zone and
+/// level. Unknown widens an obligation's reach and never widens who may approve:
+/// - for a **co-signer, guardian or watcher** (they add review or are told), it is inside every effect, zone and level
+///   filter: it counts as L3, anywhere;
+/// - for a **delegate** (who may approve on the owner's behalf), it is inside no scope: it goes to the owner.
+///
+/// The connection and the account are known facts and filter in both cases.
 #[must_use]
-pub fn scope_matches(scope: &Scope, input: &Input<'_>) -> bool {
+pub fn scope_matches(kind: CircleKind, scope: &Scope, input: &Input<'_>) -> bool {
     let unreadable = input.certainty == Certainty::None || input.kinds.contains(&EffectKind::Unknown);
+    if unreadable && kind == CircleKind::Delegate {
+        return false;
+    }
     if !unreadable {
         if !scope.effects.is_empty() && !input.kinds.iter().any(|k| scope.effects.contains(&kind_name(*k))) {
             return false;
@@ -48,9 +56,8 @@ pub fn scope_matches(scope: &Scope, input: &Input<'_>) -> bool {
         if !scope.zones.is_empty() && !scope.zones.contains(&zone_name(input.zone)) {
             return false;
         }
-        if let Some(min) = scope.min_level
-            && (input.level as u8) < min
-        {
+        let level = input.level as u8;
+        if scope.min_level.is_some_and(|min| level < min) || scope.max_level.is_some_and(|max| level > max) {
             return false;
         }
     }
@@ -139,7 +146,7 @@ pub fn obligations(owner_account: &str, active: &[&Arrangement], input: &Input<'
     for a in active {
         if a.owner.account != owner_account
             || a.helper.account == owner_account
-            || !scope_matches(&a.terms.scope, input)
+            || !scope_matches(a.terms.kind, &a.terms.scope, input)
         {
             continue;
         }
@@ -301,35 +308,35 @@ mod tests {
     fn scopes_match_by_effect_zone_level_connection_account() {
         let mut s = Scope::default();
         let msg = [EffectKind::Message];
-        assert!(scope_matches(&s, &input(&msg)));
+        assert!(scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         s.effects = vec!["money".to_owned()];
-        assert!(!scope_matches(&s, &input(&msg)));
-        assert!(scope_matches(&s, &input(&[EffectKind::Money, EffectKind::DataRead])));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &input(&msg)));
+        assert!(scope_matches(CircleKind::Cosign, &s, &input(&[EffectKind::Money, EffectKind::DataRead])));
         let mut s = Scope {
             zones: vec!["work".to_owned()],
             ..Scope::default()
         };
-        assert!(!scope_matches(&s, &input(&msg)));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         s.zones.push("outside".to_owned());
-        assert!(scope_matches(&s, &input(&msg)));
+        assert!(scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         let s = Scope {
             min_level: Some(3),
             ..Scope::default()
         };
-        assert!(!scope_matches(&s, &input(&msg)));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         let s = Scope {
             connections: vec!["c2".to_owned()],
             ..Scope::default()
         };
-        assert!(!scope_matches(&s, &input(&msg)));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         let s = Scope {
             accounts: vec!["Dana@Example.com".to_owned()],
             ..Scope::default()
         };
-        assert!(scope_matches(&s, &input(&msg)));
+        assert!(scope_matches(CircleKind::Cosign, &s, &input(&msg)));
         let mut no_account = input(&msg);
         no_account.account = None;
-        assert!(!scope_matches(&s, &no_account));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &no_account));
     }
 
     #[test]
@@ -341,8 +348,8 @@ mod tests {
         };
         let mut i = input(&[EffectKind::Message]);
         i.certainty = Certainty::None;
-        assert!(scope_matches(&s, &i));
-        assert!(scope_matches(&s, &input(&[EffectKind::Unknown])));
+        assert!(scope_matches(CircleKind::Cosign, &s, &i));
+        assert!(scope_matches(CircleKind::Cosign, &s, &input(&[EffectKind::Unknown])));
         // A level or zone guessed for an unreadable request never takes it out of scope: it counts as L3, anywhere.
         let high = Scope {
             min_level: Some(3),
@@ -351,23 +358,50 @@ mod tests {
         let mut none = input(&[EffectKind::Message]);
         none.certainty = Certainty::None;
         none.level = Level::L0;
-        assert!(scope_matches(&high, &none));
+        assert!(scope_matches(CircleKind::Cosign, &high, &none));
         let outside = Scope {
             zones: vec!["outside".to_owned()],
             ..Scope::default()
         };
         let mut unknown = input(&[EffectKind::Unknown]);
         unknown.zone = Zone::Mine;
-        assert!(scope_matches(&outside, &unknown));
+        assert!(scope_matches(CircleKind::Cosign, &outside, &unknown));
         // A readable request is still filtered by its level and zone.
         let mut known = input(&[EffectKind::Message]);
         known.zone = Zone::Mine;
-        assert!(!scope_matches(&outside, &known));
-        assert!(!scope_matches(&high, &known));
+        assert!(!scope_matches(CircleKind::Cosign, &outside, &known));
+        assert!(!scope_matches(CircleKind::Cosign, &high, &known));
+        // A delegate never gets an unreadable request, whatever its scope: it goes to the owner.
+        let routine = Scope {
+            max_level: Some(1),
+            ..Scope::default()
+        };
+        let mine = Scope {
+            zones: vec!["mine".to_owned()],
+            ..Scope::default()
+        };
+        let mut low = input(&[EffectKind::Unknown]);
+        low.level = Level::L0;
+        low.zone = Zone::Mine;
+        assert!(!scope_matches(CircleKind::Delegate, &routine, &low));
+        assert!(!scope_matches(CircleKind::Delegate, &mine, &low));
+        assert!(!scope_matches(CircleKind::Delegate, &Scope::default(), &none));
+        // A readable routine request does reach the delegate.
+        let mut readable = input(&[EffectKind::Message]);
+        readable.level = Level::L1;
+        readable.zone = Zone::Mine;
+        assert!(scope_matches(CircleKind::Delegate, &routine, &readable));
+        assert!(scope_matches(CircleKind::Delegate, &mine, &readable));
+        readable.level = Level::L2;
+        assert!(!scope_matches(CircleKind::Delegate, &routine, &readable));
+        // And through `obligations`: the unreadable request names no delegate.
+        let mut maria = arrangement(20, "maria", CircleKind::Delegate);
+        maria.terms.scope = routine;
+        assert!(obligations("dana", &[&maria], &low).delegates.is_empty());
         // The known facts (connection, account) still apply.
         let mut other = input(&[EffectKind::Unknown]);
         other.connection = "c9";
-        assert!(!scope_matches(&s, &other));
+        assert!(!scope_matches(CircleKind::Cosign, &s, &other));
     }
 
     #[test]

@@ -154,6 +154,9 @@ pub struct Scope {
     /// 0..=3: the least level covered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_level: Option<u8>,
+    /// 0..=3: the highest level covered (a delegate for routine requests only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_level: Option<u8>,
     /// Connection ids of the owner (the agent).
     pub connections: Vec<String>,
     /// Accounts the requests act on (e.g. `founder@startup.com`).
@@ -297,8 +300,13 @@ impl Scope {
         list("scope.zones", &self.zones, Some(SCOPE_ZONES))?;
         list("scope.connections", &self.connections, None)?;
         list("scope.accounts", &self.accounts, None)?;
-        if self.min_level.is_some_and(|l| l > 3) {
-            return Err(invalid("scope.min_level", "must be 0 to 3"));
+        if self.min_level.is_some_and(|l| l > 3) || self.max_level.is_some_and(|l| l > 3) {
+            return Err(invalid("scope.min_level", "levels are 0 to 3"));
+        }
+        if let (Some(lo), Some(hi)) = (self.min_level, self.max_level)
+            && lo > hi
+        {
+            return Err(invalid("scope.max_level", "must not be below min_level"));
         }
         Ok(())
     }
@@ -309,6 +317,7 @@ impl Scope {
         self.effects.is_empty()
             && self.zones.is_empty()
             && self.min_level.is_none()
+            && self.max_level.is_none()
             && self.connections.is_empty()
             && self.accounts.is_empty()
     }
