@@ -228,6 +228,13 @@ pub enum CircleEvent {
     ReviewWaiting {
         review: CircleReviewView,
     },
+    /// A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
+    /// Notifies ("Sam: Ended the guardianship").
+    Alert {
+        link_id: String,
+        person: String,
+        text: String,
+    },
     /// Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
     Changed,
 }

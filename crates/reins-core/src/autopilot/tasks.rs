@@ -53,6 +53,9 @@ pub(crate) struct TaskRecord {
     pub asked: u32,
     #[serde(default)]
     pub parked: u32,
+    /// The owner chose "Any": no list bounds it.
+    #[serde(default)]
+    pub any: bool,
 }
 
 impl TaskRecord {
@@ -74,6 +77,8 @@ impl TaskRecord {
             people: e.people.clone(),
             operations: self.operations.clone(),
             ceiling: e.ceiling.min(matrix::MAX_CEILING) as u8,
+            requested_ceiling: e.ceiling.min(matrix::MAX_CEILING) as u8,
+            any: self.any,
             budget: self.budget,
             uses_left: e.uses_left,
             started_at: self.started_at,
@@ -135,6 +140,9 @@ fn check_lists(v: &TaskView) -> Result<(), CoreError> {
     if v.title.trim().is_empty() || v.title.chars().any(char::is_control) || v.title.chars().count() > 80 {
         return Err(CoreError::invalid("A task needs a title, one line."));
     }
+    if !v.any && v.repos.is_empty() && v.people.is_empty() && v.paths.is_empty() && v.operations.is_empty() {
+        return Err(CoreError::invalid("Name what the task covers, or choose Any."));
+    }
     Ok(())
 }
 
@@ -193,7 +201,10 @@ pub(crate) fn view_of_draft(
         paths: d.paths.clone(),
         people: d.people.clone(),
         operations: d.operations.clone(),
-        ceiling: d.ceiling.unwrap_or_else(|| default_ceiling(&d.repos, facts)),
+        // What it may do starts at the default for its repositories; the owner may raise it up to what was asked.
+        ceiling: d.ceiling.unwrap_or_else(|| default_ceiling(&d.repos, facts)).min(default_ceiling(&d.repos, facts)),
+        requested_ceiling: d.ceiling.unwrap_or_else(|| default_ceiling(&d.repos, facts)),
+        any: false,
         budget: d.budget,
         uses_left: d.budget,
         started_at: now,
@@ -231,8 +242,11 @@ pub(crate) fn narrow(proposed: &TaskView, edit: &TaskView) -> Result<TaskView, &
     {
         return Err("Leave at least one, or deny the task.");
     }
-    if edit.ceiling > proposed.ceiling {
-        return Err("The ceiling can only go down.");
+    if edit.ceiling > proposed.requested_ceiling.max(proposed.ceiling) {
+        return Err("The ceiling goes up to what the agent asked, no higher.");
+    }
+    if edit.any && !proposed.any {
+        return Err("A proposal names what it covers; choose Any only for a task of your own.");
     }
     let length = |v: &TaskView| v.ends_at.saturating_sub(v.started_at);
     if length(edit) > length(proposed) || length(edit) < proto::MIN_TASK_MINUTES * 60 {
@@ -251,6 +265,7 @@ pub(crate) fn narrow(proposed: &TaskView, edit: &TaskView) -> Result<TaskView, &
     out.people.clone_from(&edit.people);
     out.operations.clone_from(&edit.operations);
     out.ceiling = edit.ceiling;
+    out.requested_ceiling = proposed.requested_ceiling;
     out.ends_at = proposed.started_at.saturating_add(length(edit));
     out.budget = edit.budget;
     out.uses_left = edit.budget;
@@ -270,23 +285,24 @@ impl Engine {
         }
     }
 
-    fn ap_put_task_records(&self, records: &[TaskRecord]) -> Result<(), CoreError> {
-        let json = serde_json::to_vec(records).map_err(|e| CoreError::storage(e.to_string()))?;
-        self.store.meta_set_sealed(TASKS_KEY, &json)
-    }
-
-    /// Changes the records under one lock-free read-modify-write (the account's calls run one at a time).
+    /// Changes the records as one store transaction (`Store::meta_update_sealed`): a Stop, a start, an approval, an
+    /// agent's end and a spent use never overwrite one another, in this process or the notification extension's.
     fn ap_with_tasks<T>(&self, f: impl FnOnce(&mut Vec<TaskRecord>) -> T) -> Result<T, CoreError> {
-        let mut records = self.ap_task_records()?;
-        let out = f(&mut records);
-        let now = unix_now();
-        records.retain(|r| r.live(now) || r.ended_at.unwrap_or(r.envelope.not_after) > now - KEEP_ENDED_SECS);
-        if records.len() > MAX_RECORDS {
-            let drop = records.len() - MAX_RECORDS;
-            records.drain(..drop);
-        }
-        self.ap_put_task_records(&records)?;
-        Ok(out)
+        self.store.meta_update_sealed(TASKS_KEY, |current| {
+            let mut records: Vec<TaskRecord> = match current {
+                Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| CoreError::storage("corrupt tasks"))?,
+                None => Vec::new(),
+            };
+            let out = f(&mut records);
+            let now = unix_now();
+            records.retain(|r| r.live(now) || r.ended_at.unwrap_or(r.envelope.not_after) > now - KEEP_ENDED_SECS);
+            if records.len() > MAX_RECORDS {
+                let drop = records.len() - MAX_RECORDS;
+                records.drain(..drop);
+            }
+            let json = serde_json::to_vec(&records).map_err(|e| CoreError::storage(e.to_string()))?;
+            Ok((Some(json), out))
+        })
     }
 
     /// The task live for a connection now.
@@ -309,13 +325,15 @@ impl Engine {
     /// Counts a request against task `id`. `Count::Auto` spends a use: it runs before the effect, and fails when
     /// none is left (the request then waits).
     pub(crate) fn ap_task_count(&self, id: &str, count: Count) -> Result<(), CoreError> {
+        let now = unix_now();
         let spent = self.ap_with_tasks(|records| {
             let Some(r) = records.iter_mut().find(|r| r.envelope.id == id) else {
                 return count != Count::Auto;
             };
             match count {
                 Count::Auto => {
-                    if r.envelope.uses_left == Some(0) {
+                    // Stopped, ended or expired since the evaluation: it covers nothing now.
+                    if !r.live(now) || r.envelope.uses_left == Some(0) {
                         return false;
                     }
                     r.envelope.uses_left = r.envelope.uses_left.map(|u| u - 1);
@@ -379,6 +397,7 @@ impl Engine {
             auto: 0,
             asked: 0,
             parked: 0,
+            any: v.any,
         };
         let stored = record.clone();
         self.ap_with_tasks(|records| {
@@ -519,22 +538,27 @@ impl Engine {
     }
 
     fn ap_put_task_edit(&self, request_id: &str, edit: Option<&TaskView>) -> Result<(), CoreError> {
-        let mut edits = self.ap_task_edits()?;
-        match edit {
-            Some(v) => {
-                edits.insert(request_id.to_owned(), TaskViewStored::from(v));
+        self.store.meta_update_sealed(EDITS_KEY, |current| {
+            let mut edits: std::collections::BTreeMap<String, TaskViewStored> = match current {
+                Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| CoreError::storage("corrupt task edits"))?,
+                None => std::collections::BTreeMap::new(),
+            };
+            match edit {
+                Some(v) => {
+                    edits.insert(request_id.to_owned(), TaskViewStored::from(v));
+                }
+                None => {
+                    edits.remove(request_id);
+                }
             }
-            None => {
-                edits.remove(request_id);
+            // Few at a time: an edit lives from the tap to the approval.
+            while edits.len() > 20 {
+                let first = edits.keys().next().cloned().unwrap_or_default();
+                edits.remove(&first);
             }
-        }
-        // Few at a time: an edit lives from the tap to the approval.
-        while edits.len() > 20 {
-            let first = edits.keys().next().cloned().unwrap_or_default();
-            edits.remove(&first);
-        }
-        let json = serde_json::to_vec(&edits).map_err(|e| CoreError::storage(e.to_string()))?;
-        self.store.meta_set_sealed(EDITS_KEY, &json)
+            let json = serde_json::to_vec(&edits).map_err(|e| CoreError::storage(e.to_string()))?;
+            Ok((Some(json), ()))
+        })
     }
 
     /// Applies an approved proposal: the owner's narrowed envelope when they edited it, else the proposal as asked.
@@ -635,6 +659,8 @@ impl From<TaskViewStored> for TaskView {
             auto: 0,
             asked: 0,
             parked: 0,
+            any: false,
+            requested_ceiling: s.ceiling,
         }
     }
 }
@@ -665,6 +691,8 @@ mod tests {
             auto: 0,
             asked: 0,
             parked: 0,
+            any: false,
+            requested_ceiling: 2,
         }
     }
 

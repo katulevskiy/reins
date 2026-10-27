@@ -154,8 +154,8 @@ struct TaskDraft: Equatable {
         return true
     }
 
-    /// The ceilings offered: the proposal's and lower.
-    var ceilingChoices: [UInt8] { TaskText.ceilings.filter { $0 <= min(proposed.ceiling, 2) } }
+    /// The ceilings offered: up to what the agent asked (the card starts at the default for its repositories).
+    var ceilingChoices: [UInt8] { TaskText.ceilings.filter { $0 <= min(max(proposed.requestedCeiling, proposed.ceiling), 2) } }
 
     /// Only lower than (or as) proposed.
     @discardableResult

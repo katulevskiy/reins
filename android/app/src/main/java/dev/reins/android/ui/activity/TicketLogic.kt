@@ -8,7 +8,7 @@ import dev.reins.core.TicketView
 // What Overnight parked (01 §11) waits here too: a ticket once parked, and here even before its ticket shows.
 
 /** Parked by Overnight for the morning, and the morning has not come ([nowSeconds]). */
-fun PendingItem.parked(nowSeconds: Long): Boolean = (parkedUntil ?: 0) > nowSeconds
+fun PendingItem.waitsForMorning(nowSeconds: Long): Boolean = parked && (parkedUntil ?: 0) > nowSeconds
 
 /**
  * Waits under Waiting for you: a ticket, or something Overnight parked. A task proposal never does: it has a card of its

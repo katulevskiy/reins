@@ -143,6 +143,31 @@ pub fn shadow(
     connection: &str,
     now: i64,
 ) -> Shadow {
+    shadow_of(config, a, cwd, command, connection, now, false)
+}
+
+/// [`shadow`] of a planned net's `after` (the net runs before the effect): what Overnight's looser L1 needs.
+#[must_use]
+pub fn shadow_netted(
+    config: &Config,
+    after: &Analysis,
+    cwd: Option<&str>,
+    command: Option<&str>,
+    connection: &str,
+    now: i64,
+) -> Shadow {
+    shadow_of(config, after, cwd, command, connection, now, true)
+}
+
+fn shadow_of(
+    config: &Config,
+    a: &Analysis,
+    cwd: Option<&str>,
+    command: Option<&str>,
+    connection: &str,
+    now: i64,
+    netted: bool,
+) -> Shadow {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let at = match (cwd, command) {
         (Some(c), Some(cmd)) => graph::repo_at(cmd, c, git_top(c).as_deref(), &home),
@@ -166,7 +191,7 @@ pub fn shadow(
         let read = head.remotes.get("origin");
         (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
     });
-    shadow_with(config, a, head.as_ref(), connection, now)
+    shadow_net(config, a, head.as_ref(), connection, now, netted)
 }
 
 /// `git remote get-url --push origin` in `dir`: where git would push `origin` (no hooks or programs run for it).
@@ -189,7 +214,19 @@ fn git_top(cwd: &str) -> Option<String> {
 }
 
 /// [`shadow`] with the configuration of the repository the request acts in (`head`; `None`: not known).
+#[cfg(test)]
 pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>, connection: &str, now: i64) -> Shadow {
+    shadow_net(config, a, head, connection, now, false)
+}
+
+fn shadow_net(
+    config: &Config,
+    a: &Analysis,
+    head: Option<&GitHead>,
+    connection: &str,
+    now: i64,
+    netted: bool,
+) -> Shadow {
     let snap = config.auto.snapshot();
     let remotes = head.map(|h| &h.remotes);
     let base = graph::Base {
@@ -205,7 +242,9 @@ pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>,
             connection,
             seen_resource: false,
             now,
+            // This computer doesn't know the phone's mode at hook time; Overnight is the phone's (P5).
             overnight: false,
+            netted,
         },
         &snap,
     );
@@ -323,7 +362,7 @@ pub fn evaluate_netted(
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-            shadow(&config, &after, cwd.as_deref(), command.as_deref(), &connection, now)
+            shadow_netted(&config, &after, cwd.as_deref(), command.as_deref(), &connection, now)
         }))
         .ok();
         let _sent = tx.send(result);

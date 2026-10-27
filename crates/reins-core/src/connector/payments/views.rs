@@ -86,7 +86,7 @@ pub struct PurchaseView {
 }
 
 /// A spend limit to create alongside an approval, or from the settings.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SpendLimitInput {
     /// From the settings; ignored alongside an approval (it is the request's).
     pub connection_id: String,
@@ -100,8 +100,8 @@ pub struct SpendLimitInput {
     pub duration_secs: i64,
 }
 
-/// What the user picked on the purchase screen.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+/// What the user picked on the purchase screen (kept with a Circle hold until the others approved).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PurchaseChoice {
     /// `None`: the one the view picked.
     pub method_id: Option<String>,

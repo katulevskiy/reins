@@ -18065,6 +18065,11 @@ public struct PendingItem: Equatable, Hashable {
      * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
      */
     public var circle: CircleProgress?
+    /**
+     * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
+     * this, not `parked_until`).
+     */
+    public var parked: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18125,7 +18130,11 @@ public struct PendingItem: Equatable, Hashable {
          */taskProposal: TaskView? = nil, 
         /**
          * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
-         */circle: CircleProgress? = nil) {
+         */circle: CircleProgress? = nil, 
+        /**
+         * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
+         * this, not `parked_until`).
+         */parked: Bool = false) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -18152,6 +18161,7 @@ public struct PendingItem: Equatable, Hashable {
         self.batchable = batchable
         self.taskProposal = taskProposal
         self.circle = circle
+        self.parked = parked
     }
 
     
@@ -18195,7 +18205,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 taskTitle: FfiConverterOptionString.read(from: &buf), 
                 batchable: FfiConverterBool.read(from: &buf), 
                 taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf), 
-                circle: FfiConverterOptionTypeCircleProgress.read(from: &buf)
+                circle: FfiConverterOptionTypeCircleProgress.read(from: &buf), 
+                parked: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -18226,6 +18237,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterBool.write(value.batchable, into: &buf)
         FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
         FfiConverterOptionTypeCircleProgress.write(value.circle, into: &buf)
+        FfiConverterBool.write(value.parked, into: &buf)
     }
 }
 
@@ -19209,7 +19221,7 @@ public func FfiConverterTypeProposalView_lower(_ value: ProposalView) -> RustBuf
 
 
 /**
- * What the user picked on the purchase screen.
+ * What the user picked on the purchase screen (kept with a Circle hold until the others approved).
  */
 public struct PurchaseChoice: Equatable, Hashable {
     /**
@@ -22005,6 +22017,16 @@ public struct TaskView: Equatable, Hashable {
     public var auto: UInt32
     public var asked: UInt32
     public var parked: UInt32
+    /**
+     * The owner chose that it covers any repository, folder, person and kind (shown as "Any"); otherwise it must
+     * name at least one of them.
+     */
+    public var any: Bool
+    /**
+     * The ceiling the agent asked for. A proposal's `ceiling` starts at the default for its repositories (01 §12: L2
+     * only when every one is the owner's) and the owner may raise it up to this.
+     */
+    public var requestedCeiling: UInt8
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22044,7 +22066,15 @@ public struct TaskView: Equatable, Hashable {
          */startedBy: String, 
         /**
          * What ran under it: decided Auto by it, asked, parked.
-         */auto: UInt32, asked: UInt32, parked: UInt32) {
+         */auto: UInt32, asked: UInt32, parked: UInt32, 
+        /**
+         * The owner chose that it covers any repository, folder, person and kind (shown as "Any"); otherwise it must
+         * name at least one of them.
+         */any: Bool = false, 
+        /**
+         * The ceiling the agent asked for. A proposal's `ceiling` starts at the default for its repositories (01 §12: L2
+         * only when every one is the owner's) and the owner may raise it up to this.
+         */requestedCeiling: UInt8 = UInt8(0)) {
         self.id = id
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -22065,6 +22095,8 @@ public struct TaskView: Equatable, Hashable {
         self.auto = auto
         self.asked = asked
         self.parked = parked
+        self.any = any
+        self.requestedCeiling = requestedCeiling
     }
 
     
@@ -22102,7 +22134,9 @@ public struct FfiConverterTypeTaskView: FfiConverterRustBuffer {
                 startedBy: FfiConverterString.read(from: &buf), 
                 auto: FfiConverterUInt32.read(from: &buf), 
                 asked: FfiConverterUInt32.read(from: &buf), 
-                parked: FfiConverterUInt32.read(from: &buf)
+                parked: FfiConverterUInt32.read(from: &buf), 
+                any: FfiConverterBool.read(from: &buf), 
+                requestedCeiling: FfiConverterUInt8.read(from: &buf)
         )
     }
 
@@ -22127,6 +22161,8 @@ public struct FfiConverterTypeTaskView: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.auto, into: &buf)
         FfiConverterUInt32.write(value.asked, into: &buf)
         FfiConverterUInt32.write(value.parked, into: &buf)
+        FfiConverterBool.write(value.any, into: &buf)
+        FfiConverterUInt8.write(value.requestedCeiling, into: &buf)
     }
 }
 
@@ -24288,6 +24324,12 @@ public enum CircleEvent: Equatable, Hashable {
     case reviewWaiting(review: CircleReviewView
     )
     /**
+     * A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
+     * Notifies ("Sam: Ended the guardianship").
+     */
+    case alert(linkId: String, person: String, text: String
+    )
+    /**
      * Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
      */
     case changed
@@ -24315,7 +24357,10 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
         case 1: return .reviewWaiting(review: try FfiConverterTypeCircleReviewView.read(from: &buf)
         )
         
-        case 2: return .changed
+        case 2: return .alert(linkId: try FfiConverterString.read(from: &buf), person: try FfiConverterString.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .changed
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -24330,8 +24375,15 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
             FfiConverterTypeCircleReviewView.write(review, into: &buf)
             
         
-        case .changed:
+        case let .alert(linkId,person,text):
             writeInt(&buf, Int32(2))
+            FfiConverterString.write(linkId, into: &buf)
+            FfiConverterString.write(person, into: &buf)
+            FfiConverterString.write(text, into: &buf)
+            
+        
+        case .changed:
+            writeInt(&buf, Int32(3))
         
         }
     }

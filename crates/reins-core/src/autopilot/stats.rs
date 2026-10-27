@@ -129,6 +129,7 @@ mod tests {
             matrix: None,
             task: None,
             parked: None,
+            batchable: false,
         }
     }
 
