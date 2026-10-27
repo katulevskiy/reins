@@ -75,6 +75,9 @@ pub enum PushKind {
     /// A handover concerns this phone (the id is the handover's): to the primary when a viewer asks to decide, to the
     /// new primary when the roster made it primary (`GET /reins/api/handover-bundle`).
     Handover,
+    /// An org review waits for this member's device signature (O2; the id is the review's). Wire `orgreview`; the
+    /// apps open the work profile's reviews (`GET /reins/api/org/reviews`).
+    OrgReview,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.
@@ -183,6 +186,8 @@ mod tests {
         assert_eq!(alert.sync_head(), Some((43, true)));
         let handover: PushMessage = serde_json::from_value(json!({"t": "handover", "id": "h1"})).unwrap();
         assert_eq!(handover.t, PushKind::Handover);
+        let review: PushMessage = serde_json::from_value(json!({"t": "orgreview", "id": "or_1"})).unwrap();
+        assert_eq!(review.t, PushKind::OrgReview);
         assert_eq!(handover.sync_head(), None);
         for bad in ["", "x", "1:alertx", ":alert", "-1"] {
             let p = PushMessage {
