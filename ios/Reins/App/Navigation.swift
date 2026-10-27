@@ -38,10 +38,8 @@ enum Route: Hashable {
     case vaultPasskeys
     /// Settings > Appearance: the theme, grain on fields, the sans.
     case appearance
-    /// Settings > Wallpaper: one for dark, one for light.
+    /// Settings > Wallpaper: one for dark, one for light (image, effect and fade).
     case wallpaper
-    /// Settings > Wallpaper > Your photo, for the dark theme or the light one.
-    case ownWallpaper(dark: Bool)
     /// Settings > Devices: the account's phones (sign out a lost one) and computers.
     case devices
     /// Integrations > Password vault > Open the vault.

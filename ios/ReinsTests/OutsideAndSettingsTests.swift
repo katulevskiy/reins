@@ -155,6 +155,121 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertLessThan(WallpaperRender.fadeStart(1), WallpaperRender.fadeStart(0))
     }
 
+    func testNoFadeLeavesTheBottomAsItIs() throws {
+        XCTAssertEqual(WallpaperRender.fadeStart(0), 1)
+        let plain = try XCTUnwrap(WallpaperRender.render(try photo(), effect: .original, fade: 0, dark: true, size: CGSize(width: 78, height: 100)))
+        let bottom = try pixel(plain, 40, 99)
+        XCTAssertGreaterThan(Int(bottom.0), 0x80, "the photo's light bottom, not the dark paper")
+    }
+
+    // MARK: Wallpaper: image, effect and fade apart
+
+    private func scratchDefaults() throws -> UserDefaults {
+        let name = "wallpaper-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
+    private func scratchDirectory() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wallpaper-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir
+    }
+
+    func testAChoiceKeepsImageEffectAndFadeApart() throws {
+        let choice = WallpaperChoice(image: .crescent, effect: .halftone, fade: 0.404)
+        XCTAssertEqual(choice.rawValue, "crescent|halftone|40")
+        XCTAssertEqual(WallpaperChoice(rawValue: choice.rawValue), choice)
+        XCTAssertEqual(WallpaperChoice(rawValue: "torii-dither|original|0"), WallpaperChoice(image: .toriiDither))
+        XCTAssertNil(WallpaperChoice(rawValue: "halo"), "the old key's bare image is not a choice")
+        XCTAssertNil(WallpaperChoice(rawValue: "halo|sepia|0"))
+        var faded = choice
+        faded.fade = 1.7
+        XCTAssertEqual(faded.fade, 1, "the fade stays in 0...1")
+        XCTAssertEqual(WallpaperChoice.defaultFor(.dark), WallpaperChoice(image: .halo, effect: .original, fade: 0))
+        XCTAssertEqual(WallpaperChoice.defaultFor(.light).image, .toriiDither)
+    }
+
+    func testTheOldKeyBecomesAChoiceOnceWithNoEffectAndNoAddedFade() throws {
+        let defaults = try scratchDefaults()
+        defaults.set("own", forKey: Wallpaper.legacyKey(.dark))
+        defaults.set("crescent", forKey: Wallpaper.legacyKey(.light))
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .own), "read before the move: as it was")
+        WallpaperChoice.migrate(defaults: defaults)
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.dark)), "own|original|0", "a baked photo is drawn as it is")
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.light)), "crescent|original|0")
+        XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.dark)), "the old key is read once")
+        XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.light)))
+        // A choice made since is never overwritten by an old key.
+        defaults.set(WallpaperChoice(image: .eyes, effect: .dither, fade: 0.3).rawValue, forKey: WallpaperChoice.key(.dark))
+        defaults.set("halo", forKey: Wallpaper.legacyKey(.dark))
+        WallpaperChoice.migrate(defaults: defaults)
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .eyes, effect: .dither, fade: 0.3))
+        XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.dark)))
+    }
+
+    func testWithNothingSavedEachThemeOpensOnItsShippedDefault() throws {
+        let defaults = try scratchDefaults()
+        WallpaperChoice.migrate(defaults: defaults)
+        XCTAssertNil(defaults.object(forKey: WallpaperChoice.key(.dark)), "nothing to move, nothing written")
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), .defaultFor(.dark))
+        XCTAssertEqual(WallpaperChoice.initial(.light, defaults: defaults), .defaultFor(.light))
+    }
+
+    func testAnOldBakedPhotoIsDrawnFromUntilANewOneIsKept() throws {
+        let dir = try scratchDirectory()
+        XCTAssertNil(OwnWallpaper.url(.dark, in: dir))
+        let baked = try XCTUnwrap(UIImage(cgImage: try photo()).jpegData(compressionQuality: 0.9))
+        try baked.write(to: OwnWallpaper.legacyURL(.dark, in: dir))
+        XCTAssertEqual(OwnWallpaper.url(.dark, in: dir), OwnWallpaper.legacyURL(.dark, in: dir))
+        XCTAssertNil(OwnWallpaper.url(.light, in: dir), "one photo per theme")
+        try OwnWallpaper.save(try photo(), .dark, in: dir)
+        XCTAssertEqual(OwnWallpaper.url(.dark, in: dir), OwnWallpaper.sourceURL(.dark, in: dir))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: OwnWallpaper.legacyURL(.dark, in: dir).path), "the baked one goes")
+    }
+
+    func testTheCacheNamesEverythingThatChangesTheArt() {
+        let base = WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.2), dark: true)
+        XCTAssertEqual(base.key, "dark_halo_dither_f20")
+        let keys: Set<String> = [
+            base.key,
+            WallpaperArt(choice: WallpaperChoice(image: .ruins, effect: .dither, fade: 0.2), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .halftone, fade: 0.2), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.21), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.2), dark: false).key,
+        ]
+        XCTAssertEqual(keys.count, 5, "image, effect, fade and theme each name another file")
+        XCTAssertEqual(WallpaperArt(choice: base.choice, dark: true, photo: 7).key, base.key, "a shipped image has no photo revision")
+        let own = WallpaperChoice(image: .own)
+        XCTAssertNotEqual(WallpaperArt(choice: own, dark: true, photo: 1).key, WallpaperArt(choice: own, dark: true, photo: 2).key, "a new photo is drawn anew")
+    }
+
+    func testOnlyAShippedImageAsItShipsSkipsTheRender() {
+        XCTAssertTrue(WallpaperArt(choice: .defaultFor(.dark), dark: true).isAsset)
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .scanlines), dark: true).isAsset)
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, fade: 0.01), dark: true).isAsset)
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .own), dark: true).isAsset, "your photo is always drawn to the wallpaper's size")
+    }
+
+    func testAMissingPhotoFallsBackToTheThemesImageKeepingTheEffect() {
+        let choice = WallpaperChoice(image: .own, effect: .colour, fade: 0.5)
+        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: false).choice, WallpaperChoice(image: .toriiDither, effect: .colour, fade: 0.5))
+        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: true).choice, choice)
+    }
+
+    func testTheCacheKeepsEachThemesNewestFew() throws {
+        let dir = try scratchDirectory()
+        for (i, name) in ["dark_a", "dark_b", "dark_c", "dark_d", "light_a"].enumerated() {
+            let url = dir.appendingPathComponent(name + ".jpg")
+            try Data([1]).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: Double(1_000 + i))], ofItemAtPath: url.path)
+        }
+        WallpaperArt.prune(dir, dark: true, keeping: dir.appendingPathComponent("dark_a.jpg"))
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: dir.path)), ["dark_a.jpg", "dark_c.jpg", "dark_d.jpg", "light_a.jpg"])
+    }
+
     // MARK: Settings words
 
     func testDeletingTheAccountListsWhatGoesInFiveWords() {

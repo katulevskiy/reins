@@ -186,9 +186,12 @@ struct ActivityScreen: View {
                 model.activitySearchText = args[i + 1]
             }
             if args.contains("-demoFilter") { model.activityFilters.deciders = [.autopilot] }
-            // `-wallpaperDark <name>` / `-wallpaperLight <name>`: another shipped wallpaper (as Settings would store it).
+            // `-wallpaperDark <name>` / `-wallpaperLight <name>`: another shipped wallpaper, as it ships, or a whole choice
+            // as Settings stores it (`halo|dither|40`).
             for (flag, scheme) in [("-wallpaperDark", ColorScheme.dark), ("-wallpaperLight", .light)] {
-                if let i = args.firstIndex(of: flag), i + 1 < args.count { AppGroup.defaults.set(args[i + 1], forKey: Wallpaper.key(scheme)) }
+                guard let i = args.firstIndex(of: flag), i + 1 < args.count else { continue }
+                let choice = WallpaperChoice(rawValue: args[i + 1]) ?? Wallpaper(rawValue: args[i + 1]).map { WallpaperChoice(image: $0) }
+                if let choice { AppGroup.defaults.set(choice.rawValue, forKey: WallpaperChoice.key(scheme)) }
             }
         }
         #endif

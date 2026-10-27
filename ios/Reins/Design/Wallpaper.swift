@@ -3,11 +3,12 @@ import SwiftUI
 import UIKit
 
 /// The art behind Activity (the Wallpaper and Settings boards): dithered and treated images, faded into the page at the
-/// bottom, one for dark and one for light (Halo and Torii dither by default), or the user's own photo with an effect.
-/// Groups over it become frosted panes; Reduce Transparency makes the panes solid and keeps the art.
+/// bottom, one for dark and one for light (Halo and Torii dither by default), or the user's own photo. Which image is
+/// one of a theme's three settings (`WallpaperChoice`); the effect and the fade are the others. Groups over it become
+/// frosted panes; Reduce Transparency makes the panes solid and keeps the art.
 enum Wallpaper: String, CaseIterable, Identifiable {
     case halo, crescent, figure, hands, ruins, eyes, torii, toriiDither = "torii-dither"
-    /// The user's own photo, treated (`OwnWallpaper`).
+    /// The user's own photo (`OwnWallpaper`).
     case own
 
     var id: String { rawValue }
@@ -30,56 +31,147 @@ enum Wallpaper: String, CaseIterable, Identifiable {
 
     var assetName: String { "wallpaper-\(rawValue)" }
 
-    static func key(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper.dark" : "wallpaper.light" }
+    /// Where the image alone was kept before the effect and the fade were settings of their own; read once, by
+    /// `WallpaperChoice.migrate`.
+    static func legacyKey(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper.dark" : "wallpaper.light" }
 
     static func defaultFor(_ scheme: ColorScheme) -> Wallpaper { scheme == .dark ? .halo : .toriiDither }
 
-    /// The image to draw, or nil when the own photo is chosen but missing.
+    /// The image itself, before any effect (your photo as it was picked), or nil when your photo is chosen but missing.
     func image(_ scheme: ColorScheme) -> UIImage? {
         self == .own ? OwnWallpaper.load(scheme) : UIImage(named: assetName)
     }
 }
 
-/// The user's own wallpaper, kept as a treated JPEG in the app's container, one per theme.
-enum OwnWallpaper {
-    static func url(_ scheme: ColorScheme) -> URL {
-        let dir = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
-            ?? FileManager.default.temporaryDirectory
-        return dir.appendingPathComponent(scheme == .dark ? "wallpaper-dark.jpg" : "wallpaper-light.jpg")
+/// A theme's wallpaper as three separate settings: the image (a shipped one or your photo), the effect over it and how
+/// far it fades into the page. Any image takes any effect. Kept as `image|effect|fade` (the fade in hundredths) under
+/// `key(scheme)` in the app group, where `WallpaperLayer` reads it.
+struct WallpaperChoice: Hashable, RawRepresentable {
+    var image: Wallpaper
+    var effect: WallpaperEffect
+    /// 0...1, in hundredths. 0 adds none: a shipped image keeps the fade it was drawn with.
+    var fade: Double {
+        didSet { fade = Self.step(fade) }
     }
 
-    static func load(_ scheme: ColorScheme) -> UIImage? {
-        UIImage(contentsOfFile: url(scheme).path)
+    init(image: Wallpaper, effect: WallpaperEffect = .original, fade: Double = 0) {
+        self.image = image
+        self.effect = effect
+        self.fade = Self.step(fade)
     }
 
-    static func save(_ image: UIImage, _ scheme: ColorScheme) throws {
-        guard let data = image.jpegData(compressionQuality: 0.86) else { return }
-        try data.write(to: url(scheme), options: .atomic)
+    init?(rawValue: String) {
+        let parts = rawValue.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3, let image = Wallpaper(rawValue: parts[0]), let effect = WallpaperEffect(rawValue: parts[1]),
+              let hundredths = Int(parts[2]) else { return nil }
+        self.init(image: image, effect: effect, fade: Double(hundredths) / 100)
+    }
+
+    var rawValue: String { "\(image.rawValue)|\(effect.rawValue)|\(hundredths)" }
+
+    var hundredths: Int { Int((fade * 100).rounded()) }
+
+    static func step(_ fade: Double) -> Double { (min(1, max(0, fade)) * 100).rounded() / 100 }
+
+    static func key(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper2.dark" : "wallpaper2.light" }
+
+    /// The theme's shipped default as it was drawn: no effect, no added fade.
+    static func defaultFor(_ scheme: ColorScheme) -> WallpaperChoice { WallpaperChoice(image: .defaultFor(scheme)) }
+
+    /// What a theme draws: the saved choice; before one was saved, the image the old key kept (your photo as it was
+    /// baked, so Original and no added fade), or the default.
+    static func initial(_ scheme: ColorScheme, defaults: UserDefaults = AppGroup.defaults) -> WallpaperChoice {
+        if let saved = defaults.string(forKey: key(scheme)).flatMap(WallpaperChoice.init(rawValue:)) { return saved }
+        if let old = defaults.string(forKey: Wallpaper.legacyKey(scheme)).flatMap(Wallpaper.init(rawValue:)) {
+            return WallpaperChoice(image: old)
+        }
+        return defaultFor(scheme)
+    }
+
+    /// Moves the old key over, once, at launch: an image kept there becomes the choice with no effect and no added
+    /// fade, so the page looks as it did. Nothing changes when the new key is already there.
+    static func migrate(defaults: UserDefaults = AppGroup.defaults) {
+        for scheme in [ColorScheme.dark, .light] where defaults.object(forKey: Wallpaper.legacyKey(scheme)) != nil {
+            if defaults.string(forKey: key(scheme)) == nil {
+                defaults.set(initial(scheme, defaults: defaults).rawValue, forKey: key(scheme))
+            }
+            defaults.removeObject(forKey: Wallpaper.legacyKey(scheme))
+        }
     }
 }
 
+/// The user's own photo, one per theme, kept in the app's container as it was picked (upright, at most 2,000 px; no
+/// effect and no fade), so its effect and fade can change without picking it again. A photo saved before that was
+/// kept with its effect and fade baked in, under the old name: it is drawn from as it is until a new one is picked.
+enum OwnWallpaper {
+    static var directory: URL {
+        (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+    }
+
+    static func sourceURL(_ scheme: ColorScheme, in dir: URL = directory) -> URL {
+        dir.appendingPathComponent(scheme == .dark ? "wallpaper-dark-photo.jpg" : "wallpaper-light-photo.jpg")
+    }
+
+    /// The baked photo of earlier versions.
+    static func legacyURL(_ scheme: ColorScheme, in dir: URL = directory) -> URL {
+        dir.appendingPathComponent(scheme == .dark ? "wallpaper-dark.jpg" : "wallpaper-light.jpg")
+    }
+
+    /// The file to draw from: the kept photo, else an older baked one, else none.
+    static func url(_ scheme: ColorScheme, in dir: URL = directory) -> URL? {
+        let files = FileManager.default
+        let source = sourceURL(scheme, in: dir)
+        if files.fileExists(atPath: source.path) { return source }
+        let legacy = legacyURL(scheme, in: dir)
+        return files.fileExists(atPath: legacy.path) ? legacy : nil
+    }
+
+    static func exists(_ scheme: ColorScheme) -> Bool { url(scheme) != nil }
+
+    static func load(_ scheme: ColorScheme, in dir: URL = directory) -> UIImage? {
+        url(scheme, in: dir).flatMap { UIImage(contentsOfFile: $0.path) }
+    }
+
+    /// Keeps a newly picked photo (already upright and sized), replacing the theme's earlier one, baked or not.
+    static func save(_ photo: CGImage, _ scheme: ColorScheme, in dir: URL = directory) throws {
+        guard let data = UIImage(cgImage: photo).jpegData(compressionQuality: 0.92) else { throw CocoaError(.fileWriteUnknown) }
+        try data.write(to: sourceURL(scheme, in: dir), options: .atomic)
+        try? FileManager.default.removeItem(at: legacyURL(scheme, in: dir))
+    }
+
+    /// Bumped on each new photo (`WallpaperArt.photo`), so a photo picked under the same choice is drawn anew.
+    static func revisionKey(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper2.dark.photo" : "wallpaper2.light.photo" }
+}
+
 /// The wallpaper layer at the top of a page, fixed behind everything (it never scrolls; the page and its panes scroll
-/// over it, as on Android): the image across the full width (its 780 × 1000 art is 390 × 500 at the
-/// boards' size), already faded into the page at its bottom, and a shade under the status bar so the title reads.
+/// over it, as on Android): the theme's art (`WallpaperArt`: the image with its effect and fade) across the full width
+/// (its 780 × 1000 art is 390 × 500 at the boards' size), already faded into the page at its bottom, and a shade under
+/// the status bar so the title reads. While a new choice renders, the last art stays.
 struct WallpaperLayer: View {
     @Environment(\.colorScheme) private var scheme
-    @AppStorage(Wallpaper.key(.dark), store: AppGroup.defaults) private var dark = Wallpaper.halo.rawValue
-    @AppStorage(Wallpaper.key(.light), store: AppGroup.defaults) private var light = Wallpaper.toriiDither.rawValue
+    @AppStorage(WallpaperChoice.key(.dark), store: AppGroup.defaults) private var dark = WallpaperChoice.initial(.dark)
+    @AppStorage(WallpaperChoice.key(.light), store: AppGroup.defaults) private var light = WallpaperChoice.initial(.light)
+    @AppStorage(OwnWallpaper.revisionKey(.dark), store: AppGroup.defaults) private var darkPhoto = 0
+    @AppStorage(OwnWallpaper.revisionKey(.light), store: AppGroup.defaults) private var lightPhoto = 0
+    @State private var drawn: WallpaperArt.Drawn?
 
     var body: some View {
-        let chosen = Wallpaper(rawValue: scheme == .dark ? dark : light) ?? Wallpaper.defaultFor(scheme)
+        let isDark = scheme == .dark
+        let art = WallpaperArt.shown(isDark ? dark : light, photo: isDark ? darkPhoto : lightPhoto, scheme: scheme, hasPhoto: OwnWallpaper.exists(scheme))
+        let shown = art.ready() ?? drawn.flatMap { $0.art.dark == isDark ? $0 : nil }
         GeometryReader { geo in
             ZStack(alignment: .top) {
-                let shade = scheme == .dark ? Color.black.opacity(0.55) : Color(red: 246 / 255, green: 246 / 255, blue: 248 / 255).opacity(0.75)
-                let shown = chosen.image(scheme) != nil ? chosen : Wallpaper.defaultFor(scheme)
-                if let image = shown.image(scheme) {
-                    Image(uiImage: image)
+                let shade = isDark ? Color.black.opacity(0.55) : Color(red: 246 / 255, green: 246 / 255, blue: 248 / 255).opacity(0.75)
+                if let shown {
+                    Image(uiImage: shown.image)
                         .resizable()
                         .interpolation(.medium)
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.width * 500 / 390, alignment: .top)
                         .clipped()
-                        .backdropArt(key: "\(shown.rawValue)-\(scheme == .dark ? "dark" : "light")-\(Self.ownStamp(shown, scheme))", image: image, dark: scheme == .dark, shade: shade)
+                        // The frosted copy follows the art drawn: its key names the image, effect, fade and theme.
+                        .backdropArt(key: shown.art.key, image: shown.image, dark: isDark, shade: shade)
                 }
                 LinearGradient(colors: [shade, .clear], startPoint: .top, endPoint: .bottom)
                     .frame(height: 150)
@@ -89,15 +181,9 @@ struct WallpaperLayer: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-}
-
-extension WallpaperLayer {
-    /// The own photo's file date, so a new photo blurs anew under the same name.
-    static func ownStamp(_ wallpaper: Wallpaper, _ scheme: ColorScheme) -> String {
-        guard wallpaper == .own else { return "" }
-        let date = (try? FileManager.default.attributesOfItem(atPath: OwnWallpaper.url(scheme).path)[.modificationDate]) as? Date
-        return String(date?.timeIntervalSince1970 ?? 0)
+        .task(id: art) {
+            if let made = await art.drawn() { drawn = made }
+        }
     }
 }
 
