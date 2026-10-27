@@ -13,6 +13,8 @@ are listed in [NOTICE](NOTICE).
 | Desktop app: window and tray (GPUI, Apache-2.0; Sora, Geologica and JetBrains Mono fonts, OFL-1.1) | `crates/reins-desktop-app` | Apache-2.0 |
 | Wire protocol types | `crates/reins-proto` | Apache-2.0 |
 | Permission policy engine | `crates/reins-policy` | Apache-2.0 |
+| Audit export verifier (`reins-audit verify`) | `crates/reins-audit` | Apache-2.0 |
+| Organization executor | `crates/reins-executor` | Apache-2.0 |
 | Autopilot model runtime for the desktop and `laya-try` | `crates/reins-laya` | Apache-2.0 |
 | End-to-end test harness | `crates/reins-e2e` | Apache-2.0 |
 | Autopilot model tooling (data, fine-tuning, export, evaluation) | `tools/laya/` | Apache-2.0 |

@@ -8285,6 +8285,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reins-audit"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "reins-proto",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "reins-core"
 version = "0.1.0"
 dependencies = [
