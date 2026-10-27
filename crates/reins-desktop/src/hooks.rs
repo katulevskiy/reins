@@ -229,6 +229,9 @@ pub struct GitHead {
     /// The remote a push with no repository argument uses, from `branch.<name>.remote`. `None`: git's own default,
     /// which is `origin`.
     pub remote: Option<String>,
+    /// Every remote's `url`, by name (one each; the configuration parsed cleanly, with no `pushurl`, `insteadOf` or
+    /// include anywhere).
+    pub remotes: std::collections::BTreeMap<String, String>,
 }
 
 /// Reads a small file of the repository (at most 64 KiB): `None` when it is not there or larger.
@@ -253,6 +256,7 @@ struct PushSettings {
     default: Option<String>,
     merge: Option<String>,
     remote: Option<String>,
+    remotes: std::collections::BTreeMap<String, String>,
 }
 
 /// Reads a git configuration file into `into`; `false` unless every line of it parses cleanly by the plain subset:
@@ -322,7 +326,13 @@ fn push_settings(text: &str, branch: &str, into: &mut PushSettings) -> bool {
         // a push URL, `pushInsteadOf`, a push remote, `remote.pushDefault`…) and nothing is reported.
         match (section.as_str(), key.as_str()) {
             ("push", "default") => into.default = Some(value.to_ascii_lowercase()),
-            ("remote", "url" | "fetch") if !sub.is_empty() => {}
+            ("remote", "url") if !sub.is_empty() => {
+                // one url per remote: a second (git pushes to every one) and nothing is reported
+                if into.remotes.insert(sub.clone(), value.to_owned()).is_some() {
+                    return false;
+                }
+            }
+            ("remote", "fetch") if !sub.is_empty() => {}
             ("branch", "remote" | "merge") if !sub.is_empty() => {
                 // a section of this branch only by case: which one git reads is not certain
                 if sub != branch && sub.eq_ignore_ascii_case(branch) {
@@ -375,7 +385,7 @@ pub fn git_head(cwd: &Path) -> Option<GitHead> {
 }
 
 /// [`git_head`], with the system's and the user's configuration files named (`globals`).
-fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> {
+pub(crate) fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> {
     let (top, dot) = cwd.ancestors().find_map(|d| {
         let dot = d.join(".git");
         dot.exists().then(|| (d.to_path_buf(), dot))
@@ -426,6 +436,7 @@ fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> 
         branch,
         default,
         remote: s.remote,
+        remotes: s.remotes,
     })
 }
 
@@ -682,53 +693,35 @@ pub async fn run(
         } => Kind::File,
         _ => Kind::Command,
     };
-    // Decisions v2: with `auto.matrix_decides`, the matrix decides first (with this computer's facts, under a
-    // deadline). Without a reading in time, or with it off, the guard decides as before.
-    let decided = if config.auto.matrix_decides {
+    // Decisions v2: with `auto.matrix_decides` (and this computer's setup done), the matrix only adds asks: what the
+    // guard asks about is still asked, and what the matrix asks about is asked even with no guard rule. Without a
+    // reading in time, or with it off, the guard decides as before.
+    let decided = if config.auto.matrix_decides && config.auto.setup_done {
         crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
     } else {
         None
     };
     let guarded = question_in(&call, &config.guard, head.as_ref());
     let (m, q, reading) = if let Some((summary, shadow)) = decided {
-        match shadow.outcome {
-            reins_policy::matrix::Outcome::Deny => {
-                let reason = format!("Reins: not allowed: {}", shadow.line);
-                let mut entry = Entry::new(kind, &action_line(&call))
-                    .source(Some(harness.label()))
-                    .decider(crate::journal::Decider::Settings)
-                    .effects(Some(summary))
-                    .matrix(Some(shadow));
-                entry.end(Outcome::Blocked, Some(&reason));
-                crate::journal::Journal::new(paths).record(&entry);
-                let (out, code) = render(&call, &Verdict::Deny(reason));
-                return (out, code, None);
-            }
-            reins_policy::matrix::Outcome::Auto => {
-                // Allowed without the phone. Only what the guard would have asked about is put in Activity (an
-                // entry for every `ls` would bury the rest); the harness keeps its own permission flow.
-                if guarded.is_some() {
-                    let mut entry = Entry::new(kind, &action_line(&call))
-                        .source(Some(harness.label()))
-                        .decider(crate::journal::Decider::Settings)
-                        .effects(Some(summary))
-                        .matrix(Some(shadow));
-                    entry.end(Outcome::Allowed, Some("Auto"));
-                    crate::journal::Journal::new(paths).record(&entry);
-                }
-                let (out, code) = render(&call, &Verdict::Unmatched);
-                return (out, code, None);
-            }
-            reins_policy::matrix::Outcome::Ask {
-                ..
-            } => {
-                let Some((m, q)) = guarded.or_else(|| matrix_question(&call, &shadow.line)) else {
-                    let (out, code) = render(&call, &Verdict::Unmatched);
-                    return (out, code, None);
-                };
-                (m, q, Some((summary, shadow)))
-            }
+        if shadow.outcome == reins_policy::matrix::Outcome::Deny {
+            let reason = format!("Reins: not allowed: {}", shadow.line);
+            let mut entry = Entry::new(kind, &action_line(&call))
+                .source(Some(harness.label()))
+                .decider(crate::journal::Decider::Settings)
+                .effects(Some(summary))
+                .matrix(Some(shadow));
+            entry.end(Outcome::Blocked, Some(&reason));
+            crate::journal::Journal::new(paths).record(&entry);
+            let (out, code) = render(&call, &Verdict::Deny(reason));
+            return (out, code, None);
         }
+        let asks = matches!(shadow.outcome, reins_policy::matrix::Outcome::Ask { .. });
+        let question = guarded.or_else(|| asks.then(|| matrix_question(&call, &shadow.line)).flatten());
+        let Some((m, q)) = question else {
+            let (out, code) = render(&call, &Verdict::Unmatched);
+            return (out, code, None);
+        };
+        (m, q, Some((summary, shadow)))
     } else {
         let Some((m, q)) = guarded else {
             let (out, code) = render(&call, &Verdict::Unmatched);
@@ -973,6 +966,7 @@ mod tests {
                 branch: Some("feature/x".into()),
                 default: Some("live".into()),
                 remote: None,
+                remotes: [("origin".to_owned(), "git@github.com:me/app.git".to_owned())].into(),
             }
         );
         // detached: no branch
@@ -1070,6 +1064,7 @@ mod tests {
                 branch: Some("feature/y".into()),
                 default: Some("main".into()),
                 remote: None,
+                remotes: [("origin".to_owned(), "git@github.com:me/app.git".to_owned())].into(),
             }
         );
         // `branch.<name>.remote` is where a push with no repository argument goes. Only origin matches the default
@@ -1103,6 +1098,7 @@ mod tests {
             branch: Some("feature/x".into()),
             default: Some("live".into()),
             remote: None,
+            ..GitHead::default()
         };
         let lines = reported_lines("git push --force origin HEAD", &head);
         let command = lines.iter().position(|l| l == "Command:").unwrap();
@@ -1134,11 +1130,13 @@ mod tests {
             branch: Some("main".into()),
             default: Some("decoy".into()),
             remote: None,
+            ..GitHead::default()
         };
         let feature = GitHead {
             branch: Some("feature/x".into()),
             default: Some("live".into()),
             remote: None,
+            ..GitHead::default()
         };
         let upstream = GitHead {
             remote: Some("upstream".into()),

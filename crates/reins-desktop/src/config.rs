@@ -472,6 +472,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "WorkspaceConfig::is_default")]
     pub workspace: WorkspaceConfig,
     /// Auto on this computer (`[auto]`): the facts it zones requests with, its matrix, and whether the matrix decides.
+    /// Left out of a written configuration while it is the default.
+    #[serde(skip_serializing_if = "AutoConfig::is_default")]
     pub auto: AutoConfig,
 }
 
@@ -491,6 +493,11 @@ pub struct AutoConfig {
 }
 
 impl AutoConfig {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// The snapshot hook requests are evaluated against: these facts and this matrix, no rules.
     #[must_use]
     pub fn snapshot(&self) -> reins_policy::matrix::Snapshot {

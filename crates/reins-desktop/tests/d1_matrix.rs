@@ -22,6 +22,7 @@ fn config(decides: bool) -> Config {
     let mut c = Config::default();
     c.workspace.roots = vec!["/home/me".to_owned()];
     c.auto.matrix_decides = decides;
+    c.auto.setup_done = decides;
     c
 }
 
@@ -58,21 +59,38 @@ async fn shadow_off_changes_nothing() {
 }
 
 #[tokio::test]
-async fn on_auto_allows_locally() {
+async fn on_a_guard_match_is_still_asked() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
     let before = mock.with(|s| s.calls.len());
-    // The guard asks about `rm -rf`; build output in the workspace is Undoable and Mine: Auto.
-    let (out, code, _) =
+    // The guard asks about `rm -rf`; build output in the workspace is Undoable and Mine (Auto): still asked, the
+    // matrix only adds asks on this computer.
+    let (out, _, _) =
         hooks::run(Harness::ClaudeCode, claude("rm -rf build dist").as_bytes(), &app.paths, &config(true), &NoPrompter)
             .await;
-    assert_eq!((out, code), (None, 0), "no opinion: the harness keeps its own permission flow");
-    assert_eq!(mock.with(|s| s.calls.len()), before, "the phone was not asked");
+    assert!(out.unwrap().contains("Reins 2FA: approved"));
+    assert!(mock.with(|s| s.calls.len()) > before, "the phone was asked");
     let log = journal::read(&app.paths, 10, 3_600);
-    assert_eq!(log.len(), 1, "what the guard would have asked is in Activity");
-    assert_eq!(log[0].outcome, journal::Outcome::Allowed);
     let m = log[0].matrix.clone().unwrap();
     assert!(m.decided && m.outcome == Outcome::Auto && m.zone == Zone::Mine, "{m:?}");
+    // Nothing the guard or the matrix asks about: no opinion, no entry.
+    let (out, _, _) =
+        hooks::run(Harness::ClaudeCode, claude("ls -la").as_bytes(), &app.paths, &config(true), &NoPrompter).await;
+    assert_eq!(out, None);
+}
+
+#[tokio::test]
+async fn without_the_setup_the_matrix_decides_nothing() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let mut c = config(true);
+    c.auto.setup_done = false;
+    let before = mock.with(|s| s.calls.len());
+    let (out, _, _) =
+        hooks::run(Harness::ClaudeCode, claude("cp notes.txt /etc/notes.txt").as_bytes(), &app.paths, &c, &NoPrompter)
+            .await;
+    assert_eq!(out, None, "no guard rule, and the matrix isn't set up: as before");
+    assert_eq!(mock.with(|s| s.calls.len()), before);
 }
 
 #[tokio::test]

@@ -119,52 +119,59 @@ pub struct Shadow {
     pub decided: bool,
 }
 
-/// `[remote "origin"] url` of the repository holding `cwd`, read from its files (never by running git). `None` when
-/// anything is unusual: then `origin` is not known, and what goes to it is Outside.
+/// `remote.origin.url` of the repository holding `cwd`, read by the hook's strict reader of git's configuration
+/// ([`crate::hooks::git_head`]: never by running git; `None` when any configuration has a `pushurl`, an `insteadOf`,
+/// an include or anything it doesn't read cleanly). Then `origin` is not known, and what goes to it is Outside.
 #[must_use]
 pub fn origin_url(cwd: &Path) -> Option<String> {
-    let read = |p: &Path| -> Option<String> {
-        let meta = std::fs::metadata(p).ok()?;
-        (meta.is_file() && meta.len() <= 64 * 1024).then(|| std::fs::read_to_string(p).ok()).flatten()
-    };
-    let (top, dot) = cwd.ancestors().find_map(|d| {
-        let dot = d.join(".git");
-        dot.exists().then(|| (d.to_path_buf(), dot))
-    })?;
-    let git_dir = if dot.is_dir() {
-        dot
-    } else {
-        top.join(read(&dot)?.lines().next()?.strip_prefix("gitdir:")?.trim())
-    };
-    let common = read(&git_dir.join("commondir"))
-        .map_or_else(|| git_dir.clone(), |c| git_dir.join(c.lines().next().unwrap_or_default().trim()));
-    let text = read(&common.join("config"))?;
-    let mut in_origin = false;
-    let mut url = None;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_origin = line == "[remote \"origin\"]";
-            continue;
-        }
-        if in_origin
-            && let Some((k, v)) = line.split_once('=')
-            && k.trim().eq_ignore_ascii_case("url")
-        {
-            if url.is_some() {
-                return None;
-            }
-            url = Some(v.trim().to_owned());
-        }
-    }
-    url.filter(|u| graph::split_repo(u).is_some())
+    origin_of(crate::hooks::git_head(cwd).as_ref())
 }
 
-/// The matrix's evaluation of `a`, a request run in `cwd`, against this computer's `[auto]`.
+fn origin_of(head: Option<&GitHead>) -> Option<String> {
+    head?.remotes.get("origin").cloned().filter(|u| graph::parse_repo(u, None).is_some())
+}
+
+/// The matrix's evaluation of `a`, a request run in `cwd` (`command`: its text, when a command), against this
+/// computer's `[auto]`. The base repository and the remotes come from the worktree's configuration, unless the
+/// command may act on another repository (`git -C`, a `cd` out of it, `GIT_DIR`…).
 #[must_use]
-pub fn shadow(config: &Config, a: &Analysis, cwd: Option<&str>, connection: &str, now: i64) -> Shadow {
+pub fn shadow(
+    config: &Config,
+    a: &Analysis,
+    cwd: Option<&str>,
+    command: Option<&str>,
+    connection: &str,
+    now: i64,
+) -> Shadow {
+    let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+    let at = match (cwd, command) {
+        (Some(c), Some(cmd)) => graph::repo_at(cmd, c, git_top(c).as_deref(), &home),
+        _ => graph::RepoAt::Cwd,
+    };
+    // The configuration of the repository the command acts in: the worktree's, a leading `cd`'s target, or none.
+    let head = match at {
+        graph::RepoAt::Cwd => cwd.and_then(|c| crate::hooks::git_head(Path::new(c))),
+        graph::RepoAt::Dir(d) => crate::hooks::git_head(Path::new(&d)),
+        graph::RepoAt::Unknown => None,
+    };
+    shadow_with(config, a, head.as_ref(), connection, now)
+}
+
+/// The folder holding the repository `cwd` is in (as `git_head` finds it).
+fn git_top(cwd: &str) -> Option<String> {
+    Path::new(cwd).ancestors().find(|d| d.join(".git").exists()).map(|d| d.to_string_lossy().into_owned())
+}
+
+/// [`shadow`] with the configuration of the repository the request acts in (`head`; `None`: not known).
+pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>, connection: &str, now: i64) -> Shadow {
     let snap = config.auto.snapshot();
-    let base = cwd.and_then(|c| origin_url(Path::new(c)));
-    let resolved = graph::request_zone(a, &snap.facts, base.as_deref());
+    let remotes = head.map(|h| &h.remotes);
+    let base = graph::Base {
+        repo: remotes.and_then(|r| r.get("origin")).map(String::as_str),
+        remotes,
+        bare_host: None,
+    };
+    let resolved = graph::request_zone(a, &snap.facts, &base);
     let e = matrix::evaluate(
         &Input {
             analysis: a,
@@ -181,12 +188,12 @@ pub fn shadow(config: &Config, a: &Analysis, cwd: Option<&str>, connection: &str
         level: e.level,
         line: e.line(),
         snapshot: e.snapshot,
-        decided: config.auto.matrix_decides,
+        decided: config.auto.matrix_decides && config.auto.setup_done,
     }
 }
 
-/// GitHub owners this computer's projects push to (the `origin` of each repository directly under a workspace root,
-/// and of the root itself), for the setup to propose: the owner sets their zones.
+/// GitHub owners (and other hosts' owners) this computer's projects push to (the `origin` of each repository directly
+/// under a workspace root, and of the root itself), for the setup to propose: the owner sets their zones.
 #[must_use]
 pub fn proposals(config: &Config) -> Vec<(FactKind, String)> {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
@@ -199,8 +206,8 @@ pub fn proposals(config: &Config) -> Vec<(FactKind, String)> {
             dirs.extend(rd.flatten().map(|e| e.path()).filter(|p| p.join(".git").exists()).take(500));
         }
         for d in dirs {
-            if let Some((o, _)) = origin_url(&d).and_then(|u| graph::split_repo(&u)) {
-                owners.insert(o);
+            if let Some(r) = origin_url(&d).and_then(|u| graph::parse_repo(&u, None)) {
+                owners.insert(r.owner_key());
             }
         }
     }
@@ -252,7 +259,11 @@ pub fn evaluate_action(
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-            let sh = shadow(&config, &a, cwd.as_deref(), &connection, now);
+            let command = match &action {
+                Action::Command(c) => Some(c.as_str()),
+                _ => None,
+            };
+            let sh = shadow(&config, &a, cwd.as_deref(), command, &connection, now);
             Some((a.summary(), sh))
         }))
         .ok()
@@ -382,15 +393,48 @@ mod tests {
     fn origin_is_read_from_the_repositorys_files() {
         let dir = std::env::temp_dir().join(format!("reins-origin-{}", std::process::id()));
         std::fs::create_dir_all(dir.join(".git")).unwrap();
-        std::fs::write(
-            dir.join(".git/config"),
-            "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:dkat/app.git\n",
-        )
-        .unwrap();
-        assert_eq!(origin_url(&dir.join("src")).as_deref(), Some("git@github.com:dkat/app.git"));
-        // Two urls: not known.
-        std::fs::write(dir.join(".git/config"), "[remote \"origin\"]\nurl = a/b\nurl = c/d\n").unwrap();
-        assert_eq!(origin_url(&dir), None);
+        let origin = |config: &str| {
+            std::fs::write(dir.join(".git/config"), config).unwrap();
+            origin_of(crate::hooks::git_head_with(&dir.join("src"), &[]).as_ref())
+        };
+        assert_eq!(
+            origin("[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:dkat/app.git\n").as_deref(),
+            Some("git@github.com:dkat/app.git")
+        );
+        // Anything that can send a push elsewhere, and nothing is known.
+        for odd in [
+            "[remote \"origin\"]\nurl = git@github.com:a/b.git\nurl = git@github.com:c/d.git\n",
+            "[remote \"origin\"]\nurl = git@github.com:a/b.git\npushurl = https://evil.example/a/b\n",
+            "[remote \"origin\"]\nurl = git@github.com:a/b.git\n[url \"https://evil.example/\"]\ninsteadOf = git@github.com:\n",
+            "[include]\npath = elsewhere\n[remote \"origin\"]\nurl = git@github.com:a/b.git\n",
+        ] {
+            assert_eq!(origin(odd), None, "{odd}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_command_that_leaves_the_worktree_has_no_origin() {
+        let dir = std::env::temp_dir().join(format!("reins-redirect-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/config"), "[remote \"origin\"]\nurl = git@github.com:dkat/app.git\n").unwrap();
+        let head = crate::hooks::git_head_with(&dir, &[]);
+        let mut config = Config::default();
+        config.auto.facts.set(FactKind::Owner, "dkat", Zone::Mine);
+        let cwd = dir.to_string_lossy().into_owned();
+        let env = |_: &str| None;
+        let ctx = context(&config, Some(&cwd), &env, None);
+        let zone = |cmd: &str| {
+            let a = effects::analyze_command(cmd, &ctx);
+            let head = match graph::repo_at(cmd, &cwd, git_top(&cwd).as_deref(), "/home/me") {
+                graph::RepoAt::Cwd => head.clone(),
+                _ => None,
+            };
+            shadow_with(&config, &a, head.as_ref(), "Claude Code", 0).zone
+        };
+        assert_eq!(zone("git push origin HEAD:refs/heads/feat"), Zone::Mine);
+        assert_eq!(zone("git -C /elsewhere push origin HEAD:refs/heads/feat"), Zone::Outside);
+        assert_eq!(zone("cd /elsewhere && git push origin HEAD:refs/heads/feat"), Zone::Outside);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -402,11 +446,11 @@ mod tests {
         let env = |_: &str| None;
         let ctx = context(&config, Some("/home/me/app"), &env, None);
         let a = effects::analyze_command("git push origin HEAD:refs/heads/feat https://github.com/dkat/app", &ctx);
-        let sh = shadow(&config, &a, Some("/home/me/app"), "Claude Code", 0);
+        let sh = shadow(&config, &a, Some("/home/me/app"), None, "Claude Code", 0);
         assert_eq!(sh.snapshot, config.auto.snapshot().hash(), "evaluated against this computer's [auto] only");
         let mut other = config.clone();
         other.auto.facts = reins_policy::context::Facts::default();
-        assert_ne!(shadow(&other, &a, Some("/home/me/app"), "Claude Code", 0).snapshot, sh.snapshot);
+        assert_ne!(shadow(&other, &a, Some("/home/me/app"), None, "Claude Code", 0).snapshot, sh.snapshot);
         assert!(!sh.decided);
     }
 }
