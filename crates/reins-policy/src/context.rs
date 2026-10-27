@@ -95,11 +95,14 @@ pub struct Facts {
     pub chats: BTreeMap<String, Zone>,
 }
 
+/// The longest key kept (an email address can't be longer).
+pub const MAX_KEY: usize = 254;
+
 /// The lookup form of a key: trimmed and lowercased, `None` when empty or not ASCII (a lookalike can't match).
 #[must_use]
 pub fn key(raw: &str) -> Option<String> {
     let k = raw.trim().to_ascii_lowercase();
-    (!k.is_empty() && k.is_ascii() && !k.chars().any(char::is_control)).then_some(k)
+    (!k.is_empty() && k.len() <= MAX_KEY && k.is_ascii() && !k.chars().any(char::is_control)).then_some(k)
 }
 
 impl Facts {
@@ -329,6 +332,8 @@ pub fn request_zone(a: &Analysis, facts: &Facts, base_repo: Option<&str>) -> Res
     };
     let base = || base_repo.map_or((Zone::Outside, None), |b| repo_zone(facts, b));
     let area = |area: &Area| match area {
+        // A path worked out only at run time is assumed in the workspace's zone (01 §2.4); its level is already the
+        // worst plausible one and its certainty Partial or None, which the model or the floor weighs.
         Area::Generated | Area::Scratch | Area::Source | Area::Unknown => (Zone::Mine, None),
         Area::Home | Area::System => (Zone::Outside, None),
         Area::Remote(h) => host_zone(facts, h),
@@ -586,6 +591,7 @@ mod tests {
         assert!(!f.set(FactKind::Domain, "gmail.com", Zone::Work));
         assert!(!f.set(FactKind::Domain, "", Zone::Work));
         assert!(!f.set(FactKind::Owner, "dk\u{0430}t", Zone::Mine));
+        assert!(!f.set(FactKind::Person, &format!("{}@x.io", "a".repeat(300)), Zone::Friends), "too long");
         assert!(f.domains.is_empty() && f.owners.is_empty());
     }
 

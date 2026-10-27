@@ -4413,6 +4413,20 @@ mod decisions_v2 {
     }
 
     #[tokio::test]
+    async fn only_mail_the_owner_sent_proposes_friends() {
+        let env = auto_env().await;
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.approve("r1").await;
+        env.core.start_bypass(None, None).await.unwrap();
+        env.relay("r2", OLD, email("stranger@y.io", "hi")).await;
+        assert!(env.decided().iter().any(|(id, _, by)| id == "r2" && by == "bypass"));
+        let world = env.core.auto_setup().await.unwrap().world;
+        let friend = world.iter().find(|w| w.key == "friend@x.com").expect("proposed");
+        assert!(!friend.confirmed && friend.zone == ZoneChoice::Friends, "{friend:?}");
+        assert!(!world.iter().any(|w| w.key == "stranger@y.io"), "a bypass's send proposes nobody: {world:?}");
+    }
+
+    #[tokio::test]
     async fn questions_are_deduplicated_answered_and_dismissed() {
         let env = auto_env().await;
         env.relay("r1", OLD, email("a@y.io", "hi")).await;
