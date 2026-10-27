@@ -172,4 +172,5 @@ check("group: ${{ inputs.verify_only && format('release-publish-verification-{0}
 guard = publisher.index('refs/tags/$TAG')
 check(guard < publisher.index("docker buildx imagetools create") and guard < publisher.index("gh release create"),
       "the tag check comes before anything is published")
+check(guard < publisher.index("name: Tag the executor image"), "the tag check comes before the executor image's tags")
 print(f"{checks} release supersede checks passed")

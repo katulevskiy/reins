@@ -2,8 +2,9 @@ name: Release
 # Builds alongside CI on main; publication waits for successful CI on the exact commit. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
 # Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
-# installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR,
-# the signed Android APK, the Google Play bundle (reins-<version>-play.aab, also uploaded to a Play track; job `play`),
+# installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR, the
+# organization tools reins-audit and reins-executor for Linux (static musl) and the executor image on GHCR, the
+# signed Android APK, the Google Play bundle (reins-<version>-play.aab, also uploaded to a Play track; job `play`),
 # the Linux distribution packages (.deb, .rpm), the update feed (reins-feed-<version>.tar.gz, scripts/release-feed.sh;
 # the server mirrors it into reins2fa.com/releases, with the APT and RPM repositories), and SHA256SUMS. Android
 # signing is required for every release. Archives and installers use a
@@ -808,6 +809,196 @@ jobs:
           path: digests/*
           retention-days: 1
 
+  # The organization tools for Linux, static (musl), linked with zig as desktop-linux does: reins-audit (verifies an
+  # organization's audit export offline and writes evidence reports, docs/audit.md) and reins-executor (the
+  # organization's executor, docs/executor.md). Their archives (scripts/package-tool.sh) are release assets; the bare
+  # binaries go into the executor image (executor-image). Both crates keep their own version, which the archives'
+  # names do not carry: those use the release's.
+  audit-tools:
+    name: Audit and executor tools (${{ matrix.target }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      # A failed upload must not cancel independent builds needed by a release retry.
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, native: true }
+          - { target: aarch64-unknown-linux-musl, native: false }
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+          rustc -vV
+      # No Rust cache, as in desktop-linux: a small build, off the release's longest path.
+      - name: Install cargo-zigbuild
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet --retries 10 cargo-zigbuild==0.23.4 ziglang==0.16.0
+      - name: Build
+        run: |
+          PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p reins-audit -p reins-executor \
+            --target "$TARGET"
+      - name: Smoke test
+        if: matrix.native
+        run: |
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/reins-audit/Cargo.toml | head -1)"
+          out="$("target/$TARGET/release/reins-audit" --version)"
+          echo "$out"
+          [[ -n "$crate" && "$out" == *"$crate"* ]] || { echo "::error::unexpected reins-audit version: $out"; exit 1; }
+          status=0
+          out="$("target/$TARGET/release/reins-executor" 2>&1)" || status=$?
+          echo "$out"
+          [[ "$status" == 1 && "$out" == *"usage:"* ]] ||
+            { echo "::error::reins-executor without arguments exited $status: $out"; exit 1; }
+      - name: Package
+        run: |
+          for tool in reins-audit reins-executor; do scripts/package-tool.sh "$tool" "$TARGET" "$VERSION"; done
+          ls -l dist
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-tools-${{ matrix.target }}
+          compression-level: 0
+          path: dist/*.tar.gz
+          retention-days: 7
+      # Not a release asset: the executor image's binaries.
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: executor-bin-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/reins-executor
+            target/${{ matrix.target }}/release/reins-audit
+          retention-days: 1
+
+  # The executor image, ghcr.io/<owner>/reins-executor (docker/Dockerfile.executor): audit-tools' two static programs on
+  # an empty base, linux/amd64 and linux/arm64 in one build (it has no RUN step, so nothing is emulated). Checked on
+  # amd64 first, then pushed by digest only, as the server image is; publish tags it <version> and latest once CI has
+  # passed. A verify_only run builds it and pushes nothing. It reads no secret: the registry login is the job's own
+  # token (packages: write).
+  executor-image:
+    name: Executor image
+    needs: [plan, audit-tools]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: executor-bin-x86_64-unknown-linux-musl
+          path: executor-context/bin/amd64
+      - uses: actions/download-artifact@v8
+        with:
+          name: executor-bin-aarch64-unknown-linux-musl
+          path: executor-context/bin/arm64
+      # Artifacts drop the executable bit. state/ is the image's empty state directory (scratch cannot make one).
+      - name: Build context
+        run: |
+          chmod 0755 executor-context/bin/{amd64,arm64}/{reins-executor,reins-audit}
+          mkdir -m 0700 executor-context/state
+          ls -lR executor-context
+      - name: Image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "name=ghcr.io/${OWNER,,}/reins-executor" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: inputs.verify_only != true
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+      # The amd64 image, loaded here only: its programs run, and the executor can write its state directory (a fresh
+      # volume, as `docker run` without -v makes one) as its own user.
+      - uses: docker/build-push-action@v7
+        with:
+          context: executor-context
+          file: docker/Dockerfile.executor
+          platforms: linux/amd64
+          outputs: type=docker
+          tags: reins-executor-check:amd64
+      - name: Check the image
+        run: |
+          image=reins-executor-check:amd64
+          [[ "$(docker image inspect -f '{{.Config.User}}' "$image")" == 65532:65532 ]] ||
+            { echo "::error::the image does not run as 65532:65532"; exit 1; }
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/reins-audit/Cargo.toml | head -1)"
+          out="$(docker run --rm --entrypoint /reins-audit "$image" --version)"
+          echo "$out"
+          [[ -n "$crate" && "$out" == *"$crate"* ]] || { echo "::error::unexpected reins-audit version: $out"; exit 1; }
+          status=0
+          out="$(docker run --rm "$image" --help 2>&1)" || status=$?
+          [[ "$status" == 1 && "$out" == *"usage:"* ]] || { echo "::error::reins-executor exited $status: $out"; exit 1; }
+          docker run --rm "$image" keygen --out /var/lib/reins-executor/executor.key
+      - uses: docker/build-push-action@v7
+        id: build
+        # A registry error is tried once more (next step), from the layers this builder already has.
+        continue-on-error: true
+        with:
+          context: executor-context
+          file: docker/Dockerfile.executor
+          platforms: linux/amd64,linux/arm64
+          # Push immutable digests first; the publisher updates public version/latest tags. verify_only pushes nothing.
+          outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          labels: |
+            org.opencontainers.image.title=Reins executor
+            org.opencontainers.image.description=The Reins organization executor, with reins-audit
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - uses: docker/build-push-action@v7
+        id: build-retry
+        if: steps.build.outcome == 'failure'
+        with:
+          context: executor-context
+          file: docker/Dockerfile.executor
+          platforms: linux/amd64,linux/arm64
+          # Push immutable digests first; the publisher updates public version/latest tags. verify_only pushes nothing.
+          outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          labels: |
+            org.opencontainers.image.title=Reins executor
+            org.opencontainers.image.description=The Reins organization executor, with reins-audit
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Export image digest
+        if: inputs.verify_only != true
+        env:
+          DIGEST: ${{ steps.build.outputs.digest || steps.build-retry.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p executor-digest
+          touch "executor-digest/${DIGEST#sha256:}"
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        if: inputs.verify_only != true
+        with:
+          name: executor-image-digest
+          path: executor-digest/*
+          retention-days: 1
+
   android-native:
     name: Android native (${{ matrix.kind }})
     needs: plan
@@ -1277,6 +1468,8 @@ jobs:
       - macos
       - server
       - docker
+      - audit-tools
+      - executor-image
       - android
       - linux-packages
       - linux-packages-amd64
@@ -1287,6 +1480,7 @@ jobs:
       needs.desktop-app-linux.result == 'success' && needs.desktop-app.result == 'success' &&
       needs.macos.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
+      needs.audit-tools.result == 'success' && needs.executor-image.result == 'success' &&
       needs.android.result == 'success' &&
       needs.linux-packages.result == 'success' && needs.linux-packages-amd64.result == 'success' &&
       needs.linux-packages-arm64.result == 'success'
@@ -1422,16 +1616,42 @@ jobs:
             sleep $(( attempt * 15 ))
           done
           docker buildx imagetools inspect "$image:$VERSION"
+      - uses: actions/download-artifact@v8
+        if: inputs.verify_only != true
+        with:
+          name: executor-image-digest
+          path: executor-digest
+      # The executor image was pushed as one multi-architecture index (executor-image): only its tags are new here.
+      - name: Tag the executor image
+        if: inputs.verify_only != true
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          image="ghcr.io/${OWNER,,}/reins-executor"
+          digests=(executor-digest/*)
+          [[ "${#digests[@]}" == 1 && "${digests[0]##*/}" =~ ^[0-9a-f]{64}$ ]] ||
+            { echo "::error::Missing or unexpected executor image digest: ${digests[*]}"; exit 1; }
+          # Tagging the same digest again is harmless, so a registry error is tried again.
+          for attempt in 1 2 3 4; do
+            docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" \
+              "$image@sha256:${digests[0]##*/}" && break
+            (( attempt < 4 )) || exit 1
+            echo "::warning::tagging the executor image failed (attempt $attempt); trying again"
+            sleep $(( attempt * 15 ))
+          done
+          docker buildx imagetools inspect "$image:$VERSION"
       - name: Verification complete
         if: inputs.verify_only == true
-        run: echo 'Both native server images built successfully; publishing disabled.'
+        run: echo 'Both native server images and the executor image built successfully; publishing disabled.'
 
       - name: Release notes
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
           scripts/release-notes.sh --version "$VERSION" --previous "$PREVIOUS" --rev "$SHA" \
-            --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" > notes.md
+            --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" \
+            --executor-image "ghcr.io/${OWNER,,}/reins-executor" > notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
       - name: Create the release
         if: inputs.verify_only != true
