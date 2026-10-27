@@ -4,6 +4,11 @@ use crate::effects::Workspace;
 const REINS: &str = "/usr/local/bin/reins";
 const PLAN: &str = "plan01";
 const TRASH: &str = "/home/me/.local/share/reins/nets";
+const RUNNER: Runner<'static> = Runner {
+    reins: REINS,
+    plan: PLAN,
+    store: TRASH,
+};
 
 fn ctx(cwd: &str) -> Context {
     let ws = Workspace {
@@ -18,16 +23,21 @@ fn ctx(cwd: &str) -> Context {
 
 fn disk() -> SameDisk {
     SameDisk {
-        trash: TRASH.to_owned(),
+        worktrees: vec![
+            "/home/me/Documents/dev/app-wt".to_owned(),
+            "/home/me/Documents/dev/a".to_owned(),
+            "/home/me/Documents/dev/b".to_owned(),
+        ],
+        ..SameDisk::new(TRASH)
     }
 }
 
 fn plan(command: &str) -> Option<NetPlan> {
-    plan_command(command, &ctx("/home/me/Documents/dev/notes"), &disk(), REINS, PLAN)
+    plan_command(command, &ctx("/home/me/Documents/dev/notes"), &disk(), RUNNER)
 }
 
 fn pre() -> String {
-    prefix(REINS, PLAN)
+    prefix(RUNNER)
 }
 
 #[test]
@@ -122,7 +132,7 @@ fn levels_with_nets() {
     let p = plan("rm -rf /tmp/x old").expect("a net");
     assert_eq!(p.after.level, Level::L1);
     // In a known worktree it was recoverable already, the net keeps a copy anyway.
-    let p = plan_command("rm -rf src/x", &ctx("/home/me/Documents/dev/app"), &disk(), REINS, PLAN).expect("a net");
+    let p = plan_command("rm -rf src/x", &ctx("/home/me/Documents/dev/app"), &disk(), RUNNER).expect("a net");
     assert_eq!((p.before.level, p.after.level), (Level::L1, Level::L1));
 }
 
@@ -159,9 +169,9 @@ fn another_disk_is_not_netted() {
         }
     }
     let c = ctx("/home/me/Documents/dev/notes");
-    assert!(plan_command("rm -rf ~/mnt/usb/photos", &c, &Elsewhere, REINS, PLAN).is_none());
-    assert!(plan_command("rm -rf old ~/mnt/usb/photos", &c, &Elsewhere, REINS, PLAN).is_none(), "all or nothing");
-    assert!(plan_command("rm -rf old", &c, &NoFacts, REINS, PLAN).is_none());
+    assert!(plan_command("rm -rf ~/mnt/usb/photos", &c, &Elsewhere, RUNNER).is_none());
+    assert!(plan_command("rm -rf old ~/mnt/usb/photos", &c, &Elsewhere, RUNNER).is_none(), "all or nothing");
+    assert!(plan_command("rm -rf old", &c, &NoFacts, RUNNER).is_none());
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -209,21 +219,21 @@ fn git_shapes() {
 #[test]
 fn git_nets_are_planned() {
     let c = ctx("/home/me/Documents/dev/app");
-    let p = plan_command("git worktree remove --force ../app-wt", &c, &disk(), REINS, PLAN).expect("a net");
+    let p = plan_command("git worktree remove --force ../app-wt", &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.rewritten, format!("{}git worktree remove --force ../app-wt", pre()));
     assert_eq!((p.before.level, p.after.level), (Level::L3, Level::L1), "{p:?}");
-    let p = plan_command("git branch -D feat/x", &c, &disk(), REINS, PLAN).expect("a net");
+    let p = plan_command("git branch -D feat/x", &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.kinds(), vec![NetKind::GitBackup]);
     assert_eq!(p.netted_refs.len(), 1);
-    let p = plan_command("git status && git reset --hard origin/x", &c, &disk(), REINS, PLAN).expect("a net");
+    let p = plan_command("git status && git reset --hard origin/x", &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.rewritten, format!("git status && {}git reset --hard origin/x", pre()));
     // The replay's own shape: a loop of worktree removals, branch deletes, and scratch deletes.
     let cmd = "cd ~/Documents/dev/app && for w in a b; do git worktree remove --force ~/Documents/dev/$w && echo ok; done; git branch -D x y 2>&1 | grep -c Deleted; rm -rf ~/Documents/dev/tmp/a";
-    let p = plan_command(cmd, &c, &disk(), REINS, PLAN).expect("a net");
+    let p = plan_command(cmd, &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.rewritten.matches("net run").count(), 2, "{}", p.rewritten);
     assert!(p.before.level == Level::L3 && p.after.level <= Level::L1, "{p:?}");
     // Not a shape: untouched.
-    assert!(plan_command("git worktree remove ../w", &c, &disk(), REINS, PLAN).is_none());
+    assert!(plan_command("git worktree remove ../w", &c, &disk(), RUNNER).is_none());
 }
 
 #[test]
@@ -246,14 +256,34 @@ fn rm_unknown_options_are_not_netted() {
 #[test]
 fn the_reins_path_is_quoted() {
     let odd = "/home/o'neil/My Apps/reins";
-    let (text, _) = rewrite("rm -rf old", "rm", odd, PLAN, &rm_wanted).expect("a rewrite");
+    let (text, _) = rewrite(
+        "rm -rf old",
+        "rm",
+        Runner {
+            reins: odd,
+            ..RUNNER
+        },
+        &rm_wanted,
+    )
+    .expect("a rewrite");
     let parsed = ast::parse(&text);
     let Command::Simple(s) = &parsed.script.0[0].pipelines[0].commands[0] else {
         panic!()
     };
     assert_eq!(s.words[0].literal().as_deref(), Some(odd));
-    assert!(rewrite("rm -rf old", "rm", REINS, "bad id!", &rm_wanted).is_none());
-    assert!(rewrite("rm -rf 'old", "rm", REINS, PLAN, &rm_wanted).is_none(), "incomplete input");
+    assert!(
+        rewrite(
+            "rm -rf old",
+            "rm",
+            Runner {
+                plan: "bad id!",
+                ..RUNNER
+            },
+            &rm_wanted
+        )
+        .is_none()
+    );
+    assert!(rewrite("rm -rf 'old", "rm", RUNNER, &rm_wanted).is_none(), "incomplete input");
 }
 
 #[test]
@@ -319,4 +349,58 @@ fn shadowing_forms_are_never_netted() {
         let p = plan(c);
         assert!(p.is_none(), "{c}: {p:?}");
     }
+}
+
+/// git resolves `worktree remove NAME` by path, else by a unique ending of a worktree's path: only a path that is a
+/// linked worktree now is netted.
+#[test]
+fn only_a_worktree_path_is_netted() {
+    let c = ctx("/home/me/Documents/dev/app");
+    assert!(plan_command("git worktree remove --force ../app-wt", &c, &disk(), RUNNER).is_some());
+    for not in
+        ["git worktree remove --force app-wt", "git worktree remove --force ../nope", "git worktree remove --force wt"]
+    {
+        let p = plan_command(not, &c, &disk(), RUNNER);
+        assert!(p.is_none(), "{not}: {p:?}");
+    }
+}
+
+/// What finds `reins`, its store, or what git and rm read, set by the command itself: no net.
+#[test]
+fn environment_the_command_sets_is_never_trusted() {
+    for c in [
+        "HOME=/x rm -rf old",
+        "REINS_NETS_DIR=/x rm -rf old",
+        "export REINS_NETS_DIR=/x; rm -rf old",
+        "env XDG_STATE_HOME=/x rm -rf old",
+        "PATH=/x:$PATH rm -rf old",
+        "GIT_DIR=/x git branch -D a",
+        "local HOME=/x; rm -rf old",
+    ] {
+        let p = plan(c);
+        assert!(p.is_none(), "{c}: {p:?}");
+    }
+    assert!(plan("FOO=1 rm -rf old").is_some(), "other names are fine");
+}
+
+#[test]
+fn a_plan_names_its_programs_and_folders() {
+    let p = plan("cd sub && rm -rf a; cd ../other && rm -rf b; git -C x status").expect("a net");
+    assert_eq!(p.programs, vec!["rm".to_owned()]);
+    for d in ["/home/me/Documents/dev/notes", "/home/me/Documents/dev/notes/sub", "/home/me/Documents/dev/notes/other"]
+    {
+        assert!(p.cwds.contains(&d.to_owned()), "{d} in {:?}", p.cwds);
+    }
+}
+
+#[test]
+fn only_files_a_snapshot_can_copy_are_netted() {
+    struct NoCopies;
+    impl NetFacts for NoCopies {
+        fn trashable(&self, _: &str) -> bool {
+            true
+        }
+    }
+    let c = ctx("/home/me/Documents/dev/notes");
+    assert!(plan_files(&["/home/me/notes/big.iso"], &c, &NoCopies).is_none());
 }

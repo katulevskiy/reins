@@ -49,6 +49,14 @@ pub trait NetFacts {
     /// `abs` can be moved into the Reins trash: it is on the trash's filesystem, and it is neither the trash, inside
     /// it, nor one of its ancestors.
     fn trashable(&self, abs: &str) -> bool;
+    /// `abs` is a linked git worktree (not a main one): `git worktree remove` of it removes exactly that folder.
+    fn is_worktree(&self, _abs: &str) -> bool {
+        false
+    }
+    /// `abs` is a regular file a snapshot can copy (it exists, and is not larger than snapshots keep).
+    fn snapshottable(&self, _abs: &str) -> bool {
+        false
+    }
 }
 
 /// No facts: nothing can be trashed (nets that need no trash still apply).
@@ -60,14 +68,38 @@ impl NetFacts for NoFacts {
     }
 }
 
-/// One filesystem for everything, with the trash at `trash` (the replay, tests).
+/// Facts without a computer (the replay, tests): the trash at `trash`, on the disk of `disk` (a path is on it when it
+/// is inside it; `/` for one disk), the linked worktrees `worktrees`; every file fits a snapshot.
 pub struct SameDisk {
     pub trash: String,
+    pub disk: String,
+    pub worktrees: Vec<String>,
+}
+
+impl SameDisk {
+    /// One disk for everything, no worktrees.
+    #[must_use]
+    pub fn new(trash: &str) -> Self {
+        Self {
+            trash: trash.to_owned(),
+            disk: "/".to_owned(),
+            worktrees: Vec::new(),
+        }
+    }
 }
 
 impl NetFacts for SameDisk {
     fn trashable(&self, abs: &str) -> bool {
-        trash_safe(abs, &self.trash)
+        let disk = self.disk.trim_end_matches('/');
+        trash_safe(abs, &self.trash) && (disk.is_empty() || abs.starts_with(&format!("{disk}/")))
+    }
+
+    fn is_worktree(&self, abs: &str) -> bool {
+        self.worktrees.iter().any(|w| w.trim_end_matches('/') == abs.trim_end_matches('/'))
+    }
+
+    fn snapshottable(&self, abs: &str) -> bool {
+        self.trashable(abs)
     }
 }
 
@@ -105,6 +137,10 @@ pub struct NetPlan {
     /// The paths whose delete or write is netted (normalized), and the refs that get a backup.
     pub netted_paths: Vec<String>,
     pub netted_refs: Vec<String>,
+    /// The programs the rewrite runs through the net (`rm`, `git`): `reins net run` runs no other.
+    pub programs: Vec<String>,
+    /// The folders a netted command may run in: where the request runs, and every literal `cd`/`pushd` target in it.
+    pub cwds: Vec<String>,
 }
 
 impl NetPlan {
@@ -129,10 +165,25 @@ pub fn quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
 }
 
+/// Who runs a netted command: the `reins` program, the plan's id, and the store the plan is in (absolute paths), so
+/// that what runs never depends on the environment the command sets up.
+#[derive(Clone, Copy, Debug)]
+pub struct Runner<'a> {
+    pub reins: &'a str,
+    pub plan: &'a str,
+    pub store: &'a str,
+}
+
+impl Runner<'_> {
+    fn usable(&self) -> bool {
+        valid_plan_id(self.plan) && self.reins.starts_with('/') && self.store.starts_with('/')
+    }
+}
+
 /// The prefix put before a netted command word.
 #[must_use]
-pub fn prefix(reins: &str, plan: &str) -> String {
-    format!("{} net run --plan {plan} -- ", quote(reins))
+pub fn prefix(r: Runner<'_>) -> String {
+    format!("{} net run --plan {} --store {} -- ", quote(r.reins), r.plan, quote(r.store))
 }
 
 /// A plan id: what may follow `--plan` (letters, digits, `-`, `_`; 6 to 64 of them).
@@ -263,16 +314,13 @@ fn each_in_command(c: &mut Command, f: &mut dyn FnMut(&mut Simple)) {
 
 /// Takes the net prefixes out of `script`: every simple command whose words start with exactly the prefix's words.
 /// Returns how many, and the stripped commands' words (literal or as written).
-fn strip(script: &mut Script, reins: &str, plan: &str) -> Vec<Simple> {
-    let want = ["net", "run", "--plan", plan, "--"];
+fn strip(script: &mut Script, r: Runner<'_>) -> Vec<Simple> {
+    let want = [r.reins, "net", "run", "--plan", r.plan, "--store", r.store, "--"];
     let mut stripped = Vec::new();
     each_simple(script, &mut |s: &mut Simple| {
-        let head: Vec<Option<String>> = s.words.iter().take(6).map(Word::literal).collect();
-        if head.len() == 6
-            && head[0].as_deref() == Some(reins)
-            && head[1..].iter().zip(want).all(|(w, x)| w.as_deref() == Some(x))
-        {
-            s.words.drain(..6);
+        let head: Vec<Option<String>> = s.words.iter().take(want.len()).map(Word::literal).collect();
+        if head.len() == want.len() && head.iter().zip(want).all(|(w, x)| w.as_deref() == Some(x)) {
+            s.words.drain(..want.len());
             stripped.push(s.clone());
         }
     });
@@ -395,6 +443,15 @@ const SHADOWING: &[&str] = &["eval", "source", ".", "alias", "unalias", "enable"
 /// - a command word that is not literal (`$E`, `$(…)`): it could be any of them.
 fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
     let base = reins.rsplit('/').next().unwrap_or(reins);
+    // Where `reins` and its store are found, or what the net's programs read: set by the command, they are the
+    // agent's. `env NAME=…`, `export NAME=…` and the like count too.
+    let sensitive = |name: &str| {
+        name.starts_with("REINS_")
+            || name == "HOME"
+            || name.starts_with("XDG_")
+            || name == "PATH"
+            || name.starts_with("GIT_")
+    };
     let mut found = false;
     visit_script(script, &mut |c: &Command| match c {
         Command::Function {
@@ -409,6 +466,19 @@ fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
             {
                 found = true;
             }
+        }
+        Command::Simple(s) if s.assigns.iter().any(|(n, _)| sensitive(n)) => found = true,
+        Command::Simple(s)
+            if s.words
+                .iter()
+                .skip(1)
+                .filter_map(Word::literal)
+                .any(|w| w.split_once('=').is_some_and(|(n, _)| sensitive(n)))
+                && s.words.first().and_then(Word::literal).is_some_and(|p| {
+                    matches!(p.as_str(), "env" | "export" | "declare" | "typeset" | "local" | "readonly")
+                }) =>
+        {
+            found = true;
         }
         Command::Simple(s) => match s.words.first().map(Word::literal) {
             Some(Some(w)) if SHADOWING.contains(&w.as_str()) || w == reins || w == base || w == "reins" => {
@@ -473,20 +543,13 @@ fn replace_at(text: &str, at: &[usize], len: usize, with: &str) -> String {
 
 /// Whether `rewritten` is `original` with exactly `count` simple commands prefixed, each passing `wanted` once the
 /// prefix is out.
-fn proven(
-    original: &Script,
-    rewritten: &str,
-    reins: &str,
-    plan: &str,
-    count: usize,
-    wanted: &dyn Fn(&Simple) -> bool,
-) -> bool {
+fn proven(original: &Script, rewritten: &str, r: Runner<'_>, count: usize, wanted: &dyn Fn(&Simple) -> bool) -> bool {
     let parsed = ast::parse(rewritten);
     if !parsed.complete {
         return false;
     }
     let mut tree = parsed.script;
-    let stripped = strip(&mut tree, reins, plan);
+    let stripped = strip(&mut tree, r);
     stripped.len() == count && stripped.iter().all(wanted) && &tree == original
 }
 
@@ -497,27 +560,26 @@ fn proven(
 pub fn rewrite(
     command: &str,
     word: &str,
-    reins: &str,
-    plan: &str,
+    r: Runner<'_>,
     wanted: &dyn Fn(&Simple) -> bool,
 ) -> Option<(String, Vec<usize>)> {
-    if command.len() > ast::MAX_INPUT || !valid_plan_id(plan) || reins.is_empty() {
+    if command.len() > ast::MAX_INPUT || !r.usable() {
         return None;
     }
     let original = ast::parse(command);
-    if !original.complete || shadowed(&original.script, word, reins) {
+    if !original.complete || shadowed(&original.script, word, r.reins) {
         return None;
     }
-    let pre = prefix(reins, plan);
+    let pre = prefix(r);
     let kept: Vec<usize> = candidates(command, word)
         .into_iter()
-        .filter(|&i| proven(&original.script, &insert_at(command, &[i], &pre), reins, plan, 1, wanted))
+        .filter(|&i| proven(&original.script, &insert_at(command, &[i], &pre), r, 1, wanted))
         .collect();
     if kept.is_empty() {
         return None;
     }
     let all = insert_at(command, &kept, &pre);
-    proven(&original.script, &all, reins, plan, kept.len(), wanted).then_some((all, kept))
+    proven(&original.script, &all, r, kept.len(), wanted).then_some((all, kept))
 }
 
 // ---- What both the planner and `reins net run` accept ----
@@ -861,7 +923,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
 /// Plans the nets for a shell command run in `ctx`. `reins` is the absolute path of the `reins` program the rewritten
 /// command calls, `plan` the plan's id. `None`: no net applies (the request keeps its level).
 #[must_use]
-pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &str, plan: &str) -> Option<NetPlan> {
+pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, runner: Runner<'_>) -> Option<NetPlan> {
     let before = analyze_command(command, ctx);
     let before_paths = deleted_paths(&before);
     let before_refs = ref_keys(&before);
@@ -870,9 +932,10 @@ pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &
     let mut netted_paths: Vec<String> = Vec::new();
     let mut netted_refs: Vec<String> = Vec::new();
     let mut kinds: Vec<NetKind> = Vec::new();
+    let mut programs: Vec<String> = Vec::new();
     let words: [(&str, Wanted); 2] = [("rm", rm_wanted), ("git", git_wanted)];
     for (word, wanted) in words {
-        let Some((_, offsets)) = rewrite(command, word, reins, plan, &wanted) else {
+        let Some((_, offsets)) = rewrite(command, word, runner, &wanted) else {
             continue;
         };
         for at in offsets {
@@ -894,8 +957,15 @@ pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &
             if !worth {
                 continue;
             }
-            kept.push((at, word.len()));
             let shape = (word == "git").then(|| shape_at(command, at)).flatten();
+            // git resolves a worktree by its path, else by a unique ending of one: only a path that is a linked worktree
+            // now is netted (`reins net run` resolves it again, and refuses what it can't).
+            if shape == Some(GitNet::WorktreeRemove) && (mine.is_empty() || !mine.iter().all(|p| facts.is_worktree(p)))
+            {
+                continue;
+            }
+            kept.push((at, word.len()));
+            programs.push(word.to_owned());
             match shape {
                 Some(GitNet::BranchDelete | GitNet::ResetHard | GitNet::ForcePush) => kinds.push(NetKind::GitBackup),
                 Some(GitNet::WorktreeRemove | GitNet::Clean) | None => kinds.push(NetKind::Trash),
@@ -908,11 +978,11 @@ pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &
         return None;
     }
     let offsets: Vec<usize> = kept.iter().map(|(at, _)| *at).collect();
-    let rewritten = insert_at(command, &offsets, &prefix(reins, plan));
+    let rewritten = insert_at(command, &offsets, &prefix(runner));
     // The whole rewrite, proven once more: every kept word, nothing else.
     let original = ast::parse(command);
     let any = |s: &Simple| rm_wanted(s) || git_wanted(s);
-    if !proven(&original.script, &rewritten, reins, plan, kept.len(), &any) {
+    if !proven(&original.script, &rewritten, runner, kept.len(), &any) {
         return None;
     }
     netted_paths.sort();
@@ -937,6 +1007,9 @@ pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &
             what,
         });
     }
+    programs.sort();
+    programs.dedup();
+    let cwds = cd_targets(&original.script, ctx);
     Some(NetPlan {
         rewritten,
         nets,
@@ -944,7 +1017,33 @@ pub fn plan_command(command: &str, ctx: &Context, facts: &dyn NetFacts, reins: &
         after,
         netted_paths,
         netted_refs,
+        programs,
+        cwds,
     })
+}
+
+/// Where the commands of `script` may run: `ctx.cwd`, and each literal `cd`/`pushd` target, read from `ctx.cwd` and
+/// from every target before it (a relative `cd` after another).
+fn cd_targets(script: &Script, ctx: &Context) -> Vec<String> {
+    let home = ctx.workspace.home.clone();
+    let mut out = vec![super::normalize(&ctx.cwd, "/", &home)];
+    visit_script(script, &mut |c: &Command| {
+        if let Command::Simple(s) = c
+            && let Some(Some(program)) = s.words.first().map(Word::literal)
+            && matches!(program.as_str(), "cd" | "pushd")
+            && let Some(Some(target)) = s.words.get(1).map(Word::literal)
+        {
+            let from: Vec<String> = out.clone();
+            for base in from {
+                let t = super::normalize(&target, &base, &home);
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+    });
+    out.retain(|d| d.starts_with('/'));
+    out
 }
 
 /// The git net of the command that starts at `at` (for its words only).
@@ -986,11 +1085,16 @@ pub fn plan_files(paths: &[&str], ctx: &Context, facts: &dyn NetFacts) -> Option
         .filter_map(|e| match e {
             Effect::FileWrite {
                 path,
-            } if lowerable(&path.area) && facts.trashable(&path.path) => Some(path.path.clone()),
+            } if lowerable(&path.area) && facts.trashable(&path.path) && facts.snapshottable(&path.path) => {
+                Some(path.path.clone())
+            }
             Effect::FileDelete {
                 paths,
                 ..
-            } => paths.iter().find(|p| lowerable(&p.area) && facts.trashable(&p.path)).map(|p| p.path.clone()),
+            } => paths
+                .iter()
+                .find(|p| lowerable(&p.area) && facts.trashable(&p.path) && facts.snapshottable(&p.path))
+                .map(|p| p.path.clone()),
             _ => None,
         })
         .collect();
@@ -1008,6 +1112,8 @@ pub fn plan_files(paths: &[&str], ctx: &Context, facts: &dyn NetFacts) -> Option
         after,
         netted_paths: netted,
         netted_refs: Vec::new(),
+        programs: Vec::new(),
+        cwds: vec![ctx.cwd.clone()],
     })
 }
 
