@@ -26,7 +26,13 @@ pub fn spawn(pool: DbPool) {
         return;
     }
     tokio::spawn(async move {
+        let mut relinked = 0_i64;
         loop {
+            // O3: members' GitHub logins re-checked against the GitHub organization's SAML identities, daily.
+            if now_unix() - relinked >= 86_400 {
+                relinked = now_unix();
+                super::routing::codeowners::relink_all(&pool, relinked).await;
+            }
             match pool.get().await {
                 Ok(conn) => {
                     let now = now_unix();

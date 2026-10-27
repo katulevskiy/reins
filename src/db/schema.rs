@@ -921,6 +921,8 @@ table! {
         installation_id -> BigInt,
         key_id -> Nullable<Text>,
         sealed -> Nullable<Text>,
+        webhook_key_id -> Nullable<Text>,
+        webhook_sealed -> Nullable<Text>,
         set_at -> BigInt,
     }
 }

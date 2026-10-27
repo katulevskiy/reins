@@ -41,9 +41,10 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
         .order(reins_org_members::user_uuid.asc())
         .load(c)?;
     let active: std::collections::BTreeSet<String> = rows.iter().map(|(u, _)| u.clone()).collect();
-    let managers: std::collections::BTreeMap<String, String> = reins_org_routing::q_people(c, org)?
+    let managers: std::collections::BTreeMap<String, String> = super::routing::manager_links(c, org)?
         .into_iter()
-        .filter_map(|p| p.manager_user.filter(|m| active.contains(m) && *m != p.user_uuid).map(|m| (p.user_uuid, m)))
+        .filter(|(_, (m, _))| active.contains(m))
+        .map(|(u, (m, _))| (u, m))
         .collect();
     let mut members = Vec::with_capacity(rows.len());
     for (user, membership) in rows {

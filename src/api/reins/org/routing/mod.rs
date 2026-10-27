@@ -187,12 +187,9 @@ impl Directory {
             );
         }
         let mut managers = BTreeMap::new();
-        for p in reins_org_routing::q_people(c, org)? {
-            if let (Some(m), Some(src)) = (p.manager_user, p.manager_source)
-                && people.contains_key(&m)
-                && people.contains_key(&p.user_uuid)
-            {
-                managers.insert(p.user_uuid, (m, src));
+        for (user, (m, src)) in manager_links(c, org)? {
+            if people.contains_key(&m) && people.contains_key(&user) {
+                managers.insert(user, (m, src));
             }
         }
         let groups = reins_org_routing::q_group_settings(c, org)?
@@ -238,6 +235,20 @@ impl Directory {
             .map(|p| p.user.clone())
             .collect()
     }
+}
+
+/// Every member's manager link that counts: (manager, source). On a tier with a directory only the directory's;
+/// admin-set links count only where there is no directory (05 §7.1: verified sources only).
+pub fn manager_links(c: &mut DbConnInner, org: &str) -> Result<BTreeMap<String, (String, String)>, OrgError> {
+    let scim = reins_org::q_org(c, org)?.is_some_and(|t| t.tier().scim());
+    Ok(reins_org_routing::q_people(c, org)?
+        .into_iter()
+        .filter_map(|p| match (p.manager_user, p.manager_source) {
+            (Some(m), Some(src)) if m != p.user_uuid => Some((p.user_uuid, (m, src))),
+            _ => None,
+        })
+        .filter(|(_, (_, src))| !scim || src == reins_org_routing::manager_source::DIRECTORY)
+        .collect())
 }
 
 /// What a resolution is about.
@@ -609,7 +620,7 @@ pub fn apply_admin(
         A::SetGithubReader {
             app_id,
             installation_id,
-        } => reins_org_routing::q_set_reader(
+        } => crate::db::models::reins_org_github_reader::q_set_github_reader(
             c,
             org,
             i64::try_from(*app_id).unwrap_or(0),

@@ -1,7 +1,8 @@
 -- Organizations, O3 (Decisions v2): approval routing. Who a member's manager is, their linked GitHub, Slack and Teams
--- identities; group backups and windows; on-call sources, approval channels and the org's read-only GitHub App (their
--- secrets sealed under the tenant's data key); each obligation's escalation steps; web passkeys, one-time web approval
--- tokens (SHA-256 only) and the channel messages posted for a review.
+-- identities; group backups and windows; on-call sources and approval channels (their secrets sealed under the
+-- tenant's data key); each obligation's escalation steps; web passkeys, one-time web approval tokens (SHA-256 only)
+-- and the channel messages posted for a review. The org's GitHub reader is `2026-11-01-000000_reins_org_github_reader`,
+-- shared with O4.
 CREATE TABLE reins_org_people (
     org_uuid            VARCHAR(40) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
     user_uuid           CHAR(36) NOT NULL,
@@ -42,16 +43,6 @@ CREATE TABLE reins_org_channels (
     enabled      BOOLEAN NOT NULL,
     installed_at BIGINT,
     PRIMARY KEY (org_uuid, kind)
-);
-
-CREATE TABLE reins_org_github_reader (
-    org_uuid        VARCHAR(40) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
-    app_id          BIGINT NOT NULL,
-    installation_id BIGINT NOT NULL,
-    key_id          VARCHAR(64),
-    sealed          TEXT,
-    set_at          BIGINT NOT NULL,
-    PRIMARY KEY (org_uuid)
 );
 
 CREATE TABLE reins_org_steps (

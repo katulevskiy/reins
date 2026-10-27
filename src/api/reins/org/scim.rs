@@ -398,7 +398,8 @@ pub fn apply(c: &mut DbConnInner, action: &DirAction, now: i64) -> Result<Vec<Re
 }
 
 /// Sets a member's manager from the directory: only an active member of the same tenant (never someone outside it,
-/// never themselves). Anything else clears a manager the directory had set, so a stale link can't route a review.
+/// never themselves). Anything else clears the link, so a stale one can't route a review. On a tier with a directory
+/// the directory's word replaces any link, an admin-set one included (admin links are for tiers without one).
 fn directory_manager(
     c: &mut DbConnInner,
     org: &str,
@@ -419,8 +420,11 @@ fn directory_manager(
         None => None,
     };
     let current = routing::q_person(c, org, user)?;
-    let from_directory = current.as_ref().is_none_or(|p| p.manager_source.as_deref() != Some(manager_source::ADMIN));
-    if !from_directory || current.as_ref().and_then(|p| p.manager_user.as_deref()) == manager.as_deref() {
+    let same = current.as_ref().is_some_and(|p| {
+        p.manager_user.as_deref() == manager.as_deref()
+            && p.manager_source.as_deref() == manager.as_ref().map(|_| manager_source::DIRECTORY)
+    });
+    if same || (current.is_none() && manager.is_none()) {
         return Ok(());
     }
     routing::q_edit_person(c, org, user, now, |p| {
@@ -1466,5 +1470,36 @@ mod tests {
         // Nor is anyone their own manager.
         run(&mut c, &ev("dsync.user.updated", with_manager("directory_user_lee", "lee@acme.com", "lee@acme.com")));
         assert_eq!(q_person(&mut c, "o1", lee.user_uuid.as_ref()).unwrap().unwrap().manager_user, None);
+    }
+    #[test]
+    fn a_directory_manager_change_replaces_an_admin_set_manager() {
+        use crate::db::models::reins_org_routing::{manager_source, q_edit_person, q_person};
+        let mut c = db();
+        bound_tenant(&mut c);
+        let with_manager = |id: &str, email: &str, manager: &str| {
+            let mut u = dir_user(id, email, "active");
+            u["custom_attributes"] = json!({"manager_email": manager});
+            u
+        };
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_mia", "mia@acme.com", "active")));
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_old", "old@acme.com", "active")));
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_lee", "lee@acme.com", "active")));
+        let lee = member_by_email(&mut c, "lee@acme.com").unwrap().user_uuid.to_string();
+        let old = member_by_email(&mut c, "old@acme.com").unwrap().user_uuid.to_string();
+        let mia = member_by_email(&mut c, "mia@acme.com").unwrap().user_uuid.to_string();
+        // An admin link from before (a Team-era change): on a tier with a directory it doesn't count, and the
+        // directory's word replaces it.
+        q_edit_person(&mut c, "o1", &lee, 5, |p| {
+            p.manager_user = Some(old.clone());
+            p.manager_source = Some(manager_source::ADMIN.to_owned());
+        })
+        .unwrap();
+        assert!(!crate::api::reins::org::routing::manager_links(&mut c, "o1").unwrap().contains_key(&lee));
+        run(&mut c, &ev("dsync.user.updated", with_manager("directory_user_lee", "lee@acme.com", "mia@acme.com")));
+        let p = q_person(&mut c, "o1", &lee).unwrap().unwrap();
+        assert_eq!((p.manager_user.as_deref(), p.manager_source.as_deref()), (Some(mia.as_str()), Some("directory")));
+        // And the directory saying nobody clears it.
+        run(&mut c, &ev("dsync.user.updated", dir_user("directory_user_lee", "lee@acme.com", "active")));
+        assert_eq!(q_person(&mut c, "o1", &lee).unwrap().unwrap().manager_user, None);
     }
 }

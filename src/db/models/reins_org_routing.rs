@@ -1,8 +1,8 @@
 //! Approval routing (Decisions v2 · O3): who a member's manager is and which GitHub, Slack and Teams identities are
-//! theirs; group backups and windows; on-call sources, approval channels and the org's read-only GitHub App; each
+//! theirs; group backups and windows; on-call sources, approval channels; each
 //! obligation's escalation steps; web passkeys, one-time web approval tokens and the channel messages posted.
 //!
-//! Secrets (an on-call API key, a channel's tokens, the GitHub App's key) are stored sealed under the tenant's data key
+//! Secrets (an on-call API key, a channel's tokens) are stored sealed under the tenant's data key
 //! and only ever read back by the one query that opens them for use; listings never carry them. A web approval token
 //! is stored as its SHA-256 and used once (a guarded update).
 
@@ -13,8 +13,8 @@ use diesel::prelude::*;
 use crate::db::{
     DbConnInner,
     schema::{
-        reins_org_channels, reins_org_github_reader, reins_org_group_settings, reins_org_oncall, reins_org_people,
-        reins_org_posted, reins_org_steps, reins_org_web_passkeys, reins_org_web_tokens,
+        reins_org_channels, reins_org_group_settings, reins_org_oncall, reins_org_people, reins_org_posted,
+        reins_org_steps, reins_org_web_passkeys, reins_org_web_tokens,
     },
 };
 
@@ -123,19 +123,6 @@ pub struct ChannelSummary {
     pub kind: String,
     pub enabled: bool,
     pub installed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = reins_org_github_reader)]
-#[diesel(primary_key(org_uuid))]
-pub struct ReinsOrgGithubReader {
-    pub org_uuid: String,
-    pub app_id: i64,
-    pub installation_id: i64,
-    pub key_id: Option<String>,
-    /// The App's private key (PEM), sealed.
-    pub sealed: Option<String>,
-    pub set_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Identifiable, Queryable, Insertable)]
@@ -432,56 +419,6 @@ pub fn q_channels(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<ChannelSumm
         .collect())
 }
 
-// ---- The GitHub reader
-
-pub fn q_set_reader(c: &mut DbConnInner, org: &str, app_id: i64, installation_id: i64, now: i64) -> QueryResult<()> {
-    let n = diesel::update(reins_org_github_reader::table.filter(reins_org_github_reader::org_uuid.eq(org)))
-        .set((
-            reins_org_github_reader::app_id.eq(app_id),
-            reins_org_github_reader::installation_id.eq(installation_id),
-            reins_org_github_reader::set_at.eq(now),
-        ))
-        .execute(c)?;
-    if n == 0 {
-        diesel::insert_into(reins_org_github_reader::table)
-            .values(ReinsOrgGithubReader {
-                org_uuid: org.to_owned(),
-                app_id,
-                installation_id,
-                key_id: None,
-                sealed: None,
-                set_at: now,
-            })
-            .execute(c)?;
-    }
-    Ok(())
-}
-
-pub fn q_set_reader_key(c: &mut DbConnInner, org: &str, key_id: &str, sealed: &str) -> QueryResult<bool> {
-    let n = diesel::update(reins_org_github_reader::table.filter(reins_org_github_reader::org_uuid.eq(org)))
-        .set((reins_org_github_reader::key_id.eq(Some(key_id)), reins_org_github_reader::sealed.eq(Some(sealed))))
-        .execute(c)?;
-    Ok(n == 1)
-}
-
-pub fn q_reader_for_use(c: &mut DbConnInner, org: &str) -> QueryResult<Option<ReinsOrgGithubReader>> {
-    reins_org_github_reader::table.filter(reins_org_github_reader::org_uuid.eq(org)).first(c).optional()
-}
-
-/// The reader as listings show it: (app id, installation id, has a key).
-pub fn q_reader(c: &mut DbConnInner, org: &str) -> QueryResult<Option<(i64, i64, bool)>> {
-    let row: Option<(i64, i64, Option<String>)> = reins_org_github_reader::table
-        .filter(reins_org_github_reader::org_uuid.eq(org))
-        .select((
-            reins_org_github_reader::app_id,
-            reins_org_github_reader::installation_id,
-            reins_org_github_reader::key_id,
-        ))
-        .first(c)
-        .optional()?;
-    Ok(row.map(|(a, i, k)| (a, i, k.is_some())))
-}
-
 // ---- Escalation steps
 
 pub fn q_insert_step(c: &mut DbConnInner, row: &ReinsOrgStep) -> QueryResult<bool> {
@@ -776,9 +713,6 @@ mod tests {
         let channels = q_channels(&mut c, "o1").unwrap();
         assert!(!format!("{channels:?}").contains("SEALED") && channels[0].installed && !channels[0].enabled);
         assert!(q_channels_of_kind(&mut c, "slack").unwrap().is_empty(), "disabled");
-        q_set_reader(&mut c, "o1", 7, 8, 5).unwrap();
-        q_set_reader_key(&mut c, "o1", "k1", "SEALED-PEM").unwrap();
-        assert_eq!(q_reader(&mut c, "o1").unwrap(), Some((7, 8, true)));
         // Only the use queries carry what's sealed (still sealed).
         assert_eq!(q_oncall_for_use(&mut c, "o1", "payments").unwrap().unwrap().sealed.as_deref(), Some("SEALED-KEY"));
     }
