@@ -16,7 +16,9 @@ import Foundation
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 /// `-demoAutoSetup`: Auto's setup is not done yet, so picking Auto guides through it first. `-demoQuestions`: Auto
 /// asks who a few things are (the question cards in Activity). `-demoOvernight`: Overnight parked a few requests for
-/// the morning (Cursor's under its task "Fix CI"), Claude proposes a task, and one task ended today.
+/// the morning (Cursor's under its task "Fix CI"), Claude proposes a task, and one task ended today. `-demoCircles`:
+/// people in Circles both ways, reviews waiting under "For others", a watcher's notices, and a request that needs a
+/// co-signer too; `-demoNoCircles`: Circles need the primary-phone setup first.
 enum DemoCore {
     static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
@@ -43,7 +45,9 @@ enum DemoCore {
             quiet: args.contains("-demoQuiet"),
             autoSetupDone: !args.contains("-demoAutoSetup"),
             questions: args.contains("-demoQuestions"),
-            overnight: args.contains("-demoOvernight")
+            overnight: args.contains("-demoOvernight"),
+            circles: args.contains("-demoCircles"),
+            circlesAvailable: !args.contains("-demoNoCircles")
         )
     }
 }
@@ -160,15 +164,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     private let lock = NSLock()
     private var state: State
+    /// Circles, with their own lock (`DemoCircleStore`).
+    let circles: DemoCircleStore
     /// The longest a `sync` waits, so tests need not wait the real 25 s.
     private let syncCap: Double
 
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
         keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
-        quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false, overnight: Bool = false
+        quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false, overnight: Bool = false, circles: Bool = false, circlesAvailable: Bool = true
     ) {
         let now = Self.now()
+        self.circles = DemoCircleStore(seeded: circles, available: circlesAvailable, now: now)
         let seeded = DemoData.pending(now)
         var s = State(model: modelInstalled
             ? DemoData.model(.installed, update: modelOutdated, updatedAt: now - 3 * 86_400)
@@ -266,6 +273,13 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
         if args.contains("-demoTickets") { Self.seedTickets(&s, now: now) }
         if overnight && !quiet { Self.seedOvernight(&s, now: now) }
+        // A request Alex has to approve too (`-demoCircles`): the card's Circle line.
+        if circles, let i = s.pending.firstIndex(where: { $0.kind == .request && $0.ticket == nil }) {
+            s.pending[i].circle = CircleProgress(
+                needs: [DemoCircleStore.helper], approved: [], waitingForYou: true, youApproved: false, deferred: true,
+                deadline: now + 4 * 3_600, line: "Needs Alex too"
+            )
+        }
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -2465,6 +2479,56 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     /// "Try it": denies what mentions a password, money going out or an unknown address; approves the rest.
+    // MARK: Circles (`DemoCircleStore`)
+
+    func circlesAvailable() async throws -> Bool { circles.circlesAvailable() }
+
+    func circleInviteCreate(draft: CircleDraft) async throws -> CircleInviteStart {
+        try await latency()
+        return try circles.inviteCreate(draft)
+    }
+
+    func circleInvitePoll(id: String) async throws -> CircleInviteProgress { try circles.invitePoll(id) }
+
+    func circleInviteConfirm(id: String) async throws -> CirclePerson {
+        try await latency()
+        return try circles.inviteConfirm(id)
+    }
+
+    func circleInviteCancel(id: String) async throws { circles.inviteCancel(id) }
+
+    func circleJoinOpen(link: String) async throws -> CircleInviteView {
+        try await latency()
+        return try circles.joinOpen(link)
+    }
+
+    func circleJoinPoll(id: String) async throws -> CircleInviteView { try circles.joinPoll(id) }
+
+    func circleJoinAccept(id: String) async throws {
+        try await latency()
+        try circles.joinAccept(id)
+    }
+
+    func circleJoinDecline(id: String) async throws { circles.joinDecline(id) }
+
+    func circlePeople(refresh: Bool) async throws -> [CirclePerson] { circles.peopleList(refresh: refresh) }
+
+    func circlePause(linkId: String, paused: Bool) async throws { try circles.pause(linkId, paused: paused) }
+
+    func circleEnd(linkId: String) async throws {
+        try await latency()
+        try circles.end(linkId)
+    }
+
+    func circleReviews(refresh: Bool) async throws -> [CircleReviewView] { circles.reviewList(refresh: refresh) }
+
+    func circleNotices() async throws -> [CircleNoticeView] { circles.noticeList() }
+
+    func circleAnswer(reviewId: String, approve: Bool, note: String?) async throws {
+        try await latency()
+        try circles.answer(reviewId, approve: approve)
+    }
+
     func autopilotEvaluate(profileId: String?, situation: String) async throws -> SuggestionView {
         try await latency(0.7)
         let now = Self.now()

@@ -78,6 +78,7 @@ pub struct RecordingNotifier {
     pub resolved: Mutex<Vec<String>>,
     pub decided: Mutex<Vec<AutoDecisionView>>,
     pub events: Mutex<Vec<AutopilotEvent>>,
+    pub circle: Mutex<Vec<reins_core::CircleEvent>>,
 }
 
 impl Notifier for RecordingNotifier {
@@ -95,6 +96,9 @@ impl Notifier for RecordingNotifier {
 
     fn autopilot_changed(&self, event: AutopilotEvent) {
         self.events.lock().unwrap().push(event);
+    }
+    fn circle_changed(&self, event: reins_core::CircleEvent) {
+        self.circle.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(event);
     }
 }
 

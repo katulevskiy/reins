@@ -882,6 +882,11 @@ impl Engine {
         let payload = serde_json::to_vec(parked).map_err(|e| CoreError::storage(e.to_string()))?;
         let request = &parked.request;
         self.store.park(&request.id.0, PendingKind::Request, request.created_at, unix_now(), &payload)?;
+        // A Circle hold, before anything looks at it (local; the packets go out after the pass). Autopilot routes it
+        // again (idempotent) and waits when that fails.
+        if let Err(e) = self.circle_route(&request.id.0) {
+            log::warn!("a Circle could not be applied to a request: {e}");
+        }
         Ok(())
     }
 

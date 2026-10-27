@@ -464,6 +464,7 @@ impl Engine {
                 parked.request.created_at,
             );
         }
+        item.circle = self.circle_progress(&parked.request.id.0);
         item
     }
 

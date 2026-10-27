@@ -32,6 +32,7 @@ import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.AutoDecisionView
 import dev.reins.core.AutopilotEvent
+import dev.reins.core.CircleEvent
 import dev.reins.core.Notifier
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
@@ -56,6 +57,8 @@ class AppNotifier(
     private val onAutopilot: (AutopilotEvent) -> Unit = {},
     /** A mode or Autopilot decided this request: it no longer waits, and an ask open on it closes. */
     private val onDecided: (String) -> Unit = {},
+    /** Something about Circles changed (a review for this phone, a person, an owner's progress): read it again. */
+    private val onCircles: () -> Unit = {},
     private val onChanged: () -> Unit,
 ) : Notifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -244,6 +247,63 @@ class AppNotifier(
             is AutopilotEvent.ModeChanged -> Unit
         }
     }
+
+    /**
+     * Circles (Decisions v2, 04). A request of another account waiting for this phone is the one Circle notification,
+     * titled by person ("Sam: Buy headphones waiting"), with Open only: it is answered in For others, never inline.
+     * Anything else (a review settled, a person added, an owner's progress) refreshes the screens quietly.
+     */
+    override fun circleChanged(event: CircleEvent) {
+        onCircles()
+        val review = (event as? CircleEvent.ReviewWaiting)?.review ?: return
+        if (Foreground.focused) {
+            // In front, For others shows it; the chime says something arrived.
+            feedback().requestArrived(CIRCLE_PREFIX + review.id, needsUser = true)
+            return
+        }
+        if (!manager.areNotificationsEnabled()) return
+        val channel = channel(Kind.Approvals)
+        val public = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Reins")
+            .setContentText("Something is waiting for you")
+            .build()
+        val text = listOfNotNull(untrusted(review.subtitle).ifBlank { null }, untrusted(review.agent).ifBlank { null }).joinToString(" · ")
+        val notification = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(dev.reins.android.ui.circles.reviewNotificationTitle(review.copy(person = untrusted(review.person), title = untrusted(review.title))))
+            .setContentText(text.ifEmpty { "For others" })
+            .addAction(Notification.Action.Builder(null, "Open", openForOthers(review.id)).build())
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(public)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(openForOthers(review.id))
+            .setWhen(review.createdAt * 1000)
+            .setTimeoutAfter((review.deadline * 1000 - System.currentTimeMillis()).coerceAtLeast(MIN_LIFETIME_MS))
+            .addExtras(android.os.Bundle().apply { putString(EXTRA_CIRCLE, review.id) })
+            .build()
+        manager.notify(tag, notificationId(CIRCLE_PREFIX + review.id), notification)
+    }
+
+    /** Takes away the notifications of Circle reviews that no longer wait ([waiting] are the ids that do). */
+    fun dropStaleCircles(waiting: Set<String>) {
+        manager.activeNotifications
+            .filter { n -> n.tag == tag && n.notification.extras.getString(EXTRA_CIRCLE)?.let { it !in waiting } == true }
+            .forEach { manager.cancel(tag, it.id) }
+    }
+
+    /** Opens For others in Activity (a Circle review's notification). */
+    private fun openForOthers(id: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        notificationId(CIRCLE_PREFIX + id),
+        Intent(context, MainActivity::class.java)
+            .setAction(ACTION_OPEN_FOR_OTHERS)
+            .putExtra(EXTRA_ID, id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile(),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /** Auto-approvals stopped for a connection (unusual volume); its requests wait for the user. */
     private fun paused(event: AutopilotEvent.Paused) {
@@ -637,6 +697,12 @@ class AppNotifier(
         const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
         /** A work profile's org reviews ([orgReview]). */
         const val ACTION_OPEN_ORG_REVIEWS = "dev.reins.android.OPEN_ORG_REVIEWS"
+        /** A Circle review's notification: Activity, at For others. */
+        const val ACTION_OPEN_FOR_OTHERS = "dev.reins.android.OPEN_FOR_OTHERS"
+        /** The Circle review a notification is about, in its extras (see [dropStaleCircles]). */
+        const val EXTRA_CIRCLE = "dev.reins.android.CIRCLE"
+        /** Keeps a review's notification id apart from a request's of the same id. */
+        private const val CIRCLE_PREFIX = "circle:"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4

@@ -8,6 +8,7 @@ pub mod apns;
 pub mod blob;
 pub mod blob_io;
 pub mod blob_routes;
+pub mod circles;
 pub mod desktop_routes;
 pub mod device_api;
 pub mod device_flow;
@@ -116,6 +117,8 @@ pub struct Hub {
     pub live: live::LiveHub,
     /// Tickets (deferred decisions): what wakes their waits and the phone, and results passing through.
     pub tickets: tickets::TicketHub,
+    /// Circles: which accounts' phones have news (ends their long poll).
+    pub circles: circles::CircleNews,
 }
 
 /// Sealed lease revocations for desktop apps (Reins Secrets): the phone posts one per paired computer, the computer's
@@ -305,6 +308,7 @@ impl Hub {
             handovers: roles::HandoverHub::new(Arc::clone(&signal)),
             live: live::LiveHub::default(),
             tickets: tickets::TicketHub::default(),
+            circles: circles::CircleNews::new(Arc::clone(&signal)),
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
@@ -387,6 +391,7 @@ impl Hub {
                 log_head: log_after.and(self.live.head(user)),
                 tickets: vec![],
                 instant_window_secs: None,
+                circles: self.circles.take(user),
             };
             let log_moved = pending.log_head.zip(log_after).is_some_and(|(head, after)| head > after);
             // Ticket news is fetched by the caller (it needs the database); it ends the wait.
@@ -416,6 +421,7 @@ impl Hub {
         self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.relay.forget_user(user);
         self.tickets.forget_user(user);
+        self.circles.forget(user);
         self.presence.forget(user);
         self.pairings.forget_user(user);
         self.joins.forget_user(user);
@@ -493,6 +499,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(mcp_routes::routes());
     routes.extend(desktop_routes::routes());
     routes.extend(ticket_routes::routes());
+    routes.extend(circles::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
     routes.extend(pages::routes());

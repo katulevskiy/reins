@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -182,7 +183,15 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
         nav.overlay = ApprovalOverlay.Autopilot
         feedback.play(Event.Open)
     }
+    // Circles: who else decides it, and how far it got ("Needs Alex too", "Alex approved, waiting for you").
+    val pendingItem by viewModel.item.collectAsStateWithLifecycle()
+    val circle = pendingItem?.circle
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        circle?.let { progress ->
+            dev.reins.android.ui.circles.progressLine(progress).ifEmpty { null }?.let { line ->
+                FieldVerdict(untrusted(line), Modifier.testTag("circleLine"), glyph = Glyph.People)
+            }
+        }
         // Every warning, each its own pill (see fieldWarnings).
         fieldWarnings(view, s, risk, nav.riskInFacts).forEach { w ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -442,3 +451,4 @@ internal fun Ring(fraction: Float, color: Color, track: Color, size: Dp, stroke:
         drawArc(color, -90f, 360f * fraction.coerceIn(0f, 1f), false, at, arc, style = Stroke(w, cap = StrokeCap.Round))
     }
 }
+

@@ -80,6 +80,7 @@ pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
         task_title: None,
         batchable: false,
         task_proposal: None,
+        circle: None,
         kind: PendingKind::Join,
         id: j.id.clone(),
         title,

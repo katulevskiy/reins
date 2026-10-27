@@ -41,6 +41,7 @@ class RealCoreTest {
         override fun itemResolved(id: String) = Unit
         override fun autoDecided(decision: dev.reins.core.AutoDecisionView) = Unit
         override fun autopilotChanged(event: dev.reins.core.AutopilotEvent) = Unit
+        override fun circleChanged(event: dev.reins.core.CircleEvent) = Unit
     }
 
     /** The app's constructor: no on-phone integrations, and this build's Telegram credentials (empty when unset). */

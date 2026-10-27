@@ -103,7 +103,7 @@ org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin ch
 (decisions, their trace and countersigned record), `reins_org_bodies` (sealed bodies, results and receipts, with
 retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`, `reins_org_leases` and
 `reins_org_checkpoints`. Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
-`reins_callbacks`. Everything else is in memory with a time limit, so
+`reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows
@@ -230,6 +230,29 @@ after 10 minutes as before.
   - An approved command passes the hook once, bound to the digest of the exact raw call, for an hour.
   - A parked `git push` is kept and pushed on approval, only if every ref is still where git found it; otherwise the
     ticket is Stale. `reins tickets` and `reins wait` cover scripts.
+
+### Circles (shared control)
+
+Another Reins account reviews this one's requests within a scope (04): a delegate, a co-signer, a guardian or a
+watcher. `reins_proto::circle` holds the messages and checks, `reins_policy::circles` the obligations and how votes
+settle, `reins-core/src/circles` the phone side and `src/api/reins/circles.rs` the routes.
+
+- **Invitation** (`/reins/api/circles/invites*`, `…/join`): the owner posts a commitment and gets a one-time
+  `reins-circle://<server>/<secret>` link; the helper answers with its owner key and a nonce (binding it); the owner
+  reveals and sends the terms sealed to the helper's approval phone; both phones show six digits; the helper signs,
+  the owner confirms (hold and biometric) and activates. `reins_circle_links` then holds the routing and each side's
+  sealed copy.
+- **A request in scope:** when the owner's phone parks it, it computes a **hold** (no network), so Autopilot only
+  waits on it. Review packets (signed, sealed to each helper's approval phone) go to `reins_circle_packets`; the helper
+  is pushed (`PushKind::Circle`, `review:<id>`: the one Circle notification). A Deferred arrangement makes the request
+  a ticket at once.
+- **Answers:** the helper's phone signs and seals its answer; the owner's phone takes it on its next sync or push,
+  verifies it, and settles the hold: either deny wins; once everyone needed approved (the owner's tap included where
+  it is needed), it runs through the owner's own approval path. Windows that run out deny, or leave a delegate's
+  request to the owner.
+- **Changes:** pause, resume and end are signed changes (`…/links/<id>/change`); ending drops a delegate's or
+  co-signer's part of what waits and lapses a guardian's.
+- **Receipts:** the owner's Activity names who decided ("Approved by …"); the helper's keeps "Approved for …".
 
 ### Pairing an AI or the desktop app
 

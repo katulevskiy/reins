@@ -19,6 +19,7 @@ struct SettingsScreen: View {
                     ProfilesSection(model: model, server: info.serverUrl)
                 }
                 PagesGroup()
+                CirclesGroup()
                 SecurityGroup()
                 AboutGroup()
                 SessionGroup()
@@ -354,6 +355,34 @@ private struct DevicesRow: View {
             spokenValue: count.map { $0 == 1 ? "1 device" : "\($0) devices" }
         ) { model.show(.devices) }
         .task { count = try? await model.core.devices().count }
+    }
+}
+
+// MARK: Circles
+
+/// Settings > Circles: other Reins users who share control of this account, and those it helps; how many, read again
+/// each time Settings shows.
+private struct CirclesGroup: View {
+    @Environment(AppModel.self) private var model
+    @State private var count: Int?
+
+    var body: some View {
+        if case .signedIn = model.session {
+            SectionHeader("People", glyph: .person)
+            RaisedGroup {
+                SettingsTileButton(
+                    "Circles", value: count.map { String($0) }, id: "circlesRow",
+                    spokenValue: count.map { $0 == 1 ? "1 person" : "\($0) people" }
+                ) {
+                    SymbolTile(symbol: "person.2")
+                } action: {
+                    model.show(.circles)
+                }
+            }
+            .task(id: model.circleTick) {
+                count = (try? await model.core.circlePeople(refresh: false))?.filter { $0.state != .ended }.count
+            }
+        }
     }
 }
 

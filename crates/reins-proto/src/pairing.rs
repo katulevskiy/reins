@@ -78,6 +78,9 @@ pub enum PushKind {
     /// An org review waits for this member (the id is the review's: an org request or an admin change). Fetch
     /// `GET /reins/api/org/reviews`.
     OrgReview,
+    /// Something of a Circle concerns this phone (the id is a packet's, an invitation's or a link's): a review for
+    /// another account, an answer, an invitation's next step. Fetch `GET /reins/api/circles/*`.
+    Circle,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.

@@ -175,6 +175,15 @@ class MainActivity : FragmentActivity() {
             }
             return
         }
+        if (intent?.action == AppNotifier.ACTION_OPEN_FOR_OTHERS) {
+            // A Circle review: For others sits in Activity, under Waiting for you.
+            lifecycleScope.launch {
+                container.state.session.first { it is SessionState.SignedIn }
+                app.home()
+                container.refreshCircles(fromServer = true)
+            }
+            return
+        }
         if (intent?.action == AppNotifier.ACTION_OPEN_AUTOPILOT) {
             lifecycleScope.launch {
                 container.state.session.first { it is SessionState.SignedIn }

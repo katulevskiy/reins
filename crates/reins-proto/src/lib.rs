@@ -8,6 +8,7 @@ pub mod authorization;
 pub mod autopilot;
 pub mod blob;
 pub mod canon;
+pub mod circle;
 pub mod computer;
 pub mod connector;
 pub mod desktop;

@@ -206,6 +206,10 @@ pub struct Pending {
     /// This server's Instant window (seconds): when the phone turns a request it holds into a ticket by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instant_window_secs: Option<u64>,
+    /// Something of a Circle changed for this account (a review, an answer, an invitation's step, a link):
+    /// fetch `GET /reins/api/circles/*`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub circles: bool,
 }
 
 impl Pending {
@@ -218,6 +222,7 @@ impl Pending {
             && self.joins.is_empty()
             && self.handovers.is_empty()
             && self.tickets.is_empty()
+            && !self.circles
     }
 }
 
@@ -430,6 +435,7 @@ mod tests {
             log_head: Some(4),
             tickets: vec![],
             instant_window_secs: None,
+            circles: false,
         };
         assert!(!p.is_empty());
         let v = serde_json::to_value(&p).unwrap();

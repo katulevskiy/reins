@@ -201,7 +201,10 @@ struct FieldWaitCard: View {
 
     private var item: PendingItem { group.first }
     private var field: FieldKind { ActivityText.field(item, danger: danger) }
-    private var pick: AutopilotPick? { WaitCardIdentity.pick(item, ActivityText.pick(advice, suggestion)) }
+    /// Nothing to take once the owner approved a request their Circle still decides: it waits for the others.
+    private var pick: AutopilotPick? {
+        item.circle?.youApproved == true ? nil : WaitCardIdentity.pick(item, ActivityText.pick(advice, suggestion))
+    }
 
     var body: some View {
         let line = AskLabels.pending(item, field: field)
@@ -248,6 +251,12 @@ struct FieldWaitCard: View {
                         .environment(\.layoutDirection, .leftToRight)
                         .padding(.top, -4)
                         .accessibilityIdentifier("cardDetails:\(item.id)")
+                }
+                // Who else in the owner's Circle decides it, and how far it got.
+                if !group.isBurst, let circle = item.circle {
+                    CircleProgressLine(progress: circle, onField: true)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .accessibilityIdentifier("cardCircle:\(item.id)")
                 }
                 if group.isBurst { peek }
                 WithLater(later: canLater ? { pressed(later) } : nil) {

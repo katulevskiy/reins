@@ -16,6 +16,10 @@ use crate::autopilot::{
     FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightDigest, Preset, ProfileView, SuggestionView,
     TaskView, ThresholdReplay, Verdict, ZoneChoice,
 };
+use crate::circles::{
+    CircleDraft, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleNoticeView, CirclePerson,
+    CircleReviewView,
+};
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
@@ -1131,6 +1135,193 @@ impl ReinsCore {
         .await
     }
 
+    /// Circles are possible here: this account has phone roles and this phone is its approval phone.
+    pub async fn circles_available(&self) -> Result<bool, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { Ok(engine.circle_me(&*engine.session()?).await.is_ok()) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Starts an invitation (Settings › Circles › Add): returns the link or QR code the other person opens.
+    pub async fn circle_invite_create(&self, draft: CircleDraft) -> Result<CircleInviteStart, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_create(draft)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where an invitation stands; once someone answered, the six digits both phones show.
+    pub async fn circle_invite_poll(&self, id: String) -> Result<CircleInviteProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_poll(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Confirms an accepted invitation (after comparing the code; the app asks for the hold and biometric first).
+    pub async fn circle_invite_confirm(&self, id: String) -> Result<CirclePerson, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_confirm(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Withdraws an invitation.
+    pub async fn circle_invite_cancel(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_cancel(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Opens an invitation link (Settings › Circles › Join) and answers it.
+    pub async fn circle_join_open(&self, link: String) -> Result<CircleInviteView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_open(&link)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where an invitation this phone answered stands; the terms and the code once the inviter's phone sent them.
+    pub async fn circle_join_poll(&self, id: String) -> Result<CircleInviteView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_poll(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Accepts an invitation (after comparing the code).
+    pub async fn circle_join_accept(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_accept(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Declines an invitation.
+    pub async fn circle_join_decline(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_decline(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The arrangements this account is in, either side (`refresh`: ask the server first).
+    pub async fn circle_people(&self, refresh: bool) -> Result<Vec<CirclePerson>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_people(refresh)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Pauses or resumes an arrangement this account made (nothing goes to the helper meanwhile).
+    pub async fn circle_pause(&self, link_id: String, paused: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_pause(&link_id, paused)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Ends an arrangement (either side; for a helper, leaving).
+    pub async fn circle_end(&self, link_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_end(&link_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Requests of other accounts waiting for this one, and those settled lately (For others). `refresh`: ask the server first.
+    pub async fn circle_reviews(&self, refresh: bool) -> Result<Vec<CircleReviewView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine
+                .run_account(async {
+                    if refresh {
+                        engine.circles_sync(&*engine.session()?, true).await?;
+                    }
+                    engine.circle_reviews()
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// What watchers (or helpers) were told lately; no buttons.
+    pub async fn circle_notices(&self) -> Result<Vec<CircleNoticeView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.circle_notices() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers another account's request (this phone must be the approval phone).
+    pub async fn circle_answer(&self, review_id: String, approve: bool, note: Option<String>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_answer(&review_id, approve, note)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
     /// check the events and webhooks this phone signs. Shown under a connection's More.
     pub async fn signing_key_fingerprint(&self) -> Result<String, CoreError> {
@@ -1992,6 +2183,15 @@ impl ReinsCore {
                     engine.set_autopilot_mode(connection_id, mode, minutes).await?;
                     if brake {
                         engine.brake_out(restriction).await?;
+                    }
+                    if mode == Some(AutopilotMode::Bypass) {
+                        // Watchers hear it (04 §6.3), quietly.
+                        let text = match minutes {
+                            Some(m) if m < 120 => format!("Bypass on for {m} min"),
+                            Some(m) => format!("Bypass on for {} h", m / 60),
+                            None => "Bypass on".to_owned(),
+                        };
+                        engine.circle_bypass_on(&text).await;
                     }
                     Ok(())
                 })

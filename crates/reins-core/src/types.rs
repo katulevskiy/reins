@@ -147,6 +147,9 @@ pub struct PendingItem {
     /// An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
     #[uniffi(default)]
     pub task_proposal: Option<crate::autopilot::TaskView>,
+    /// Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
+    #[uniffi(default)]
+    pub circle: Option<crate::circles::CircleProgress>,
 }
 
 /// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.

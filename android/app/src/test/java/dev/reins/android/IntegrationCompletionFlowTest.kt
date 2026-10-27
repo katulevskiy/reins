@@ -159,6 +159,8 @@ class IntegrationCompletionFlowTest : FlowHarness() {
 
     @Test fun removalAndSessionChangeClearOnlyTheirOwnCompletion() {
         launch()
+        // Signing out below only starts a new account epoch from a signed-in session.
+        awaitCore { container.state.session.value is SessionState.SignedIn }
         runBlocking { GmailViewModel(container).connect("new@gmail.com") }
         ServiceViewModel(container, "device_contacts").addDevice()
         awaitCore { container.state.connectedAccounts.value.size == 2 }

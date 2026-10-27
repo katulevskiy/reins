@@ -10,9 +10,21 @@ struct ApprovalDock: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var typeSize
 
+    /// Others in the owner's Circle decide it too: who, and how far it got.
+    private var circle: CircleProgress? { model.pending.first { $0.id == view.requestId }?.circle }
+
+    /// The owner approved; it runs once the others have.
+    private var approvedByYou: Bool { circle?.youApproved == true }
+
     var body: some View {
         let ax = typeSize.isAccessibilitySize
         VStack(spacing: 10) {
+            if let circle {
+                CircleProgressLine(progress: circle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .accessibilityIdentifier("dockCircle")
+            }
             if let error = vm.error {
                 Text(error)
                     .font(RFont.sans(13.5, .medium))
@@ -83,7 +95,16 @@ struct ApprovalDock: View {
     }
 
     @ViewBuilder private var approve: some View {
-        if ApprovalWords.held(view) {
+        if approvedByYou {
+            // Done on the owner's side: nothing more to press until the others answer.
+            Label("Approved", systemImage: "checkmark")
+                .font(TextRole.button.font())
+                .foregroundStyle(Palette.success)
+                .frame(maxWidth: .infinity)
+                .frame(height: typeSize.isAccessibilitySize ? 64 : 54)
+                .background(Palette.success.opacity(0.12), in: Capsule())
+                .accessibilityIdentifier("approvedByYou")
+        } else if ApprovalWords.held(view) {
             HoldButton(
                 title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy,
                 height: typeSize.isAccessibilitySize ? 64 : 54

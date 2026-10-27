@@ -208,6 +208,11 @@ impl Engine {
         let session = self.session()?;
         self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
+        // A Circle request runs only once everyone it needs approved (04, 08 R3): the owner's tap fills the owner's
+        // slot; until the others answer, nothing runs and the card waits.
+        if !self.circle_gate(request_id, &choice, source)? {
+            return Ok(());
+        }
         if self.store.invocation_started(request_id)? {
             return Err(CoreError::invalid(
                 "This request was already attempted. Check Activity and the provider before creating a new request; do not repeat this approval.",
@@ -462,6 +467,8 @@ impl Engine {
         self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
         self.store.mark_handled(request_id, now)?;
+        // Either deny wins: a Circle hold is settled (its packets are withdrawn on the next sync).
+        self.circle_denied(request_id);
         self.notifier.item_resolved(request_id.to_owned());
         self.discard_input(&session, &parked).await;
         self.respond(

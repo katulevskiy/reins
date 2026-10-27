@@ -782,6 +782,59 @@ table! {
     }
 }
 
+table! {
+    reins_circle_invites (id) {
+        id -> Text,
+        token_hash -> Text,
+        owner_uuid -> Text,
+        kind -> Text,
+        state -> Text,
+        owner_pub -> Text,
+        owner_epoch -> BigInt,
+        commitment -> Text,
+        helper_uuid -> Nullable<Text>,
+        data -> Text,
+        link_id -> Nullable<Text>,
+        created_at -> BigInt,
+        expires_at -> BigInt,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_circle_links (id) {
+        id -> Text,
+        owner_uuid -> Text,
+        helper_uuid -> Text,
+        kind -> Text,
+        state -> Text,
+        owner_copy -> Text,
+        helper_copy -> Text,
+        last_change -> Nullable<Text>,
+        created_at -> BigInt,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_circle_packets (id) {
+        id -> Text,
+        link_id -> Text,
+        owner_uuid -> Text,
+        helper_uuid -> Text,
+        kind -> Text,
+        state -> Text,
+        sealed -> Text,
+        sealed_answer -> Nullable<Text>,
+        deadline -> BigInt,
+        created_at -> BigInt,
+        answered_at -> Nullable<BigInt>,
+        delivered -> Bool,
+        owner_seen -> Bool,
+        updated_at -> BigInt,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

@@ -44,6 +44,8 @@ enum Route: Hashable {
     case devices
     /// Settings > Profiles > Reviews (a work profile's): the org reviews waiting for this member.
     case orgReviews
+    /// Settings > Circles: who helps with this account, and whom it helps.
+    case circles
     /// Integrations > Password vault > Open the vault.
     case vault
     /// Vault > Add: what kind of item.

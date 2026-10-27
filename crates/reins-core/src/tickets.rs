@@ -241,7 +241,7 @@ impl Engine {
 
     /// A push about a ticket (not a relay request): its news comes with the poll.
     pub(crate) async fn take_ticket_news(&self, _session: &Session) -> Result<(), CoreError> {
-        Box::pin(self.sync_inner(0)).await
+        Box::pin(self.sync_inner(0)).await.map(drop)
     }
 
     /// Tells the app an item changed (a ticket's deadline, a question, an answer).
@@ -483,6 +483,12 @@ impl Engine {
     /// Later: an Instant request becomes a ticket; the agent is told at once and carries on.
     pub(crate) async fn decide_later(&self, id: &str) -> Result<(), CoreError> {
         self.decide_later_for(id, None, None).await
+    }
+
+    /// [`Self::decide_later`] with the window a policy states (a Deferred Circle arrangement's), `None` for the
+    /// server's default.
+    pub(crate) async fn defer_for(&self, id: &str, window_secs: Option<u64>) -> Result<(), CoreError> {
+        self.decide_later_for(id, window_secs, None).await
     }
 
     /// [`Self::decide_later`] with a window (`None`: the server's default) and a note the agent is told (Overnight:

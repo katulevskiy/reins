@@ -381,6 +381,9 @@ private fun TabContent(
             onAnswerBurst = { burst, approve ->
                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
             },
+            onAnswerCircle = { review, approve, note ->
+                dev.reins.android.ui.activity.answerCircle(container, authenticator, review, approve, note)
+            },
             onAnswerQuestion = { q, zone ->
                 questionScope.launch { dev.reins.android.ui.activity.answerQuestion(container, authenticator, q, zone)?.let(app::showNotice) }
             },
@@ -456,6 +459,7 @@ private fun TabContent(
             onTour = app::replaySetup,
             onVaultPasskeys = { app.open(Route.VaultPasskeys) },
             onDevices = { app.open(Route.Devices) },
+            onCircles = { app.open(Route.Circles) },
             onAddWorkAccount = { app.open(Route.AddWorkAccount) },
             onOrgReviews = { app.open(Route.OrgReviews) },
             onSignalGallery = { app.open(Route.SignalGallery) },
@@ -494,6 +498,12 @@ private fun PageContent(
                     dev.reins.android.profiles.ProfilesProvider.deviceKeys,
                 )
             },
+            onBack = { app.back() },
+        )
+        Route.Circles -> dev.reins.android.ui.circles.CirclesScreen(
+            viewModel(key = "circles:$accountEpoch") { dev.reins.android.ui.circles.CirclesViewModel(container) },
+            container,
+            authenticator,
             onBack = { app.back() },
         )
         Route.Devices -> DevicesScreen(

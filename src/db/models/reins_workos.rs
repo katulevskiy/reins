@@ -354,6 +354,7 @@ fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<(
         super::reins_vault_passkey::q_delete_all(c, user_uuid)?;
         super::reins_roster::q_delete_all(c, user_uuid.as_ref())?;
         super::reins_org::q_delete_user_devices(c, user_uuid.as_ref())?;
+        super::reins_circle::q_delete_user(c, user_uuid.as_ref())?;
         Ok(())
     })
 }

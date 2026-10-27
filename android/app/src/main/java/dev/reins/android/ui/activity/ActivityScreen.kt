@@ -176,6 +176,8 @@ fun ActivityScreen(
     onStopTask: (dev.reins.core.TaskView) -> Unit = {},
     /** "Approve all" for one agent's task under Waiting for you. */
     onApproveAll: (AgentTickets) -> Unit = {},
+    /** For others (Circles): answers another account's request; a message when it did not go through. */
+    onAnswerCircle: suspend (dev.reins.core.CircleReviewView, Boolean, String?) -> String? = { _, _, _ -> null },
 ) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
@@ -184,6 +186,8 @@ fun ActivityScreen(
     val pending by state.pending.collectAsStateWithLifecycle()
     val questions by state.autoQuestions.collectAsStateWithLifecycle()
     val tasks by state.tasks.collectAsStateWithLifecycle()
+    val circleReviews by state.circleReviews.collectAsStateWithLifecycle()
+    val circleNotices by state.circleNotices.collectAsStateWithLifecycle()
     val loaded by state.loaded.collectAsStateWithLifecycle()
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
@@ -269,7 +273,8 @@ fun ActivityScreen(
     }
     // The items above the river, in the order the list lays them out.
     val headerCount = (if (warnings.isEmpty()) 0 else 1) + 2 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
-        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1) + (if (searching || tickets.isEmpty()) 0 else 1)
+        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1) + (if (searching || tickets.isEmpty()) 0 else 1) +
+        (if (searching || (circleReviews.isEmpty() && circleNotices.isEmpty())) 0 else 1)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
@@ -311,6 +316,7 @@ fun ActivityScreen(
             refreshing = true
             scope.launch {
                 container.refreshPending()
+                container.refreshCircles(fromServer = true)
                 refreshing = false
             }
         },
@@ -441,6 +447,12 @@ fun ActivityScreen(
                             modifier = Modifier.padding(bottom = 10.dp),
                             onApproveAll = onApproveAll,
                         )
+                    }
+                }
+                // For others (Circles): other people's requests that wait for this phone, under what waits for you.
+                if (circleReviews.isNotEmpty() || circleNotices.isNotEmpty()) {
+                    item(key = "forOthers") {
+                        ForOthersSection(circleReviews, circleNotices, onAnswerCircle, Modifier.padding(bottom = 10.dp))
                     }
                 }
             }

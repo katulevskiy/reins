@@ -1,6 +1,6 @@
 #if DEBUG
 /// `-show <place>` at launch (screenshots, manual checks): a tab (`activity`, `trust`, `connections`, `settings`) or a
-/// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `wallpaper`, `vault`, `vaultAdd`, `vaultItem:<id>`, `vaultNew:<kind>`, `connection:<id>`,
+/// page in it: `sounds`, `devices`, `circles`, `passkeys`, `appearance`, `wallpaper`, `vault`, `vaultAdd`, `vaultItem:<id>`, `vaultNew:<kind>`, `connection:<id>`,
 /// `gmail`, `service:<id>`, `mcp:<id>`, `connectSheet`, `addService`, `typeCode`, `join:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `permissions`, `accountPermissions:<service>/<account>[/temp]`, `newgrant`, `entry:<id>` (an Activity entry), `request:<id>` (a waiting request's sheet), and `tour` (its page
 /// from `-tourPage <n>`, 0 to 4).
 @MainActor
@@ -10,6 +10,7 @@ enum DebugShow {
         switch place {
         case "sounds": model.show(.sounds, in: .settings)
         case "devices": model.show(.devices, in: .settings)
+        case "circles": model.show(.circles, in: .settings)
         case "passkeys": model.show(.vaultPasskeys, in: .settings)
         case "appearance": model.show(.appearance, in: .settings)
         case "wallpaper": model.show(.wallpaper, in: .settings)

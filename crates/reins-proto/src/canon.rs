@@ -71,6 +71,20 @@ pub mod contexts {
     pub const ORG_EXEC: &str = "reins/org-exec/v1";
     /// A member's own policy, signed by their device ([`crate::managed::member_policy_message`]).
     pub const ORG_MEMBER_POLICY: &str = "reins/org-member-policy/v1";
+    /// A Circle owner's commitment to its nonce ([`crate::circle::invite_commitment`]).
+    pub const CIRCLE_COMMIT: &str = "reins/circle-commit/v1";
+    /// The six digits two Circle members compare ([`crate::circle::InviteTranscript::code`]).
+    pub const CIRCLE_CODE: &str = "reins/circle-code/v1";
+    /// A Circle arrangement, signed by the helper's owner key ([`crate::circle::helper_message`]).
+    pub const CIRCLE_ARRANGEMENT: &str = "reins/circle-arrangement/v1";
+    /// The owner's confirmation of an arrangement ([`crate::circle::owner_message`]).
+    pub const CIRCLE_ACTIVATE: &str = "reins/circle-activate/v1";
+    /// A review packet, signed by the owner's approval phone ([`crate::circle::packet_message`]).
+    pub const CIRCLE_PACKET: &str = "reins/circle-packet/v1";
+    /// A helper's answer, signed by its approval phone ([`crate::circle::answer_message`]).
+    pub const CIRCLE_ANSWER: &str = "reins/circle-answer/v1";
+    /// A change of an arrangement's state, signed by an owner key ([`crate::circle::change_message`]).
+    pub const CIRCLE_CHANGE: &str = "reins/circle-change/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,

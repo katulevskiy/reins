@@ -612,6 +612,7 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         // Deferred decisions: Instant requests becoming tickets, windows running out.
         if api::reins::enabled() {
             api::reins::tickets::spawn_sweeper(pool.clone());
+            api::reins::circles::spawn_sweeper(pool.clone());
         }
         // Organizations: the decision service's sweeper (expiries, leases, retention, audit checkpoints).
         api::reins::org::sweeper::spawn(pool.clone());

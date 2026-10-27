@@ -141,6 +141,8 @@ async fn post_reset(
         return Err(api_err(Status::InternalServerError, codes::INTERNAL, "Server error, please retry"));
     }
     HUB.forget_user(user.uuid.as_ref());
+    // Its Circle arrangements can't be verified any more (new keys): they end, and each peer hears (08 R7).
+    super::circles::end_all_for(user.uuid.as_ref(), &conn, pool.inner()).await;
 
     // The phone that approved for the account is signed out already; tell it so it says why.
     if let Some(old) = approval.filter(|old| old.device_uuid != device.uuid) {
