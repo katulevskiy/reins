@@ -13,7 +13,7 @@ use gpui::{
     Anchor, AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
-use reins_desktop::journal::{Decider, Entry, Kind, Outcome, Tally};
+use reins_desktop::journal::{Decider, Entry, Kind, NetRecord, Outcome, Tally};
 
 use reins_desktop::pushes::{CommitInfo, FileStatus, Push, RefChange, RefUpdate};
 use reins_proto::attention::{self, Attention, Level};
@@ -402,6 +402,7 @@ impl Root {
             diff::commits_link(&p.repo, branch)
         });
         let took = e.ended_at.map(|end| format::duration(end - e.at));
+        let net = e.nets.as_ref().map(|n| Self::net_panel(n, d, pal, cx));
         let mut panel = div()
             .flex()
             .flex_col()
@@ -469,6 +470,7 @@ impl Root {
                         .child(wrapped(&text)),
                 )
             })
+            .when_some(net, gpui::ParentElement::child)
             .child(
                 div()
                     .flex()
@@ -804,6 +806,87 @@ impl Root {
 }
 
 /// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
+/// Where a safety net stands in Activity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetState {
+    /// It can be restored.
+    Restore,
+    Restoring,
+    Restored,
+    /// Past its keeping time.
+    Gone,
+}
+
+fn net_state(net: &NetRecord, now: i64, restored: bool, restoring: bool) -> NetState {
+    if restored {
+        NetState::Restored
+    } else if restoring {
+        NetState::Restoring
+    } else if now >= net.until {
+        NetState::Gone
+    } else {
+        NetState::Restore
+    }
+}
+
+impl Root {
+    /// "Netted · Restore": what the safety net kept, and putting it back.
+    fn net_panel(net: &NetRecord, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let state = net_state(
+            net,
+            d.now,
+            d.restored_nets.contains(&net.plan),
+            d.restoring_net.as_deref() == Some(net.plan.as_str()),
+        );
+        let label = match state {
+            NetState::Restore | NetState::Restoring => "Restore",
+            NetState::Restored => "Restored",
+            NetState::Gone => "Kept copy gone",
+        };
+        let glyph_for = if state == NetState::Restored {
+            Glyph::Check
+        } else {
+            Glyph::Undo
+        };
+        let button = kit::button("net-restore", kit::Look::Soft, kit::Size::Small, Some(glyph_for), label, pal);
+        let button = if state == NetState::Restore && d.restoring_net.is_none() {
+            let plan = net.plan.clone();
+            button.on_click(Self::on_model(cx, move |m, cx| m.restore_net(plan.clone(), cx)))
+        } else {
+            button.opacity(if state == NetState::Restored {
+                1.0
+            } else {
+                kit::button::DISABLED
+            })
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .mt(px(10.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(pal.ink_2())
+                    .child(glyph(Glyph::Undo, 14.0, pal.ink_2()))
+                    .child("Netted"),
+            )
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .line_height(px(19.0))
+                    .text_color(pal.ink_meta())
+                    .child(wrapped(&net.lines.join("\n"))),
+            )
+            .child(div().flex().child(button))
+            .into_any_element()
+    }
+}
+
 /// What a request does, as the consequence engine read it on this computer: the level, then one line per effect, and
 /// what could not be read. Decides nothing yet (Decisions v2 P1).
 fn effects_text(s: &reins_policy::effects::Summary) -> String {
@@ -993,6 +1076,21 @@ mod tests {
         let mut e = Entry::new(kind, "x");
         e.outcome = outcome;
         e
+    }
+
+    #[test]
+    fn netted_rows_offer_restore_until_the_copy_is_gone() {
+        let net = NetRecord {
+            plan: "nplan01".to_owned(),
+            kinds: vec![reins_policy::effects::nets::NetKind::Trash],
+            lines: vec!["Keeps 2 deleted paths in the Reins trash for 7 days".to_owned()],
+            until: 1_000,
+        };
+        assert_eq!(net_state(&net, 10, false, false), NetState::Restore);
+        assert_eq!(net_state(&net, 10, false, true), NetState::Restoring);
+        assert_eq!(net_state(&net, 10, true, false), NetState::Restored);
+        assert_eq!(net_state(&net, 1_000, false, false), NetState::Gone);
+        assert_eq!(net_state(&net, 1_000, true, false), NetState::Restored);
     }
 
     #[test]

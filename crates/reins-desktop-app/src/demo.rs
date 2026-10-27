@@ -388,7 +388,13 @@ impl Demo {
                         confidence: 71,
                     }),
                     effects: None,
-                    nets: None,
+                    // The approved recursive delete kept a copy in the Reins trash.
+                    nets: (i == AUTO_SAMPLE).then(|| reins_desktop::journal::NetRecord {
+                        plan: "ndemo0001".to_owned(),
+                        kinds: vec![reins_policy::effects::nets::NetKind::Trash],
+                        lines: vec!["Keeps 1 deleted path in the Reins trash for 7 days".to_owned()],
+                        until: at + 7 * 86_400,
+                    }),
                 }
             })
             .collect()
