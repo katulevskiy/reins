@@ -120,9 +120,13 @@ pub fn q_insert_policy(c: &mut DbConnInner, row: &ReinsOrgPolicy) -> QueryResult
 }
 
 /// Makes `revision` the active policy, with its signed `envelope`; the previous active one is retired. One
-/// transaction: there is never more than one active policy.
+/// transaction, and the previous one is retired only once `revision` is confirmed to be a draft and promoted: there is
+/// never more than one active policy, and a failed activation leaves the current one active.
 pub fn q_activate(c: &mut DbConnInner, org: &str, revision: i64, envelope: &str, at: i64) -> QueryResult<bool> {
-    c.transaction(|c| {
+    let done = c.transaction(|c| {
+        if !q_policy(c, org, revision)?.is_some_and(|p| p.state == policy_state::DRAFT) {
+            return Err(diesel::result::Error::RollbackTransaction);
+        }
         diesel::update(
             reins_org_policies::table
                 .filter(reins_org_policies::org_uuid.eq(org))
@@ -142,8 +146,16 @@ pub fn q_activate(c: &mut DbConnInner, org: &str, revision: i64, envelope: &str,
             reins_org_policies::activated_at.eq(Some(at)),
         ))
         .execute(c)?;
-        Ok(n == 1)
-    })
+        if n != 1 {
+            return Err(diesel::result::Error::RollbackTransaction);
+        }
+        Ok(())
+    });
+    match done {
+        Ok(()) => Ok(true),
+        Err(diesel::result::Error::RollbackTransaction) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// A member's own policy, signed by their device.
@@ -212,6 +224,12 @@ mod tests {
         assert_eq!(q_policy(&mut c, "o1", 1).unwrap().unwrap().state, policy_state::RETIRED);
         // A retired revision can't be activated again by its old draft path, and another org's is untouched.
         assert!(!q_activate(&mut c, "o1", 1, "env1", 7).unwrap());
+        // A failed activation leaves the current policy active.
+        assert_eq!(q_active_policy(&mut c, "o1").unwrap().unwrap().revision, 2);
+        assert!(!q_activate(&mut c, "o1", 99, "env", 8).unwrap(), "no such draft");
+        assert_eq!(q_active_policy(&mut c, "o1").unwrap().unwrap().revision, 2);
+        assert!(!q_activate(&mut c, "o1", 2, "env", 9).unwrap(), "already active");
+        assert_eq!(q_active_policy(&mut c, "o1").unwrap().unwrap().envelope.as_deref(), Some("env2"));
         assert!(q_active_policy(&mut c, "o2").unwrap().is_none());
         assert_eq!(q_policy_by_hash(&mut c, "o1", "h1").unwrap().unwrap().envelope.as_deref(), Some("env1"));
         assert!(q_policy_by_hash(&mut c, "o2", "h1").unwrap().is_none(), "drafts have no envelope");

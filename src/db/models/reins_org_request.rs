@@ -135,14 +135,17 @@ pub fn q_claimable(c: &mut DbConnInner, org: &str, now: i64, limit: i64) -> Quer
         .load(c)
 }
 
-/// Takes an approved request for `executor`; false when someone else took it first.
-pub fn q_claim(c: &mut DbConnInner, org: &str, id: &str, executor: &str, at: i64) -> QueryResult<bool> {
+/// Takes an approved, still valid request for `executor` at `now`; false when someone else took it first or its
+/// decision expired.
+pub fn q_claim(c: &mut DbConnInner, org: &str, id: &str, executor: &str, now: i64) -> QueryResult<bool> {
+    let at = now;
     let n = diesel::update(
         reins_org_requests::table
             .filter(reins_org_requests::org_uuid.eq(org))
             .filter(reins_org_requests::uuid.eq(id))
             .filter(reins_org_requests::state.eq(request_state::APPROVED))
-            .filter(reins_org_requests::claimed_by.is_null()),
+            .filter(reins_org_requests::claimed_by.is_null())
+            .filter(reins_org_requests::valid_until.gt(now)),
     )
     .set((
         reins_org_requests::state.eq(request_state::EXECUTING),
@@ -621,6 +624,7 @@ pub(crate) mod tests {
         assert_eq!(q_claimable(&mut c, "o2", 6, 10).unwrap().len(), 0, "another tenant");
         assert_eq!(q_claimable(&mut c, "o1", 600, 10).unwrap().len(), 0, "past its validity");
         assert_eq!(q_claimable(&mut c, "o1", 6, 10).unwrap().len(), 1);
+        assert!(!q_claim(&mut c, "o1", "r1", "e1", 500).unwrap(), "its decision expired");
         assert!(q_claim(&mut c, "o1", "r1", "e1", 6).unwrap());
         assert!(!q_claim(&mut c, "o1", "r1", "e2", 6).unwrap());
         assert!(!q_finish(&mut c, "o1", "r1", "e2", request_state::DONE, "rc", 7).unwrap(), "not its claim");
