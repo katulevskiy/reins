@@ -224,7 +224,10 @@ async fn family_end_to_end() {
     let sam_phone = Phone::signed_out(|_| {}).await;
     sam_phone.sso_sign_in(&server.base).await.unwrap();
     let joined = sam_phone.core.family_join(link.clone()).await.unwrap();
-    assert!(joined.minor && !joined.guardian);
+    // Invited as a minor: it counts only once Sam accepts on his phone.
+    assert!(!joined.minor && joined.minor_proposed && !joined.guardian);
+    sam_phone.core.family_answer_minor(true).await.unwrap();
+    assert!(sam_phone.core.family_view().await.unwrap().unwrap().minor);
     assert_eq!(joined.guardians, ["mom@lees.example"]);
     assert!(sam_phone.core.family_join(link).await.is_err(), "an invitation works once");
     sam_phone.core.register_device(None).await.unwrap();

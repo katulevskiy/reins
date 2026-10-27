@@ -8,8 +8,8 @@
 //! - **A new account only** (08 R6): [`join`] refuses any account that existed before (older than 30 minutes, in an
 //!   org, or with phone roles, connections, Circle links, vault items or other devices), with one answer that names
 //!   nobody. A family never captures someone's Personal account, and never learns one exists.
-//! - **Minors.** A minor is marked at invitation, or later by a guardian **with the member's acceptance** on their phone
-//!   (a guardian can't make an adult a minor alone).
+//! - **Minors.** A guardian proposes it, at invitation or later, and it counts only **once the member accepts** on
+//!   their phone (a guardian can't make an adult a minor alone, not even by inviting them as one).
 //! - **Leaving.** An adult leaves after the family's notice (0, 3 or 7 days); a minor's leave waits for a guardian's
 //!   consent. When it takes effect, the sweeper deprovisions the member ([`Reason::FamilyLeave`]).
 //! - **Policy.** [`family_baseline`]: the child decides their own soft asks; guardians approve money, messages to
@@ -451,14 +451,15 @@ pub fn join(c: &mut DbConnInner, user: &str, token: &str, now: i64) -> Result<St
         let org = tenant.org_uuid;
         let membership = Membership::new(user.to_owned().into(), org.clone().into(), None);
         reins_org::q_add_member(c, &membership, Some(&invite.created_by), now)?;
+        // An invitation as a minor is a proposal: it counts once the member accepts it on their phone (Review Focus 1).
         reins_family::q_save_member(
             c,
             &ReinsFamilyMember {
                 org_uuid: org.clone(),
                 user_uuid: user.to_owned(),
-                minor: invite.minor,
-                minor_proposed_at: None,
-                minor_proposed_by: None,
+                minor: false,
+                minor_proposed_at: invite.minor.then_some(now),
+                minor_proposed_by: invite.minor.then(|| invite.created_by.clone()),
             },
         )?;
         if invite.guardian {
@@ -930,6 +931,10 @@ pub(crate) mod tests {
         new_user(&mut c, "sam", "sam@example.com");
         let t = invite_for(&mut c, "Sam@Example.com ");
         assert_eq!(join(&mut c, "sam", &t, now).unwrap(), org);
+        // Invited as a minor: proposed, not yet so, until Sam accepts.
+        let row = reins_family::q_member(&mut c, &org, "sam").unwrap().unwrap();
+        assert!(!row.minor && row.minor_proposed_at.is_some());
+        answer_minor(&mut c, &org, "sam", true, now).unwrap();
         assert!(reins_family::q_member(&mut c, &org, "sam").unwrap().unwrap().minor);
     }
 
@@ -997,6 +1002,9 @@ pub(crate) mod tests {
         let t = invite(c, org, "mom", &email, minor, false, now).unwrap().token;
         new_user(c, user, &email);
         join(c, user, &t, now).unwrap();
+        if minor {
+            answer_minor(c, org, user, true, now).unwrap();
+        }
     }
 
     #[test]

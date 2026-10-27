@@ -714,8 +714,8 @@ holds.
 - **Guardians** hold Org owner, Security admin, Connection admin and Approver. Adding a second guardian is a
   two-person change (`AddGuardian`) once the family has a guardian to approve it. A single guardian activates the
   family's policy alone with their device signature; with two or more, another guardian approves.
-- **Minors.** A member is a minor from the invitation, or when a guardian proposes it **and the member accepts on
-  their phone**. A guardian can't make an adult a minor alone.
+- **Minors.** A guardian proposes it, in the invitation or later, and it counts only **once the member accepts on
+  their phone**. A guardian can't make an adult a minor alone, not even by inviting them as one.
 - **Leaving.** An adult leaves after the family's notice, which is 0, 3 or 7 days, never more and never "permanent".
   A minor's leave waits for a guardian's consent. Either way the member is deprovisioned when it takes effect: their
   devices and connections go, and what the family connected for them is revoked upstream.
