@@ -142,6 +142,8 @@ final class AppModel {
     private(set) var autopilot: AutopilotSettings?
     /// "Who is octo?": what Auto met and doesn't know yet, newest first. Shown with what waits, never notified.
     private(set) var autoQuestions: [AutoQuestion] = []
+    /// Tasks: live ones, then those that ended in the last day (Activity's task chips). Never notified.
+    private(set) var tasks: [TaskView] = []
     /// Auto's setup is open (`AutoSetupScreen`): picking Auto for every AI before it was done guides through it first.
     var autoSetupOpen = false
     private(set) var seenActivityId: Int64 = 0
@@ -389,6 +391,7 @@ final class AppModel {
         onboarding = false
         autopilot = nil
         autoQuestions = []
+        tasks = []
         autoSetupOpen = false
         sheet = nil
         paths = [:]
@@ -592,6 +595,7 @@ final class AppModel {
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
             async let questionsRead = core.autoQuestions()
+            async let tasksRead = core.tasks()
             let newPending = AskGate.waiting(try await pendingRead, decided: autoDecided)
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
@@ -601,6 +605,7 @@ final class AppModel {
             let newStarting = try? await startingRead
             // Questions are extra: a list that cannot be read keeps the last one.
             let newQuestions = try? await questionsRead
+            let newTasks = try? await tasksRead
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 // Read before a change shown ahead of the core: read once more instead.
@@ -613,6 +618,7 @@ final class AppModel {
             if grants != newGrants { grants = newGrants }
             if startingPolicy != newStarting { startingPolicy = newStarting }
             if let newQuestions, autoQuestions != newQuestions { autoQuestions = newQuestions }
+            if let newTasks, tasks != newTasks { tasks = newTasks }
             if accounts != newAccounts { accounts = newAccounts }
             if services != newServices { services = newServices }
             if mcpServers != newServers { setMcpServers(newServers) }
@@ -718,6 +724,13 @@ final class AppModel {
     /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
     /// what is too risky: the same check as a bypass's.
     var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
+
+    /// Reads the tasks again (kept as they were when they cannot be read).
+    func refreshTasks() async {
+        let epoch = accountEpoch
+        guard let read = try? await core.tasks(), epoch == accountEpoch else { return }
+        if read != tasks { tasks = read }
+    }
 
     // MARK: Auto's questions
 

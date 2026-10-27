@@ -101,7 +101,7 @@ enum TimedMode: Hashable {
     var untilOffWarning: (title: String, detail: String) {
         switch self {
         case .bypass: ("Everything is approved without asking until you stop it.", AutopilotText.bypassStillAsks)
-        case .overnight: ("\(AutopilotText.overnightName) runs until you stop it.", "What is too risky is still held.")
+        case .overnight: ("\(AutopilotText.overnightName) runs until you stop it.", "What it would ask waits for you.")
         }
     }
 
@@ -143,9 +143,9 @@ private struct StillAsksLabel: LabelStyle {
     }
 }
 
-/// Turning Overnight on for one AI or every AI, as a bypass is: 4, 8 or 12 hours or Custom, what to do with what is
-/// too risky, then a hold; the core then asks the owner. Its (?) says it decides like Auto when the model does not rate
-/// risk. (Trust starts Overnight on a tap, for 8 hours; this sheet is the mode pill's and an AI's page's.)
+/// Turning Overnight on for one AI or every AI, as a bypass is: 4, 8 or 12 hours or Custom, how long what it parks
+/// waits after the morning, then a hold; the core then asks the owner. Overnight never denies: what it would ask is
+/// parked for the morning (its (?) says so).
 struct OvernightSheet: View {
     var who: String?
     var ap: AutopilotModel
@@ -156,35 +156,38 @@ struct OvernightSheet: View {
                        onConfirm: onConfirm) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    GlyphIcon(.warning, size: 15)
-                    Text("Too risky").textRole(.section)
+                    GlyphIcon(.timer, size: 15)
+                    Text(AutopilotText.overnightExpiryTitle).textRole(.section)
                 }
                 .foregroundStyle(Palette.ink2)
-                WhenRiskyPicker(selected: ap.settings?.overnightWhenRisky ?? .wait) { risky in
-                    Task { await ap.setOvernightWhenRisky(risky) }
+                ExpiryPicker(selected: ap.settings?.overnightExpiryHours ?? 12) { hours in
+                    Task { await ap.setOvernightExpiry(hours) }
                 }
             }
         }
     }
 }
 
-/// What Overnight does with what is too risky: Wait for me, or Deny (Overnight's setting, for every AI).
-struct WhenRiskyPicker: View {
-    var selected: OvernightRisky
-    var onPick: (OvernightRisky) -> Void
+/// How long what Overnight parks waits after the morning before it expires, not approved: 6, 12 or 24 hours
+/// (Overnight's setting, for every AI). The current value shows even when it is none of those.
+struct ExpiryPicker: View {
+    var selected: UInt32
+    var onPick: (UInt32) -> Void
+
+    static func choices(_ selected: UInt32) -> [UInt32] {
+        let offered = AutopilotText.overnightExpiryHours
+        return offered.contains(selected) ? offered : (offered + [selected]).sorted()
+    }
 
     var body: some View {
-        Chooser([
-            Chooser.Segment(id: "whenRisky:wait", title: AutopilotText.whenRiskyWait, selected: selected == .wait) {
-                if selected != .wait { onPick(.wait) }
-            },
-            Chooser.Segment(id: "whenRisky:deny", title: AutopilotText.whenRiskyDeny, selected: selected == .deny) {
-                if selected != .deny { onPick(.deny) }
-            },
-        ])
+        Chooser(Self.choices(selected).map { hours in
+            Chooser.Segment(id: "expiry:\(hours)", title: AutopilotText.expiryLabel(hours: hours), selected: selected == hours) {
+                if selected != hours { onPick(hours) }
+            }
+        })
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("whenRisky")
+        .accessibilityIdentifier("overnightExpiry")
     }
 }
 

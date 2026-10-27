@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.QuestionAnswer
 import androidx.compose.material.icons.rounded.Schedule
@@ -57,8 +59,9 @@ import dev.reins.core.PendingItem
 // words, never as a fact), and what changed since it was approved. One agent's tickets of one kind go together.
 
 /**
- * The section: soonest deadline first, by agent. A tap opens the request's approval screen; [onBatch] answers a group
- * (Allow: its routine requests after one owner's check; Deny: all of them), as the stack answers a burst.
+ * The section: soonest deadline first, by agent and task. A tap opens the request's approval screen; [onBatch] answers a
+ * group (Allow: its routine requests after one owner's check; Deny: all of them), as the stack answers a burst;
+ * [onApproveAll] is "Approve all" for one agent's task (only what the core marks batchable: never hard, never L3).
  */
 @Composable
 fun WaitingInbox(
@@ -67,6 +70,7 @@ fun WaitingInbox(
     onOpen: (PendingItem) -> Unit,
     onBatch: (Burst, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onApproveAll: (AgentTickets) -> Unit = {},
 ) {
     val agents = remember(pending) { inboxByAgent(pending) }
     if (agents.isEmpty()) return
@@ -82,27 +86,42 @@ fun WaitingInbox(
             RText("$count", RType.section, c.ink2, Modifier.testTag("waitingCount"), maxLines = 1)
         }
         agents.forEach { agent ->
-            AgentLine(agent)
+            AgentLine(agent, onApproveAll)
             agent.items.forEachIndexed { i, item ->
                 TicketRow(item, details, divider = i > 0) { onOpen(item) }
             }
-            groups.filter { it.connectionId == agent.connectionId }.forEach { group -> BatchRow(group, onBatch) }
+            groups.filter { it.connectionId == agent.connectionId && it.taskId == agent.taskId }.forEach { group -> BatchRow(group, onBatch) }
         }
         Box(Modifier.heightIn(min = 6.dp))
     }
 }
 
-/** Who the tickets below are from. */
+/** Who the tickets below are from, and for which task; "Approve all" when some of them may go together. */
 @Composable
-private fun AgentLine(agent: AgentTickets) {
+private fun AgentLine(agent: AgentTickets, onApproveAll: (AgentTickets) -> Unit) {
     val c = LocalColors.current
     Row(
-        Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp).testTag("ticketAgent:${agent.connectionId}"),
+        Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 2.dp).testTag("ticketAgent:${agent.key}"),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ConnectionIcon(agent.connectionId, agent.label, size = 18.dp)
-        RText(untrustedName(agent.label), RType.sans(13f, FontWeight.SemiBold), c.ink2, Modifier.weight(1f), maxLines = 1)
+        Column(Modifier.weight(1f)) {
+            RText(untrustedName(agent.label), RType.sans(13f, FontWeight.SemiBold), c.ink2, maxLines = 1)
+            agent.taskTitle?.let {
+                RText("Task · ${untrusted(it)}", RType.sans(12.5f), c.inkMeta, Modifier.testTag("ticketTask:${agent.key}"), maxLines = 1)
+            }
+        }
+        val all = agent.batchable.size
+        if (all > 0) {
+            SignalButton(
+                "Approve all $all",
+                Modifier.testTag("approveAll:${agent.key}"),
+                style = ButtonStyle.Soft,
+                size = ButtonSize.Compact,
+                leading = { Icon(Icons.Rounded.DoneAll, null, Modifier.size(16.dp), tint = c.ink) },
+            ) { onApproveAll(agent) }
+        }
     }
 }
 
@@ -110,7 +129,8 @@ private fun AgentLine(agent: AgentTickets) {
 @Composable
 private fun TicketRow(item: PendingItem, details: PendingDetails, divider: Boolean, onClick: () -> Unit) {
     val c = LocalColors.current
-    val ticket = item.ticket ?: return
+    val ticket = item.ticket
+    val nowSeconds = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
     val sentence = remember(item, details.views[item.id]) { askSentence(item, details.views[item.id]) }
     val words = remember(sentence) { sentence.copy(text = rowAction(sentence.text)) }
     Row(
@@ -138,21 +158,22 @@ private fun TicketRow(item: PendingItem, details: PendingDetails, divider: Boole
                 detailsMaxLines = 1,
                 tag = "ticketTitle:${item.id}",
             )
-            ticket.question?.let { question ->
+            if (item.parked(nowSeconds)) Chip("Parked", Icons.Rounded.Bedtime, c.violet, Modifier.testTag("ticketParked:${item.id}"))
+            ticket?.question?.let { question ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Chip("Why?", Icons.Rounded.QuestionAnswer, c.violet, Modifier.testTag("ticketWhy:${item.id}"))
                     RText(untrusted(question), RType.sans(13.5f), c.ink2, Modifier.weight(1f), maxLines = 2)
                 }
             }
-            ticket.agentReply?.let { AgentSays(it, Modifier.testTag("agentSays:${item.id}")) }
-            ticket.stale?.let { stale ->
+            ticket?.agentReply?.let { AgentSays(it, Modifier.testTag("agentSays:${item.id}")) }
+            ticket?.stale?.let { stale ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Chip("Stale", Icons.Rounded.SyncProblem, c.warning, Modifier.testTag("ticketStale:${item.id}"))
                     RText(untrusted(stale), RType.sans(13.5f), c.ink2, Modifier.weight(1f), maxLines = 2)
                 }
             }
         }
-        Due(ticket.deadline, Modifier.testTag("ticketDue:${item.id}"))
+        ticket?.let { Due(it.deadline, Modifier.testTag("ticketDue:${item.id}")) }
     }
 }
 
@@ -176,7 +197,7 @@ private fun Due(deadline: Long, modifier: Modifier = Modifier) {
 
 /** A small tinted pill: a state of the ticket ("Why?", "Stale"). */
 @Composable
-private fun Chip(text: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
+internal fun Chip(text: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
     Row(
         modifier.semantics(mergeDescendants = true) {}.clip(CircleShape).background(tint.copy(alpha = 0.13f)).padding(horizontal = 8.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -192,7 +213,7 @@ private fun Chip(text: String, icon: ImageVector, tint: Color, modifier: Modifie
  * reads as one of Reins' facts.
  */
 @Composable
-private fun AgentSays(reply: String, modifier: Modifier = Modifier) {
+internal fun AgentSays(reply: String, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     val shape = RoundedCornerShape(12.dp)
     Column(

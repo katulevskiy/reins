@@ -115,7 +115,7 @@ final class AskGateTests: XCTestCase {
 
     func testOvernightLeavesItsJudgingToTheApp() {
         let s = AutopilotSettings(
-            mode: .overnight, baseMode: .manual, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
+            mode: .overnight, baseMode: .manual, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
             model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
             connections: [ConnectionAutopilot(connectionId: "c1", baseMode: .overnight, bypassUntil: nil, bypassSince: nil, mode: .overnight, profileId: "p")]
         )

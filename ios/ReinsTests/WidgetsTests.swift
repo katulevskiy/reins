@@ -118,7 +118,7 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(views.title, "Overnight on · every AI")
         XCTAssertEqual(views.mode, .overnight, "an Overnight has its own glyph")
         XCTAssertEqual(views.fill, Palette.modeOvernight, "and its own colour")
-        XCTAssertEqual(views.line, "For every AI. Holds what is too risky.")
+        XCTAssertEqual(views.line, "For every AI. Parks what it would ask.")
         // The same end of a bypass, after it, is a new ring.
         let bypass = try XCTUnwrap(Glance.bypassState(global: now + 8 * 3_600, connections: [], previous: state, approvedSince: { _ in 0 }, now: now + 10))
         XCTAssertNil(bypass.overnight)

@@ -235,6 +235,7 @@ impl Engine {
             ),
         ))));
         connectors.add(Arc::new(crate::connector::desktop::Desktop));
+        connectors.add(Arc::new(crate::connector::tasks::Tasks));
         connectors.add(Arc::new(crate::connector::githost::GitLab::new(
             http.clone(),
             &cfg.gitlab_base,

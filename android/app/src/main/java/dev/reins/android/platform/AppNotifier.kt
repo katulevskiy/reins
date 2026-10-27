@@ -12,6 +12,7 @@ import android.media.AudioAttributes
 import android.net.Uri
 import dev.reins.android.ui.activity.field
 import dev.reins.android.ui.activity.pendingTone
+import dev.reins.android.ui.activity.parked
 import dev.reins.android.ui.activity.pressing
 import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
@@ -131,8 +132,12 @@ class AppNotifier(
 
     override fun itemPending(item: PendingItem) {
         onChanged()
+        val nowSeconds = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+        // Parked by Overnight for the morning (Decisions v2, 01 §11): parking never notifies, in front or not. The one
+        // morning summary ([OvernightDigest]) covers it.
+        if (item.parked(nowSeconds)) return
         // A ticket can wait: it arrives quietly unless less than an hour is left (Decisions v2, 03 §5.2).
-        val quiet = item.ticket?.let { !it.pressing((dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000) } ?: false
+        val quiet = item.ticket?.let { !it.pressing(nowSeconds) } ?: false
         // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
         // chime still sounds, on the notification stream, for a phone left open on the desk.
         if (Foreground.focused) {

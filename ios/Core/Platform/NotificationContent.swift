@@ -65,7 +65,7 @@ enum NotificationCategory: String, CaseIterable {
     /// what is asked every time only opens.
     static func of(_ item: PendingItem) -> NotificationCategory {
         guard item.kind == .request else { return NotificationCategory(item.kind) }
-        if item.ticket != nil { return .waiting }
+        if item.ticket != nil || item.parkedUntil != nil { return .waiting }
         return item.quick ? .quickRequest : .request
     }
 
@@ -236,6 +236,13 @@ enum NotificationContent {
             c.interruptionLevel = urgent ? .timeSensitive : .active
             c.relevanceScore = urgent ? 0.9 : 0.5
             if !urgent { c.sound = nil }
+        }
+        if (item.parkedUntil ?? 0) > now {
+            // Parked by Overnight for the morning: it never alerts (the extension cannot drop a push, so it lands in
+            // the list without a sound or a lit screen); the morning digest is the one that rings.
+            c.interruptionLevel = .passive
+            c.relevanceScore = 0.1
+            c.sound = nil
         }
         let kind: Snapshot.Item.Kind = switch item.kind {
         case .request: .request

@@ -977,7 +977,7 @@ pub async fn run(
             let (out, code) = render_with(&call, &Verdict::Deny(reason), &news);
             return (out, code, None);
         }
-        matrix_asks = matches!(shadow.outcome, reins_policy::matrix::Outcome::Ask { .. });
+        matrix_asks = shadow.outcome.reviews();
     }
     // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
     if !guarded && !matrix_asks {
@@ -1136,7 +1136,12 @@ fn ask_verdict(
             if let Err(e) = crate::tickets::TicketStore::update(paths, |s| s.add(ticket)) {
                 log::warn!("tickets: {e}");
             }
-            Verdict::Deny(crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now))
+            Verdict::Deny(crate::tickets::parked_hook_message(
+                &parked.ticket,
+                parked.expected_by,
+                now,
+                parked.until_morning,
+            ))
         }
     }
 }

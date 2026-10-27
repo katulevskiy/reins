@@ -900,48 +900,6 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun ifSomethingIsTooRiskyIsChosenInTheOvernightSheet() {
-        installModel()
-        openAutopilot()
-        tap("forAWhile"); tap("mode:OVERNIGHT")
-        awaitText("If something is too risky:")
-        rule.onNodeWithTag("overnightRisky:WAIT").assertIsSelected()
-        tap("overnightRisky:DENY")
-        awaitCore { core.whenRiskyCalls.isNotEmpty() }
-        assertEquals(listOf(dev.reins.core.OvernightRisky.DENY), core.whenRiskyCalls.toList())
-        assertEquals("the owner is asked", "Change Overnight" to "Overnight: deny what is too risky", promptTexts.single())
-        awaitText("Decides like Auto. Too risky is denied.")
-        assertTrue("a setting, not a start", core.overnightCalls.isEmpty())
-
-        // Back to Wait is asked too; refused, it stays.
-        authResult = dev.reins.android.platform.AuthResult.Cancelled
-        tap("overnightRisky:WAIT")
-        awaitCore { prompts.get() == 2 }
-        settle()
-        assertEquals(dev.reins.core.OvernightRisky.DENY, core.whenRisky)
-        rule.onNodeWithTag("overnightRisky:DENY").assertIsSelected()
-        assertTrue(core.overnightOwners.all { it is dev.reins.android.platform.OwnerPrompt })
-    }
-
-    @Test
-    fun withoutAModelThatRatesRiskOvernightsHelpSaysItDecidesLikeAuto() {
-        installModel()
-        openAutopilot()
-        tap("forAWhile"); tap("mode:OVERNIGHT")
-        tap("help:Overnight")
-        awaitTag("overnightHelp")
-        awaitText("Your model doesn't rate risk yet", substring = true)
-        tap("cancelOvernight")
-        awaitGone("overnightSheet")
-        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, risk = true)
-        kotlinx.coroutines.runBlocking { container.refreshAutopilot() }
-        awaitCore { container.state.autopilot.value?.model?.risk == true }
-        tap("forAWhile"); tap("mode:OVERNIGHT")
-        tap("help:Overnight")
-        awaitText("weighed by their risk", substring = true)
-    }
-
-    @Test
     fun overnightFromTheQuickMenuIsItsOwnButtonAndStopsThere() {
         installModel()
         launch()

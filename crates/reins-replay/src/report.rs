@@ -34,6 +34,9 @@ pub struct Miss {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
+    /// The same history replayed in Overnight (01 §11), with the effects engine only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overnight: Option<OvernightReport>,
     pub engine: String,
     pub policy: String,
     pub cases: usize,
@@ -73,6 +76,94 @@ pub struct Report {
     /// Routine cases asked (beyond the known false positives).
     pub routine_asks: Vec<Miss>,
     pub changed: Vec<Changed>,
+}
+
+/// Overnight on the recorded history (07 §1 P5: "≤ 3 morning decisions per agent-night"). An agent-night is one
+/// agent's requests on one (UTC) day: every recorded day is replayed as if the agent ran all of it overnight, which
+/// is stricter than a real night.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OvernightReport {
+    /// Requests parked for the morning, and how many of them were hard (decided one by one).
+    pub parks: usize,
+    pub hard_parks: usize,
+    pub agent_nights: usize,
+    pub per_agent_night_mean: f64,
+    pub per_agent_night_median: f64,
+    pub per_agent_night_p90: f64,
+    pub per_agent_night_max: usize,
+    /// Morning decisions: each hard park, plus one "Approve all" for an agent-night's soft parks.
+    pub decisions_mean: f64,
+    pub decisions_median: f64,
+    pub decisions_max: usize,
+    /// Labelled real risks (adversarial included) Overnight would run: must be 0.
+    pub real_risk_auto: usize,
+    /// Outcomes Deny without a rule: must be 0 (Overnight never denies).
+    pub denied: usize,
+}
+
+fn quantile(sorted: &[usize], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "an index within the slice")]
+    let i = ((sorted.len() - 1) as f64 * q).round() as usize;
+    #[expect(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+    let v = sorted[i] as f64;
+    v
+}
+
+fn mean(v: &[usize]) -> f64 {
+    let r = rate(v.iter().sum(), v.len());
+    (r * 100.0).round() / 100.0
+}
+
+/// Replays `corpus` in Overnight with `policy` (the effects engine).
+#[must_use]
+pub fn overnight(corpus: &Corpus, policy: &Policy) -> OvernightReport {
+    use reins_policy::matrix::{Outcome, Why};
+    let mut o = OvernightReport::default();
+    // (agent, day) → (soft parks, hard parks)
+    let mut nights: std::collections::BTreeMap<(String, i64), (usize, usize)> = std::collections::BTreeMap::new();
+    for case in &corpus.cases {
+        let a = engine::analyze(&corpus.context, case);
+        let e = engine::evaluate_with(&corpus.context, case, policy, &a, true);
+        if case.real_risk() && e.outcome == Outcome::Auto {
+            o.real_risk_auto += 1;
+        }
+        if e.outcome == Outcome::Deny && !e.why.iter().any(|w| matches!(w, Why::Rule(_))) {
+            o.denied += 1;
+        }
+        if case.tagged("adversarial") || case.at <= 0 {
+            continue;
+        }
+        let night = nights.entry((case.agent.clone().unwrap_or_default(), case.at.div_euclid(86_400))).or_default();
+        if let Outcome::Park {
+            hard,
+        } = e.outcome
+        {
+            o.parks += 1;
+            if hard {
+                o.hard_parks += 1;
+                night.1 += 1;
+            } else {
+                night.0 += 1;
+            }
+        }
+    }
+    let mut parks: Vec<usize> = nights.values().map(|(s, h)| s + h).collect();
+    let mut decisions: Vec<usize> = nights.values().map(|(s, h)| h + usize::from(*s > 0)).collect();
+    parks.sort_unstable();
+    decisions.sort_unstable();
+    o.agent_nights = nights.len();
+    o.per_agent_night_mean = mean(&parks);
+    o.per_agent_night_median = quantile(&parks, 0.5);
+    o.per_agent_night_p90 = quantile(&parks, 0.9);
+    o.per_agent_night_max = parks.last().copied().unwrap_or(0);
+    o.decisions_mean = mean(&decisions);
+    o.decisions_median = quantile(&decisions, 0.5);
+    o.decisions_max = decisions.last().copied().unwrap_or(0);
+    o
 }
 
 fn rate(n: usize, d: usize) -> f64 {
@@ -139,6 +230,7 @@ pub fn run(corpus: &Corpus, policy: &Policy, engine: EngineKind) -> Report {
     };
     if engine == EngineKind::Effects {
         r.full_certainty = Some(rate(full, r.developer_cases));
+        r.overnight = Some(overnight(corpus, policy));
     }
     if last > first {
         #[expect(clippy::cast_precision_loss, reason = "seconds in a few weeks")]
@@ -215,7 +307,13 @@ pub struct Baseline {
     /// Asks ÷ developer requests (P2 on).
     #[serde(default)]
     pub developer_ask_rate: Option<f64>,
+    /// Overnight's morning decisions per agent-night, on average (P5 on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overnight_decisions_mean: Option<f64>,
 }
+
+/// How far Overnight's mean morning decisions per agent-night may rise above the baseline's.
+pub const OVERNIGHT_SLACK: f64 = 0.05;
 
 /// How far Full certainty may fall below the baseline's (a ratchet, not a fixed bar).
 pub const FULL_CERTAINTY_SLACK: f64 = 0.005;
@@ -254,7 +352,23 @@ pub fn gate(r: &Report, baseline: Option<&Baseline>) -> Vec<String> {
     if r.known_fp_asked > 0 {
         fails.push(format!("{} known false positive(s) still asked", r.known_fp_asked));
     }
+    if let Some(o) = &r.overnight {
+        if o.real_risk_auto > 0 {
+            fails.push(format!("{} labelled risk(s) would run in Overnight", o.real_risk_auto));
+        }
+        if o.denied > 0 {
+            fails.push(format!("Overnight denied {} request(s) without a rule", o.denied));
+        }
+    }
     if let Some(b) = baseline {
+        if let (Some(o), Some(mean)) = (&r.overnight, b.overnight_decisions_mean)
+            && o.decisions_mean > mean + OVERNIGHT_SLACK + 1e-9
+        {
+            fails.push(format!(
+                "Overnight's morning decisions per agent-night rose from {mean:.2} to {:.2}",
+                o.decisions_mean
+            ));
+        }
         if r.recall < b.recall {
             fails.push(format!("recall dropped from {:.3} to {:.3}", b.recall, r.recall));
         }
@@ -335,6 +449,25 @@ pub fn text(r: &Report, verbose: bool) -> String {
         r.needs_human_asked, r.needs_human, r.routine_asked, r.routine
     );
     let _w = writeln!(s, "known false positives asked {}/{}", r.known_fp_asked, r.known_fp);
+    if let Some(o) = &r.overnight {
+        let _w = writeln!(
+            s,
+            "overnight: {} parks ({} hard) over {} agent-nights · per agent-night mean {} median {} p90 {} max {} · \
+             morning decisions mean {} median {} max {} · risks run {} · denied {}",
+            o.parks,
+            o.hard_parks,
+            o.agent_nights,
+            o.per_agent_night_mean,
+            o.per_agent_night_median,
+            o.per_agent_night_p90,
+            o.per_agent_night_max,
+            o.decisions_mean,
+            o.decisions_median,
+            o.decisions_max,
+            o.real_risk_auto,
+            o.denied
+        );
+    }
     if let Some(f) = r.full_certainty {
         let _w = writeln!(
             s,

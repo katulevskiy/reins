@@ -231,6 +231,8 @@ impl Engine {
             Some(account) => Ok(account),
             // The desktop app's own questions: the paired app is the account (its key was checked above).
             None if call.service == reins_proto::connector::DESKTOP => Ok(super::desktop::DESKTOP_ACCOUNT.to_owned()),
+            // A task is the connection's own: no integration account.
+            None if call.service == reins_proto::connector::TASKS => Ok(super::tasks::TASKS_ACCOUNT.to_owned()),
             None => self.resolve_service_account(&call.service, named.as_deref()),
         };
         request.account = match resolved {
@@ -259,6 +261,37 @@ impl Engine {
                 action_of(call),
                 "revoked",
                 &format!("ended a work session ({ended} permission(s))"),
+                None,
+                &[],
+            );
+            return self
+                .finish_authorized(
+                    session,
+                    &request,
+                    audit,
+                    RelayOutcome::Result {
+                        result: ToolResult::Connector {
+                            data: serde_json::json!({"ended": ended}),
+                        },
+                    },
+                    AuthorizedResponse {
+                        source: AuthorizationSource::Automatic,
+                        effect: ResponseEffect::Succeeded,
+                        settle_pending: false,
+                    },
+                )
+                .await;
+        }
+
+        // Ending a task only takes away: done at once, never asked (only the agent's own connection's task).
+        if call.service == reins_proto::connector::TASKS && reins_proto::connector::tasks::ends(&call.op) {
+            let ended = self.end_task_of(&request.connection_id.0, call.str_arg("task").unwrap_or_default())?;
+            let audit = self.audit_connector(
+                &request,
+                call,
+                action_of(call),
+                "revoked",
+                &format!("ended {ended} task(s)"),
                 None,
                 &[],
             );
@@ -625,6 +658,19 @@ impl Engine {
         {
             return Err(CoreError::invalid("Only you approve a change of Autopilot asked from a computer."));
         }
+        // A task loosens policy: only the owner's own approval starts one, never an automatic decision.
+        if crate::autopilot::desktop::owners_alone(&call.service, &call.op)
+            && source != AuthorizationSource::OwnerReview
+        {
+            return Err(CoreError::invalid("Only you approve a task."));
+        }
+        // ... and only from its card (`approve_task`), which asks the owner check first (02 §5: loosening is confirmed).
+        if call.service == reins_proto::connector::TASKS
+            && reins_proto::connector::tasks::proposes(&call.op)
+            && !self.ap_task_checked(request_id)?
+        {
+            return Err(CoreError::invalid("Approve a task from its card: it asks for your confirmation first."));
+        }
 
         if effect == Effect::Write && held.purchase.is_some() {
             if choice.standing.is_some() {
@@ -670,28 +716,39 @@ impl Engine {
             };
             // The action happens first. After invocation, even an ambiguous failure settles this request rather
             // than leaving a blind retry. A work session's action is creating its grants.
-            let attempt =
-                if call.service == reins_proto::connector::DESKTOP && call.op == reins_proto::connector::SESSION_OP {
-                    let plan = crate::work_session::plan(call)?;
-                    AuthorizationInvocation::new(request, source).begin(self)?;
-                    let trace = self.authorization_attempt_started(request, source)?;
-                    WriteAttempt {
-                        result: self.start_work_session(&request.connection_id, &parked.label(), &plan, now),
-                        trace,
-                        disclosure_error: None,
-                    }
-                } else if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
-                    // Read again from the call as the owner approved it, and applied now.
-                    AuthorizationInvocation::new(request, source).begin(self)?;
-                    let trace = self.authorization_attempt_started(request, source)?;
-                    WriteAttempt {
-                        result: self.apply_desktop_autopilot(&request.connection_id.0, call).await,
-                        trace,
-                        disclosure_error: None,
-                    }
-                } else {
-                    self.perform_write(request, connector.as_ref(), &account, call, granted_command, source).await?
-                };
+            let attempt = if call.service == reins_proto::connector::DESKTOP
+                && call.op == reins_proto::connector::SESSION_OP
+            {
+                let plan = crate::work_session::plan(call)?;
+                AuthorizationInvocation::new(request, source).begin(self)?;
+                let trace = self.authorization_attempt_started(request, source)?;
+                WriteAttempt {
+                    result: self.start_work_session(&request.connection_id, &parked.label(), &plan, now),
+                    trace,
+                    disclosure_error: None,
+                }
+            } else if call.service == reins_proto::connector::TASKS && reins_proto::connector::tasks::proposes(&call.op)
+            {
+                // The task as the owner approved it (narrowed, or as asked), applied now.
+                AuthorizationInvocation::new(request, source).begin(self)?;
+                let trace = self.authorization_attempt_started(request, source)?;
+                WriteAttempt {
+                    result: self.ap_task_from_request(request, &parked.label(), call),
+                    trace,
+                    disclosure_error: None,
+                }
+            } else if crate::autopilot::desktop::owner_only(&call.service, &call.op) {
+                // Read again from the call as the owner approved it, and applied now.
+                AuthorizationInvocation::new(request, source).begin(self)?;
+                let trace = self.authorization_attempt_started(request, source)?;
+                WriteAttempt {
+                    result: self.apply_desktop_autopilot(&request.connection_id.0, call).await,
+                    trace,
+                    disclosure_error: None,
+                }
+            } else {
+                self.perform_write(request, connector.as_ref(), &account, call, granted_command, source).await?
+            };
             let data = match attempt.result {
                 Ok(data) => data,
                 Err(error) => {

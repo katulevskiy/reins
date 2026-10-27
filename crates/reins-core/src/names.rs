@@ -244,6 +244,11 @@ mod tests {
         let mut item = PendingItem {
             ticket: None,
             can_defer: false,
+            parked_until: None,
+            task_id: None,
+            task_title: None,
+            batchable: false,
+            task_proposal: None,
             kind: crate::types::PendingKind::Request,
             id: "r1".to_owned(),
             title: "Claude wants to read 2 emails".to_owned(),

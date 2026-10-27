@@ -286,12 +286,12 @@ private fun RunningLine(kind: TimedKind, until: Long, since: Long?, s: Autopilot
         }
         return
     }
-    // Overnight's "Too risky" choice sits under the field (Autopilot 03), so the field keeps to its clock.
+    // Overnight's line sits under the field (Autopilot 03), so the field keeps to its clock.
     if (kind == TimedKind.Overnight && !AutopilotText.isUntilOff(until)) return
     val text = when {
         AutopilotText.isUntilOff(until) -> AutopilotText.runningLine(kind.mode, until, since, now)
         kind == TimedKind.Bypass -> AutopilotText.BYPASS_STILL_ASKS
-        else -> AutopilotText.overnightStillAsks(s.overnightWhenRisky)
+        else -> AutopilotText.OVERNIGHT_STILL_ASKS
     }
     RText(text, RType.sans(14.5f), color, Modifier.testTag(kind.tag("Line")), maxLines = 2)
 }
@@ -555,9 +555,8 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
     OvernightSheets(
         sheets.overnight,
         who = null,
-        risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-        ratesRisk = model?.risk == true,
-        onRisky = @DontMemoize { viewModel.setOvernightWhenRisky(it, authenticator) },
+        expiryHours = settings?.overnightExpiryHours ?: AutopilotText.DEFAULT_EXPIRY_HOURS,
+        onExpiry = @DontMemoize { viewModel.setOvernightExpiry(it) },
         onStart = @DontMemoize { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
         onClose = @DontMemoize { sheets.overnight = false },
     )

@@ -31,11 +31,17 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             // "Autopilot has still to decide") gives way to the ask itself.
             self.withdraw(item.id, keeping: item.id)
             guard let model else { return }
+            // Parked by Overnight for the morning: no notification and no chime now; the morning digest says it.
+            let parked = OvernightDigestNotice.isParked(item, now: Int64(Date().timeIntervalSince1970))
             if model.isActive {
                 await model.refreshPending()
                 // The chime still sounds (once per request and per burst), for a phone left open on the desk; a
                 // ticket (nobody waits on it) and news about one arrive quietly.
-                model.feedback.requestArrived(item.id, needsUser: item.ticket == nil)
+                model.feedback.requestArrived(item.id, needsUser: item.ticket == nil && !parked)
+                return
+            }
+            if parked {
+                await model.refreshPending()
                 return
             }
             // Posted before the refresh: in the background the app may be suspended any moment, and the notification

@@ -452,6 +452,18 @@ impl Engine {
             item.wait_until = Some(ticket.deadline);
         }
         item.can_defer = item.ticket.is_none();
+        self.ap_fill_item(&mut item);
+        if let ToolCall::Connector(call) = &parked.request.call
+            && call.service == reins_proto::connector::TASKS
+            && reins_proto::connector::tasks::proposes(&call.op)
+        {
+            item.task_proposal = self.task_proposal_view(
+                &parked.request.connection_id.0,
+                &item.connection_label,
+                call,
+                parked.request.created_at,
+            );
+        }
         item
     }
 

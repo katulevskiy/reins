@@ -17,6 +17,7 @@ import dev.reins.android.feedback.FeedbackStore
 import dev.reins.android.platform.AppNotifier
 import dev.reins.android.platform.BypassEndWorker
 import dev.reins.android.platform.GrantReminders
+import dev.reins.android.platform.OvernightDigest
 import dev.reins.android.platform.TicketReminders
 import dev.reins.android.platform.FirebaseSupport
 import dev.reins.android.platform.GoogleAuthorizer
@@ -465,6 +466,10 @@ class AppContainer(private val context: Context) {
                         null
                     }
                 }
+                // Tasks, for Activity's chips; and what Overnight parked, for the one morning summary. A failed read keeps
+                // what is shown (and the summary as it was planned).
+                val tasks = async { readOrNull { core.tasks() } }
+                val digest = async { readOrNull { Read(core.overnightDigest()) } }
                 val loaded = grants.await()
                 if (!state.isCurrent(epoch)) return@coroutineScope
                 val waiting = pending.await()
@@ -479,11 +484,14 @@ class AppContainer(private val context: Context) {
                 state.markLoaded()
                 state.setStartingPolicy(starting.await())
                 questions.await()?.let(state::setAutoQuestions)
+                tasks.await()?.let(state::setTasks)
+                val morning = digest.await()
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
                     if (state.isCurrent(epoch)) {
                         GrantReminders.sync(context, loaded, profile)
                         TicketReminders.sync(context, waiting, profile)
+                        morning?.let { OvernightDigest.sync(context, it.value) }
                     }
                 }
             }
@@ -493,6 +501,24 @@ class AppContainer(private val context: Context) {
         // A Keystore decrypt behind it: never on the main thread.
         val replaced = withContext(Dispatchers.IO) { deviceStatus.isReplaced() }
         if (state.isCurrent(epoch)) state.setDeviceReplaced(replaced)
+    }
+
+    /** A value read, null included (a read that failed is no [Read] at all). */
+    private class Read<T>(val value: T)
+
+    private suspend fun <T> readOrNull(read: suspend () -> T): T? = try {
+        read()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Re-reads the tasks after Stop or an approved proposal (Activity's chips). */
+    suspend fun refreshTasks() {
+        val epoch = state.accountEpoch.value
+        val tasks = readOrNull { core.tasks() } ?: return
+        if (state.isCurrent(epoch)) state.setTasks(tasks)
     }
 
     /**
@@ -739,6 +765,7 @@ class AppContainer(private val context: Context) {
             deviceStatus.clear()
             GrantReminders.sync(context, emptyList(), profile)
             TicketReminders.sync(context, emptyList(), profile)
+            OvernightDigest.sync(context, null)
             BypassEndWorker.schedule(context, null)
             notifier.showBypass(null)
             notifier.showOvernight(null)

@@ -2,6 +2,8 @@ package dev.reins.android.ui
 
 import dev.reins.android.TestData
 import dev.reins.android.ui.activity.batchGroups
+import dev.reins.android.ui.activity.parked
+import dev.reins.android.ui.activity.taskProposals
 import dev.reins.android.ui.activity.dueIn
 import dev.reins.android.ui.activity.inboxByAgent
 import dev.reins.android.ui.activity.reminderTimes
@@ -118,5 +120,69 @@ class TicketLogicTest {
         assertEquals(listOf("ok"), group.allowIds)
         assertEquals(listOf("ok", "why", "stale", "moved"), group.denyIds)
         assertEquals(listOf("ok"), group.burst.quick)
+    }
+
+    // ---- Overnight v2 and tasks (Decisions v2 P5) ------------------------------------------------------------------
+
+    @Test
+    fun `the inbox groups one agent's requests by task, and Approve all counts only the batchable ones`() {
+        val pending = listOf(
+            TestData.pending("a1", taskId = "t1", taskTitle = "Fix CI", batchable = true, ticket = TestData.ticket("a1", left = 600)),
+            TestData.pending("a2", taskId = "t1", taskTitle = "Fix CI", batchable = true, ticket = TestData.ticket("a2", left = 900)),
+            TestData.pending("hard", taskId = "t1", taskTitle = "Fix CI", ticket = TestData.ticket("hard", left = 1_200)),
+            TestData.pending("loose", batchable = true, ticket = TestData.ticket("loose", left = 3_600)),
+            TestData.pending("other", label = "Codex", conn = "c2", taskId = "t9", ticket = TestData.ticket("other", left = 7_200)),
+        )
+        val groups = inboxByAgent(pending)
+        assertEquals(listOf("c1:t1", "c1", "c2:t9"), groups.map { it.key })
+        val task = groups[0]
+        assertEquals("t1", task.taskId)
+        assertEquals("Fix CI", task.taskTitle)
+        assertEquals(listOf("a1", "a2", "hard"), task.items.map { it.id })
+        assertEquals("hard ones are answered one by one", listOf("a1", "a2"), task.batchable.map { it.id })
+        assertEquals("under no task", null, groups[1].taskId)
+        assertEquals(listOf("loose"), groups[1].batchable.map { it.id })
+        assertTrue(groups[2].batchable.isEmpty())
+    }
+
+    @Test
+    fun `kind groups stay within one task`() {
+        val pending = listOf(
+            TestData.pending("s1", "send", taskId = "t1", ticket = TestData.ticket("s1")),
+            TestData.pending("s2", "send", taskId = "t1", ticket = TestData.ticket("s2")),
+            TestData.pending("s3", "send", ticket = TestData.ticket("s3")),
+        )
+        val group = batchGroups(pending).single()
+        assertEquals(listOf("s1", "s2"), group.items.map { it.id })
+        assertEquals("c1:t1:gmail/send/", group.key)
+    }
+
+    @Test
+    fun `what Overnight parked waits in the inbox, even before its ticket, and never on the stack`() {
+        val morning = now + 6 * 3_600
+        val pending = listOf(
+            TestData.pending("parked", parkedUntil = morning, ticket = TestData.ticket("parked", left = morning - now + 12 * 3_600)),
+            TestData.pending("noTicket", parkedUntil = morning),
+            TestData.pending("instant"),
+        )
+        assertEquals(listOf("noTicket", "parked"), waitingInbox(pending).map { it.id })
+        assertTrue(pending[0].parked(now))
+        assertTrue("the morning came", !pending[0].parked(morning))
+        assertEquals(listOf("instant"), waitCards(pending).map { (it as WaitCard.One).item.id })
+    }
+
+    @Test
+    fun `a task proposal is neither in the inbox nor on the stack`() {
+        val proposal = TestData.pending("p1", taskProposal = TestData.task(id = ""), ticket = TestData.ticket("p1"))
+        assertTrue(waitingInbox(listOf(proposal)).isEmpty())
+        assertTrue(waitCards(listOf(proposal)).isEmpty())
+        assertEquals(listOf("p1"), taskProposals(listOf(proposal, TestData.pending("r1"))).map { it.id })
+    }
+
+    @Test
+    fun `a parked ticket reminds only after the morning`() {
+        val morning = now + 6 * 3_600
+        val t = TestData.ticket("t", left = morning - now + 10_000, age = 0, now = now)
+        assertEquals(listOf(morning + 5_000, morning + 9_000), reminderTimes(t, parkedUntil = morning))
     }
 }

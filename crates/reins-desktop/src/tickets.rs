@@ -502,7 +502,13 @@ pub fn within(secs: i64) -> String {
 
 /// What a hook tells the agent about a question parked for review.
 #[must_use]
-pub fn parked_hook_message(ticket: &str, expected_by: i64, now: i64) -> String {
+pub fn parked_hook_message(ticket: &str, expected_by: i64, now: i64, until_morning: bool) -> String {
+    if until_morning {
+        return format!(
+            "Parked until morning (ticket {ticket}). Continue with other work; when it's approved, re-run this exact \
+             command."
+        );
+    }
     let when = if expected_by > now {
         format!(", expected within {}", within(expected_by - now))
     } else {
@@ -1202,9 +1208,13 @@ mod tests {
         assert_eq!(within(0), "1 min");
         assert_eq!(within(7 * 86_400), "7 d");
         assert_eq!(
-            parked_hook_message("rt_a", 1_000 + 14_400, 1_000),
+            parked_hook_message("rt_a", 1_000 + 14_400, 1_000, false),
             "Parked for review (ticket rt_a, expected within 4 h). Continue with other work; when it's approved, \
              re-run this exact command."
+        );
+        assert_eq!(
+            parked_hook_message("rt_a", 1_000 + 72_000, 1_000, true),
+            "Parked until morning (ticket rt_a). Continue with other work; when it's approved, re-run this exact command."
         );
     }
 

@@ -145,8 +145,15 @@ pub async fn ticket_body(id: &RequestId, connection: &str, wait: Duration, peek:
     let view = super::tickets::agent_wait(&id.0, connection, wait, !peek, pool).await?;
     let ticket = reins_proto::ticket::ticket_of(id);
     let waiting = |row: &crate::db::models::ReinsTicket| {
-        json!({"request_id": id.0, "status": "deferred", "ticket": ticket, "expected_by": row.deadline,
-               "state": row.state})
+        let mut body = json!({"request_id": id.0, "status": "deferred", "ticket": ticket, "expected_by": row.deadline,
+               "state": row.state});
+        // The phone's note on a park ("Parked until morning"), never a reviewer's note to a denial (that's an answer).
+        if let Some(note) =
+            row.note.as_deref().filter(|_| row.state == reins_proto::ticket::TicketState::Deferred.as_str())
+        {
+            body["note"] = json!(note);
+        }
+        body
     };
     Some(match view {
         AgentView::Open(row) | AgentView::Approved(row) => waiting(&row),

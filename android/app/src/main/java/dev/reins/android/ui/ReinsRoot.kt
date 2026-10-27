@@ -295,9 +295,8 @@ private fun SignedInContent(
             OvernightSheets(
                 timedSheet == AutopilotMode.OVERNIGHT,
                 who = null,
-                risky = apSettings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-                ratesRisk = (apUi.model ?: apSettings?.model)?.risk == true,
-                onRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
+                expiryHours = apSettings?.overnightExpiryHours ?: AutopilotText.DEFAULT_EXPIRY_HOURS,
+                onExpiry = { autopilot.setOvernightExpiry(it) },
                 onStart = { minutes -> autopilot.startOvernight(minutes, authenticator = authenticator) },
                 onClose = { timedSheet = null },
             )
@@ -387,6 +386,16 @@ private fun TabContent(
             },
             onDismissQuestion = { q ->
                 questionScope.launch { dev.reins.android.ui.activity.dismissQuestion(container, q)?.let(app::showNotice) }
+            },
+            onApproveTask = { item, draft ->
+                questionScope.launch { dev.reins.android.ui.activity.approveTaskProposal(container, authenticator, item, draft)?.let(app::showNotice) }
+            },
+            onDenyTask = { item -> dev.reins.android.ui.activity.denyTaskProposal(container, item) },
+            onStopTask = { task ->
+                questionScope.launch { dev.reins.android.ui.activity.stopTask(container, task)?.let(app::showNotice) }
+            },
+            onApproveAll = { group ->
+                questionScope.launch { dev.reins.android.ui.activity.approveAllForTask(container, authenticator, group)?.let(app::showNotice) }
             },
             onConnectComputer = { app.open(Route.ConnectComputer) },
             onOpenSettings = { app.selectTab(Tab.Settings) },

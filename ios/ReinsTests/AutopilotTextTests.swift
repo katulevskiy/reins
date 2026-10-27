@@ -11,7 +11,7 @@ final class AutopilotTextTests: XCTestCase {
 
     private func settings(bypass: Int64? = nil, since: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
         AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, bypassSince: since,
-                          overnightWhenRisky: .wait, defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
+                          defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
     }
 
     private func connection(_ id: String, until: Int64?, since: Int64? = nil, profile: String = "personal") -> ConnectionAutopilot {
@@ -309,13 +309,13 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual(AutopilotText.name(key: "overnight"), AutopilotText.overnightName)
         XCTAssertEqual(AutopilotText.key(.overnight), "overnight")
         XCTAssertEqual(AutopilotText.symbol(.overnight), "moon.stars.fill")
-        XCTAssertEqual(AutopilotText.line(.overnight), "Holds what is too risky")
+        XCTAssertEqual(AutopilotText.line(.overnight), "Parks what it would ask")
         XCTAssertTrue(AutopilotText.needsModel(.overnight), "it decides like Auto")
         XCTAssertEqual(AutopilotText.overnightMinutes.map { AutopilotText.lengthLabel(minutes: $0) }, ["4 hours", "8 hours", "12 hours"])
         XCTAssertEqual(AutopilotText.overnightTitle(until: 1_000 + 5 * 3_600, now: 1_000), "Overnight on · 5 h left")
-        XCTAssertEqual(AutopilotText.overnightLine(until: 9_000, since: 1_000, now: 1_000), "Holds what is too risky")
+        XCTAssertEqual(AutopilotText.overnightLine(until: 9_000, since: 1_000, now: 1_000), "Parks what it would ask")
         XCTAssertEqual(AutopilotText.overnightLine(until: AutopilotText.untilOff, since: 1_000, now: 1_720), "On until you stop it · 12 min so far")
-        XCTAssertEqual(AutopilotText.overnightText(scope: "every AI"), "For every AI. Holds what is too risky.")
+        XCTAssertEqual(AutopilotText.overnightText(scope: "every AI"), "For every AI. Parks what it would ask.")
     }
 
     func testOvernightSitsBetweenAutoAndBypassAndFeelsSo() {
@@ -327,11 +327,17 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertLessThan(AutopilotText.autonomy(.overnight), AutopilotText.autonomy(.bypass))
     }
 
-    func testOvernightsHelpSaysItDecidesLikeAutoWithoutARiskModel() {
-        XCTAssertEqual(AutopilotText.overnightHelpText(riskRated: false), "This model does not rate risk, so Overnight decides like Auto.")
-        XCTAssertTrue(AutopilotText.overnightHelpText(riskRated: true).contains("catastrophic"))
+    func testOvernightsHelpSaysItParksAndNeverDenies() {
+        XCTAssertTrue(AutopilotText.overnightHelpText(riskRated: false).hasSuffix("This model does not rate risk, so Overnight decides like Auto."))
+        let help = AutopilotText.overnightHelpText(riskRated: true)
+        XCTAssertTrue(help.contains("parked"))
+        XCTAssertTrue(help.contains("Nothing is denied unless a rule of yours says so"))
+        XCTAssertFalse(help.contains("is denied."), "Overnight never denies by itself")
         XCTAssertTrue(AutopilotText.modeHelp.contains(AutopilotText.overnightName))
-        XCTAssertEqual([AutopilotText.whenRiskyWait, AutopilotText.whenRiskyDeny], ["Wait for me", "Deny it"])
+        XCTAssertFalse(AutopilotText.modeHelp.contains("too risky"))
+        XCTAssertEqual(AutopilotText.overnightExpiryTitle, "Expires after")
+        XCTAssertEqual(AutopilotText.overnightExpiryHours.map { AutopilotText.expiryLabel(hours: $0) }, ["6 h", "12 h", "24 h"])
+        XCTAssertEqual(AutopilotText.parkedWord, "Parked")
     }
 
     func testTheRiskReadsAsItsLevelAndWhy() {

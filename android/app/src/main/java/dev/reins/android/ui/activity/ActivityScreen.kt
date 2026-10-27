@@ -169,6 +169,13 @@ fun ActivityScreen(
     /** "Auto needs information": an answer (the owner check first unless Outside), or a dismiss. */
     onAnswerQuestion: (dev.reins.core.AutoQuestion, dev.reins.core.ZoneChoice) -> Unit = { _, _ -> },
     onDismissQuestion: (dev.reins.core.AutoQuestion) -> Unit = {},
+    /** A task proposal approved as narrowed (the owner check first), or denied. */
+    onApproveTask: (PendingItem, dev.reins.core.TaskView) -> Unit = { _, _ -> },
+    onDenyTask: (PendingItem) -> Unit = {},
+    /** A live task's Stop. */
+    onStopTask: (dev.reins.core.TaskView) -> Unit = {},
+    /** "Approve all" for one agent's task under Waiting for you. */
+    onApproveAll: (AgentTickets) -> Unit = {},
 ) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
@@ -176,6 +183,7 @@ fun ActivityScreen(
     val entries by state.activity.collectAsStateWithLifecycle()
     val pending by state.pending.collectAsStateWithLifecycle()
     val questions by state.autoQuestions.collectAsStateWithLifecycle()
+    val tasks by state.tasks.collectAsStateWithLifecycle()
     val loaded by state.loaded.collectAsStateWithLifecycle()
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
@@ -193,8 +201,9 @@ fun ActivityScreen(
     val searching = search.searching
     val details = rememberPendingDetails(container, pending, entries)
     val cards = remember(pending) { waitCards(pending) }
-    // Requests that became tickets wait in their own section above Today (Decisions v2).
-    val tickets = remember(pending) { pending.filter { it.ticket != null } }
+    // Requests that became tickets, and what Overnight parked, wait in their own section above Today (Decisions v2).
+    val tickets = remember(pending) { pending.filter { it.inInbox() } }
+    val proposals = remember(pending) { taskProposals(pending) }
     val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
     val zone = ZoneId.systemDefault()
     val today = localDay(nowSeconds, zone)
@@ -383,6 +392,15 @@ fun ActivityScreen(
                         else -> 70.dp
                     }
                     Column(Modifier.padding(top = open)) {
+                        // Tasks: the live ones with Stop, then what ended today; then what an agent proposes.
+                        if (tasks.isNotEmpty()) {
+                            TaskChips(tasks, nowSeconds, onStopTask)
+                            Spacer(Modifier.height(12.dp))
+                        }
+                        if (proposals.isNotEmpty()) {
+                            TaskProposalCards(proposals, onApproveTask, onDenyTask)
+                            Spacer(Modifier.height(12.dp))
+                        }
                         WaitingStack(
                             cards,
                             details,
@@ -421,6 +439,7 @@ fun ActivityScreen(
                                 }
                             },
                             modifier = Modifier.padding(bottom = 10.dp),
+                            onApproveAll = onApproveAll,
                         )
                     }
                 }

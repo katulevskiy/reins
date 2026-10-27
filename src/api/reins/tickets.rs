@@ -574,12 +574,15 @@ pub async fn apply_signed(
             TicketState::Approved => {
                 next.approved_at = Some(now);
                 next.question = None;
+                next.note = None;
             }
             TicketState::Deferred => {
                 let secs = deferred_window(window);
                 next.window_secs = i64::try_from(secs).unwrap_or(i64::MAX);
                 next.deferred_at = now;
                 next.deadline = now.saturating_add(next.window_secs);
+                // The phone's own words about the park ("Parked until morning": Overnight), signed with the event.
+                next.note = e.note.as_deref().and_then(|n| ticket::clean_text(n, ticket::MAX_NOTE_CHARS));
                 if let Some(on_expiry) = on_expiry {
                     on_expiry.as_str().clone_into(&mut next.on_expiry);
                 }
@@ -773,8 +776,13 @@ pub fn pending_review(row: &ReinsTicket, summary: Option<&str>) -> Value {
         "next": "Continue with other work. Call reins_get_result with this ticket later, or reins_wait to block up to \
     10 minutes. Do not call the tool again: that would ask a second time."
     });
-    if let Some(summary) = summary {
-        out["summary"] = json!(format!("{summary} \u{2014} waiting for review"));
+    // Parked by the phone with a note (Overnight: "Parked until morning"): the agent is told that.
+    let parked = row.note.as_deref().filter(|_| row.state == TicketState::Deferred.as_str());
+    match (summary, parked) {
+        (Some(summary), Some(note)) => out["summary"] = json!(format!("{summary} \u{2014} {}", note.to_lowercase())),
+        (Some(summary), None) => out["summary"] = json!(format!("{summary} \u{2014} waiting for review")),
+        (None, Some(note)) => out["summary"] = json!(note),
+        (None, None) => {}
     }
     out
 }
@@ -1031,6 +1039,23 @@ mod tests {
         forged = signed;
         forged.sig = "x".to_owned();
         assert!(!verify(&forged, &key));
+    }
+
+    #[cfg(sqlite)]
+    #[test]
+    fn a_phone_note_names_the_parking() {
+        let mut row = crate::db::models::test_ticket("r1", "c1", "deferred", 4_000_000_000);
+        row.note = Some("Parked until morning".to_owned());
+        let v = pending_review(&row, Some("Send email to ann@acme.io"));
+        assert_eq!(v["summary"], "Send email to ann@acme.io \u{2014} parked until morning");
+        assert_eq!(pending_review(&row, None)["summary"], "Parked until morning");
+        assert_eq!(status_value(&row)["note"], "Parked until morning");
+        // Without a note, or once it isn't parked any more, the usual words.
+        row.note = None;
+        assert_eq!(pending_review(&row, Some("Send")).get("summary").unwrap(), "Send \u{2014} waiting for review");
+        row.note = Some("Parked until morning".to_owned());
+        "denied".clone_into(&mut row.state);
+        assert_eq!(pending_review(&row, Some("Send"))["summary"], "Send \u{2014} waiting for review");
     }
 
     #[test]

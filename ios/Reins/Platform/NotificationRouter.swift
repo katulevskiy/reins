@@ -30,10 +30,12 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             GrantReminders.sync(list, profile: WorkProfiles.active)
         }
         let pending = model.onPendingChanged
-        model.onPendingChanged = { [weak self] list in
+        model.onPendingChanged = { [weak self, weak model] list in
             pending?(list)
             self?.dropStale(keeping: Set(list.map(\.id)))
             TicketReminders.sync(list)
+            // Overnight's one morning note: planned again from the core's digest whenever what waits changes.
+            if let core = model?.core { Task { await OvernightDigestNotice.sync(core) } }
         }
         let signedIn = model.onSignedIn
         // The `-demo` build asks only when told to (`-askNotifications`): the prompt would cover every screenshot.

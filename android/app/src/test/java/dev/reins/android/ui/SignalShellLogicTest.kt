@@ -145,7 +145,6 @@ class SignalShellLogicTest {
         baseMode = AutopilotMode.MANUAL,
         bypassUntil = null,
         bypassSince = null,
-        overnightWhenRisky = dev.reins.core.OvernightRisky.WAIT,
         defaultProfileId = "personal",
         wifiOnly = true,
         model = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED),

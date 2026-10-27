@@ -273,7 +273,7 @@ async fn ask(
             }
             eprintln!(
                 "{} `reins wait {}` waits for it; then ask again.",
-                crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now)
+                crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now, parked.until_morning)
                     .replace("re-run this exact command", "ask this exact question again"),
                 parked.ticket
             );

@@ -13,8 +13,8 @@ use zeroize::Zeroizing;
 
 use crate::autopilot::{
     AutoQuestion, AutoSetup, AutopilotMode, AutopilotSettings, AutopilotStats, CellChoice, DownloadProgress,
-    FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightRisky, Preset, ProfileView, SuggestionView,
-    ThresholdReplay, Verdict, ZoneChoice,
+    FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightDigest, Preset, ProfileView, SuggestionView,
+    TaskView, ThresholdReplay, Verdict, ZoneChoice,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -1971,11 +1971,11 @@ impl ReinsCore {
 
     /// Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
     /// minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
-    /// `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
-    /// of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
-    /// held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
-    /// its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
-    /// rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
+    /// `i64::MAX`). It is Auto while the owner is away (Decisions v2, 01 §11): what Auto would ask is parked for the
+    /// morning (a ticket; the agent carries on), Work and Outside people always wait, the owner's own L1 work runs, and
+    /// nothing is ever denied but by an explicit rule; what already waits is judged too. Its end is the morning of the
+    /// digest (`overnight_digest`); then it returns to the mode it interrupted; stop it earlier with
+    /// `set_autopilot_mode`. Until Auto's setup is done it decides as before, minus any deny. Every start, restart or change of its length asks `owner` first (the core asks
     /// it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
     pub async fn start_overnight(
         &self,
@@ -1997,11 +1997,98 @@ impl ReinsCore {
         .await
     }
 
-    /// What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
-    /// A change either way asks `owner` first.
-    pub async fn set_overnight_when_risky(
+    /// How long what Overnight parks waits past the morning before it expires, not approved (1 to 48 hours).
+    pub async fn set_overnight_expiry(&self, hours: u32) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_overnight_expiry(hours) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The morning digest of what Overnight parked and still waits, grouped by agent and task (`None`: nothing waits).
+    /// The app shows it as one notification at `at`, and on Activity when opened.
+    pub async fn overnight_digest(&self) -> Result<Option<OvernightDigest>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.overnight_digest() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Approve all" for one agent's parked requests under one task (`task_id` = `None`: under none). Only what is
+    /// soft and below L3 is approved; the rest stays for the owner one by one. Returns how many were approved.
+    pub async fn approve_all(&self, connection_id: String, task_id: Option<String>) -> Result<u32, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.approve_all(&connection_id, task_id.as_deref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Live tasks, then those that ended in the last day (with what ran under them).
+    pub async fn tasks(&self) -> Result<Vec<TaskView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.tasks() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The owner starts a task for one AI (`draft.connection_id`), from Activity or with Overnight
+    /// (`draft.started_by` = "overnight"); its length is `ends_at - started_at`. Asks `owner` first: a task loosens.
+    pub async fn start_task(&self, draft: TaskView, owner: Arc<dyn OwnerCheck>) -> Result<TaskView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.start_task(draft, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Stop: ends a task now. It only takes away, so nothing is asked.
+    pub async fn end_task(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.end_task(&id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Approves an agent's task proposal (`request_id`) as the owner narrowed it (`draft`: every list a subset, the
+    /// ceiling, length and budget no higher). Asks `owner` first: a task loosens.
+    pub async fn approve_task(
         &self,
-        risky: OvernightRisky,
+        request_id: String,
+        draft: TaskView,
         owner: Arc<dyn OwnerCheck>,
     ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
@@ -2011,7 +2098,7 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result =
-                engine.run_account(async { engine.set_overnight_when_risky(risky, owner.as_ref()).await }).await;
+                engine.run_account(async { engine.approve_task(&request_id, draft, owner.as_ref()).await }).await;
             runtime.finish(&engine, result)
         })
         .await

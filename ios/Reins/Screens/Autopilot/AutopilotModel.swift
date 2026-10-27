@@ -269,15 +269,16 @@ final class AutopilotModel {
         }
     }
 
-    /// What Overnight does with what it rates too risky: waits for the user, or denies it. A change either way is the
-    /// owner's to make: the core asks for the check itself, and it shows once confirmed.
-    func setOvernightWhenRisky(_ risky: OvernightRisky) async {
-        guard let app, settings?.overnightWhenRisky != risky else { return }
-        let changed = await run {
-            try await app.core.setOvernightWhenRisky(risky: risky, owner: app.ownerCheck)
+    /// How long what Overnight parks waits after the morning (1 to 48 hours). It is not a loosening (an expired item
+    /// is not approved), so no owner check; shown at once, and put back if the core refuses.
+    func setOvernightExpiry(_ hours: UInt32) async {
+        guard let app, settings?.overnightExpiryHours != hours else { return }
+        app.feedback.play(.selection)
+        app.patchAutopilot { $0.overnightExpiryHours = hours }
+        await run {
+            try await app.core.setOvernightExpiry(hours: hours)
             await app.refreshAutopilot()
         }
-        if changed { app.feedback.play(.selection) }
     }
 
     /// Ends the global Lockdown: back to the mode picked before it, or Manual.

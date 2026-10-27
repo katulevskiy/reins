@@ -227,6 +227,8 @@ pub struct Parked {
     pub ticket: String,
     pub nonce: String,
     pub expected_by: i64,
+    /// Overnight parked it for the morning.
+    pub until_morning: bool,
 }
 
 impl Parked {
@@ -493,6 +495,7 @@ pub async fn ask_phone_ticketed(
             CallStatus::Deferred {
                 ticket,
                 expected_by,
+                parked_until_morning,
                 ..
             } => {
                 log::info!("{ASK_TOOL}: request {request_id} parked for review as {ticket}");
@@ -500,6 +503,7 @@ pub async fn ask_phone_ticketed(
                     ticket,
                     nonce,
                     expected_by,
+                    until_morning: parked_until_morning,
                 };
                 // Without a digest no later approval can be bound to this question: not approved now, and no ticket.
                 return if ticketing.is_some() {

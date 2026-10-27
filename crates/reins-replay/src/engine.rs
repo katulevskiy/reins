@@ -210,6 +210,12 @@ pub fn facts(ctx: &Context, policy: &Policy) -> Facts {
 /// What the matrix says of a case.
 #[must_use]
 pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Evaluation {
+    evaluate_with(ctx, case, policy, a, false)
+}
+
+/// What the matrix says of a case, in Overnight (`overnight`) or not.
+#[must_use]
+pub fn evaluate_with(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis, overnight: bool) -> Evaluation {
     let mut snap = policy.snapshot.clone();
     snap.facts = facts(ctx, policy);
     let base = base_repo(ctx, case);
@@ -229,6 +235,7 @@ pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Ev
             connection: case.agent.as_deref().unwrap_or_default(),
             seen_resource: false,
             now: case.at,
+            overnight,
         },
         &snap,
     )

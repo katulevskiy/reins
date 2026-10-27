@@ -122,4 +122,94 @@ final class TicketInboxTests: XCTestCase {
         XCTAssertEqual(AskGate.next(pending, presented: [])?.id, "i")
         XCTAssertNil(AskGate.next([item("t", deadline: now + 60)], presented: []))
     }
+
+    // MARK: Overnight's parks and tasks (Decisions v2 P5)
+
+    private func parked(
+        _ id: String, conn: String = "c1", label: String = "Claude", task: String? = nil, title: String? = nil, batchable: Bool = true,
+        deadline: Int64? = nil, until: Int64? = nil, created: Int64 = 0
+    ) -> PendingItem {
+        var i = item(id, conn: conn, label: label, deadline: deadline, created: created)
+        i.parkedUntil = until ?? now + 6 * 3_600
+        i.taskId = task
+        i.taskTitle = title
+        i.batchable = batchable
+        return i
+    }
+
+    func testTheInboxGroupsByAgentAndTask() {
+        let pending = [
+            parked("a1", task: "t1", title: "Fix CI", deadline: now + 9_000),
+            parked("a2", deadline: now + 8_000),
+            parked("a3", task: "t1", title: "Fix CI", batchable: false, deadline: now + 7_000),
+            parked("b1", conn: "c2", label: "ChatGPT", task: "t1", title: "Fix CI", deadline: now + 10_000),
+        ]
+        let groups = TicketInbox.groups(pending)
+        XCTAssertEqual(groups.map(\.id), ["c1|t1", "c1|", "c2|t1"], "one AI under one task each; the same task id on another AI never mixes")
+        XCTAssertEqual(groups[0].items.map(\.id), ["a3", "a1"])
+        XCTAssertEqual(groups[0].taskTitle, "Fix CI")
+        XCTAssertEqual(TicketInbox.taskTitle(groups[0]), "Fix CI")
+        XCTAssertNil(TicketInbox.taskTitle(groups[1]))
+        XCTAssertEqual(groups[0].approvable, ["a1"], "what is hard stays one by one")
+        XCTAssertEqual(TicketInbox.approveAllTitle(groups[0]), "Approve all 1")
+        XCTAssertEqual(groups[1].approvable, ["a2"])
+    }
+
+    func testOnlyParkedSoftItemsAreApprovedTogether() {
+        XCTAssertTrue(TicketInbox.approvableTogether(parked("a")))
+        XCTAssertFalse(TicketInbox.approvableTogether(parked("b", batchable: false)), "hard or L3")
+        var notParked = item("c", deadline: now + 60)
+        notParked.batchable = true
+        XCTAssertFalse(TicketInbox.approvableTogether(notParked), "Approve all covers what Overnight parked")
+        XCTAssertTrue(TicketInbox.groups([notParked])[0].approvable.isEmpty)
+    }
+
+    func testParkedItemsWaitInTheInboxEvenBeforeTheyHaveATicket() {
+        let early = parked("p", deadline: nil, until: now + 3_600)
+        XCTAssertNil(early.ticket)
+        XCTAssertTrue(TicketInbox.inInbox(early))
+        XCTAssertTrue(TicketInbox.instant([early]).isEmpty, "not a waiting card")
+        XCTAssertEqual(TicketInbox.groups([early, parked("q", deadline: now + 600)]).flatMap { $0.items.map(\.id) }, ["q", "p"],
+                       "sorted by its ticket's deadline, else by the morning")
+        XCTAssertNil(TicketInbox.due(early, now: now))
+    }
+
+    func testATaskProposalIsItsOwnCard() {
+        var proposal = item("tp")
+        proposal.taskProposal = TaskView(
+            id: "", connectionId: "c1", connectionLabel: "Claude", title: "Release", reason: nil, repos: ["octo/app"], branches: [],
+            paths: [], people: [], operations: [], ceiling: 1, budget: nil, usesLeft: nil, startedAt: 0, endsAt: 3_600, endedAt: nil,
+            startedBy: "agent", auto: 0, asked: 0, parked: 0
+        )
+        XCTAssertEqual(TicketInbox.proposals([proposal, item("i")]).map(\.id), ["tp"])
+        XCTAssertEqual(TicketInbox.instant([proposal, item("i")]).map(\.id), ["i"])
+        proposal.parkedUntil = now + 60
+        XCTAssertTrue(TicketInbox.groups([proposal]).isEmpty, "even parked, it is decided on its card")
+        XCTAssertNil(AskGate.next([proposal], presented: []), "never pops up by itself")
+    }
+
+    @MainActor
+    func testApproveAllApprovesTheGroupsRoutineParksAfterOneCheck() async throws {
+        let owner = SetupOwnerAnswers()
+        let core = DemoReinsCore(signedIn: true, syncCap: 0.3, overnight: true)
+        let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: owner, demo: true)
+        await model.refreshSession()
+        await model.refreshPending()
+        let groups = TicketInbox.groups(model.pending)
+        let cursor = try XCTUnwrap(groups.first { $0.connectionId == "c5" && $0.taskId == DemoReinsCore.demoTaskId })
+        XCTAssertEqual(Set(cursor.items.map(\.id)), ["req10", "req11"])
+        XCTAssertEqual(cursor.approvable, ["req10"])
+
+        owner.answer = false
+        let refused = await InboxActions.approveAll(model, group: cursor)
+        XCTAssertNil(refused)
+        XCTAssertTrue(model.pending.contains { $0.id == "req10" }, "nothing without the owner's check")
+
+        owner.answer = true
+        let approved = await InboxActions.approveAll(model, group: cursor)
+        XCTAssertEqual(approved, 1)
+        XCTAssertEqual(owner.asked.last, "Approve the request from Cursor")
+        XCTAssertFalse(model.pending.contains { $0.id == "req10" })
+        XCTAssertTrue(model.pending.contains { $0.id == "req11" }, "the hard one stays, one by one")
+    }
 }

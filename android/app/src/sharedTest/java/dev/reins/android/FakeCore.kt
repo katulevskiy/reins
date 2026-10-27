@@ -1319,10 +1319,24 @@ class FakeCore : ReinsCoreInterface {
     val bypassCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
     /** `startOvernight` calls, like [bypassCalls]. */
     val overnightCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
-    /** The owner checks handed to `startOvernight` and `setOvernightWhenRisky`, refused or not. */
+    /** The owner checks handed to `startOvernight`, refused or not. */
     val overnightOwners = CopyOnWriteArrayList<dev.reins.core.OwnerCheck>()
-    @Volatile var whenRisky = dev.reins.core.OvernightRisky.WAIT
-    val whenRiskyCalls = CopyOnWriteArrayList<dev.reins.core.OvernightRisky>()
+    /** How long what Overnight parks waits past the morning, and the `setOvernightExpiry` calls. */
+    @Volatile var overnightExpiry: UInt = 12u
+    val expiryCalls = CopyOnWriteArrayList<UInt>()
+    /** What `overnightDigest` answers; reading it throws [digestFailure] instead when set. */
+    @Volatile var digest: dev.reins.core.OvernightDigest? = null
+    @Volatile var digestFailure: CoreException? = null
+    /** What `tasks` lists (live first, then those ended in the last day). */
+    @Volatile var tasks: List<dev.reins.core.TaskView> = emptyList()
+    /** `approveAll` calls: (connection, task). */
+    val approveAllCalls = CopyOnWriteArrayList<Pair<String, String?>>()
+    /** `startTask`, `endTask` and `approveTask` calls. */
+    val startedTasks = CopyOnWriteArrayList<dev.reins.core.TaskView>()
+    val endedTasks = CopyOnWriteArrayList<String>()
+    val approvedTasks = CopyOnWriteArrayList<Pair<String, dev.reins.core.TaskView>>()
+    /** The owner checks handed to `startTask` and `approveTask`. */
+    val taskOwners = CopyOnWriteArrayList<dev.reins.core.OwnerCheck>()
     @Volatile var stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
     /** What `thresholdReplay` answers; null: numbers that move with the thresholds. */
     @Volatile var replay: dev.reins.core.ThresholdReplay? = null
@@ -1355,8 +1369,11 @@ class FakeCore : ReinsCoreInterface {
         updateFailure = null
         updateCalls.clear()
         autoUpdateCalls.clear()
-        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls, overnightOwners).forEach { it.clear() }
-        whenRisky = dev.reins.core.OvernightRisky.WAIT
+        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, expiryCalls, overnightOwners, approveAllCalls, startedTasks, endedTasks, approvedTasks, taskOwners).forEach { it.clear() }
+        overnightExpiry = 12u
+        digest = null
+        digestFailure = null
+        tasks = emptyList()
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
         replay = null
         downloads.set(0)
@@ -1391,7 +1408,7 @@ class FakeCore : ReinsCoreInterface {
             bypassSince = apGlobal.bypassSince.takeIf { (apGlobal.bypassUntil ?: 0) > now },
             overnightUntil = (apGlobal.overnightUntil ?: Long.MAX_VALUE).takeIf { apGlobal.overnighting(now) },
             overnightSince = apGlobal.overnightSince.takeIf { apGlobal.overnighting(now) },
-            overnightWhenRisky = whenRisky,
+            overnightExpiryHours = overnightExpiry,
             defaultProfileId = defaultProfile().id,
             wifiOnly = wifiOnly,
             autoUpdate = autoUpdate,
@@ -1457,13 +1474,48 @@ class FakeCore : ReinsCoreInterface {
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
     }
 
-    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) {
-        overnightOwners += owner
-        if (whenRisky == risky) return
-        val reason = if (risky == dev.reins.core.OvernightRisky.DENY) "Overnight: deny what is too risky" else "Overnight: wait for you when something is too risky"
-        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
-        whenRiskyCalls += risky
-        whenRisky = risky
+    override suspend fun setOvernightExpiry(hours: UInt) {
+        // As the core: 1 to 48 hours, and no owner check (it never loosens).
+        if (hours == 0u || hours > 48u) throw CoreException.Invalid("between 1 and 48 hours")
+        expiryCalls += hours
+        overnightExpiry = hours
+    }
+
+    override suspend fun overnightDigest(): dev.reins.core.OvernightDigest? {
+        digestFailure?.let { throw it }
+        return digest
+    }
+
+    /** As the core: only the batchable ones of that agent's task (or none); the rest stay. */
+    override suspend fun approveAll(connectionId: String, taskId: String?): UInt {
+        approveAllCalls += connectionId to taskId
+        val taken = pending.filter { it.connectionId == connectionId && it.taskId == taskId && it.batchable }
+        pending = pending - taken.toSet()
+        return taken.size.toUInt()
+    }
+
+    override suspend fun tasks(): List<dev.reins.core.TaskView> = tasks
+
+    override suspend fun startTask(draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck): dev.reins.core.TaskView {
+        taskOwners += owner
+        if (!owner.confirm("Start a task for ${draft.connectionLabel}")) throw CoreException.Invalid("the owner did not confirm")
+        val task = draft.copy(id = "task${startedTasks.size + 1}", startedBy = "you")
+        startedTasks += task
+        tasks = listOf(task) + tasks.map { if (it.connectionId == draft.connectionId && it.endedAt == null) it.copy(endedAt = now()) else it }
+        return task
+    }
+
+    override suspend fun endTask(id: String) {
+        endedTasks += id
+        tasks = tasks.map { if (it.id == id && it.endedAt == null) it.copy(endedAt = now()) else it }
+    }
+
+    override suspend fun approveTask(requestId: String, draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck) {
+        taskOwners += owner
+        if (!owner.confirm("Approve the task \"${draft.title}\"")) throw CoreException.Invalid("the owner did not confirm")
+        approvedTasks += requestId to draft
+        pending = pending.filterNot { it.id == requestId }
+        tasks = listOf(draft.copy(id = "task-$requestId")) + tasks
     }
 
     override suspend fun startBypass(connectionId: String?, minutes: UInt?) {

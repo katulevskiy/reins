@@ -205,9 +205,8 @@ fun ConnectionDetailScreen(
             OvernightSheets(
                 overnightOpen,
                 who = connection.label,
-                risky = apSettings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-                ratesRisk = apSettings?.model?.risk == true,
-                onRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
+                expiryHours = apSettings?.overnightExpiryHours ?: dev.reins.android.autopilot.AutopilotText.DEFAULT_EXPIRY_HOURS,
+                onExpiry = { autopilot.setOvernightExpiry(it) },
                 onStart = { minutes -> autopilot.startOvernight(minutes, connection.id, connection.label, authenticator) },
                 onClose = { overnightOpen = false },
             )

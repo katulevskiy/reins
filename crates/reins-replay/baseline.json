@@ -4,5 +4,6 @@
   "full_certainty": 0.9105691056910569,
   "asks": 55,
   "ask_rate": 0.06756756756756757,
-  "developer_ask_rate": 0.06504065040650407
+  "developer_ask_rate": 0.06504065040650407,
+  "overnight_decisions_mean": 2.17
 }
