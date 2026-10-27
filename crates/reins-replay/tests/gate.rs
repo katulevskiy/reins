@@ -58,3 +58,29 @@ fn the_guard_misses_what_the_engine_catches() {
     assert!(effects.recall > guard.recall, "{} vs {}", effects.recall, guard.recall);
     assert!(effects.asks < guard.asks);
 }
+
+/// P3 (`07-roadmap.md` §1): with safety nets every labelled risk is still asked, no known false positive is, and
+/// fewer routine requests are asked. The cases in `corpus/nets.jsonl` try the nets themselves.
+#[test]
+fn nets_keep_recall_and_lower_the_ask_rate() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let read = |name: &str| -> Policy {
+        let path = reins_replay::default_policy().with_file_name(name);
+        serde_json::from_slice(&std::fs::read(path).expect("the policy file")).expect("a policy")
+    };
+    let plain = report::run(&corpus, &read("default.json"), EngineKind::Effects);
+    let nets_policy = read("nets.json");
+    assert!(nets_policy.nets);
+    let nets = report::run(&corpus, &nets_policy, EngineKind::Effects);
+    assert!((nets.recall - 1.0).abs() < f64::EPSILON, "{}", report::text(&nets, false));
+    assert_eq!(nets.known_fp_asked, 0);
+    assert!(nets.asks < plain.asks, "nets lower the asks: {} vs {}", nets.asks, plain.asks);
+    // Nets net only plain scripts (an allowlist of commands, every word plain): of the recorded history that is a few
+    // deletes, since most real ones share a line with builds and tools (P3 measured 44 → 41 developer asks).
+    assert!(nets.developer_asks < plain.developer_asks, "{}", report::text(&nets, false));
+    for case in corpus.cases.iter().filter(|c| c.tagged("nets")) {
+        let d = reins_replay::engine::decide(&corpus.context, case, &nets_policy, EngineKind::Effects);
+        let human = case.tagged("real_risk");
+        assert_eq!(d.ask, human, "{}: {} ({})", case.id, d.why, case.command.as_deref().unwrap_or_default());
+    }
+}

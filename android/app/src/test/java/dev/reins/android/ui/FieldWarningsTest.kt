@@ -72,6 +72,20 @@ class FieldWarningsTest {
     }
 
     @Test
+    fun `a safety net is said, display only, and never loosens`() {
+        val ruled = TestData.askView(rule = forceRule).copy(noStanding = true)
+        val netted = ruled.copy(ask = ruled.ask!!.copy(net = "Keeps 1 deleted path in the Reins trash for 7 days"))
+        val w = lines(netted).line("netted")
+        assertEquals("Netted", w.text)
+        assertEquals(WarnTone.Plain, w.tone)
+        assertEquals(dev.reins.android.design.Glyph.Undo, w.glyph)
+        assertTrue(w.help!!.contains("Reins trash"))
+        assertEquals(heldByDanger(ruled), heldByDanger(netted))
+        assertEquals(dangerTag(ruled), dangerTag(netted))
+        assertTrue(lines(ruled).none { it.tag == "netted" })
+    }
+
+    @Test
     fun `a force push rewrites history`() {
         val w = lines(TestData.gitPushView(TestData.gitPush(TestData.gitRef(force = true)), noStanding = true)).line("forceWarning:0")
         assertEquals("Always asks · rewrites history", w.text)

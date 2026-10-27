@@ -9931,6 +9931,12 @@ public struct AskView: Equatable, Hashable {
      * The repository's default branch (its remote's), as the desktop app reported it.
      */
     public var defaultBranch: String?
+    /**
+     * The safety net the desktop app applies if this is approved (Decisions v2 P3), one line per net ("Keeps 2
+     * deleted paths in the Reins trash for 7 days"), as it reported it. Shown, read-only; it never makes a question
+     * looser. `None`: no net.
+     */
+    public var net: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9966,7 +9972,12 @@ public struct AskView: Equatable, Hashable {
          */branch: String? = nil, 
         /**
          * The repository's default branch (its remote's), as the desktop app reported it.
-         */defaultBranch: String? = nil) {
+         */defaultBranch: String? = nil, 
+        /**
+         * The safety net the desktop app applies if this is approved (Decisions v2 P3), one line per net ("Keeps 2
+         * deleted paths in the Reins trash for 7 days"), as it reported it. Shown, read-only; it never makes a question
+         * looser. `None`: no net.
+         */net: String? = nil) {
         self.question = question
         self.detail = detail
         self.topic = topic
@@ -9976,6 +9987,7 @@ public struct AskView: Equatable, Hashable {
         self.kind = kind
         self.branch = branch
         self.defaultBranch = defaultBranch
+        self.net = net
     }
 
     
@@ -10002,7 +10014,8 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
                 destructive: FfiConverterBool.read(from: &buf), 
                 kind: FfiConverterOptionString.read(from: &buf), 
                 branch: FfiConverterOptionString.read(from: &buf), 
-                defaultBranch: FfiConverterOptionString.read(from: &buf)
+                defaultBranch: FfiConverterOptionString.read(from: &buf), 
+                net: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -10016,6 +10029,7 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.branch, into: &buf)
         FfiConverterOptionString.write(value.defaultBranch, into: &buf)
+        FfiConverterOptionString.write(value.net, into: &buf)
     }
 }
 

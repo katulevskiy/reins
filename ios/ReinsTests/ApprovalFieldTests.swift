@@ -128,6 +128,17 @@ final class ApprovalFieldTests: XCTestCase {
         XCTAssertNotNil(line(lines(ask(uncertain: true, destructive: true)), "askUncertain"), "beside can't be undone too")
     }
 
+    func testASafetyNetIsSaidAfterTheRuleWithoutAWarningGlyph() {
+        var v = ask(rule: forceRule)
+        v.ask?.net = "Keeps main's old head as a Reins backup ref for 7 days"
+        let all = lines(v)
+        XCTAssertEqual(all.map(\.id).prefix(2), ["guardRule", "netted"])
+        let w = line(all, "netted")
+        XCTAssertEqual(w?.text, "Netted")
+        XCTAssertEqual(w?.symbol, .undo)
+        XCTAssertNotEqual(w?.symbol, .warning)
+    }
+
     func testAForcePushRewritesHistory() {
         let w = line(lines(push([ref(force: true)])), "forceWarning:0")
         XCTAssertEqual(w?.text, "Always asks · rewrites history")

@@ -177,11 +177,41 @@ enum Cmd {
         #[command(subcommand)]
         action: reins_desktop::secrets_cmd::SecretsCmd,
     },
+    #[command(display_order = 16)]
+    /// What safety nets kept (deleted files in the Reins trash, git backup refs, file copies), and putting it back.
+    Net {
+        #[command(subcommand)]
+        action: NetCmd,
+    },
     #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
         #[command(subcommand)]
         action: reins_desktop::ssh_agent::setup::SshCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum NetCmd {
+    /// What is kept, newest first: its id, when, what, and until when.
+    List,
+    /// Put back what a net kept: deleted paths where they were, branches, the work tree before a reset.
+    Restore {
+        /// The id `reins net list` and Activity show.
+        id: String,
+    },
+    /// Drop what is past its keeping time now (7 days for files, 30 for backup refs).
+    Prune,
+    /// Run `rm` or `git` with a safety net (what a netted command calls).
+    #[command(hide = true)]
+    Run {
+        #[arg(long)]
+        plan: String,
+        /// The store the hook wrote the plan to.
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1.., required = true)]
+        argv: Vec<std::ffi::OsString>,
     },
 }
 
@@ -598,7 +628,10 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         } => self_update(&paths, &config, check).await,
         Cmd::Pause => pause(&config),
         Cmd::Resume => resume(&paths, &config).await,
-        Cmd::Agents(_) => unreachable!("handled in main"),
+        Cmd::Agents(_)
+        | Cmd::Net {
+            ..
+        } => unreachable!("handled in main"),
         Cmd::Run(args) => {
             let code = reins_desktop::run::main(&paths, &config, &args).await;
             std::process::exit(i32::from(code));
@@ -1048,9 +1081,79 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
     Ok(())
 }
 
+/// `reins net …`. A netted command runs even when the config can't be read (with the default scratch folders).
+fn net(action: NetCmd) -> ExitCode {
+    use reins_desktop::nets;
+    // A netted command runs from its plan alone: no config, no environment.
+    if let NetCmd::Run {
+        plan,
+        store,
+        argv,
+    } = action
+    {
+        return ExitCode::from(nets::run(&plan, &store, &argv));
+    }
+    let store = match nets::Store::open_default() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("reins: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let now = reins_desktop::now_unix();
+    match action {
+        NetCmd::List => {
+            let all = store.list();
+            if all.is_empty() {
+                out!("Nothing is kept.");
+            }
+            for n in all {
+                let state = if n.restored {
+                    "restored".to_owned()
+                } else {
+                    format!("kept {} more", reins_desktop::ago(n.until - now))
+                };
+                out!("{}  {} ago  {}", n.id, reins_desktop::ago(now - n.at), state);
+                for l in n.lines {
+                    out!("    {l}");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        NetCmd::Restore {
+            id,
+        } => match nets::restore(&store, &id) {
+            Ok(lines) => {
+                for l in lines {
+                    out!("{l}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("reins: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        NetCmd::Prune => {
+            let gone = store.prune(now, &nets::drop_ref);
+            out!("Dropped {gone} kept item(s).");
+            ExitCode::SUCCESS
+        }
+        NetCmd::Run {
+            ..
+        } => ExitCode::FAILURE,
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Cmd::Net {
+        action,
+    } = cli.command
+    {
+        return net(action);
+    }
     if let Cmd::Agents(cmd) = cli.command {
         return reins_desktop::agents_cli::run(cmd).await;
     }

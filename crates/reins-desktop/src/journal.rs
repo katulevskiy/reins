@@ -154,6 +154,28 @@ pub struct Entry {
     /// certainty and one line per effect. Shown in Activity; it decides nothing yet.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub effects: Option<reins_policy::effects::Summary>,
+    /// The safety net applied to it (Decisions v2 P3): what was kept, and the id `reins net restore` takes.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub nets: Option<NetRecord>,
+}
+
+/// A safety net applied to a request, as Activity shows it ("Netted · Restore").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetRecord {
+    /// The plan id (`reins net restore <plan>`).
+    pub plan: String,
+    pub kinds: Vec<reins_policy::effects::nets::NetKind>,
+    /// One line per net ("Keeps 2 deleted paths in the Reins trash for 7 days").
+    pub lines: Vec<String>,
+    /// Unix seconds until which it can be restored (the trash's keeping time; refs last longer).
+    pub until: i64,
+    /// The net was applied: it kept something (read from the store when the log is read, never written to it). Until
+    /// then Activity says the net was not applied.
+    #[serde(skip)]
+    pub ran: bool,
+    /// Something is still kept for it (read with `ran`): a net that ran with nothing kept any more is gone.
+    #[serde(skip)]
+    pub kept: bool,
 }
 
 /// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
@@ -250,6 +272,7 @@ impl Entry {
             autopilot: None,
             leaning: None,
             effects: None,
+            nets: None,
         }
     }
 
@@ -292,6 +315,13 @@ impl Entry {
     #[must_use]
     pub fn effects(mut self, effects: Option<reins_policy::effects::Summary>) -> Self {
         self.effects = effects;
+        self
+    }
+
+    /// The safety net applied to it.
+    #[must_use]
+    pub fn nets(mut self, nets: Option<NetRecord>) -> Self {
+        self.nets = nets;
         self
     }
 
@@ -486,7 +516,14 @@ pub fn read(paths: &Paths, limit: usize, stale_after: i64) -> Vec<Entry> {
     let mut text = std::fs::read_to_string(PathBuf::from(old)).unwrap_or_default();
     text.push('\n');
     text.push_str(&std::fs::read_to_string(&file).unwrap_or_default());
-    parse(&text, limit, stale_after, crate::now_unix())
+    let mut entries = parse(&text, limit, stale_after, crate::now_unix());
+    // Whether each net was applied: the netted command really ran through the net (or the copies were taken).
+    let store = crate::nets::Store::open(paths);
+    for n in entries.iter_mut().filter_map(|e| e.nets.as_mut()) {
+        n.ran = store.ran(&n.plan);
+        n.kept = !store.items(&n.plan).is_empty() || !store.refs(&n.plan).is_empty();
+    }
+    entries
 }
 
 fn parse(text: &str, limit: usize, stale_after: i64, now: i64) -> Vec<Entry> {

@@ -513,6 +513,18 @@ fn push_targets_origin(command: &str, configured: Option<&str>) -> bool {
 /// the command, so that a command cannot write them.
 #[must_use]
 pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>) -> Option<(Match, Question)> {
+    question_netted(call, guard, head, None)
+}
+
+/// [`question_in`] with a safety net: `Net: …` lines after the repository's (written by this app, before the command,
+/// so a command cannot write them), and the netted command after the command: the approval is for exactly that text.
+#[must_use]
+pub fn question_netted(
+    call: &HookCall,
+    guard: &GuardConfig,
+    head: Option<&GitHead>,
+    net: Option<&crate::nets::hook::HookNet>,
+) -> Option<(Match, Question)> {
     let who = call.harness.label();
     let (m, question, mut detail) = match &call.action {
         Action::Command(c) => {
@@ -540,6 +552,9 @@ pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>)
         }
         Action::Other => return None,
     };
+    if let Some(rewritten) = net.and_then(|n| n.rewritten.as_deref()) {
+        let _infallible = write!(detail, "\n\nNetted command:\n{rewritten}");
+    }
     if let Some(cwd) = &call.cwd {
         let _infallible = write!(detail, "\n\nIn: {cwd}");
     }
@@ -555,7 +570,9 @@ pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>)
         }
     }
     let detail = format!("{}{head_lines}\n{detail}", rule_lines(&m));
-    let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
+    let mut q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
+    // Its own argument, not a line of the detail: a detail can be written by an agent (`reins ask`), this can't.
+    q.net = net.map(crate::nets::hook::question_net);
     Some((m, q))
 }
 
@@ -616,6 +633,24 @@ pub fn verdict(answer: Answer, timed_out: bool, on_no_answer: OnNoAnswer) -> Ver
 /// What to print on stdout (if anything) and the exit code.
 #[must_use]
 pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
+    render_netted(call, verdict, None, &Value::Null)
+}
+
+/// [`render`], handing the harness `rewritten` as the command to run with an `allow` (where its hook can take one):
+/// Claude Code and Codex `updatedInput` (the whole tool input, `command` replaced), Gemini CLI
+/// `hookSpecificOutput.tool_input`. Never with ask, deny or no decision: a rewrite needs the allow, and an allow Reins
+/// did not decide would take the harness's own prompt away.
+#[must_use]
+pub fn render_netted(
+    call: &HookCall,
+    verdict: &Verdict,
+    rewritten: Option<&str>,
+    tool_input: &Value,
+) -> (Option<String>, u8) {
+    let rewritten = match verdict {
+        Verdict::Allow(_) if crate::nets::hook::rewrites(call.harness, call.event) => rewritten,
+        _ => None,
+    };
     let out = |v: Value| (Some(v.to_string()), 0);
     match (call.event, verdict) {
         // Cursor never asks before a read, so allowing one takes no decision away from the user; an empty answer
@@ -639,6 +674,14 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
             if call.harness == Harness::ClaudeCode {
                 answer["systemMessage"] = json!(reason);
             }
+            if let Some(command) = rewritten {
+                let mut input = match tool_input {
+                    Value::Object(_) => tool_input.clone(),
+                    _ => json!({}),
+                };
+                input["command"] = json!(command);
+                answer["hookSpecificOutput"]["updatedInput"] = input;
+            }
             out(answer)
         }
         (Event::CursorShell | Event::CursorRead | Event::CursorTool, v) => {
@@ -651,7 +694,13 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
             out(json!({"permission": permission, "user_message": message, "agent_message": message}))
         }
         (Event::GeminiBeforeTool, v) => match v {
-            Verdict::Allow(r) => out(json!({"decision": "allow", "reason": r})),
+            Verdict::Allow(r) => match rewritten {
+                Some(command) => out(json!({"decision": "allow", "reason": r, "hookSpecificOutput": {
+                    "hookEventName": "BeforeTool",
+                    "tool_input": {"command": command},
+                }})),
+                None => out(json!({"decision": "allow", "reason": r})),
+            },
             Verdict::Deny(r) => out(json!({"decision": "deny", "reason": r})),
             Verdict::Ask(_) | Verdict::Unmatched => (None, 0),
         },
@@ -676,7 +725,14 @@ pub async fn run(
         (Action::Command(c), Some(cwd)) if c.contains("push") => git_head(Path::new(cwd)),
         _ => None,
     };
-    let Some((m, q)) = question_in(&call, &config.guard, head.as_ref()) else {
+    // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
+    if question_in(&call, &config.guard, head.as_ref()).is_none() {
+        let (out, code) = render(&call, &Verdict::Unmatched);
+        return (out, code, None);
+    }
+    // The safety net, planned before asking, so the question names it and the approval covers the netted command.
+    let net = crate::nets::hook::plan(config, paths, &call, head.as_ref());
+    let Some((m, q)) = question_netted(&call, &config.guard, head.as_ref(), net.as_ref()) else {
         let (out, code) = render(&call, &Verdict::Unmatched);
         return (out, code, None);
     };
@@ -694,13 +750,44 @@ pub async fn run(
     let tell = |line: &str| eprintln!("{line}");
     let (answer, timed_out, entry) =
         crate::ask::ask_logged_entry(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
-    let v = verdict(answer, timed_out, config.guard.on_no_answer);
-    let (out, code) = render(&call, &v);
+    let mut v = verdict(answer, timed_out, config.guard.on_no_answer);
+    // The net, applied only when the request is allowed: file copies now (right before the tool runs), the netted
+    // command handed back to the harness. A copy that can't be taken leaves the request as approved, without its net:
+    // in P3 the guard decides, so the approval never depended on the net. Activity says so.
+    let mut applied = None;
+    let mut net_failed = None;
+    if let (Verdict::Allow(_), Some(n)) = (&v, &net) {
+        if n.rewritten.is_none() {
+            match crate::nets::hook::apply_files(config, paths, n) {
+                Ok(()) => applied = Some(crate::nets::hook::record(n)),
+                Err(e) => net_failed = Some(e),
+            }
+        } else if crate::nets::hook::rewrites(call.harness, call.event) {
+            applied = Some(crate::nets::hook::record(n));
+        }
+    }
+    if let Some(e) = &net_failed {
+        tell(&format!("Reins couldn't keep a copy ({e}); it runs without one."));
+    }
+    let tool_input: Value = serde_json::from_slice::<Value>(input)
+        .ok()
+        .and_then(|v| match call.harness {
+            Harness::Cursor => None,
+            _ => v.get("tool_input").cloned(),
+        })
+        .unwrap_or(Value::Null);
+    let rewritten = applied.as_ref().and(net.as_ref()).and_then(|n| n.rewritten.as_deref());
+    if let (Verdict::Allow(reason), Some(_)) = (&mut v, rewritten) {
+        reason.push_str(" Reins keeps a copy of what it deletes.");
+    }
+    let (out, code) = render_netted(&call, &v, rewritten, &tool_input);
     // What it does, for Activity (Decisions v2 P1: shown, never deciding): read only once the verdict is fixed, on
     // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
     if let Some(effects) = crate::consequences::guarded_action(config, &call.action, call.cwd.as_deref(), head.as_ref())
     {
-        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)));
+        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)).nets(applied));
+    } else if applied.is_some() {
+        crate::journal::Journal::new(paths).record(&entry.nets(applied));
     }
     (out, code, None)
 }

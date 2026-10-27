@@ -110,6 +110,12 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             vec![
                 str_p("question", 300, true, "The question, one line."),
                 text_p("detail", 8_000, false, "What exactly would happen (the command, the files)."),
+                text_p(
+                    "net",
+                    400,
+                    false,
+                    "The safety net the desktop app applies if approved, one line per net (set by its hooks only).",
+                ),
                 str_p(
                     "topic",
                     100,
