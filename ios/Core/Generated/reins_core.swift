@@ -19221,7 +19221,7 @@ public func FfiConverterTypeProposalView_lower(_ value: ProposalView) -> RustBuf
 
 
 /**
- * What the user picked on the purchase screen.
+ * What the user picked on the purchase screen (kept with a Circle hold until the others approved).
  */
 public struct PurchaseChoice: Equatable, Hashable {
     /**
@@ -24324,6 +24324,12 @@ public enum CircleEvent: Equatable, Hashable {
     case reviewWaiting(review: CircleReviewView
     )
     /**
+     * A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
+     * Notifies ("Sam: Ended the guardianship").
+     */
+    case alert(linkId: String, person: String, text: String
+    )
+    /**
      * Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
      */
     case changed
@@ -24351,7 +24357,10 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
         case 1: return .reviewWaiting(review: try FfiConverterTypeCircleReviewView.read(from: &buf)
         )
         
-        case 2: return .changed
+        case 2: return .alert(linkId: try FfiConverterString.read(from: &buf), person: try FfiConverterString.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .changed
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -24366,8 +24375,15 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
             FfiConverterTypeCircleReviewView.write(review, into: &buf)
             
         
-        case .changed:
+        case let .alert(linkId,person,text):
             writeInt(&buf, Int32(2))
+            FfiConverterString.write(linkId, into: &buf)
+            FfiConverterString.write(person, into: &buf)
+            FfiConverterString.write(text, into: &buf)
+            
+        
+        case .changed:
+            writeInt(&buf, Int32(3))
         
         }
     }

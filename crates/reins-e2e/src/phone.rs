@@ -97,6 +97,15 @@ impl Phone {
         Self::start(server_url, email, PASSWORD, false, true, |_| {}).await
     }
 
+    /// [`Phone::sign_in_with_existing_gmail`] with the core's settings changed first.
+    pub async fn sign_in_with_existing_gmail_config(
+        server_url: &str,
+        email: &str,
+        configure: impl FnOnce(&mut CoreConfig),
+    ) -> Self {
+        Self::start(server_url, email, PASSWORD, false, true, configure).await
+    }
+
     /// Like [`Phone::sign_in`] with an explicit master password (for a real, already deployed server).
     pub async fn sign_in_with(server_url: &str, email: &str, password: &str) -> Self {
         Self::sign_in_configured(server_url, email, password, |_| {}).await

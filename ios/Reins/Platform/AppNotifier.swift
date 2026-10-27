@@ -127,6 +127,16 @@ final class AppNotifier: Notifier, @unchecked Sendable {
                     if !shown { self.post(id, NotificationContent.circleReview(review, settings: self.settings())) }
                 }
                 await model.refreshCircles()
+            case let .alert(linkId, person, text):
+                // A guardian must know at once (08 R7): posted in front too (it explains itself), quietly there.
+                self.post("circle-alert-\(linkId)", NotificationContent.status(
+                    title: person.isEmpty ? "Reins" : person,
+                    body: text,
+                    link: .home,
+                    settings: self.settings(),
+                    silent: model.isActive
+                ))
+                await model.circlesChanged()
             case .changed:
                 await model.circlesChanged()
             }

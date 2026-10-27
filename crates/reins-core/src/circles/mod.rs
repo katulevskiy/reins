@@ -16,6 +16,7 @@
 mod invite;
 mod net;
 mod review;
+pub(crate) use review::Tap;
 pub mod types;
 
 use crate::session::api_call;
@@ -81,6 +82,9 @@ pub(crate) struct Held {
     /// The last signed change this phone accepted for the link.
     pub last_seq: u64,
     pub since: i64,
+    /// When this phone last verified the other side's roster (a guardian checks its ward's for a recovery).
+    #[serde(default)]
+    pub checked_at: i64,
 }
 
 impl Held {
@@ -219,9 +223,9 @@ impl Engine {
         Ok(out)
     }
 
-    /// The account slot without the network, if this phone holds Circle state for it.
-    pub(crate) fn circle_slot_now(&self) -> Option<String> {
-        self.account_slot_now().ok().flatten()
+    /// The account slot without the network (`None`: signed out). An error is passed on: callers fail closed.
+    pub(crate) fn circle_slot_now(&self) -> Result<Option<String>, CoreError> {
+        self.account_slot_now()
     }
 
     /// This account as its roster says now (refreshed), on its approval phone. Circles need phone roles.
@@ -308,15 +312,20 @@ impl Engine {
             PeerKeys::OwnerChanged {
                 epoch,
             } => {
-                self.with_circles(slot, |s| {
+                let newly = self.with_circles(slot, |s| {
                     if let Some(h) = s.held_mut(id)
-                        && h.standing != Standing::Ended
+                        && !matches!(h.standing, Standing::Ended | Standing::Suspended)
                     {
                         log::warn!("a Circle peer's owner key changed at epoch {epoch}: the arrangement is suspended");
                         h.standing = Standing::Suspended;
+                        return Ok(true);
                     }
-                    Ok(())
+                    Ok(false)
                 })?;
+                if newly {
+                    // A guardian learns at once that the ward's account was recovered (08 R7: tamper-evident).
+                    self.circle_alert_guardian(&held, "Their account was recovered");
+                }
                 self.notifier.circle_changed(CircleEvent::Changed);
                 Err(CoreError::invalid("The other person's account was recovered: invite them again."))
             }
@@ -365,6 +374,7 @@ impl Engine {
                 let hash = circle::arrangement_hash(&h.signed.body);
                 match change.verify(&h.other().owner_pub, &hash, h.last_seq, verify) {
                     Ok(c) if c.by == other_side => {
+                        let person = h.other().label.clone();
                         self.with_circles(&me.slot, |s| {
                             if let Some(h) = s.held_mut(&link.id) {
                                 h.last_seq = c.seq;
@@ -374,8 +384,32 @@ impl Engine {
                                     LinkState::Ended => Standing::Ended,
                                 };
                             }
+                            // The helper hears quietly that the owner paused, resumed or ended it.
+                            if h.side == Side::Helper {
+                                s.notices.push(review::NoticeRow {
+                                    id: new_id()?,
+                                    link: link.id.clone(),
+                                    person: person.clone(),
+                                    notice: circle::Notice {
+                                        text: match c.state {
+                                            LinkState::Active => "Resumed".to_owned(),
+                                            LinkState::Paused => "Paused".to_owned(),
+                                            LinkState::Ended => "Ended".to_owned(),
+                                        },
+                                        outcome: None,
+                                        at: crate::store::unix_now(),
+                                    },
+                                });
+                            }
                             Ok(())
                         })?;
+                        if c.state == LinkState::Ended {
+                            self.circle_alert_guardian(&h, "Ended the guardianship");
+                        }
+                        // What it held is released at once (the other side ended or paused it).
+                        if c.state != LinkState::Active {
+                            Box::pin(self.circle_release(session, me, &link.id)).await;
+                        }
                         changed = true;
                     }
                     Ok(_) | Err(circle::CircleError::Replayed) => {}
@@ -389,12 +423,14 @@ impl Engine {
                 && let Some(h) = self.circle_state(&me.slot)?.held(&link.id)
                 && matches!(h.standing, Standing::Active | Standing::Paused)
             {
+                let held = h.clone();
                 self.with_circles(&me.slot, |s| {
                     if let Some(h) = s.held_mut(&link.id) {
                         h.standing = Standing::Suspended;
                     }
                     Ok(())
                 })?;
+                self.circle_alert_guardian(&held, "Their account was reset");
                 changed = true;
             }
         }
@@ -439,6 +475,7 @@ impl Engine {
             seen_epoch: other.epoch,
             peer: None,
             last_seq: 0,
+            checked_at: 0,
             since: a.created_at,
             signed,
         };
@@ -453,7 +490,7 @@ impl Engine {
     /// Everything Circles do on a sync: links, the owner's answers, the helper's inbox, expiries. Quiet when this
     /// account has no Circle state and the server had no news.
     pub(crate) async fn circles_sync(&self, session: &Session, news: bool) -> Result<(), CoreError> {
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(());
         };
         let state = self.circle_state(&slot)?;
@@ -473,7 +510,35 @@ impl Engine {
             log::warn!("Circle reviews: {e}");
         }
         Box::pin(self.circle_expire(session, &me)).await;
+        self.circle_check_wards(session, &me, news).await;
         Ok(())
+    }
+
+    /// As a guardian: the ward's roster, on news and at least hourly, so a recovery (a new owner key) is noticed even
+    /// with no request in flight. `circle_peer` suspends and alerts.
+    async fn circle_check_wards(&self, session: &Session, me: &Me, news: bool) {
+        let now = crate::store::unix_now();
+        let Ok(state) = self.circle_state(&me.slot) else {
+            return;
+        };
+        for h in state.held.iter().filter(|h| {
+            h.side == Side::Helper
+                && h.arrangement.terms.kind == circle::CircleKind::Guardian
+                && h.standing == Standing::Active
+                && (news || now - h.checked_at >= 3600)
+        }) {
+            if let Err(e) = self.circle_peer(session, &me.slot, h.id()).await {
+                log::info!("a ward's roster: {e}");
+            }
+            if let Err(e) = self.with_circles(&me.slot, |s| {
+                if let Some(h) = s.held_mut(h.id()) {
+                    h.checked_at = now;
+                }
+                Ok(())
+            }) {
+                log::warn!("Circle state: {e}");
+            }
+        }
     }
 
     // ---- people -----------------------------------------------------------------------------------------------------
@@ -483,7 +548,7 @@ impl Engine {
             let session = self.session()?;
             self.circles_sync(&session, true).await?;
         }
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(Vec::new());
         };
         Ok(self
@@ -510,10 +575,26 @@ impl Engine {
         self.circle_change(link_id, LinkState::Ended).await
     }
 
+    /// As a guardian: the ward changed what binds them (ended it, was recovered or reset). The one Circle status that
+    /// notifies (08 R7: tamper-evident).
+    pub(crate) fn circle_alert_guardian(&self, held: &Held, text: &str) {
+        if held.side == Side::Helper && held.arrangement.terms.kind == circle::CircleKind::Guardian {
+            self.notifier.circle_changed(CircleEvent::Alert {
+                link_id: held.arrangement.id.clone(),
+                person: held.other().label.clone(),
+                text: text.to_owned(),
+            });
+        }
+    }
+
     async fn circle_change(&self, link_id: &str, to: LinkState) -> Result<(), CoreError> {
         let session = self.session()?;
         let me = self.circle_me(&session).await?;
         let held = self.circle_state(&me.slot)?.held(link_id).cloned().ok_or(CoreError::NotFound)?;
+        // A guardianship isn't paused: the ward ends it (and the guardian is told), or it binds.
+        if held.arrangement.terms.kind == circle::CircleKind::Guardian && to == LinkState::Paused {
+            return Err(CoreError::invalid("A guardianship can't be paused; end it instead."));
+        }
         if held.side == Side::Helper && to != LinkState::Ended {
             return Err(CoreError::invalid("Only the person who invited you can pause this."));
         }

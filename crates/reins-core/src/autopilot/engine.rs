@@ -949,14 +949,26 @@ impl Engine {
                 return self.ap_wait(&subject, &suggestion);
             }
         }
-        if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
+        if matches!(row.kind, PendingKind::Request | PendingKind::Blob) && mode != AutopilotMode::Lockdown {
             // A Circle request (04, 08 R3): others decide it too, so no automatic mode approves it; the owner's tap
             // fills the owner's slot. Routed again here (idempotent), and when that fails it waits for the owner too.
-            let routed = self.circle_route(&row.id);
+            let routed = if row.kind == PendingKind::Request {
+                self.circle_route(&row.id)
+            } else {
+                serde_json::from_slice::<BlobInfo>(&row.payload)
+                    .map_err(|_| CoreError::storage("corrupt parked upload"))
+                    .and_then(|info| {
+                        self.circle_route_blob(
+                            &row.id,
+                            &crate::blob::blob_request(&info),
+                            &crate::blob::blob_item(&info),
+                        )
+                    })
+            };
             if let Err(e) = &routed {
                 log::warn!("a Circle could not be applied; the request waits: {e}");
             }
-            if routed.is_err() || self.circle_hold(&row.id).is_some() {
+            if routed.is_err() || !matches!(self.circle_hold(&row.id), Ok(None)) {
                 let reason = self
                     .circle_progress(&row.id)
                     .map(|p| p.line)

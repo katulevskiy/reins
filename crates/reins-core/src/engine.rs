@@ -112,6 +112,8 @@ pub struct Engine {
     pub(crate) instant_window: std::sync::atomic::AtomicI64,
     /// Serializes changes to this account's Circle state (`circles`).
     pub(crate) circles_lock: Mutex<()>,
+    /// One Circle invitation step at a time (the pin, then the reveal).
+    pub(crate) circles_step: tokio::sync::Mutex<()>,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -268,6 +270,7 @@ impl Engine {
             sync_queued: std::sync::atomic::AtomicBool::new(false),
             not_approval: std::sync::atomic::AtomicBool::new(false),
             circles_lock: Mutex::new(()),
+            circles_step: tokio::sync::Mutex::new(()),
             instant_window: std::sync::atomic::AtomicI64::new(
                 i64::try_from(reins_proto::ticket::INSTANT_DEFAULT_SECS).unwrap_or(i64::MAX),
             ),
@@ -1003,7 +1006,10 @@ impl Engine {
                     serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| self.pending_request_item(&p))
                 }
                 PendingKind::Pairing => serde_json::from_slice(&row.payload).ok().map(|p| views::pairing_item(&p)),
-                PendingKind::Blob => Self::blob_pending_item(&row.payload),
+                PendingKind::Blob => Self::blob_pending_item(&row.payload).map(|mut item| {
+                    item.circle = self.circle_progress(&item.id);
+                    item
+                }),
                 PendingKind::Join => serde_json::from_slice(&row.payload).ok().map(|j| crate::join::join_item(&j)),
             };
             if let Some(mut item) = item {
