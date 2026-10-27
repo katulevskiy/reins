@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::context::{Base, Facts, GITHUB, Zone, request_zone};
+use crate::context::{Base, Facts, GITHUB, Resolved, Zone, parse_repo, repo_zone, request_zone};
 use crate::effects::{Analysis, Certainty, Effect, Level, analyze_tool};
-use crate::matrix::{self, Evaluation, Input, Issuer, Matrix, Outcome, Rule, Snapshot, Then, Why};
+use crate::matrix::{self, Cell, Evaluation, Input, Issuer, Matrix, Outcome, Rule, Snapshot, Then, Why};
 
 /// `version` of an [`OrgPolicy`].
 pub const ORG_POLICY_VERSION: u32 = 1;
@@ -395,22 +395,8 @@ pub fn stricter(org: &Matrix, member: &Matrix) -> Matrix {
 #[must_use]
 pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
     let analysis = analyze_request(req.tool, req.args);
-    let base_repo = if req.tool == LEASE_TOOL {
-        req.args.get("repo").and_then(Value::as_str).map(str::to_owned)
-    } else {
-        None
-    };
-    let resolved = request_zone(
-        &analysis,
-        &org.facts,
-        &Base {
-            repo: base_repo.as_deref(),
-            remotes: None,
-            bare_host: Some(GITHUB),
-        },
-    );
+    let resolved = resolve(req, &analysis, &org.facts);
     let mut rules: Vec<Rule> = org.rules.iter().map(|r| r.rule.clone()).collect();
-    let mut member_rule_ids: Vec<String> = Vec::new();
     let mut matrix = org.matrix.clone();
     if let Some(m) = member {
         if let Some(mm) = &m.matrix {
@@ -421,7 +407,6 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
             // Kept apart from the org's ids.
             r.id = format!("member:{}", r.id);
             r.issuer = Issuer::Owner;
-            member_rule_ids.push(r.id.clone());
             rules.push(r);
         }
     }
@@ -446,8 +431,16 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
         Outcome::Auto => (ManagedOutcome::Auto, Vec::new()),
         Outcome::Deny => (ManagedOutcome::Deny, Vec::new()),
         Outcome::Ask {
-            ..
-        } => (ManagedOutcome::Review, obligations_of(&evaluation.why, org)),
+            hard,
+        } => {
+            let mut why = evaluation.why.clone();
+            // Hard obligations stop P2's evaluation before the cell. The org's cell review still applies: a member's
+            // rule (or the floor) only adds to what the org requires, never stands in for it.
+            if hard && cell_needs_review(req, &analysis, &resolved, &snapshot, org) {
+                why.push(Why::Cell);
+            }
+            (ManagedOutcome::Review, obligations_of(&why, org))
+        }
     };
     let explain = match outcome {
         ManagedOutcome::Auto => String::new(),
@@ -461,6 +454,80 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
         explain,
         lines: analysis.lines(),
         evaluation,
+    }
+}
+
+/// Where a request acts. A lease names its repository directly (it has no effect that names one): the repository's
+/// zone, and the repository as the resource, so the org's resource rules apply to leases as to any other request.
+fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Resolved {
+    if req.tool == LEASE_TOOL {
+        let repo = req.args.get("repo").and_then(Value::as_str).and_then(|r| parse_repo(r, Some(GITHUB)));
+        return match repo {
+            Some(r) => {
+                let (zone, unknown) = repo_zone(facts, &r);
+                Resolved {
+                    zone,
+                    unknown: unknown.into_iter().collect(),
+                    resource: Some(r.key()),
+                    parts: vec![r.key()],
+                }
+            }
+            // Not a repository anyone can name: Outside, and it matches no permit.
+            None => Resolved {
+                zone: Zone::Outside,
+                unknown: Vec::new(),
+                resource: None,
+                parts: Vec::new(),
+            },
+        };
+    }
+    request_zone(
+        analysis,
+        facts,
+        &Base {
+            repo: None,
+            remotes: None,
+            bare_host: Some(GITHUB),
+        },
+    )
+}
+
+/// Whether the composed matrix cell asks, unless one of the org's permits satisfies it: judged as if there were no
+/// hard obligation (no floor, full certainty, no deny or review rules).
+fn cell_needs_review(
+    req: &ManagedRequest<'_>,
+    analysis: &Analysis,
+    resolved: &Resolved,
+    snapshot: &Snapshot,
+    org: &OrgPolicy,
+) -> bool {
+    let mut soft = analysis.clone();
+    soft.floor.clear();
+    soft.certainty = Certainty::Full;
+    let permits = Snapshot {
+        rules: org.rules.iter().filter(|r| r.rule.then == Then::Permit).map(|r| r.rule.clone()).collect(),
+        ..snapshot.clone()
+    };
+    let e = matrix::evaluate(
+        &Input {
+            analysis: &soft,
+            resolved,
+            connection: req.connection,
+            seen_resource: false,
+            now: req.now,
+        },
+        &permits,
+    );
+    match e.outcome {
+        Outcome::Auto => false,
+        Outcome::Ask {
+            hard: false,
+        } => true,
+        // Only L3 is left hard here: ask the cell unless the matrix itself says Auto.
+        Outcome::Ask {
+            hard: true,
+        }
+        | Outcome::Deny => snapshot.matrix.cell(resolved.zone, soft.level) != Cell::Auto,
     }
 }
 
@@ -574,7 +641,7 @@ mod tests {
 
     use super::*;
     use crate::context::FactKind;
-    use crate::matrix::{Cell, When};
+    use crate::matrix::When;
 
     fn acme() -> OrgPolicy {
         let mut p = OrgPolicy::empty("o1");
@@ -844,6 +911,67 @@ mod tests {
         let v = eval(LEASE_TOOL, &json!({"repo": "someone/x", "access": "push"}), &acme(), None);
         assert_eq!(v.outcome, ManagedOutcome::Review);
         assert_eq!(v.evaluation.zone, Zone::Outside);
+    }
+
+    #[test]
+    fn an_org_resource_rule_applies_to_a_lease() {
+        let mut p = acme();
+        p.rules.push(org_rule(
+            "prod-deny",
+            When {
+                resource: Some("acme/prod".to_owned()),
+                ..When::default()
+            },
+            Then::Deny,
+            None,
+        ));
+        p.rules.push(org_rule(
+            "infra-review",
+            When {
+                resource: Some("acme/infra-*".to_owned()),
+                ..When::default()
+            },
+            Then::Review,
+            Some(sec(1)),
+        ));
+        let lease = |repo: &str, access: &str| eval(LEASE_TOOL, &json!({"repo": repo, "access": access}), &p, None);
+        assert_eq!(lease("acme/prod", "push").outcome, ManagedOutcome::Deny);
+        assert_eq!(lease("Acme/Prod", "read").outcome, ManagedOutcome::Deny);
+        let v = lease("acme/infra-live", "push");
+        assert_eq!(v.outcome, ManagedOutcome::Review);
+        assert_eq!(v.obligations[0].spec, sec(1));
+        assert_eq!(lease("acme/api", "push").outcome, ManagedOutcome::Auto);
+        // A repository that can't be named is Outside.
+        assert_eq!(lease("not a repo", "push").evaluation.zone, Zone::Outside);
+    }
+
+    #[test]
+    fn a_member_review_rule_adds_to_the_orgs_cell_review() {
+        let mut p = acme();
+        p.cell_review = sec(1);
+        let member = MemberPolicy {
+            matrix: None,
+            rules: vec![Rule {
+                id: "mine".to_owned(),
+                issuer: Issuer::Owner,
+                when: When::default(),
+                then: Then::Review,
+                not_after: None,
+                accepted: false,
+                explain: String::new(),
+            }],
+        };
+        // Outside: the org's cell asks Security; the member's rule asks the member. Both are required.
+        let v = eval("github_create_issue", &issue("someone/x"), &p, Some(&member));
+        assert_eq!(v.outcome, ManagedOutcome::Review);
+        let specs: Vec<&ReviewSpec> = v.obligations.iter().map(|o| &o.spec).collect();
+        assert!(specs.contains(&&sec(1)) && specs.contains(&&ReviewSpec::owner()), "{v:?}");
+        // In an Auto cell, the member's rule adds only their own review.
+        let v = eval("github_create_issue", &issue("acme/api"), &p, Some(&member));
+        assert_eq!(v.obligations.iter().map(|o| &o.spec).collect::<Vec<_>>(), [&ReviewSpec::owner()]);
+        // The floor doesn't hide the cell either.
+        let v = eval("reins_list_accounts", &json!({}), &p, None);
+        assert!(v.obligations.iter().any(|o| o.spec == ReviewSpec::owner()), "{v:?}");
     }
 
     #[test]
