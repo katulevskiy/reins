@@ -101,6 +101,21 @@ object Posture {
 }
 
 /**
+ * Signs with a work profile's enrolled org key (O2): an org review's answer or the member's own policy. The key was
+ * made without user authentication, so no prompt; the phone's screen lock gates the app. ECDSA P-256 DER, base64.
+ */
+fun orgSign(keys: DeviceKeys, profileId: String, message: ByteArray): String =
+    Base64.encodeToString(keys.sign(WorkProfiles.orgKeyAlias(profileId), message), Base64.NO_WRAP)
+
+/** The bytes an org review's answer signs: the core's (`org_review_message`); tests, without the native core, replace it. */
+object OrgSigning {
+    val CORE: (String, dev.reins.core.OrgReviewView, Boolean, Long) -> ByteArray =
+        { org, review, approve, at -> dev.reins.core.orgReviewMessage(org, review, approve, at) }
+
+    @Volatile var message: (String, dev.reins.core.OrgReviewView, Boolean, Long) -> ByteArray = CORE
+}
+
+/**
  * The enrollment for [challenge]: a fresh org device key for [profileId], its signature over the challenge, the
  * key attestation chain, and the posture. The attestation's challenge is the enrollment message: the chain's leaf
  * certifies this very key (the binding O2's verifier checks with `reins_proto::org::attestation_binding`'s inputs).

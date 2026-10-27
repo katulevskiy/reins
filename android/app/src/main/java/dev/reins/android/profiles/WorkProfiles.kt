@@ -138,16 +138,21 @@ object ProfilesProvider {
 
 /** Switching profiles starts the app again on the other profile's core (one core per process). */
 object ProfileSwitch {
+    /** What the restarted app opens (a notification of the other profile's: its reviews); taken by the restart. */
+    @Volatile var next: Intent? = null
+
     /** Tests replace the restart. */
     @Volatile var restart: (Activity) -> Unit = { activity ->
-        activity.startActivity(
-            Intent(activity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
+        val intent = next ?: Intent(activity, MainActivity::class.java)
+        next = null
+        activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         Runtime.getRuntime().exit(0)
     }
 
-    fun switchTo(activity: Activity, registry: ProfileRegistryInterface, id: String) {
+    /** [then]: an intent of the app's own, stamped for profile [id], to open once switched. */
+    fun switchTo(activity: Activity, registry: ProfileRegistryInterface, id: String, then: Intent? = null) {
         registry.setActive(id)
+        next = then
         restart(activity)
     }
 }
