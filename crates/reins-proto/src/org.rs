@@ -333,6 +333,10 @@ pub enum AdminAction {
     SetApprovalChannel {
         channel: ChannelKind,
         enabled: bool,
+        /// Turning on: the digest of the installed app and secret this was proposed for. Approving it turns on
+        /// exactly that install, never one swapped in meanwhile.
+        #[serde(default)]
+        config: Option<String>,
     },
 }
 

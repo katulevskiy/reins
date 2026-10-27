@@ -96,7 +96,7 @@ pub fn issue_token(
     }
     let obligations: Vec<reins_policy::org::Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
     let resolved = routing::stored(row.resolved.as_deref());
-    let dir = Directory::load(c, org, now)?;
+    let dir = Directory::load(c, org, now, true)?;
     if !obligations.iter().any(|o| dir.eligible(o, &row.user_uuid, resolved.get(&o.id)).contains(member)) {
         return Ok(None);
     }
@@ -377,6 +377,10 @@ pub fn confirm_passkey(
     if (now - ans.at).abs() > reviews::SKEW_SECS {
         return Err(OrgError::Invalid("This phone's clock is off. Check the time and try again."));
     }
+    if !ans.approve {
+        // Refusing only narrows: no signature is needed (or kept), so none can be replayed as a confirmation.
+        return revoke_passkey(c, org, user, id, now);
+    }
     let dev = reviews::deciding_device(c, org, user, device, now)?;
     let key = store::q_passkey(c, org, id)?.filter(|k| k.user_uuid == user).ok_or(OrgError::NotFound)?;
     // The phone signs the exact key and registration it was shown (its fingerprint), not just an id.
@@ -449,7 +453,7 @@ fn token_ok(token: &str) -> bool {
     (40..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-#[get("/reins/org/approve/<token>")]
+#[get("/reins/org/approve/<token>", rank = 1)]
 async fn approve_page(token: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Result<Custom<Page>, Redirect> {
     if !enabled() || !token_ok(token) {
         return Ok(Custom(Status::NotFound, not_found()));
@@ -473,7 +477,7 @@ async fn approve_page(token: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Res
     })
 }
 
-#[post("/reins/org/approve/<token>", data = "<form>")]
+#[post("/reins/org/approve/<token>", data = "<form>", rank = 1)]
 async fn approve_post(
     token: &str,
     form: Form<AssertionForm>,
@@ -507,7 +511,7 @@ async fn approve_post(
     })
 }
 
-#[get("/reins/org/passkeys/new")]
+#[get("/reins/org/passkeys/new", rank = 1)]
 async fn passkey_page(cookies: &CookieJar<'_>, conn: DbConn) -> Result<Page, Redirect> {
     if !enabled() {
         return Ok(not_found());
@@ -540,7 +544,7 @@ struct RegisterForm {
     attestation_object: String,
 }
 
-#[post("/reins/org/passkeys/new", data = "<form>")]
+#[post("/reins/org/passkeys/new", data = "<form>", rank = 1)]
 async fn passkey_post(
     form: Form<RegisterForm>,
     cookies: &CookieJar<'_>,
@@ -606,7 +610,7 @@ struct RevokeForm {
     csrf: String,
 }
 
-#[post("/reins/org/passkeys/<id>/revoke", data = "<form>")]
+#[post("/reins/org/passkeys/<id>/revoke", data = "<form>", rank = 1)]
 async fn passkey_revoke(id: &str, form: Form<RevokeForm>, cookies: &CookieJar<'_>, conn: DbConn) -> Redirect {
     if let Some(s) = signed(cookies, now_unix()).filter(|_| enabled())
         && check_csrf(&s, &form.csrf)
@@ -1055,5 +1059,44 @@ pub(crate) mod tests {
         let html = pages::passkeys("/reins/org/", "c", "kim@acme.com", "kim", "ch", &rp, &[]);
         assert!(html.contains("as your browser reports"), "{html}");
         assert!(html.contains("attestation:'none'"));
+    }
+
+    #[test]
+    fn a_refusal_needs_no_signature_and_only_revokes() {
+        let mut c = db();
+        let phones = routed_org(&mut c);
+        let (origin, rp) = reviews::web_origin();
+        let key = Authenticator::new(b"refused-key");
+        let (client, att) = key.register("ch", &origin, &rp, 0x05);
+        let (id, spki) = parse_registration(&key.credential_id(), &client, &att, "ch", &origin, &rp).unwrap();
+        register(&mut c, "o1", "kim", &id, &spki, 150).unwrap();
+        let refuse = PasskeyConfirm {
+            approve: false,
+            at: 151,
+            signature: String::new(),
+        };
+        confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &id, &refuse, 151).unwrap();
+        assert!(store::q_passkeys_of(&mut c, "o1", "kim").unwrap().is_empty(), "revoked");
+        // And a revoked key can't be confirmed afterwards, whatever is signed.
+        let ok = PasskeyConfirm {
+            approve: true,
+            at: 152,
+            signature: phones["kim"].sign(&passkey_confirm_message("o1", &id, &passkey_spki_hash(&spki), 150, 152)),
+        };
+        assert!(confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &id, &ok, 152).is_err());
+    }
+
+    #[test]
+    fn a_passkey_only_reviewer_never_holds_up_an_l3_review() {
+        let mut c = db();
+        let phones = routed_org(&mut c);
+        // Kim (Security) has only a web passkey now: her phone is gone.
+        let kim = Authenticator::new(b"kim-key");
+        add_passkey(&mut c, &phones, "kim", &kim, 150);
+        crate::db::models::reins_org::q_revoke_devices(&mut c, "o1", "kim", 160).unwrap();
+        let dir = Directory::load(&mut c, "o1", 170, true).unwrap();
+        assert!(dir.people["kim"].can_decide, "L0–L2: the web counts");
+        let dir = Directory::load(&mut c, "o1", 170, false).unwrap();
+        assert!(!dir.people["kim"].can_decide, "L3: it doesn't");
     }
 }

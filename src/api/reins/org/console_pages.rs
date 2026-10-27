@@ -492,6 +492,7 @@ pub fn action_title(action: &AdminAction) -> String {
         AdminAction::SetApprovalChannel {
             channel: kind,
             enabled,
+            ..
         } => format!(
             "{} reviews {}",
             kind.label(),

@@ -267,12 +267,11 @@ pub fn card(msg: &Message, url: Option<&str>) -> Value {
         json!({"type": "TextBlock", "text": plain(&msg.line), "wrap": true}),
         json!({"type": "TextBlock", "text": due_text(msg.due), "isSubtle": true, "spacing": "Small"}),
     ];
-    let actions = match url.filter(|_| msg.web) {
-        Some(u) => vec![json!({"type": "Action.OpenUrl", "title": "Review", "url": u})],
-        None => {
-            body.push(json!({"type": "TextBlock", "text": "Open the Reins app", "isSubtle": true}));
-            Vec::new()
-        }
+    let actions = if let Some(u) = url.filter(|_| msg.web) {
+        vec![json!({"type": "Action.OpenUrl", "title": "Review", "url": u})]
+    } else {
+        body.push(json!({"type": "TextBlock", "text": "Open the Reins app", "isSubtle": true}));
+        Vec::new()
     };
     json!({"type": "AdaptiveCard", "version": "1.4", "body": body, "actions": actions,
            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json"})
@@ -440,7 +439,7 @@ pub fn service_url_of(activity: &Value) -> Option<String> {
         .filter(|u| service_url_ok(u))
 }
 
-#[post("/reins/org/teams/messages", data = "<data>")]
+#[post("/reins/org/teams/messages", data = "<data>", rank = 1)]
 async fn messages(bearer: Bearer, data: Data<'_>, conn: DbConn) -> Status {
     if !enabled() {
         return Status::NotFound;

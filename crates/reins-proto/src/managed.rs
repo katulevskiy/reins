@@ -249,7 +249,8 @@ pub fn webauthn_signed_bytes(
 
 /// What a member's enrolled phone signs to confirm a web passkey as theirs: the canon encoding of
 /// (`reins/org-passkey/v1`, org, credential id, SHA-256 hex of the key's SPKI, registered at, at). It binds the exact
-/// key and registration, not just an id the browser chose.
+/// key and registration, not just an id the browser chose. It is signed only to confirm: a refusal is an unsigned
+/// revoke, so a refusal never carries a signature that could be replayed as a confirmation.
 #[must_use]
 pub fn passkey_confirm_message(
     org: &str,

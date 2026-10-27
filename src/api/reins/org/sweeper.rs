@@ -12,6 +12,16 @@ use crate::{
 
 pub const EVERY_SECS: u64 = 15;
 
+/// [`EVERY_SECS`], or (tests only, with `REINS_TEST_ALLOW_LOOPBACK`) `REINS_TEST_ORG_SWEEP_SECS`.
+fn every_secs() -> u64 {
+    if crate::api::reins::outbound::allow_loopback()
+        && let Some(s) = std::env::var("REINS_TEST_ORG_SWEEP_SECS").ok().and_then(|v| v.parse::<u64>().ok())
+    {
+        return s.max(1);
+    }
+    EVERY_SECS
+}
+
 /// One pass, with the dynamic routing sources' answers; returns the escalations to notify. Each part runs whatever
 /// the others did (a failing one is logged): lease expiry and checkpoints never wait on escalation.
 pub fn sweep_routed(
@@ -75,7 +85,7 @@ pub fn spawn(pool: DbPool) {
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }
-            tokio::time::sleep(Duration::from_secs(EVERY_SECS)).await;
+            tokio::time::sleep(Duration::from_secs(every_secs())).await;
         }
     });
 }

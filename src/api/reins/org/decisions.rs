@@ -341,6 +341,7 @@ pub fn submit_with(
                 let resources = routing::resources_of(&policy, &managed);
                 let ctx = routing::Ctx {
                     org,
+                    web: reins_proto::managed::channel_allowed(trace["level"].as_str().unwrap_or_default()),
                     requester: user,
                     policy: &policy,
                     resources: &resources,

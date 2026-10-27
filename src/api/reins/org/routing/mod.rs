@@ -169,12 +169,14 @@ pub struct Directory {
 }
 
 impl Directory {
-    pub fn load(c: &mut DbConnInner, org: &str, now: i64) -> Result<Self, OrgError> {
+    /// `web`: whether a web approval may decide this request (L0–L2); otherwise a member who has only a web passkey
+    /// can't decide it and doesn't count.
+    pub fn load(c: &mut DbConnInner, org: &str, now: i64, web: bool) -> Result<Self, OrgError> {
         let policy = super::policy::active(c, org)?.map(|(p, _)| p);
         let roster: Roster = super::roster::build(c, org, policy.as_ref(), now)?;
         let mut people = BTreeMap::new();
         for m in &roster.members {
-            let can_decide = m.devices.iter().any(|d| d.may_decide) || !m.passkeys.is_empty();
+            let can_decide = m.devices.iter().any(|d| d.may_decide) || (web && !m.passkeys.is_empty());
             people.insert(
                 m.user.clone(),
                 Person {
@@ -254,6 +256,8 @@ pub fn manager_links(c: &mut DbConnInner, org: &str) -> Result<BTreeMap<String, 
 /// What a resolution is about.
 pub struct Ctx<'a> {
     pub org: &'a str,
+    /// The request's level allows a web approval (L0–L2).
+    pub web: bool,
     pub requester: &'a str,
     pub policy: &'a OrgPolicy,
     /// The request's resources (repositories, recipients, hosts), for resource tags.
@@ -387,7 +391,7 @@ pub fn open(
     obligations: &[Obligation],
     now: i64,
 ) -> Result<Routed, OrgError> {
-    let dir = Directory::load(c, ctx.org, now)?;
+    let dir = Directory::load(c, ctx.org, now, ctx.web)?;
     let mut out = Routed {
         expires_at: now,
         ..Routed::default()
@@ -635,6 +639,7 @@ pub fn apply_admin(
         A::SetApprovalChannel {
             channel: kind,
             enabled,
+            ..
         } => reins_org_routing::q_set_channel_enabled(c, org, kind.as_str(), *enabled)?,
         _ => return Err(OrgError::Internal("not a routing change".to_owned())),
     }

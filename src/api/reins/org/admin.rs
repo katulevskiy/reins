@@ -524,11 +524,17 @@ fn validate(
         AdminAction::SetApprovalChannel {
             channel: kind,
             enabled,
+            config,
         } => {
-            let installed = crate::db::models::reins_org_routing::q_channel_for_use(c, org, kind.as_str())?
-                .is_some_and(|ch| ch.sealed.is_some());
-            if *enabled && !installed {
+            if !*enabled {
+                return Ok(());
+            }
+            let Some(current) = super::channels::config_digest(c, org, *kind)? else {
                 return Err(OrgError::Invalid("Install it first."));
+            };
+            // Only the install it was proposed for.
+            if config.as_deref().is_none_or(|d| !crate::crypto::ct_eq(d, &current)) {
+                return Err(OrgError::Invalid("It was reinstalled since. Propose it again."));
             }
             Ok(())
         }

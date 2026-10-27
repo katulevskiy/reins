@@ -170,7 +170,7 @@ async fn group(
         backup: Some(f.backup).filter(|b| !b.is_empty()),
         window_secs: f.window_mins.trim().parse::<u64>().ok().map(|m| m * 60),
     };
-    proposed(org, &s, &conn, &pool, action, "Saved.", "/routing").await
+    proposed(org, &s, &conn, pool, action, "Saved.", "/routing").await
 }
 
 #[derive(FromForm)]
@@ -197,7 +197,7 @@ async fn manager(
         member: f.member,
         manager: Some(f.manager).filter(|m| !m.is_empty()),
     };
-    proposed(org, &s, &conn, &pool, action, "Saved.", "/routing").await
+    proposed(org, &s, &conn, pool, action, "Saved.", "/routing").await
 }
 
 #[derive(FromForm)]
@@ -223,7 +223,7 @@ async fn reader(
         app_id: f.app_id,
         installation_id: f.installation_id,
     };
-    proposed(org, &s, &conn, &pool, action, "Saved.", "/routing").await
+    proposed(org, &s, &conn, pool, action, "Saved.", "/routing").await
 }
 
 #[derive(FromForm)]
@@ -241,7 +241,7 @@ async fn reader_key(org: &str, form: Form<ReaderKeyForm>, cookies: &CookieJar<'_
     };
     let (o, now) = (org.to_owned(), now_unix());
     let r = run(&conn, move |c| set_reader_key(c, &o, &f.pem, &f.webhook_secret, now)).await;
-    flash(&s.sid, r.as_ref().map_or_else(|e| e.message(), |()| "Key saved."), r.is_err());
+    flash(&s.sid, r.as_ref().map_or_else(OrgError::message, |()| "Key saved."), r.is_err());
     to_org(org, "/routing")
 }
 
@@ -289,7 +289,7 @@ async fn oncall_source(
         provider,
         schedule_id: f.schedule_id.trim().to_owned(),
     };
-    proposed(org, &s, &conn, &pool, action, "Saved.", "/routing").await
+    proposed(org, &s, &conn, pool, action, "Saved.", "/routing").await
 }
 
 #[derive(FromForm)]
@@ -307,7 +307,7 @@ async fn oncall_key(org: &str, form: Form<OnCallKeyForm>, cookies: &CookieJar<'_
     };
     let (o, now) = (org.to_owned(), now_unix());
     let r = run(&conn, move |c| oncall::set_key(c, &o, &f.alias, &f.key, now)).await;
-    flash(&s.sid, r.as_ref().map_or_else(|e| e.message(), |()| "Key saved."), r.is_err());
+    flash(&s.sid, r.as_ref().map_or_else(OrgError::message, |()| "Key saved."), r.is_err());
     to_org(org, "/routing")
 }
 
@@ -372,7 +372,7 @@ async fn install(org: &str, form: Form<InstallForm>, cookies: &CookieJar<'_>, co
     };
     let (o, now) = (org.to_owned(), now_unix());
     let r = run(&conn, move |c| channels::install(c, &o, kind, &config, proof.as_ref(), now)).await;
-    flash(&s.sid, r.as_ref().map_or_else(|e| e.message(), |()| "Installed. Turn it on to use it."), r.is_err());
+    flash(&s.sid, r.as_ref().map_or_else(OrgError::message, |()| "Installed. Turn it on to use it."), r.is_err());
     to_org(org, "/channels")
 }
 
@@ -398,11 +398,18 @@ async fn toggle(
     let Some(channel) = ChannelKind::parse(&f.kind) else {
         return to_org(org, "/channels");
     };
+    let (o, enabled) = (org.to_owned(), f.enabled);
+    let config = if enabled {
+        run(&conn, move |c| channels::config_digest(c, &o, channel)).await.ok().flatten()
+    } else {
+        None
+    };
     let action = AdminAction::SetApprovalChannel {
         channel,
-        enabled: f.enabled,
+        enabled,
+        config,
     };
-    proposed(org, &s, &conn, &pool, action, "Saved.", "/channels").await
+    proposed(org, &s, &conn, pool, action, "Saved.", "/channels").await
 }
 
 #[get("/reins/org/<org>/reports/sla?<days>")]
@@ -483,32 +490,32 @@ async fn template_post(
     cookies: &CookieJar<'_>,
     conn: DbConn,
 ) -> Result<Page, Redirect> {
-    let f = form.into_inner();
-    let Some(s) = checked(cookies, &conn, org, &f.csrf, AUTHORS).await else {
+    let input = form.into_inner();
+    let Some(s) = checked(cookies, &conn, org, &input.csrf, AUTHORS).await else {
         return Err(console::to_home());
     };
     let base = console::base();
     let Ok(name) = org_name(&conn, org).await else {
         return Ok(not_found());
     };
-    let t = Template::parse(&f.template).unwrap_or(Template::DeveloperBaseline);
-    let parsed: Result<TemplateParams, _> = serde_json::from_str(&f.params);
+    let template = Template::parse(&input.template).unwrap_or(Template::DeveloperBaseline);
+    let parsed: Result<TemplateParams, _> = serde_json::from_str(&input.params);
     let Ok(params) = parsed else {
         flash(&s.sid, "Those parameters aren't valid JSON.", true);
-        return Ok(Page(pages::templates(&frame(&s, org, &name, &base), t, &f.params, None)));
+        return Ok(Page(pages::templates(&frame(&s, org, &name, &base), template, &input.params, None)));
     };
     let (o, u, now) = (org.to_owned(), s.user.clone(), now_unix());
-    if f.op == "draft" {
-        let r = run(&conn, move |c| draft_template(c, &o, &u, t, &params, now)).await;
+    if input.op == "draft" {
+        let r = run(&conn, move |c| draft_template(c, &o, &u, template, &params, now)).await;
         let text = r.as_ref().map_or_else(|e| e.message().to_owned(), |(rev, _)| format!("Saved as revision {rev}."));
         flash(&s.sid, &text, r.is_err());
         return Err(to_org(org, "/policy"));
     }
     let p2 = params.clone();
-    let preview = run(&conn, move |c| template_draft(c, &o, t, &p2)).await.unwrap_or_default();
+    let preview = run(&conn, move |c| template_draft(c, &o, template, &p2)).await.unwrap_or_default();
     let shown: Value = serde_json::to_value(&params).unwrap_or_default();
     let text = serde_json::to_string_pretty(&shown).unwrap_or_default();
-    Ok(Page(pages::templates(&frame(&s, org, &name, &base), t, &text, Some(&preview))))
+    Ok(Page(pages::templates(&frame(&s, org, &name, &base), template, &text, Some(&preview))))
 }
 
 #[cfg(all(test, sqlite))]

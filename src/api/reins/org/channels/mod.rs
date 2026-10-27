@@ -16,7 +16,10 @@ pub mod slack;
 pub mod teams;
 
 use reins_policy::org::{ManagedRequest, Obligation, analyze_request};
-use reins_proto::{managed::channel_allowed, org::ChannelKind};
+use reins_proto::{
+    managed::channel_allowed,
+    org::{AdminAction, ChannelKind},
+};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
@@ -24,6 +27,7 @@ use super::{OrgError, kms, reviews, routing, web_approval};
 use crate::db::{
     DbConnInner, DbPool,
     models::{
+        reins_org,
         reins_org_request::{self, ReinsOrgRequest, request_state as st},
         reins_org_routing::{self as store, ReinsOrgPosted},
     },
@@ -69,16 +73,29 @@ pub fn install(
     };
     // A changed app or secret on a channel that is on turns it off: it takes a fresh two-person enable
     // (`SetApprovalChannel`). Only the Teams connector URL the bot itself reported may change in place.
-    let identity = |v: &Value| {
-        let mut v = v.clone();
-        if let Some(o) = v.as_object_mut() {
-            o.remove("service_url");
-        }
-        v
-    };
     let before = config_value(c, org, kind)?;
     let was_on = store::q_channel_for_use(c, org, kind.as_str())?.is_some_and(|r| r.enabled);
     let changed = before.as_ref().is_none_or(|b| identity(b) != identity(config));
+    if changed {
+        // Pending proposals to turn on the earlier install lapse, whether or not it is on.
+        for ch in reins_org::q_pending_changes(c, org)? {
+            let ours = serde_json::from_str::<AdminAction>(&ch.action).is_ok_and(
+                |a| matches!(a, AdminAction::SetApprovalChannel { channel, enabled: true, .. } if channel == kind),
+            );
+            if ours {
+                reins_org::q_decide(c, &ch.uuid, reins_org::CHANGE_REJECTED, "system:reinstall", now)?;
+                super::event(
+                    c,
+                    org,
+                    "change.rejected",
+                    None,
+                    Some(&ch.uuid),
+                    &serde_json::json!({"why": "reinstalled"}),
+                    now,
+                )?;
+            }
+        }
+    }
     if was_on && changed {
         store::q_set_channel_enabled(c, org, kind.as_str(), false)?;
         super::audit::record(
@@ -113,6 +130,23 @@ pub fn install(
         now,
     )?;
     Ok(())
+}
+
+/// The digest of a channel's installed app and secret (its identity, without the connector URL the bot reports):
+/// what a proposal to turn it on is bound to.
+pub fn config_digest(c: &mut DbConnInner, org: &str, kind: ChannelKind) -> Result<Option<String>, OrgError> {
+    Ok(config_value(c, org, kind)?.map(|v| {
+        let id = reins_proto::managed::canonical_json(&identity(&v));
+        reins_proto::canon::hex32(&reins_proto::canon::sha256(id.as_bytes()))
+    }))
+}
+
+fn identity(v: &Value) -> Value {
+    let mut v = v.clone();
+    if let Some(o) = v.as_object_mut() {
+        o.remove("service_url");
+    }
+    v
 }
 
 fn config_value(c: &mut DbConnInner, org: &str, kind: ChannelKind) -> Result<Option<Value>, OrgError> {
@@ -158,7 +192,8 @@ pub fn line(
     };
     let mut out = format!("{requester} · {agent} · {what} · {level}");
     if !needs.is_empty() {
-        out.push_str(&format!(" · needs {}", needs.join(", ")));
+        out.push_str(" · needs ");
+        out.push_str(&needs.join(", "));
     }
     out
 }
@@ -373,6 +408,9 @@ pub fn outcome_of(c: &mut DbConnInner, row: &ReinsOrgRequest) -> Result<Option<S
     })
 }
 
+/// What updating a request's messages needs: (org, outcome, posted messages, the channels' configurations).
+type Loaded = (String, String, Vec<ReinsOrgPosted>, Vec<(ChannelKind, Zeroizing<String>)>);
+
 /// Updates every message posted for `request` with `text`, or with its outcome when `text` is `None`.
 pub async fn update_all(pool: &DbPool, request: &str, text: Option<String>) {
     let r = request.to_owned();
@@ -380,27 +418,22 @@ pub async fn update_all(pool: &DbPool, request: &str, text: Option<String>) {
         return;
     };
     let loaded = conn
-        .run(
-            move |c| -> Result<
-                Option<(String, String, Vec<ReinsOrgPosted>, Vec<(ChannelKind, Zeroizing<String>)>)>,
-                OrgError,
-            > {
-                let Some(row) = reins_org_request::q_request_any(c, &r)? else {
-                    return Ok(None);
-                };
-                let Some(outcome) = text.or(outcome_of(c, &row)?) else {
-                    return Ok(None);
-                };
-                let posted = store::q_posted_of(c, &r)?;
-                let mut channels = Vec::new();
-                for kind in ChannelKind::ALL {
-                    if let Some(cfg) = config(c, &row.org_uuid, kind, true)? {
-                        channels.push((kind, cfg));
-                    }
+        .run(move |c| -> Result<Option<Loaded>, OrgError> {
+            let Some(row) = reins_org_request::q_request_any(c, &r)? else {
+                return Ok(None);
+            };
+            let Some(outcome) = text.or(outcome_of(c, &row)?) else {
+                return Ok(None);
+            };
+            let posted = store::q_posted_of(c, &r)?;
+            let mut channels = Vec::new();
+            for kind in ChannelKind::ALL {
+                if let Some(cfg) = config(c, &row.org_uuid, kind, true)? {
+                    channels.push((kind, cfg));
                 }
-                Ok(Some((row.org_uuid, outcome, posted, channels)))
-            },
-        )
+            }
+            Ok(Some((row.org_uuid, outcome, posted, channels)))
+        })
         .await;
     let Ok(Some((org, outcome, posted, channels))) = loaded else {
         return;
@@ -501,9 +534,10 @@ mod tests {
         use reins_proto::org::AdminAction;
         let mut c = db();
         let phones = routed_org(&mut c);
-        let on = AdminAction::SetApprovalChannel {
+        let mut on = AdminAction::SetApprovalChannel {
             channel: ChannelKind::Slack,
             enabled: true,
+            config: None,
         };
         // Not installed: refused.
         assert!(crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 300).is_err());
@@ -511,6 +545,12 @@ mod tests {
             .unwrap();
         assert!(install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "not-a-bot"}), None, 300).is_err());
         assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_none(), "installed, still off");
+        assert!(crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 301).is_err(), "no digest");
+        on = AdminAction::SetApprovalChannel {
+            channel: ChannelKind::Slack,
+            enabled: true,
+            config: config_digest(&mut c, "o1", ChannelKind::Slack).unwrap(),
+        };
         let (crate::api::reins::org::admin::Proposed::Pending(id), _) =
             crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 301).unwrap()
         else {
@@ -568,6 +608,7 @@ mod tests {
             let on = AdminAction::SetApprovalChannel {
                 channel: ChannelKind::Slack,
                 enabled: true,
+                config: config_digest(c, "o1", ChannelKind::Slack).unwrap(),
             };
             let (crate::api::reins::org::admin::Proposed::Pending(id), _) =
                 crate::api::reins::org::admin::propose(c, "o1", "dana", &on, None, at).unwrap()
@@ -589,5 +630,35 @@ mod tests {
         enable(&mut c, 330);
         let on = config(&mut c, "o1", ChannelKind::Slack, false).unwrap().unwrap();
         assert!(on.contains("xoxb-2"));
+    }
+
+    #[test]
+    fn an_approval_turns_on_only_the_install_it_was_proposed_for() {
+        use reins_proto::managed::ReviewDecision;
+        let mut c = db();
+        let phones = routed_org(&mut c);
+        let dana = reviews::tests::enroll(&mut c, "o1", "dana", "dana-phone", Some(false), 300);
+        install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "xoxb-1", "signing_secret": "s"}), None, 300)
+            .unwrap();
+        let on = AdminAction::SetApprovalChannel {
+            channel: ChannelKind::Slack,
+            enabled: true,
+            config: config_digest(&mut c, "o1", ChannelKind::Slack).unwrap(),
+        };
+        let (crate::api::reins::org::admin::Proposed::Pending(id), _) =
+            crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 301).unwrap()
+        else {
+            panic!("pending")
+        };
+        reviews::tests::change_answer_as(&mut c, &dana, "dana", &id, ReviewDecision::Propose, 302).unwrap();
+        // While it waits, someone swaps the secret: the proposal lapses, and approving it does nothing.
+        install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "xoxb-evil", "signing_secret": "x"}), None, 303)
+            .unwrap();
+        assert!(
+            reviews::tests::change_answer_as(&mut c, &phones["kim"], "kim", &id, ReviewDecision::Approve, 304).is_err()
+        );
+        assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_none());
+        // A proposal bound to the old digest is refused outright too.
+        assert!(crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 305).is_err());
     }
 }

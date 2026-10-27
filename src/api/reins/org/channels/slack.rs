@@ -201,7 +201,7 @@ pub fn answer(body: &[u8]) -> Value {
     }
 }
 
-#[post("/reins/org/slack/events", data = "<data>")]
+#[post("/reins/org/slack/events", data = "<data>", rank = 1)]
 async fn events(headers: SlackHeaders, data: Data<'_>, conn: DbConn) -> Result<Json<Value>, Status> {
     if !enabled() {
         return Err(Status::NotFound);

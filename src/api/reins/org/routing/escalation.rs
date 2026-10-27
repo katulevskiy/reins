@@ -181,15 +181,18 @@ fn escalate_row(
         reason: None,
     };
     let resources = super::resources_of(&policy, &req);
+    let level: Value = serde_json::from_str(&row.trace).unwrap_or_default();
+    let web = reins_proto::managed::channel_allowed(level["level"].as_str().unwrap_or_default());
     let ctx = Ctx {
         org: &org,
+        web,
         requester: &row.user_uuid,
         policy: &policy,
         resources: &resources,
         touches: &touches,
         dynamic: &dynamic,
     };
-    let dir = Directory::load(c, &org, now)?;
+    let dir = Directory::load(c, &org, now, web)?;
     let mut resolved = stored(row.resolved.as_deref());
     let mut deadline = row.expires_at;
     for (o, step) in due {
