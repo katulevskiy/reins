@@ -12,6 +12,10 @@ publish.workspace = true
 name = "reins-executor"
 path = "src/main.rs"
 
+[features]
+# Test support for the end-to-end suite (a fixed test-only RSA key).
+testing = []
+
 [dependencies]
 async-trait = "0.1.92"
 data-encoding = "2.11.1"

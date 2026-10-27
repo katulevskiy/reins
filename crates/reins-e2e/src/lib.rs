@@ -9,6 +9,7 @@
 )]
 
 pub mod ai;
+pub mod org;
 pub mod phone;
 pub mod server;
 pub mod workos;

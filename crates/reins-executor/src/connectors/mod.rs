@@ -194,8 +194,9 @@ pub(crate) fn format_rfc3339(t: i64) -> String {
     format!("{}T{:02}:{:02}:{:02}Z", format_date(days), secs / 3600, secs % 3600 / 60, secs % 60)
 }
 
-#[cfg(test)]
-pub(crate) mod testing {
+/// Test support (a fixed test-only RSA key), for this crate's tests and the end-to-end suite.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
     use ring::signature::RsaKeyPair;
 
     /// A 2048-bit RSA key made for these tests only (PKCS#8 DER, base64). It signs nothing outside them.

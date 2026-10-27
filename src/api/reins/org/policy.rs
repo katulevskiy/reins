@@ -35,20 +35,7 @@ pub const MAX_POLICY_BYTES: usize = 256 * 1024;
 
 /// 05 §7.2's *Developer baseline*: routine work (L0–L2) in the org's own repositories and with its people is Auto, a
 /// soft Ask is the member's own review, and L3 and the always-ask floor are always reviewed.
-pub const DEVELOPER_BASELINE: &str = r#"{
-  "version": 1,
-  "org": "",
-  "matrix": {
-    "mine":    ["auto", "auto", "auto", "ask"],
-    "friends": ["auto", "ask_first", "auto", "ask"],
-    "work":    ["auto", "auto", "auto", "ask"],
-    "outside": ["ask", "ask", "ask", "ask"]
-  },
-  "rules": [],
-  "cell_review": {"reviewers": "requester", "exclude_requester": false, "class": "instant", "window_secs": 120},
-  "posture": {"screen_lock": true, "no_root": true, "attested": false, "min_os": {}, "max_age_days": 30},
-  "explain": "Developer baseline"
-}"#;
+pub const DEVELOPER_BASELINE: &str = include_str!("policy_baseline.json");
 
 /// Parses a draft for `org`: every rule is the org's, and the org's verified domains and GitHub organization are Work.
 pub fn parse_draft(c: &mut DbConnInner, org: &str, body: &str) -> Result<OrgPolicy, OrgError> {
