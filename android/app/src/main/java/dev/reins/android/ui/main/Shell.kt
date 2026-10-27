@@ -168,13 +168,13 @@ fun HeaderModeChip(settings: AutopilotSettings?, onOpen: () -> Unit) {
     }
 }
 
-/** The countdown of the timed mode in force ("47:12"), ticking each second; null when none runs or it never ends. */
+/** The countdown of the timed mode in force ("47:12", "23:39" from an hour on), ticking each second; null when none runs or it never ends. */
 @Composable
 private fun runningClock(settings: AutopilotSettings?): String? {
     val until = timedUntil(settings) ?: return null
     if (AutopilotText.isUntilOff(until)) return null
     val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-    return AutopilotText.clock(until, now)
+    return AutopilotText.chipClock(until, now)
 }
 
 /**

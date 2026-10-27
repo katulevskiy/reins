@@ -627,6 +627,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// The demo has no modes deciding in the background: nothing is ever left for one.
+    func deciding() async throws -> [PendingItem] { [] }
+
     /// Waits like the server's long poll (at most a few seconds), returning early when something changes.
     func sync(waitSecs: UInt32) async throws -> [PendingItem] {
         let start = try locked { s -> Int in

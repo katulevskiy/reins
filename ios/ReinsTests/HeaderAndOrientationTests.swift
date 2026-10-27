@@ -14,7 +14,10 @@ final class HeaderAndOrientationTests: XCTestCase {
     func testTheIPhoneIsPortraitOnly() {
         let phone = Bundle.main.object(forInfoDictionaryKey: "UISupportedInterfaceOrientations") as? [String]
         XCTAssertEqual(phone, ["UIInterfaceOrientationPortrait"])
-        let pad = Bundle.main.object(forInfoDictionaryKey: "UISupportedInterfaceOrientations~ipad") as? [String]
+        // The bundle resolves `~ipad` keys away on an iPhone: read the file as written.
+        let url = Bundle.main.url(forResource: "Info", withExtension: "plist")
+        let raw = url.flatMap { try? Data(contentsOf: $0) }.flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
+        let pad = raw?["UISupportedInterfaceOrientations~ipad"] as? [String]
         XCTAssertEqual(pad?.count, 4, "the iPad keeps every orientation")
     }
 }

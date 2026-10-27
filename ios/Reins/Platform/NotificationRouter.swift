@@ -84,6 +84,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             category(.pairing),
             category(.blob),
             category(.join),
+            // What the extension could not read, and what Autopilot has still to decide: never an action to answer with.
+            category(.arriving),
+            category(.deciding),
             category(.autopilot, [report]),
             category(.grant),
             category(.status),
@@ -110,16 +113,15 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: Keeping in step
 
-    /// Takes away item notifications whose item no longer waits (a safety net under `itemResolved`). A push whose
-    /// item the extension could not read yet is left alone for a minute, until the app fetched it.
+    /// Takes away item notifications whose item no longer waits for the owner (a safety net under `itemResolved` and
+    /// `autoDecided`): answered, expired, or decided by a mode. A push whose item the extension could not read yet is
+    /// left alone for a minute, until the app fetched it (`NotificationSweep`).
     private func dropStale(keeping waiting: Set<String>) {
-        let items = Set([NotificationCategory.request, .quickRequest, .pairing, .blob].map(\.rawValue))
         center.getDeliveredNotifications { delivered in
-            let cutoff = Date().addingTimeInterval(-60)
+            let now = Date()
             let stale = delivered.filter { n in
-                guard items.contains(n.request.content.categoryIdentifier), n.date < cutoff else { return false }
                 let id = n.request.content.userInfo[NotificationKey.id] as? String ?? n.request.identifier
-                return !waiting.contains(id)
+                return NotificationSweep.isStale(category: n.request.content.categoryIdentifier, id: id, date: n.date, waiting: waiting, now: now)
             }.map(\.request.identifier)
             if !stale.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: stale) }
         }
@@ -140,7 +142,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 switch category {
-                case .request, .quickRequest, .pairing, .blob, .join:
+                case .request, .quickRequest, .pairing, .blob, .join, .arriving:
                     if let payload, payload.itemKind != nil, let host = self.host {
                         Task {
                             guard let model = await host.ready() else { return }
@@ -151,7 +153,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                     completionHandler([])
                 case .status:
                     completionHandler([.banner, .list])
-                case .autopilot, .grant, nil:
+                case .autopilot, .grant, .deciding, nil:
                     completionHandler([])
                 }
             }

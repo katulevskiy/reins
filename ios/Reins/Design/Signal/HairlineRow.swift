@@ -59,7 +59,7 @@ struct HairlineFact<Trailing: View>: View {
                     .font(mono ? TextRole.value.font() : RFont.sans(15, .medium))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(mono ? .middle : .tail)
             }
             trailing
             if chevron { GlyphIcon(.chevronRight, size: 14).foregroundStyle(Palette.inkFaint) }

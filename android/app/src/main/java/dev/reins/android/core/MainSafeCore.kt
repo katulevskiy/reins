@@ -322,6 +322,7 @@ class MainSafeCore(
     override suspend fun pairingByCode(userCode: String): PairingView = io { pairingByCode(userCode) }
 
     override suspend fun pending(): List<PendingItem> = io { pending() }
+    override suspend fun deciding(): List<PendingItem> = io { deciding() }
 
     override suspend fun registerDevice(fcmToken: String?) = io { registerDevice(fcmToken) }
 

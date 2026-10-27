@@ -33,11 +33,33 @@ struct TrustScreen: View {
 
     private var placement: EarsPlacement { EarsPlacement(safeTop: safeTop, accessibility: typeSize.isAccessibilitySize) }
 
+    /// The pinned title's height, and whether the list has scrolled under it.
+    @State private var titleHeight: CGFloat = 52
+    @State private var titleScrolled = false
+
+    /// Trust's title, pinned under the status bar while the list scrolls beneath it (when no mode runs: a running
+    /// mode's field is the header then).
+    private func pinnedTitle(_ placement: EarsPlacement) -> some View {
+        PageHeader(title: "Trust") { EmptyView() }
+            .padding(.top, placement.safeTop + 4)
+            .padding(.bottom, 8)
+            .padding(.leading, 20)
+            .padding(.trailing, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(alignment: .top) { StickyBackdrop(shown: titleScrolled) }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { titleHeight = $0 }
+            .ignoresSafeArea(edges: .top)
+    }
+
     var body: some View {
         let mode = runningMode
         let placement = placement
         ZStack(alignment: .top) {
             list(mode, placement)
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 1 } action: { _, now in
+                    if now != titleScrolled { titleScrolled = now }
+                }
+            if mode == nil { pinnedTitle(placement) }
             if let mode, let s = ap.settings {
                 RunningOverlay(
                     running: mode, count: mode.entries(model.activity, settings: s).count, placement: placement, fold: fold,
@@ -149,10 +171,10 @@ struct TrustScreen: View {
                 runningMiddle(mode, s)
                     .id("middle")
             } else {
-                PageHeader(title: "Trust") { EmptyView() }
-                    .padding(.top, placement.safeTop + 4)
-                    .padding(.bottom, 24)
-                    .plainRow(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
+                // The title is pinned above (`pinnedTitle`); its room at the top of the list.
+                Color.clear
+                    .frame(height: titleHeight + 16)
+                    .plainRow(EdgeInsets())
                 if let s = ap.settings {
                     TrustModePicker(
                         settings: s,

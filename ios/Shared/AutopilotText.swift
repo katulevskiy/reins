@@ -198,6 +198,16 @@ enum AutopilotText {
         return "\(left / 86_400)d \(left % 86_400 / 3_600)h"
     }
 
+    /// The header chip's clock: "47:12" under an hour, then hours and minutes without seconds ("23:39"), so the page's
+    /// title keeps its room; "2d 4h" beyond a day, "∞" without an end.
+    static func chipClock(until: Int64, now: Int64) -> String {
+        if isUntilOff(until) { return "∞" }
+        let left = Swift.max(until - now, 0)
+        if left < 3_600 { return String(format: "%d:%02d", left / 60, left % 60) }
+        if left < 86_400 { return String(format: "%d:%02d", left / 3_600, left % 3_600 / 60) }
+        return "\(left / 86_400)d \(left % 86_400 / 3_600)h"
+    }
+
     /// Who a bypass covers, for its notification and Live Activity: every AI, one by name, or how many.
     static func bypassScope(global: Bool, labels: [String]) -> String {
         if global { return "every AI" }

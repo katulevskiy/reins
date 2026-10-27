@@ -103,6 +103,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawBehind
 
 /** One row of the river as the list lays it out. */
 private sealed interface RiverItem {
@@ -145,6 +149,7 @@ private data class Warning(val tag: String, val label: String, val ask: String, 
  * searched by the core on this phone. When Reins is broken (notifications off, no screen lock, another phone
  * approves), a warn field runs into the top.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ActivityScreen(
     container: AppContainer,
@@ -302,7 +307,30 @@ fun ActivityScreen(
             contentPadding = PaddingValues(bottom = 32.dp),
         ) {
             if (warnings.isNotEmpty()) item(key = "warn") { WarnField(warnings, registrationError) }
-            item(key = "title") {
+            // The header stays pinned under the status bar while the list scrolls; a scrim fades in behind it once rows
+            // pass under, so the title and buttons stay readable over them.
+            stickyHeader(key = "title") {
+                val scrim = if (c.dark) Color.Black.copy(alpha = 0.82f) else c.paper.copy(alpha = 0.9f)
+                val shown by androidx.compose.animation.core.animateFloatAsState(
+                    if (listState.canScrollBackward) 1f else 0f,
+                    label = "headerScrim",
+                )
+                Box(
+                    Modifier.drawBehind {
+                        if (shown > 0f) {
+                            val fade = 28.dp.toPx()
+                            drawRect(
+                                Brush.verticalGradient(
+                                    0f to scrim.copy(alpha = scrim.alpha * shown),
+                                    size.height / (size.height + fade) to scrim.copy(alpha = scrim.alpha * shown),
+                                    1f to Color.Transparent,
+                                    endY = size.height + fade,
+                                ),
+                                size = size.copy(height = size.height + fade),
+                            )
+                        }
+                    },
+                ) {
                 if (searchOpen) {
                     SearchHeader(
                         text,
@@ -325,6 +353,7 @@ fun ActivityScreen(
                         FilterButton(filtersOpen) { filtersShown = !filtersOpen }
                     }
                 }
+            }
             }
             notice?.let { item(key = "notice") { NoticeRow(it, onDismissNotice) } }
             // What the core says about syncing with the account's other phone (#101): a soft row with the sync glyph and
