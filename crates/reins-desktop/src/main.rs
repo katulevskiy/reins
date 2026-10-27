@@ -160,6 +160,12 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<SessionCmd>,
     },
+    /// A task for the AI tools here: an envelope your phone decides more in on its own; `reins task start` / `end`.
+    #[command(display_order = 9)]
+    Task {
+        #[command(subcommand)]
+        action: Option<TaskCmd>,
+    },
     #[command(flatten)]
     Agents(reins_desktop::agents_cli::Command),
     #[command(display_order = 13)]
@@ -204,6 +210,14 @@ enum SessionCmd {
     /// Start a work session (the same as `reins allow`).
     Start(SessionArgs),
     /// End the running work session now: its permissions end on your phone.
+    End,
+}
+
+#[derive(Subcommand)]
+enum TaskCmd {
+    /// Propose a task; your phone approves it (and may narrow it).
+    Start(reins_desktop::task_cli::TaskArgs),
+    /// End the task now (never asked).
     End,
 }
 
@@ -549,6 +563,32 @@ async fn run(cmd: Cmd) -> Result<(), String> {
                 out!("No work session runs here.");
             } else {
                 out!("Work session ended: {ended} permission(s) ended on your phone.");
+            }
+            Ok(())
+        }
+        Cmd::Task {
+            action: Some(TaskCmd::Start(args)),
+        } => {
+            let t = reins_desktop::task_cli::start(&paths, &config, &args).await?;
+            out!("{}", reins_desktop::task_cli::describe(&t, reins_desktop::now_unix()));
+            Ok(())
+        }
+        Cmd::Task {
+            action: Some(TaskCmd::End),
+        } => {
+            if reins_desktop::task_cli::end(&paths, &config).await? {
+                out!("Task ended.");
+            } else {
+                out!("No task runs here.");
+            }
+            Ok(())
+        }
+        Cmd::Task {
+            action: None,
+        } => {
+            match reins_desktop::task_cli::current(&paths) {
+                Some(t) => out!("{}", reins_desktop::task_cli::describe(&t, reins_desktop::now_unix())),
+                None => out!("No task runs here. `reins task start --title ... --repo owner/name` proposes one."),
             }
             Ok(())
         }

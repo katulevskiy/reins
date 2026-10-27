@@ -967,7 +967,12 @@ pub async fn run(
             if let Err(e) = crate::tickets::TicketStore::update(paths, |s| s.add(ticket)) {
                 log::warn!("tickets: {e}");
             }
-            Verdict::Deny(crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now))
+            Verdict::Deny(crate::tickets::parked_hook_message(
+                &parked.ticket,
+                parked.expected_by,
+                now,
+                parked.until_morning,
+            ))
         }
     };
     let (out, code) = render_with(&call, &v, &news);
