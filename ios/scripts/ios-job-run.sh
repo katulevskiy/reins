@@ -3,7 +3,7 @@
 # booted simulator, then test-without-building once per requested slice. Started by .github/workflows/ios-job.yml
 # and by scripts/ios-job.sh --mac; see docs/ios-dev.md.
 #
-#   ios/scripts/ios-job-run.sh --out DIR [--run SPECS] [--device NAME] [--derived DIR]
+#   ios/scripts/ios-job-run.sh --out DIR [--run SPECS] [--device NAME] [--derived DIR] [--cas DIR] [--packages DIR]
 #
 # SPECS, comma-separated (default: snapshots):
 #   build                    build only (also implied by every other spec)
@@ -21,13 +21,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUN=snapshots OUT="" DEVICE="${REINS_JOB_DEVICE:-iPhone 17 Pro}" DERIVED=""
+RUN=snapshots OUT="" DEVICE="${REINS_JOB_DEVICE:-iPhone 17 Pro}" DERIVED="" CAS="" PACKAGES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --device) DEVICE="$2"; shift 2 ;;
     --derived) DERIVED="$2"; shift 2 ;;
+    --cas) CAS="$2"; shift 2 ;;
+    --packages) PACKAGES="$2"; shift 2 ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
@@ -41,7 +43,11 @@ if [[ -z "$DERIVED" ]]; then
   key="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-10)"
   DERIVED="$HOME/Library/Developer/Xcode/DerivedData/Reins-job-$(basename "$ROOT")-$key"
 fi
-mkdir -p "$DERIVED" "$OUT/logs" "$OUT/results" "$OUT/snapshots"
+# The Swift compilation cache and the cloned packages: inside DerivedData by default. CI (ios.yml) keeps them at the
+# workspace's compilation-cache and spm, which the iOS job passes so main's cache of them can seed a cold job.
+CAS="${CAS:-$DERIVED/CompilationCache.noindex}"
+PACKAGES="${PACKAGES:-$DERIVED/SourcePackages}"
+mkdir -p "$DERIVED" "$CAS" "$PACKAGES" "$OUT/logs" "$OUT/results" "$OUT/snapshots"
 : > "$OUT/timings.tsv"
 : > "$OUT/steps.tsv"
 
@@ -208,10 +214,17 @@ settings=(
   PROVISIONING_PROFILE=
   COMPILER_INDEX_STORE_ENABLE=NO
   COMPILATION_CACHE_ENABLE_CACHING=YES
+  COMPILATION_CACHE_CAS_PATH="$CAS"
   ONLY_ACTIVE_ARCH=YES
   DEBUG_INFORMATION_FORMAT=dwarf
 )
 export REINS_SKIP_CORE=1
+export COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS"
+# A fresh checkout gives every file a new mtime, which alone makes the Swift driver recompile it. With file hashing it
+# compares contents instead, so DerivedData kept between runs (an Actions cache) builds only what changed. A driver
+# option: the compile jobs, and so the compilation cache's keys, are the same.
+SWIFT_FLAGS='$(inherited) -enable-incremental-file-hashing'
+settings+=("OTHER_SWIFT_FLAGS=$SWIFT_FLAGS")
 t0=$(now)
 status=pass
 # generic/platform: no simulator needed to build, so the boot above runs alongside.
@@ -221,7 +234,7 @@ if ! xcodebuild build-for-testing \
   -configuration Debug \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$DERIVED" \
-  -clonedSourcePackagesDirPath "$DERIVED/SourcePackages" \
+  -clonedSourcePackagesDirPath "$PACKAGES" \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackagePluginValidation \
   -showBuildTimingSummary \
