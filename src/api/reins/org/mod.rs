@@ -27,6 +27,7 @@
 
 pub mod admin;
 pub mod api;
+pub mod attest;
 pub mod audit;
 pub mod console;
 pub mod console_managed;

@@ -173,10 +173,12 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     if !signature_ok(&request.device_key, &request.signature, &request.challenge) {
         return Err(api_err(Status::Forbidden, "bad_signature", "The device key did not sign the challenge"));
     }
-    // What each attestation must vouch for (`reins_proto::org::attestation_binding`): kept with them, for O2's
-    // verifier to check against the platform's signed data.
+    // What each attestation must vouch for (`reins_proto::org::attestation_binding`), checked now and kept with them.
     let key_der = data_encoding::BASE64.decode(request.device_key.trim().as_bytes()).unwrap_or_default();
-    let binding = data_encoding::HEXLOWER.encode(&reins_proto::org::attestation_binding(&request.challenge, &key_der));
+    let binding_bytes = reins_proto::org::attestation_binding(&request.challenge, &key_der);
+    let binding = data_encoding::HEXLOWER.encode(&binding_bytes);
+    let (attestation_state, attestation_detail) =
+        super::attest::verify_enrollment(&request.attestations, &binding_bytes, &key_der);
     let row = ReinsOrgDevice {
         org_uuid: org.clone(),
         user_uuid: user.clone(),
@@ -189,12 +191,13 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
         posture_at: now,
         enrolled_at: now,
         revoked_at: None,
-        attestation_state: reins_org::attestation::UNVERIFIED.to_owned(),
-        attestation_detail: None,
+        attestation_state: attestation_state.to_owned(),
+        attestation_detail: Some(attestation_detail.to_string()),
     };
     let kinds: Vec<_> = request.attestations.iter().map(|a| a.kind).collect();
     let detail = json!({"device": device, "hardware": request.hardware, "attestations": kinds,
-                        "attestation_binding": binding, "posture": posture_summary(&request.posture)});
+                        "attestation_binding": binding, "attestation": attestation_state,
+                        "posture": posture_summary(&request.posture)});
     let enrolled = conn
         .run(move |c| -> Result<bool, super::OrgError> {
             use diesel::Connection;

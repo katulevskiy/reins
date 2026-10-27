@@ -148,7 +148,8 @@ pub struct ReinsOrgDevice {
     pub key_algorithm: String,
     pub public_key: String,
     pub hardware: bool,
-    /// `Vec<reins_proto::org::Attestation>` as JSON.
+    /// `{"binding": hex, "items": Vec<reins_proto::org::Attestation>}` as JSON: what each attestation must vouch for
+    /// (`reins_proto::org::attestation_binding`), and the attestations as the platform gave them.
     pub attestations: String,
     /// `reins_proto::org::Posture` as JSON.
     pub posture: String,
@@ -161,7 +162,6 @@ pub struct ReinsOrgDevice {
     pub attestation_detail: Option<String>,
 }
 
-#[allow(dead_code, reason = "verified and failed are set by attestation verification")]
 /// [`ReinsOrgDevice::attestation_state`] values.
 pub mod attestation {
     pub const UNVERIFIED: &str = "unverified";
@@ -645,6 +645,27 @@ pub fn q_set_posture(
     .set((reins_org_devices::posture.eq(posture), reins_org_devices::posture_at.eq(at)))
     .execute(c)
     .map(|_| ())
+}
+
+/// Devices whose attestations were never verified (enrolled before verification existed).
+pub fn q_unverified_devices(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgDevice>> {
+    reins_org_devices::table.filter(reins_org_devices::attestation_state.eq(attestation::UNVERIFIED)).load(c)
+}
+
+/// Records what verifying `device`'s attestations found, unless it was settled or enrolled a new key meanwhile;
+/// whether it did.
+pub fn q_set_attestation(c: &mut DbConnInner, device: &ReinsOrgDevice, state: &str, detail: &str) -> QueryResult<bool> {
+    diesel::update(
+        reins_org_devices::table
+            .filter(reins_org_devices::org_uuid.eq(&device.org_uuid))
+            .filter(reins_org_devices::user_uuid.eq(&device.user_uuid))
+            .filter(reins_org_devices::device_uuid.eq(&device.device_uuid))
+            .filter(reins_org_devices::public_key.eq(&device.public_key))
+            .filter(reins_org_devices::attestation_state.eq(attestation::UNVERIFIED)),
+    )
+    .set((reins_org_devices::attestation_state.eq(state), reins_org_devices::attestation_detail.eq(detail)))
+    .execute(c)
+    .map(|n| n == 1)
 }
 
 /// Revokes every device `user` enrolled to `org`; returns how many were active.
