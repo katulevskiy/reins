@@ -2,8 +2,6 @@
 //! check that none was edited, removed or reordered (`reins_proto::org::event_hash`). Nothing here updates or deletes
 //! an event; only deleting the organization removes them.
 
-#![allow(dead_code)] // O1 wiring in progress: the console reads these.
-
 use diesel::prelude::*;
 use reins_proto::org::{EventFields, GENESIS_HASH, event_hash};
 

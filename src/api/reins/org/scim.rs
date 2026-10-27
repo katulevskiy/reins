@@ -30,7 +30,7 @@ use crate::{
         DbConn, DbConnInner, DbPool,
         models::{
             Group, Invitation, Membership, ReinsSetting, User,
-            reins_org::{self, ACTIVE_STATUS, ReinsOrg, SUBJECT_GROUP, state},
+            reins_org::{self, ReinsOrg, SUBJECT_GROUP, state},
         },
         schema::{groups, groups_users, invitations, users, users_organizations},
     },
@@ -560,7 +560,7 @@ mod tests {
 
     use super::super::testing::*;
     use super::*;
-    use crate::db::models::reins_org::q_save_org;
+    use crate::db::models::reins_org::{ACTIVE_STATUS, q_save_org};
 
     fn ev(kind: &str, data: Value) -> Event {
         Event {

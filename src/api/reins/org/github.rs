@@ -51,8 +51,3 @@ static CHECKER: LazyLock<RwLock<Arc<dyn GithubMembership>>> = LazyLock::new(|| R
 pub fn checker() -> Arc<dyn GithubMembership> {
     Arc::clone(&CHECKER.read().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
-
-#[cfg(test)]
-pub fn set_checker(c: Arc<dyn GithubMembership>) {
-    *CHECKER.write().unwrap_or_else(std::sync::PoisonError::into_inner) = c;
-}

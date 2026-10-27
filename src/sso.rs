@@ -202,6 +202,10 @@ pub async fn authorize_url(
         // The Reins phone apps open the sign-in in ASWebAuthenticationSession / a Custom Tab and catch their own scheme.
         "mobile" if REINS_APP_REDIRECTS.contains(&raw_redirect_uri) => raw_redirect_uri.to_owned(),
         "desktop" | "mobile" => "bitwarden://sso-callback".to_owned(),
+        // The organizations admin console (`api::reins::org::console`): its own fixed callback.
+        crate::api::reins::org::console::CONSOLE_CLIENT if crate::api::reins::org::enabled() => {
+            crate::api::reins::org::console::callback_url()
+        }
         "cli" => {
             let port_regex = Regex::new(r"^http://localhost:([0-9]{4})$").unwrap();
             if let Some(port) =

@@ -33,7 +33,8 @@ form{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0}\
 input,select{height:34px;padding:0 10px;font:inherit;color:var(--ink);background:var(--paper);border:0;\
 box-shadow:0 0 0 1px var(--rule);border-radius:9px}input:focus,select:focus{outline:2px solid var(--violet)}\
 button{height:34px;padding:0 14px;border:0;border-radius:999px;background:var(--ink);color:var(--paper);font:inherit;\
-font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}button.quiet{background:var(--sunken);\
+font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}a.button{display:inline-flex;height:34px;align-items:center;padding:0 14px;border-radius:999px;\
+background:var(--ink);color:var(--paper);font-weight:600;text-decoration:none}button.quiet{background:var(--sunken);\
 color:var(--ink)}button.danger{background:var(--dwash);color:var(--bad)}\
 .flash{padding:10px 14px;border-radius:12px;background:var(--vwash);color:var(--violet)}\
 .flash.bad{background:var(--dwash);color:var(--bad)}.banner{padding:12px 14px;border-radius:12px;\
@@ -44,7 +45,8 @@ svg.i{width:18px;height:18px;fill:currentColor;flex:none}a{color:var(--violet)}"
 
 /// Material Symbols paths (24 px grid), drawn inline.
 pub mod icon {
-    pub const SHIELD: &str = "M12 22q-3.48-.88-5.74-3.99Q4 14.9 4 11.1V5l8-3 8 3v6.1q0 3.8-2.26 6.91Q15.48 21.12 12 22Z";
+    pub const SHIELD: &str =
+        "M12 22q-3.48-.88-5.74-3.99Q4 14.9 4 11.1V5l8-3 8 3v6.1q0 3.8-2.26 6.91Q15.48 21.12 12 22Z";
     pub const CHECK: &str = "m9.55 18-5.7-5.7 1.43-1.43 4.27 4.28 9.18-9.18 1.42 1.42Z";
     pub const WARNING: &str = "M1 21 12 2l11 19Zm11-3q.43 0 .71-.29.29-.28.29-.71t-.29-.71Q12.43 16 12 16t-.71.29Q11 \
 16.57 11 17t.29.71q.28.29.71.29Zm-1-3h2v-5h-2Z";
@@ -72,6 +74,8 @@ pub enum Tab {
 
 /// What every signed-in page shows in its header.
 pub struct Frame<'a> {
+    /// The console's absolute base path, ending in `/` (`{domain path}/reins/org/`).
+    pub base: &'a str,
     pub email: &'a str,
     pub csrf: &'a str,
     /// `(org id, org name)` when an org is open.
@@ -80,11 +84,15 @@ pub struct Frame<'a> {
     pub flash: Option<(&'a str, bool)>,
 }
 
-/// A whole page. `up` leads back to `/reins/org/` from the page's own folder, so links stay relative.
+/// A whole page. `up`: the console's absolute base path (links are absolute: Rocket has no trailing-slash routes).
 pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> String {
     let header = frame.map_or_else(String::new, |f| {
         let tab = |t: Tab, href: String, label: &str| {
-            let on = if f.tab == t { " class=\"on\"" } else { "" };
+            let on = if f.tab == t {
+                " class=\"on\""
+            } else {
+                ""
+            };
             format!("<a{on} href=\"{href}\">{label}</a>")
         };
         let nav = match f.org {
@@ -109,7 +117,17 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
     });
     let flash = frame
         .and_then(|f| f.flash)
-        .map(|(text, bad)| format!("<p class=\"flash{}\" role=\"status\">{}</p>", if bad { " bad" } else { "" }, e(text)))
+        .map(|(text, bad)| {
+            format!(
+                "<p class=\"flash{}\" role=\"status\">{}</p>",
+                if bad {
+                    " bad"
+                } else {
+                    ""
+                },
+                e(text)
+            )
+        })
         .unwrap_or_default();
     format!(
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -123,14 +141,14 @@ fn hidden_csrf(csrf: &str) -> String {
     format!("<input type=\"hidden\" name=\"csrf\" value=\"{}\">", e(csrf))
 }
 
-pub fn signed_out(error: Option<&str>) -> String {
+pub fn signed_out(base: &str, error: Option<&str>) -> String {
     let error = error.map(|m| format!("<p class=\"flash bad\" role=\"alert\">{}</p>", e(m))).unwrap_or_default();
     let body = format!(
         "{error}<section><h1>Reins for organizations</h1><p class=\"meta\">Sign in with your work account.</p>\
-<form method=\"get\" action=\"login\"><input name=\"domain\" placeholder=\"Work domain (optional)\" \
-autocomplete=\"off\"><button type=\"submit\">Sign in</button></form></section>"
+<p><a class=\"button\" href=\"{b}login\">Sign in</a></p></section>",
+        b = e(base)
     );
-    page("Reins for organizations", None, &body, "")
+    page("Reins for organizations", None, &body, base)
 }
 
 pub struct HomeView<'a> {
@@ -146,24 +164,34 @@ pub fn home(frame: &Frame<'_>, view: &HomeView<'_>) -> String {
         view.orgs
             .iter()
             .map(|(id, name, tier)| {
-                format!("<tr><td><a href=\"{}\">{}</a></td><td><span class=\"pill\">{}</span></td></tr>", e(id), e(name), tier.label())
+                format!(
+                    "<tr><td><a href=\"{}{}\">{}</a></td><td><span class=\"pill\">{}</span></td></tr>",
+                    e(frame.base),
+                    e(id),
+                    e(name),
+                    tier.label()
+                )
             })
             .collect::<String>()
-            .replace("<tr>", "<tr>")
     };
-    let orgs = if view.orgs.is_empty() { orgs } else { format!("<table>{orgs}</table>") };
+    let orgs = if view.orgs.is_empty() {
+        orgs
+    } else {
+        format!("<table>{orgs}</table>")
+    };
     let create = view.can_create.map_or_else(String::new, |domain| {
         format!(
             "<section><h2>New organization</h2><p class=\"meta\">Claims <span class=\"mono\">{d}</span>. \
-This account becomes its Org owner and a work account.</p><form method=\"post\" action=\"new\">{csrf}\
+This account becomes its Org owner and a work account.</p><form method=\"post\" action=\"{base}new\">{csrf}\
 <input name=\"name\" placeholder=\"Name\" maxlength=\"64\" required><select name=\"tier\">\
 <option value=\"team\">Team</option><option value=\"business\" selected>Business</option>\
 <option value=\"enterprise\">Enterprise</option></select><button type=\"submit\">Create</button></form></section>",
             d = e(domain),
+            base = e(frame.base),
             csrf = hidden_csrf(frame.csrf),
         )
     });
-    page("Organizations", Some(frame), &format!("<h1>Organizations</h1><section>{orgs}</section>{create}"), "")
+    page("Organizations", Some(frame), &format!("<h1>Organizations</h1><section>{orgs}</section>{create}"), frame.base)
 }
 
 pub struct DomainView {
@@ -177,7 +205,6 @@ pub struct ChangeView {
     pub id: String,
     pub action: AdminAction,
     pub proposed_by: String,
-    pub expires_at: i64,
     pub can_approve: bool,
     pub can_reject: bool,
 }
@@ -233,7 +260,12 @@ pub fn describe(action: &AdminAction, names: &std::collections::HashMap<String, 
         } => format!("Remove {}", e(name_of(names, member))),
         AdminAction::SetTwoPerson {
             on,
-        } => (if *on { "Turn two-person approval on" } else { "Turn two-person approval off" }).to_owned(),
+        } => (if *on {
+            "Turn two-person approval on"
+        } else {
+            "Turn two-person approval off"
+        })
+        .to_owned(),
     }
 }
 
@@ -269,14 +301,14 @@ make a new one.</p>",
                     format!(
                         "<form method=\"post\" action=\"{id}/domains/verify\">{csrf}<input type=\"hidden\" name=\"domain\" \
 value=\"{d}\"><button type=\"submit\">Verify</button></form>",
-                        id = e(&v.org_id),
+                        id = format!("{}{}", e(frame.base), e(&v.org_id)),
                         d = e(&d.domain)
                     )
                 };
                 format!(
                     "{verify}<form method=\"post\" action=\"{id}/domains/remove\">{csrf}<input type=\"hidden\" \
 name=\"domain\" value=\"{d}\"><button class=\"quiet\" type=\"submit\">Remove</button></form>",
-                    id = e(&v.org_id),
+                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
                     d = e(&d.domain)
                 )
             } else {
@@ -287,15 +319,20 @@ name=\"domain\" value=\"{d}\"><button class=\"quiet\" type=\"submit\">Remove</bu
         .collect();
     let add_domain = if v.can_set_up {
         format!(
-            "<form method=\"post\" action=\"{}/domains\">{csrf}<input name=\"domain\" placeholder=\"acme.com\" \
+            "<form method=\"post\" action=\"{}{}/domains\">{csrf}<input name=\"domain\" placeholder=\"acme.com\" \
 required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
+            e(frame.base),
             e(&v.org_id)
         )
     } else {
         String::new()
     };
     let opt = |id: IdentityKind| {
-        let sel = if id == v.identity { " selected" } else { "" };
+        let sel = if id == v.identity {
+            " selected"
+        } else {
+            ""
+        };
         format!("<option value=\"{}\"{sel}>{}</option>", id.as_str(), id.label())
     };
     let identity_form = if v.can_set_up {
@@ -304,7 +341,7 @@ required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
 <input name=\"workos_org_id\" placeholder=\"WorkOS org (org_…)\" value=\"{w}\">\
 <input name=\"directory_id\" placeholder=\"Directory (directory_…)\" value=\"{dir}\">\
 <input name=\"github_org\" placeholder=\"GitHub org\" value=\"{gh}\"><button type=\"submit\">Save</button></form>",
-            id = e(&v.org_id),
+            id = format!("{}{}", e(frame.base), e(&v.org_id)),
             opts = IdentityKind::ALL.into_iter().filter(|i| v.tier.allows(*i)).map(opt).collect::<String>(),
             w = e(v.workos_org_id.as_deref().unwrap_or_default()),
             dir = e(v.directory_id.as_deref().unwrap_or_default()),
@@ -317,7 +354,11 @@ required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
         let opts: String = Tier::ALL
             .into_iter()
             .map(|t| {
-                let sel = if t == v.tier { " selected" } else { "" };
+                let sel = if t == v.tier {
+                    " selected"
+                } else {
+                    ""
+                };
                 format!("<option value=\"{}\"{sel}>{}</option>", t.as_str(), t.label())
             })
             .collect();
@@ -326,9 +367,13 @@ required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
 <button class=\"quiet\" type=\"submit\">Change plan</button></form>\
 <form method=\"post\" action=\"{id}/two-person\">{csrf}<input type=\"hidden\" name=\"on\" value=\"{flip}\">\
 <button class=\"quiet\" type=\"submit\">{label}</button></form>",
-            id = e(&v.org_id),
+            id = format!("{}{}", e(frame.base), e(&v.org_id)),
             flip = !v.two_person,
-            label = if v.two_person { "Turn two-person off" } else { "Turn two-person on" },
+            label = if v.two_person {
+                "Turn two-person off"
+            } else {
+                "Turn two-person on"
+            },
         )
     } else {
         String::new()
@@ -343,7 +388,7 @@ required><button class=\"quiet\" type=\"submit\">Add domain</button></form>",
                     "<form method=\"post\" action=\"{id}/changes/approve\">{csrf}<input type=\"hidden\" name=\"change\" \
 value=\"{c}\"><button type=\"submit\">{}Approve</button></form>",
                     svg(icon::CHECK),
-                    id = e(&v.org_id),
+                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
                     c = e(&ch.id)
                 ));
             }
@@ -351,7 +396,7 @@ value=\"{c}\"><button type=\"submit\">{}Approve</button></form>",
                 buttons.push_str(&format!(
                     "<form method=\"post\" action=\"{id}/changes/reject\">{csrf}<input type=\"hidden\" name=\"change\" \
 value=\"{c}\"><button class=\"quiet\" type=\"submit\">Reject</button></form>",
-                    id = e(&v.org_id),
+                    id = format!("{}{}", e(frame.base), e(&v.org_id)),
                     c = e(&ch.id)
                 ));
             }
@@ -387,10 +432,14 @@ value=\"{c}\"><button class=\"quiet\" type=\"submit\">Reject</button></form>",
 <section><h2>Plan</h2>{tier_form}</section>",
         name = e(&v.name),
         tier = v.tier.label(),
-        two = if v.two_person { "Two-person on" } else { "Two-person off" },
+        two = if v.two_person {
+            "Two-person on"
+        } else {
+            "Two-person off"
+        },
         idl = v.identity.label(),
     );
-    page(&v.name, Some(frame), &body, "./")
+    page(&v.name, Some(frame), &body, frame.base)
 }
 
 pub struct MemberRow {
@@ -426,12 +475,21 @@ fn roles_html(roles: &[Role]) -> String {
 
 pub fn members(frame: &Frame<'_>, v: &MembersView) -> String {
     let csrf = hidden_csrf(frame.csrf);
+    let org = format!("{}{}", e(frame.base), e(&v.org_id));
     let rows: String = v
         .members
         .iter()
         .map(|m| {
-            let state = if m.active { "" } else { "<span class=\"pill bad\">Removed</span>" };
-            let dir = if m.from_directory { "<span class=\"pill\">Directory</span>" } else { "" };
+            let state = if m.active {
+                ""
+            } else {
+                "<span class=\"pill bad\">Removed</span>"
+            };
+            let dir = if m.from_directory {
+                "<span class=\"pill\">Directory</span>"
+            } else {
+                ""
+            };
             let devices = if m.devices.is_empty() {
                 "<span class=\"meta\">No enrolled device</span>".to_owned()
             } else {
@@ -439,9 +497,10 @@ pub fn members(frame: &Frame<'_>, v: &MembersView) -> String {
             };
             let remove = if v.can_remove && m.active {
                 format!(
-                    "<form method=\"post\" action=\"members/remove\">{csrf}<input type=\"hidden\" name=\"member\" \
+                    "<form method=\"post\" action=\"{org}/members/remove\">{csrf}<input type=\"hidden\" name=\"member\" \
 value=\"{}\"><button class=\"danger\" type=\"submit\">Remove</button></form>",
-                    e(&m.membership)
+                    e(&m.membership),
+                    org = org,
                 )
             } else {
                 String::new()
@@ -462,7 +521,11 @@ value=\"{}\"><button class=\"danger\" type=\"submit\">Remove</button></form>",
             format!(
                 "<tr><td>{}{}</td><td>{}</td><td class=\"meta\">{} members</td></tr>",
                 e(&g.name),
-                if g.from_directory { " <span class=\"pill\">Directory</span>" } else { "" },
+                if g.from_directory {
+                    " <span class=\"pill\">Directory</span>"
+                } else {
+                    ""
+                },
                 roles_html(&g.roles),
                 g.members
             )
@@ -474,12 +537,14 @@ value=\"{}\"><button class=\"danger\" type=\"submit\">Remove</button></form>",
             .iter()
             .filter(|m| m.active)
             .map(|m| format!("<option value=\"member:{}\">{}</option>", e(&m.membership), e(&m.email)))
-            .chain(v.groups.iter().map(|g| format!("<option value=\"group:{}\">Group: {}</option>", e(&g.id), e(&g.name))))
+            .chain(
+                v.groups.iter().map(|g| format!("<option value=\"group:{}\">Group: {}</option>", e(&g.id), e(&g.name))),
+            )
             .collect();
         let roles: String =
             Role::ALL.iter().map(|r| format!("<option value=\"{}\">{}</option>", r.as_str(), r.label())).collect();
         format!(
-            "<section><h2>Roles</h2><form method=\"post\" action=\"roles\">{csrf}<select name=\"subject\">{subjects}\
+            "<section><h2>Roles</h2><form method=\"post\" action=\"{org}/roles\">{csrf}<select name=\"subject\">{subjects}\
 </select><select name=\"role\">{roles}</select><select name=\"op\"><option value=\"grant\">Give</option>\
 <option value=\"revoke\">Take away</option></select><button type=\"submit\">Propose</button></form></section>"
         )
@@ -491,7 +556,7 @@ value=\"{}\"><button class=\"danger\" type=\"submit\">Remove</button></form>",
 </table></section>{assign}<section><h2>{}Groups</h2><table>{groups}</table></section>",
         svg(icon::GROUP)
     );
-    page("Members", Some(frame), &body, "../")
+    page("Members", Some(frame), &body, frame.base)
 }
 
 pub struct EventRow {
@@ -519,7 +584,8 @@ pub fn events(frame: &Frame<'_>, rows: &[EventRow], older: Option<i64>, chain_ok
             )
         })
         .collect();
-    let more = older.map(|b| format!("<p><a href=\"events?before={b}\">Older</a></p>")).unwrap_or_default();
+    let org = frame.org.map(|(id, _)| format!("{}{}", e(frame.base), e(id))).unwrap_or_default();
+    let more = older.map(|b| format!("<p><a href=\"{org}/events?before={b}\">Older</a></p>")).unwrap_or_default();
     let chain = match chain_ok {
         Some(true) => format!("<span class=\"pill ok\">{}Chain intact</span>", svg(icon::CHECK)),
         Some(false) => format!("<span class=\"pill bad\">{}Chain broken</span>", svg(icon::WARNING)),
@@ -530,7 +596,7 @@ pub fn events(frame: &Frame<'_>, rows: &[EventRow], older: Option<i64>, chain_ok
 <th>Who</th><th>About</th><th>Detail</th></tr>{list}</table>{more}</section>",
         svg(icon::LIST)
     );
-    page("Events", Some(frame), &body, "../")
+    page("Events", Some(frame), &body, frame.base)
 }
 
 #[cfg(test)]
@@ -539,6 +605,7 @@ mod tests {
 
     fn frame() -> Frame<'static> {
         Frame {
+            base: "/reins/org/",
             email: "dana@acme.com",
             csrf: "tok",
             org: Some(("o1", "Acme")),
@@ -570,7 +637,6 @@ mod tests {
                     member: "m2".to_owned(),
                 },
                 proposed_by: "dana@acme.com".to_owned(),
-                expires_at: 1,
                 can_approve: false,
                 can_reject: true,
             }],
@@ -604,6 +670,7 @@ mod tests {
         let html = overview(&frame(), &view());
         assert!(html.contains("_reins-challenge.acme.com<br>reins-domain-verification=abc"));
         assert!(html.contains("name=\"csrf\" value=\"tok\""));
+        assert!(html.contains("action=\"/reins/org/o1/domains/verify\""), "links are absolute");
     }
 
     #[test]
@@ -616,7 +683,11 @@ mod tests {
 
     #[test]
     fn pages_carry_no_script() {
-        for html in [overview(&frame(), &view()), signed_out(Some("<x>")), events(&frame(), &[], None, Some(true))] {
+        for html in [
+            overview(&frame(), &view()),
+            signed_out("/reins/org/", Some("<x>")),
+            events(&frame(), &[], None, Some(true)),
+        ] {
             assert!(!html.contains("<script"), "{html}");
         }
     }

@@ -87,11 +87,6 @@ pub fn api() -> Arc<dyn WorkosDirectoryApi> {
     Arc::clone(&API.read().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
-#[cfg(test)]
-pub fn set_api(a: Arc<dyn WorkosDirectoryApi>) {
-    *API.write().unwrap_or_else(std::sync::PoisonError::into_inner) = a;
-}
-
 /// A WorkOS organization (and directory) WorkOS confirmed for a tenant's verified domains.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedBinding {

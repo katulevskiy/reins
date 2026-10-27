@@ -25,10 +25,10 @@
 //! - deprovisioning (`deprovision::q_deprovision`, reached only for an account whose state row is in this org): the
 //!   account's devices, sessions, roster and connections, and, for a directory delete, the account itself.
 
-#![allow(dead_code)] // O1 wiring in progress: the routes and console use these.
-
 pub mod admin;
 pub mod api;
+pub mod console;
+pub mod console_pages;
 pub mod deprovision;
 pub mod dns;
 pub mod gate;
@@ -58,7 +58,9 @@ pub fn routes() -> Vec<Route> {
     if !enabled() {
         return Vec::new();
     }
-    api::routes()
+    let mut routes = api::routes();
+    routes.extend(console::routes());
+    routes
 }
 
 /// Why an org operation was refused. The texts are shown to admins as they are, so they never name a non-member.

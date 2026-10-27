@@ -80,7 +80,8 @@ pub trait TicketHook: Send + Sync {
 
 static TICKET_HOOK: RwLock<Option<Arc<dyn TicketHook>>> = RwLock::new(None);
 
-/// Plugs in the ticket store (once, at launch).
+/// Plugs in the ticket store (once, at launch). P4's tickets and O3's routed reviews register here.
+#[allow(dead_code, reason = "the seam P4 and O3 plug into; nothing registers in O1")]
 pub fn set_ticket_hook(hook: Arc<dyn TicketHook>) {
     *TICKET_HOOK.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hook);
 }
@@ -197,12 +198,14 @@ pub async fn finish(removal: Removal, pool: Option<&DbPool>) -> TicketOutcome {
         }
     }
     info!(
-        "Org {}: member {} deprovisioned ({}) in {} ms: {} devices, {} connections, {} tickets cancelled, {} reassigned",
+        "Org {}: member {} deprovisioned ({}) in {} ms: {} devices, {} enrolled devices, {} connections, {} tickets \
+         cancelled, {} reassigned",
         removal.org,
         removal.user,
         removal.reason.as_str(),
         removal.started.elapsed().as_millis(),
         removal.cut.devices,
+        removal.enrolled_devices,
         removal.cut.connections,
         outcome.cancelled,
         outcome.reassigned

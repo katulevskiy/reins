@@ -5,8 +5,6 @@
 //! The `q_*` functions take a bare connection so that one service call can run several of them in one transaction
 //! (`conn.run(|c| c.transaction(|c| …))`), and so that the model tests run against an in-memory SQLite.
 
-#![allow(dead_code)] // O1 wiring in progress: the org services use these.
-
 use diesel::prelude::*;
 use reins_proto::org::{Capability, IdentityKind, Role, Tier, role_grants};
 

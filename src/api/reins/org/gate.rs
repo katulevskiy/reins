@@ -202,6 +202,7 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         return Ok(Decision::Personal);
     }
     let existing_uuid = existing.map(|u| u.uuid.to_string());
+    let existing_user = existing_uuid.clone();
     let domain_org = org_of_domain(&user.email, conn).await;
     let loaded = conn
         .run(move |c| -> Result<Option<(OrgFacts, Existing)>, diesel::result::Error> {
@@ -256,6 +257,30 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         organization_id: workos.organization_id.as_deref(),
         github_member,
     };
+    // A Team org on GitHub follows GitHub's membership (08 R11): a member GitHub no longer counts is removed now, at
+    // their sign-in through the org, before being refused.
+    if github_member == Some(false)
+        && existing
+            == (Existing::Member {
+                active: true,
+            })
+        && let Some(user) = existing_user
+    {
+        let now = super::super::now_unix();
+        if let Err(e) = super::deprovision::deprovision(
+            conn,
+            None,
+            &org.org_uuid,
+            &user,
+            super::deprovision::Reason::ProviderMembershipLost,
+            None,
+            now,
+        )
+        .await
+        {
+            warn!("Org {}: could not remove a member GitHub no longer counts: {e:?}", org.org_uuid);
+        }
+    }
     match decide(Some(&org), existing, &facts) {
         Ok(d) => Ok(d),
         Err(message) => {
