@@ -467,6 +467,30 @@ pub struct Config {
     pub secrets: crate::secrets_scan::SecretsConfig,
     /// Work profiles (`[[profiles]]`, [`crate::profiles`]).
     pub profiles: Vec<crate::profiles::ProfileConfig>,
+    /// Where agents' work is expected (`[workspace]`), for the consequence engine (Decisions v2).
+    pub workspace: WorkspaceConfig,
+}
+
+/// `[workspace]`: the folders where an agent's work is expected (`docs/design/decisions-v2/01-decision-engine.md`
+/// §2.5). Git worktrees, the OS temp folder and `~/.cache` always count; generated folders (`target/`,
+/// `node_modules/`, …) inside these are build output.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspaceConfig {
+    /// Folders whose subfolders are projects (`~/Documents/dev`).
+    pub roots: Vec<String>,
+    /// Scratch folders: deleting in them loses nothing (`~/Documents/dev/tmp`).
+    pub scratch: Vec<String>,
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            roots: ["~/Documents/dev", "~/src", "~/code", "~/projects"].map(str::to_owned).to_vec(),
+            // The agents' own memory and uploads.
+            scratch: vec!["~/.claude/projects/*/memory".to_owned()],
+        }
+    }
 }
 
 impl Default for Config {
@@ -486,6 +510,7 @@ impl Default for Config {
             notify: crate::notify::NotifyConfig::default(),
             secrets: crate::secrets_scan::SecretsConfig::default(),
             profiles: Vec::new(),
+            workspace: WorkspaceConfig::default(),
         }
     }
 }

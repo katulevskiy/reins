@@ -201,6 +201,31 @@ jobs:
       - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
       - run: cargo clippy --locked --features sqlite -- -D warnings
 
+  # Decisions v2 (docs/design/decisions-v2/07-roadmap.md §3): every change to the consequence engine, the default
+  # policy or the replay corpus is replayed against the labelled history. A labelled real risk not asked, a known false
+  # positive asked again, or a drop below crates/reins-replay/baseline.json fails the build.
+  replay:
+    name: Replay gate (Decisions v2)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-server-core
+          save-if: false
+      - name: Replay the labelled corpus
+        run: |
+          set -o pipefail
+          cargo run --locked -q -p reins-replay -- run --engine effects --check 2>&1 | tee replay.txt
+          { echo '```'; cat replay.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)
     needs: changes

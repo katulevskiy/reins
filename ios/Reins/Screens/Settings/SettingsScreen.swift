@@ -313,13 +313,17 @@ private struct PagesGroup: View {
     @Environment(\.feedback) private var feedback
     @Environment(\.colorScheme) private var scheme
     @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue
-    @AppStorage(Wallpaper.key(.dark), store: AppGroup.defaults) private var darkWall = Wallpaper.defaultFor(.dark).rawValue
-    @AppStorage(Wallpaper.key(.light), store: AppGroup.defaults) private var lightWall = Wallpaper.defaultFor(.light).rawValue
+    @AppStorage(WallpaperChoice.key(.dark), store: AppGroup.defaults) private var darkWall = WallpaperChoice.initial(.dark)
+    @AppStorage(WallpaperChoice.key(.light), store: AppGroup.defaults) private var lightWall = WallpaperChoice.initial(.light)
 
     /// The switches as the Sounds page keeps them (in memory, observed), so the value follows them.
     private var sounds: FeedbackSettings { ((feedback as? FeedbackPreviewing)?.store ?? .shared).settings }
 
-    private var wallpaper: Wallpaper { Wallpaper(rawValue: scheme == .dark ? darkWall : lightWall) ?? .defaultFor(scheme) }
+    /// The image shown for the theme (the default when your photo is chosen but gone).
+    private var wallpaper: Wallpaper {
+        let image = (scheme == .dark ? darkWall : lightWall).image
+        return image == .own && !OwnWallpaper.exists(scheme) ? .defaultFor(scheme) : image
+    }
 
     var body: some View {
         SectionHeader("This phone", glyph: .phone)
@@ -330,7 +334,7 @@ private struct PagesGroup: View {
                 model.show(.appearance)
             }
             SettingsTileButton("Wallpaper", value: wallpaper.title, id: "openWallpaper") {
-                WallpaperThumb(wallpaper: wallpaper, scheme: scheme, side: 32, radius: 9)
+                ChosenWallpaperThumb(scheme: scheme, side: 32, radius: 9)
             } action: {
                 model.show(.wallpaper)
             }

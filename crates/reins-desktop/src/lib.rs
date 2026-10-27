@@ -10,6 +10,7 @@ pub mod auth;
 pub mod autopilot;
 pub mod computer;
 pub mod config;
+pub mod consequences;
 pub mod control;
 pub mod daemon;
 pub mod doctor;
