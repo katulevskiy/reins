@@ -313,6 +313,9 @@ pub struct DecisionRecord {
     pub obligations: Vec<String>,
     #[serde(default)]
     pub approvals: Vec<ReviewSignature>,
+    /// For a lease, exactly what may be minted and for whom: an executor mints nothing that differs.
+    #[serde(default)]
+    pub lease: Option<LeaseBinding>,
     /// When the request was evaluated (the time rules were judged at).
     pub evaluated_at: i64,
     pub decided_at: i64,
@@ -390,6 +393,49 @@ impl LeaseAccess {
 
 /// The tool name a lease request is evaluated as.
 pub const LEASE_TOOL: &str = "git_lease";
+
+/// What a decision allows a lease to be: inside the countersigned [`DecisionRecord`], so a server can't change the
+/// repository, the access, the recipient or the lifetime of a lease while reusing a valid decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseBinding {
+    pub lease: String,
+    pub repo: String,
+    pub access: LeaseAccess,
+    /// SHA-256 (hex) of the box key's text as the requester sent it.
+    pub box_key_hash: String,
+    pub expires_at: i64,
+}
+
+impl LeaseBinding {
+    /// The binding of `job`.
+    #[must_use]
+    pub fn of(job: &LeaseJob) -> Self {
+        Self {
+            lease: job.lease.clone(),
+            repo: job.repo.clone(),
+            access: job.access,
+            box_key_hash: hex32(&sha256(job.box_key.as_bytes())),
+            expires_at: job.expires_at,
+        }
+    }
+
+    /// Whether `job` is exactly this lease, and the request's arguments (what the digest covers) name the same
+    /// repository, access and box key.
+    #[must_use]
+    pub fn matches(&self, job: &LeaseJob, args: &Value) -> bool {
+        let arg = |k: &str| args.get(k).and_then(Value::as_str);
+        Self::of(job) == *self
+            && arg("repo") == Some(job.repo.as_str())
+            && arg("access") == Some(job.access.as_str())
+            && arg("box_key") == Some(job.box_key.as_str())
+    }
+}
+
+/// The arguments a lease request is evaluated (and digested) with.
+#[must_use]
+pub fn lease_args(repo: &str, access: LeaseAccess, box_key: &str) -> Value {
+    serde_json::json!({"repo": repo, "access": access.as_str(), "box_key": box_key})
+}
 
 /// A lease to mint.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -665,6 +711,38 @@ mod tests {
         assert_eq!(serde_json::to_value(JobKind::Lease).unwrap(), json!("lease"));
         assert_eq!(serde_json::to_value(EnvelopeKind::Head).unwrap(), json!("head"));
         assert_eq!(serde_json::to_value(LeaseAccess::Push).unwrap(), json!("push"));
+    }
+
+    #[test]
+    fn a_tampered_lease_does_not_match_its_decision() {
+        let job = LeaseJob {
+            lease: "l1".into(),
+            repo: "acme/api".into(),
+            access: LeaseAccess::Read,
+            box_key: "KEY".into(),
+            expires_at: 100,
+        };
+        let args = lease_args("acme/api", LeaseAccess::Read, "KEY");
+        let bound = LeaseBinding::of(&job);
+        assert!(bound.matches(&job, &args));
+        let tamper = |f: &dyn Fn(&mut LeaseJob)| {
+            let mut j = job.clone();
+            f(&mut j);
+            j
+        };
+        for j in [
+            tamper(&|j| j.repo = "acme/prod".into()),
+            tamper(&|j| j.access = LeaseAccess::Push),
+            tamper(&|j| j.box_key = "ATTACKER".into()),
+            tamper(&|j| j.expires_at = 10_000),
+            tamper(&|j| j.lease = "l2".into()),
+        ] {
+            assert!(!bound.matches(&j, &args), "{j:?}");
+        }
+        // The digested arguments must agree with the job too.
+        assert!(!bound.matches(&job, &lease_args("acme/prod", LeaseAccess::Read, "KEY")));
+        assert!(!bound.matches(&job, &lease_args("acme/api", LeaseAccess::Push, "KEY")));
+        assert!(!bound.matches(&job, &lease_args("acme/api", LeaseAccess::Read, "OTHER")));
     }
 
     #[test]
