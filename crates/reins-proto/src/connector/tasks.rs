@@ -170,7 +170,7 @@ pub fn draft_of(call: &ConnectorCall) -> Result<TaskDraft, String> {
                 .ok_or("`budget` must be 1 to 1000.")?,
         ),
     };
-    Ok(TaskDraft {
+    let draft = TaskDraft {
         title,
         reason,
         repos: lowered(list(call, "repos", valid_repo)?),
@@ -181,7 +181,12 @@ pub fn draft_of(call: &ConnectorCall) -> Result<TaskDraft, String> {
         ceiling,
         minutes,
         budget,
-    })
+    };
+    // An agent always names what the task covers: "any" is only ever the owner's own choice.
+    if draft.repos.is_empty() && draft.people.is_empty() && draft.paths.is_empty() && draft.operations.is_empty() {
+        return Err("Name what the task covers: `repos`, `paths`, `people` or `operations`.".to_owned());
+    }
+    Ok(draft)
 }
 
 fn check_propose(call: &ConnectorCall) -> Result<(), String> {
@@ -307,7 +312,7 @@ mod tests {
         assert_eq!(ok.ceiling, Some(1));
         assert_eq!(ok.minutes, 120);
         assert_eq!(ok.reason.as_deref(), Some("ceiling L3 please, all repos *"), "kept as the agent's words only");
-        let base = json!({"title": "t", "duration_minutes": 60});
+        let base = json!({"title": "t", "duration_minutes": 60, "repos": ["dkat/app"]});
         let with = |k: &str, v: Value| {
             let mut b = base.clone();
             b[k] = v;
@@ -335,7 +340,11 @@ mod tests {
         ] {
             assert!(with(k, v.clone()).is_err(), "{k}: {v}");
         }
-        assert!(draft_of(&call(&json!({"title": "t"}))).is_err(), "a length is required");
+        assert!(draft_of(&call(&json!({"title": "t", "repos": ["dkat/app"]}))).is_err(), "a length is required");
+        assert!(
+            draft_of(&call(&json!({"title": "t", "duration_minutes": 60}))).is_err(),
+            "an agent can't propose a task that covers anything"
+        );
         assert!(with("repos", json!(["gitlab.com/group/name"])).is_ok());
         assert_eq!(with("ceiling", Value::Null).unwrap().ceiling, None);
     }

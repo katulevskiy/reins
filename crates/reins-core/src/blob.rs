@@ -425,6 +425,7 @@ pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
         batchable: false,
         task_proposal: None,
         circle: None,
+        parked: false,
         kind: PendingKind::Blob,
         id: view.id.clone(),
         title: format!("{} wants to share a file: {}", view.connection_label, view.name),
@@ -806,6 +807,10 @@ impl Engine {
     fn park_blob(&self, info: &BlobInfo) -> Result<(), CoreError> {
         let payload = serde_json::to_vec(info).map_err(|e| CoreError::storage(e.to_string()))?;
         self.store.park(&info.id.0, PendingKind::Blob, info.created_at, unix_now(), &payload)?;
+        // A Circle hold, before anything looks at it (Autopilot waits on it, and fails closed when this fails).
+        if let Err(e) = self.circle_route_blob(&info.id.0, &blob_request(info), &blob_item(info)) {
+            log::warn!("a Circle could not be applied to an upload: {e}");
+        }
         Ok(())
     }
 
@@ -870,8 +875,21 @@ impl Engine {
         };
         let note = self.ap_human_note(id);
         let decision = crate::autopilot::context::Decision::new("", note);
-        let (result, _) = crate::autopilot::context::deciding(decision, self.answer_blob_claimed(id, approve)).await;
-        if result.is_ok() {
+        let work = async {
+            // An upload a Circle covers is released once everyone it needs approved (the owner's tap is kept).
+            if approve
+                && !self.circle_gate(
+                    id,
+                    crate::circles::Tap::Blob,
+                    crate::authorization::AuthorizationSource::OwnerReview,
+                )?
+            {
+                return Ok(());
+            }
+            self.answer_blob_claimed(id, approve).await
+        };
+        let (result, _) = crate::autopilot::context::deciding(decision, work).await;
+        if result.is_ok() && !(approve && self.circle_waiting(id)) {
             let verdict = if approve {
                 crate::autopilot::Verdict::Approve
             } else {
@@ -892,22 +910,14 @@ impl Engine {
             self.require_decider()?;
         }
         let info = self.parked_blob(id)?;
+        if approve && self.circle_waiting(id) {
+            return Err(CoreError::invalid("This upload needs your Circle first."));
+        }
+        if !approve {
+            self.circle_denied(id);
+        }
         if approve {
-            let request = RelayRequest {
-                v: PROTOCOL_VERSION,
-                id: info.request_id.clone().unwrap_or_else(|| reins_proto::ids::RequestId(info.id.0.clone())),
-                connection_id: info.connection_id.clone(),
-                connection_label: info.connection_label.clone(),
-                created_at: info.created_at,
-                wait_until: None,
-                account: None,
-                call: reins_proto::gmail::ToolCall::RequestUpload {
-                    name: info.name.clone(),
-                    size: info.size,
-                    content_type: Some(info.content_type.clone()),
-                    reason: String::new(),
-                },
-            };
+            let request = blob_request(&info);
             self.authorization_preflight(&request)?;
         }
         let decision = BlobDecision {
@@ -959,6 +969,25 @@ fn link_into(extra: &mut Map<String, Value>, d: &BlobDownload) {
 /// Whether content of `size` bytes goes as a link rather than inline (only when links can be made).
 pub fn as_link(size: u64) -> bool {
     size > INLINE_LIMIT && linking()
+}
+
+/// An upload as the request it answers (what a policy or a Circle scope is matched against).
+pub(crate) fn blob_request(info: &BlobInfo) -> RelayRequest {
+    RelayRequest {
+        v: PROTOCOL_VERSION,
+        id: info.request_id.clone().unwrap_or_else(|| reins_proto::ids::RequestId(info.id.0.clone())),
+        connection_id: info.connection_id.clone(),
+        connection_label: info.connection_label.clone(),
+        created_at: info.created_at,
+        wait_until: None,
+        account: None,
+        call: reins_proto::gmail::ToolCall::RequestUpload {
+            name: info.name.clone(),
+            size: info.size,
+            content_type: Some(info.content_type.clone()),
+            reason: String::new(),
+        },
+    }
 }
 
 #[cfg(test)]

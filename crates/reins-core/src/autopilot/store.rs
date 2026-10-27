@@ -180,6 +180,10 @@ pub struct Suggestion {
     /// Overnight parked it for the morning (01 §11).
     #[serde(default)]
     pub parked: Option<Parked>,
+    /// "Approve all" may cover it: set only where the matrix asked it softly (never for a closer look, a risk hold, a
+    /// tripwire, a pause, the floor or anything always asked).
+    #[serde(default)]
+    pub batchable: bool,
 }
 
 /// An Overnight park: a Deferred ticket until `deadline`, shown in the morning digest at `until`.
@@ -214,6 +218,10 @@ pub struct MatrixNote {
     /// The task whose envelope made it Auto (a use is spent before it runs).
     #[serde(default)]
     pub by_task: Option<String>,
+    /// The Telegram chat (its id) this was evaluated for: an automatic approval sends to exactly that chat, never to
+    /// whatever the name it was written with resolves to later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
 }
 
 /// A stored profile with its id.

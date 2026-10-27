@@ -320,10 +320,18 @@ impl Engine {
         let work = async {
             let session = self.session()?;
             let (_, parked) = self.parked(request_id)?;
+            // A Circle purchase pays once everyone it needs approved; the owner's picks are kept for then.
+            if !self.circle_gate(
+                request_id,
+                crate::circles::Tap::Purchase(&choice),
+                AuthorizationSource::OwnerReview,
+            )? {
+                return Ok(());
+            }
             self.approve_parked_purchase(&session, request_id, &parked, Some(&choice)).await
         };
         let (result, _) = deciding(decision, work).await;
-        if result.is_ok() {
+        if result.is_ok() && !self.circle_waiting(request_id) {
             self.ap_learn(request_id, Verdict::Approve);
         }
         result

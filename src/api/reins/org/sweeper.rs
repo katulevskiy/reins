@@ -1,10 +1,10 @@
 //! The org decision service's housekeeping, every [`EVERY_SECS`] while organizations are on: expiring reviews and
 //! approvals nobody acted on, marking executions that never reported back, expiring leases (so the executor revokes
-//! them upstream), purging bodies past retention, and checkpointing the audit chains.
+//! them upstream) and settling revocations whose token died upstream on its own, purging bodies past retention, and checkpointing the audit chains.
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{audit, decisions, enabled, routing};
+use super::{OrgError, audit, decisions, enabled, routing};
 use crate::{
     api::reins::now_unix,
     db::{DbConnInner, DbPool, models::reins_org_request},
@@ -20,6 +20,13 @@ fn every_secs() -> u64 {
         return s.max(1);
     }
     EVERY_SECS
+}
+
+/// One pass without dynamic routing answers (tests).
+#[cfg(test)]
+pub fn sweep_once(c: &mut DbConnInner, now: i64) -> Result<(), OrgError> {
+    sweep_routed(c, now, &BTreeMap::new());
+    Ok(())
 }
 
 /// One pass, with the dynamic routing sources' answers; returns the escalations to notify. Each part runs whatever
@@ -38,6 +45,11 @@ pub fn sweep_routed(
     };
     if let Err(e) = reins_org_request::q_expire_leases(c, now) {
         warn!("Org sweeper: leases: {e:?}");
+    }
+    // Revocations nobody could do (the minting executor stayed offline, or was removed): once the token's own lifetime
+    // is over, it is dead upstream and leaves the queue, recorded as such.
+    if let Err(e) = settle_lapsed_tokens(c, now) {
+        warn!("Org sweeper: lapsed tokens: {e:?}");
     }
     if let Err(e) = reins_org_request::q_purge_bodies(c, now) {
         warn!("Org sweeper: purge: {e:?}");
@@ -62,6 +74,21 @@ async fn prefetch(pool: &DbPool, now: i64) -> routing::escalation::Prefetched {
         out.insert(d.request, (touches, answers));
     }
     out
+}
+
+fn settle_lapsed_tokens(c: &mut DbConnInner, now: i64) -> Result<(), OrgError> {
+    for l in reins_org_request::q_settle_lapsed_tokens(c, now)? {
+        audit::record(
+            c,
+            &l.org_uuid,
+            audit::kinds::LEASE_TOKEN_LAPSED,
+            None,
+            Some(&l.uuid),
+            &serde_json::json!({"issued_at": l.issued_at, "token_max_secs": reins_org_request::TOKEN_MAX_SECS}),
+            now,
+        )?;
+    }
+    Ok(())
 }
 
 pub fn spawn(pool: DbPool) {

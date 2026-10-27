@@ -367,6 +367,10 @@ impl Engine {
     }
 
     pub(crate) fn authorization_automatic(&self, request: &RelayRequest) -> Result<bool, CoreError> {
+        // A co-signer or a guardian must approve it (04, 08 R3): nothing runs on a grant, a permit or a mode.
+        if self.circle_requires_review(request) {
+            return Ok(false);
+        }
         Ok(self.authorization_snapshot(request)?.is_none_or(|snapshot| {
             snapshot.decision.outcome == DecisionOutcome::Permit && snapshot.decision.authorization_path.is_empty()
         }))

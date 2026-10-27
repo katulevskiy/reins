@@ -921,6 +921,7 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
             now: req.now,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
+            netted: false,
         },
         &snapshot,
     );
@@ -1017,6 +1018,7 @@ fn cell_needs_review(
             now: req.now,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
+            netted: false,
         },
         &permits,
     );

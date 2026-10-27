@@ -132,18 +132,24 @@ async fn on_ask_asks_without_a_guard_rule() {
 async fn on_a_net_that_lowers_it_the_matrix_decides_on_the_netted_request() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
-    let ws = tempfile::tempdir().unwrap();
-    let project = ws.path().join("app");
+    // Not under the OS temp folder: `/tmp` is always scratch, where a delete is Auto without any net. Reins's own
+    // state (and its trash) moves next to it: the trash must be on the same disk, and `/tmp` may be a RAM disk.
+    let root = tempfile::Builder::new().tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let state = root.path().join("state");
+    copy_dir(app.dir.path(), &state);
+    let paths = reins_desktop::config::Paths::under(&state);
+    let ws = root.path().join("ws");
+    let project = ws.join("app");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("notes.txt"), "kept").unwrap();
     let mut c = config(true);
-    c.workspace.roots = vec![ws.path().to_str().unwrap().to_owned()];
+    c.workspace.roots = vec![ws.to_str().unwrap().to_owned()];
     let input = serde_json::json!({"session_id": "abc", "cwd": project.to_str().unwrap(),
         "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "rm notes.txt"},
         "tool_use_id": "t"})
     .to_string();
     let before = mock.with(|s| s.calls.len());
-    let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &app.paths, &c, &NoPrompter).await;
+    let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &paths, &c, &NoPrompter).await;
     assert_eq!(code, 0);
     let out: serde_json::Value = serde_json::from_str(&out.expect("an answer")).unwrap();
     let hso = &out["hookSpecificOutput"];
@@ -151,9 +157,23 @@ async fn on_a_net_that_lowers_it_the_matrix_decides_on_the_netted_request() {
     let netted = hso["updatedInput"]["command"].as_str().unwrap();
     assert!(netted.contains("net run"), "{netted}");
     assert_eq!(mock.with(|s| s.calls.len()), before, "the phone wasn't asked");
-    let log = journal::read(&app.paths, 10, 3_600);
+    let log = journal::read(&paths, 10, 3_600);
     let m = log[0].matrix.clone().unwrap();
     assert!(m.decided && m.outcome == Outcome::Auto, "{m:?}");
     assert!(log[0].nets.is_some());
     assert!(project.join("notes.txt").exists(), "nothing ran yet");
+}
+
+#[cfg(unix)]
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let target = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &target);
+        } else {
+            std::fs::copy(e.path(), &target).unwrap();
+        }
+    }
 }

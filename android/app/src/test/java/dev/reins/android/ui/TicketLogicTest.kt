@@ -2,7 +2,7 @@ package dev.reins.android.ui
 
 import dev.reins.android.TestData
 import dev.reins.android.ui.activity.batchGroups
-import dev.reins.android.ui.activity.parked
+import dev.reins.android.ui.activity.waitsForMorning
 import dev.reins.android.ui.activity.taskProposals
 import dev.reins.android.ui.activity.dueIn
 import dev.reins.android.ui.activity.inboxByAgent
@@ -166,8 +166,8 @@ class TicketLogicTest {
             TestData.pending("instant"),
         )
         assertEquals(listOf("noTicket", "parked"), waitingInbox(pending).map { it.id })
-        assertTrue(pending[0].parked(now))
-        assertTrue("the morning came", !pending[0].parked(morning))
+        assertTrue(pending[0].waitsForMorning(now))
+        assertTrue("the morning came", !pending[0].waitsForMorning(morning))
         assertEquals(listOf("instant"), waitCards(pending).map { (it as WaitCard.One).item.id })
     }
 

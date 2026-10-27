@@ -114,9 +114,30 @@ pub enum SecretsPreview {
     Token(crate::types::TokenStoreView),
 }
 
+/// Who a party a request names is, as the service knows it (Decisions v2 keeps facts by stable ids: a name or a login
+/// is only a label).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Party {
+    /// The service's stable id (a Telegram chat's numeric id, a GitHub account's numeric id).
+    pub id: String,
+    /// What the owner knows it as (`@pal`, a chat's title, a login).
+    pub label: String,
+    /// The connected account itself (Telegram's Saved Messages; the signed-in GitHub account).
+    pub own: bool,
+    /// The handle (`@name`, lowercase) the service resolved `written` as, when it was one: only then may a fact kept
+    /// by that handle be offered for the id. A title or a display name never is.
+    pub handle: Option<String>,
+}
+
 #[async_trait::async_trait]
 pub trait Connector: Send + Sync {
     fn service(&self) -> &'static str;
+
+    /// The party `written` (as a request names it: a Telegram chat, a GitHub login) is, for `account`. `Ok(None)`:
+    /// this integration keeps no ids, or there is no such party.
+    async fn party(&self, _account: &str, _written: &str) -> Result<Option<Party>, CoreError> {
+        Ok(None)
+    }
 
     /// Lists, reads or searches. Nothing is changed.
     async fn fetch(&self, _account: &str, _call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {

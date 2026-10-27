@@ -976,6 +976,7 @@ table! {
 }
 
 allow_tables_to_appear_in_same_query!(reins_connections, reins_refresh_tokens);
+allow_tables_to_appear_in_same_query!(reins_org_leases, reins_org_requests);
 
 allow_tables_to_appear_in_same_query!(
     archives,

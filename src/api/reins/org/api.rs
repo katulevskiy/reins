@@ -178,7 +178,7 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     let binding_bytes = reins_proto::org::attestation_binding(&request.challenge, &key_der);
     let binding = data_encoding::HEXLOWER.encode(&binding_bytes);
     let (attestation_state, attestation_detail) =
-        super::attest::verify_enrollment(&request.attestations, &binding_bytes, &key_der);
+        super::attest::verify_enrollment(&request.attestations, &binding_bytes, &key_der, now);
     let row = ReinsOrgDevice {
         org_uuid: org.clone(),
         user_uuid: user.clone(),

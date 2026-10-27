@@ -48,6 +48,7 @@ struct WidgetGallery: View {
             case "longpress": longPress
             case "island": island
             case "bypass": bypass
+            case "bypassIsland": bypassIsland
             case "controls": controls
             case "states": ScrollView { states.padding(20) }.background(Palette.paper)
             default: widgets
@@ -133,6 +134,30 @@ struct WidgetGallery: View {
         .environment(\.colorScheme, .dark)
     }
 
+    /// A bypass and an Overnight on the island: compact (an hour and less, then a day) and expanded.
+    private var bypassIsland: some View {
+        ZStack(alignment: .top) {
+            Color(red: 42 / 255, green: 40 / 255, blue: 56 / 255).ignoresSafeArea()
+            let short = BypassLiveViews(state: bypassState, stale: false)
+            let long = BypassLiveViews(state: longBypassState, stale: false)
+            let night = BypassLiveViews(state: overnightState, stale: false)
+            VStack(spacing: 0) {
+                compact { short.compactLeading } trailing: { short.compactTrailing }
+                label("Bypass · compact").padding(.top, 10)
+                compact { long.compactLeading } trailing: { long.compactTrailing }.padding(.top, 24)
+                label("A day · compact").padding(.top, 10)
+                expanded(leading: long.expandedLeading, trailing: long.expandedTrailing, center: long.expandedCenter, bottom: long.expandedBottom)
+                    .padding(.top, 24)
+                label("Bypass · expanded").padding(.top, 10)
+                expanded(leading: night.expandedLeading, trailing: night.expandedTrailing, center: night.expandedCenter, bottom: night.expandedBottom)
+                    .padding(.top, 24)
+                label("Overnight · expanded").padding(.top, 10)
+            }
+            .padding(.top, 20)
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
     /// 04: the Home Screen widgets.
     private var widgets: some View {
         ZStack(alignment: .top) {
@@ -163,8 +188,11 @@ struct WidgetGallery: View {
             .padding(.top, 242)
             VStack(spacing: 8) {
                 Spacer()
-                let b = BypassLiveViews(state: bypassState, stale: false)
+                // A long bypass with many approvals, the widest the countdown gets.
+                let b = BypassLiveViews(state: longBypassState, stale: false)
                 liveCard(b.background) { b.lockScreen }
+                let o = BypassLiveViews(state: overnightState, stale: false)
+                liveCard(o.background) { o.lockScreen }
                 liveCard(GlanceStyle.liveBackground) { ModelDownloadLiveViews(state: downloadState).lockScreen }
                     .environment(\.colorScheme, .light)
             }
@@ -276,6 +304,20 @@ struct WidgetGallery: View {
         return .init(until: until, startedAt: until.addingTimeInterval(-60 * 60), scope: "every AI", approvedCount: 3)
     }
 
+    /// A bypass of a day, nearly all of it left, 87 approved so far.
+    private var longBypassState: BypassActivityAttributes.ContentState {
+        let until = Date(timeIntervalSince1970: TimeInterval(now + 22 * 3_600 + 25 * 60 + 22))
+        return .init(until: until, startedAt: until.addingTimeInterval(-24 * 3_600), scope: "every AI", approvedCount: 87)
+    }
+
+    /// Overnight until the morning.
+    private var overnightState: BypassActivityAttributes.ContentState {
+        var state = bypassState
+        state.overnight = true
+        state.until = Date(timeIntervalSince1970: TimeInterval(now + 7 * 3_600 + 12 * 60))
+        return state
+    }
+
     /// A bypass that runs until turned off, on for two days.
     private var untilOffState: BypassActivityAttributes.ContentState {
         Glance.bypassState(
@@ -344,12 +386,16 @@ struct WidgetGallery: View {
             .frame(maxWidth: width == nil ? .infinity : nil)
     }
 
+    /// A Lock Screen Live Activity: at most `liveHeight` tall, clipped there as the system clips one.
     private func liveCard<V: View>(_ background: Color, @ViewBuilder content: () -> V) -> some View {
-        content()
+        CappedHeight(cap: Self.liveHeight) { content() }
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(background))
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    /// The tallest a Lock Screen Live Activity is drawn (Apple's limit is 160 pt).
+    static let liveHeight: CGFloat = 160
 
     private func compact<L: View, T: View>(@ViewBuilder leading: () -> L, @ViewBuilder trailing: () -> T) -> some View {
         HStack(spacing: 0) {
@@ -387,6 +433,24 @@ struct WidgetGallery: View {
         .background(RoundedRectangle(cornerRadius: 44, style: .continuous).fill(.black))
         .padding(.horizontal, 10)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Its content at the height it wants, at most `cap`, the rest cut off evenly at the top and bottom: how the system
+/// draws a Lock Screen Live Activity.
+private struct CappedHeight: Layout {
+    var cap: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 360
+        let height = subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)).height ?? 0
+        return CGSize(width: width, height: min(height, cap))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let view = subviews.first else { return }
+        let height = view.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height
+        view.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: ProposedViewSize(width: bounds.width, height: height))
     }
 }
 

@@ -46,6 +46,11 @@ pub const VALID_SECS: i64 = 24 * 3600;
 pub const STUCK_SECS: i64 = 300;
 /// How long an issued lease lives.
 pub const LEASE_SECS: i64 = 900;
+/// Open requests (under review, approved, or running) one connection may have at once (03 §8: request flooding).
+pub const MAX_OPEN_PER_CONNECTION: i64 = 50;
+/// What an agent is told beyond [`MAX_OPEN_PER_CONNECTION`].
+pub const TOO_MANY_OPEN: &str = "This agent already has 50 requests waiting in your organization. Wait for some of \
+                                 them to finish (reins_get_result), then ask again.";
 
 /// What [`submit`] decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,6 +216,10 @@ pub fn submit_with(
     c.transaction(|c| {
         let (policy, _) = super::policy::active(c, org)?
             .ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
+        // Request flooding (03 §8): beyond its open requests, a connection is told to wait, and nothing is recorded.
+        if reins_org_request::q_open_of_connection(c, org, connection)? >= MAX_OPEN_PER_CONNECTION {
+            return Err(OrgError::Invalid(TOO_MANY_OPEN));
+        }
         let member = member_policy_of(c, org, user)?;
         let managed = ManagedRequest {
             org,
@@ -384,7 +393,7 @@ fn end(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, to: &str, now: i64
             } else {
                 lease_state::EXPIRED
             };
-            reins_org_request::q_set_lease_state(c, org, &l.uuid, &[lease_state::PENDING], lease_to)?;
+            reins_org_request::q_end_lease(c, org, &l.uuid, &[lease_state::PENDING], lease_to, now)?;
         }
         let keep = retention_secs(c, org)?;
         reins_org_request::q_set_purge(c, org, &row.uuid, now + keep)?;
@@ -619,7 +628,8 @@ pub fn expire(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, why: &str, 
     Ok(moved)
 }
 
-/// The sweeper's part: expires overdue reviews and lapsed approvals, and marks stuck executions unknown.
+/// The sweeper's part: expires overdue reviews, lapsed approvals and leases nobody minted in time, and marks stuck
+/// executions unknown.
 #[cfg(test)]
 pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
     Ok(sweep_routed(c, now, &std::collections::BTreeMap::new())?.0)
@@ -657,6 +667,24 @@ pub fn sweep_routed(
             let moved = end(c, &row.org_uuid, &row, st::EXPIRED, now)?;
             if moved {
                 audit::record(c, &row.org_uuid, audit::kinds::REQUEST_EXPIRED, None, Some(&row.uuid), &json!({}), now)?;
+            }
+            Ok(moved)
+        });
+    }
+    // An approved lease no executor took before its end (it was offline): it ends unminted.
+    for row in listed(reins_org_request::q_lapsed_lease_requests(c, now), "q_lapsed_lease_requests") {
+        each(c, "lease end", &row, &|c| {
+            let moved = end(c, &row.org_uuid, &row, st::EXPIRED, now)?;
+            if moved {
+                audit::record(
+                    c,
+                    &row.org_uuid,
+                    audit::kinds::REQUEST_EXPIRED,
+                    None,
+                    Some(&row.uuid),
+                    &json!({"reason": "lease_ended"}),
+                    now,
+                )?;
             }
             Ok(moved)
         });
@@ -882,6 +910,33 @@ pub(crate) mod tests {
                 .unwrap();
         let bound = record.lease.unwrap();
         assert_eq!((bound.repo.as_str(), bound.access, bound.lease.as_str()), ("acme/api", LeaseAccess::Push, "l2"));
+    }
+
+    #[test]
+    fn a_connection_may_have_at_most_50_open_requests() {
+        let mut c = db();
+        pilot(&mut c);
+        // Fifty reviews wait (deferred tickets), all from one connection.
+        let open: Vec<Submitted> =
+            (0..MAX_OPEN_PER_CONNECTION).map(|_| ask(&mut c, &issue("acme/prod-db"), 100)).collect();
+        assert_eq!(open.len(), 50);
+        // The fifty-first is refused with words the agent can act on, and nothing is recorded for it.
+        let before = reins_org_request::q_requests_of_org(&mut c, "o1", None, 500).unwrap().len();
+        let refused =
+            submit(&mut c, "o1", "lee", "conn-lee", "x", "github_create_issue", &issue("acme/api"), None, 101);
+        assert_eq!(refused, Err(OrgError::Invalid(TOO_MANY_OPEN)));
+        assert!(TOO_MANY_OPEN.contains("50"), "{TOO_MANY_OPEN}");
+        assert_eq!(reins_org_request::q_requests_of_org(&mut c, "o1", None, 500).unwrap().len(), before);
+        // Another connection isn't held back by this one's.
+        let other =
+            submit(&mut c, "o1", "lee", "conn-other", "x", "github_create_issue", &issue("acme/api"), None, 101);
+        assert_eq!(other.unwrap().outcome, ManagedOutcome::Auto);
+        // Once one ends, there is room again.
+        let row = reins_org_request::q_request(&mut c, "o1", &open[0].id).unwrap().unwrap();
+        deny(&mut c, "o1", &row, "kim", 102).unwrap();
+        assert!(
+            submit(&mut c, "o1", "lee", "conn-lee", "x", "github_create_issue", &issue("acme/api"), None, 103).is_ok()
+        );
     }
 
     #[test]

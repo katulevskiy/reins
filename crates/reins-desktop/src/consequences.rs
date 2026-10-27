@@ -143,9 +143,34 @@ pub fn shadow(
     connection: &str,
     now: i64,
 ) -> Shadow {
+    shadow_of(config, a, cwd, command, connection, now, false)
+}
+
+/// [`shadow`] of a planned net's `after` (the net runs before the effect): what Overnight's looser L1 needs.
+#[must_use]
+pub fn shadow_netted(
+    config: &Config,
+    after: &Analysis,
+    cwd: Option<&str>,
+    command: Option<&str>,
+    connection: &str,
+    now: i64,
+) -> Shadow {
+    shadow_of(config, after, cwd, command, connection, now, true)
+}
+
+fn shadow_of(
+    config: &Config,
+    a: &Analysis,
+    cwd: Option<&str>,
+    command: Option<&str>,
+    connection: &str,
+    now: i64,
+    netted: bool,
+) -> Shadow {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let at = match (cwd, command) {
-        (Some(c), Some(cmd)) => graph::repo_at(cmd, c, git_top(c).as_deref(), &home),
+        (Some(c), Some(cmd)) => graph::repo_at_in(cmd, c, git_top(c).as_deref(), &home, &real_path),
         _ => graph::RepoAt::Cwd,
     };
     // The repository the command acts in: the worktree's, a leading `cd`'s target, or none.
@@ -155,9 +180,13 @@ pub fn shadow(
         graph::RepoAt::Unknown => None,
     };
     // The agent's environment can point git elsewhere, or set its configuration: then nothing is known.
-    let env_redirects = std::env::vars_os().any(|(k, _)| {
+    let env_redirects = std::env::vars_os().any(|(k, v)| {
         let k = k.to_string_lossy();
-        k == "GIT_DIR" || k == "GIT_WORK_TREE" || k.starts_with("GIT_CONFIG")
+        k == "GIT_DIR"
+            || k == "GIT_WORK_TREE"
+            || k == "GIT_COMMON_DIR"
+            || k.starts_with("GIT_CONFIG")
+            || (k == "CDPATH" && !v.is_empty())
     });
     let head = dir.filter(|_| !env_redirects).and_then(|d| {
         let head = crate::hooks::git_head(Path::new(&d))?;
@@ -166,7 +195,18 @@ pub fn shadow(
         let read = head.remotes.get("origin");
         (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
     });
-    shadow_with(config, a, head.as_ref(), connection, now)
+    shadow_net(config, a, head.as_ref(), connection, now, netted)
+}
+
+/// `path`'s real place: the deepest folder of it that exists, with symlinks resolved, and the rest as written.
+fn real_path(path: &str) -> Option<String> {
+    let p = Path::new(path);
+    let (base, rest) = p.ancestors().find_map(|a| std::fs::canonicalize(a).ok().map(|r| (r, p.strip_prefix(a))))?;
+    let rest = rest.ok()?;
+    if rest.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    Some(base.join(rest).to_string_lossy().into_owned())
 }
 
 /// `git remote get-url --push origin` in `dir`: where git would push `origin` (no hooks or programs run for it).
@@ -189,7 +229,19 @@ fn git_top(cwd: &str) -> Option<String> {
 }
 
 /// [`shadow`] with the configuration of the repository the request acts in (`head`; `None`: not known).
+#[cfg(all(test, unix))]
 pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>, connection: &str, now: i64) -> Shadow {
+    shadow_net(config, a, head, connection, now, false)
+}
+
+fn shadow_net(
+    config: &Config,
+    a: &Analysis,
+    head: Option<&GitHead>,
+    connection: &str,
+    now: i64,
+    netted: bool,
+) -> Shadow {
     let snap = config.auto.snapshot();
     let remotes = head.map(|h| &h.remotes);
     let base = graph::Base {
@@ -205,7 +257,9 @@ pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>,
             connection,
             seen_resource: false,
             now,
+            // This computer doesn't know the phone's mode at hook time; Overnight is the phone's (P5).
             overnight: false,
+            netted,
         },
         &snap,
     );
@@ -323,7 +377,7 @@ pub fn evaluate_netted(
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-            shadow(&config, &after, cwd.as_deref(), command.as_deref(), &connection, now)
+            shadow_netted(&config, &after, cwd.as_deref(), command.as_deref(), &connection, now)
         }))
         .ok();
         let _sent = tx.send(result);
@@ -503,6 +557,26 @@ mod tests {
         assert_eq!(git_push_url(&d).as_deref(), Some("https://evil.example/x/y"));
         assert_eq!(zone(), Zone::Outside);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A symlink inside the repository that leads out of it is not the repository; a folder the command makes is.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_the_worktree_is_another_place() {
+        let base =
+            std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("reins-symlink-{}", std::process::id()));
+        let repo = base.join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(base.join("other")).unwrap();
+        std::os::unix::fs::symlink(base.join("other"), repo.join("link")).unwrap();
+        let cwd = repo.to_string_lossy().into_owned();
+        let at = |cmd: &str| graph::repo_at_in(cmd, &cwd, Some(&cwd), "/home/me", &real_path);
+        assert_eq!(at("cd link && git push origin feat/x"), graph::RepoAt::Unknown);
+        assert_eq!(at("cd link/deeper && git push origin feat/x"), graph::RepoAt::Unknown);
+        assert_eq!(at("cd src && git push origin feat/x"), graph::RepoAt::Cwd);
+        assert_eq!(at("mkdir -p new && cd new && git push origin feat/x"), graph::RepoAt::Cwd);
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

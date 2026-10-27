@@ -66,6 +66,9 @@ pub mod kinds {
     pub const LEASE_ISSUED: &str = "lease.issued";
     pub const LEASE_REVOKED: &str = "lease.revoked";
     pub const LEASE_REVOKED_UPSTREAM: &str = "lease.revoked_upstream";
+    /// Nobody revoked a lease's token upstream (its executor was offline or removed) and GitHub's own lifetime for it
+    /// has passed: it is dead, and leaves the revocation queue.
+    pub const LEASE_TOKEN_LAPSED: &str = "lease.token_lapsed";
     pub const POLICY_DRAFTED: &str = "policy.drafted";
     pub const POLICY_ACTIVATED: &str = "policy.activated";
     pub const MEMBER_POLICY_SET: &str = "member_policy.set";

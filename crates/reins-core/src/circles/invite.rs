@@ -66,6 +66,9 @@ pub(crate) struct HelperJoin {
     pub accepted: bool,
     #[serde(default)]
     pub ended: Option<CircleJoinStage>,
+    /// The server took this phone's challenge (else opening the link again sends it again, with the same nonce).
+    #[serde(default)]
+    pub challenged: bool,
 }
 
 /// The scope and its words for a preset.
@@ -261,6 +264,8 @@ impl Engine {
         me: &Me,
         id: &str,
     ) -> Result<CircleInviteProgress, CoreError> {
+        // One step at a time (the app's poll, a sync, a confirm): never two reveals racing for one invitation.
+        let _one = self.circles_step.lock().await;
         let mut local =
             self.circle_state(&me.slot)?.invites.iter().find(|i| i.id == id).cloned().ok_or(CoreError::NotFound)?;
         let status = api_call!(session, |api| api.circle_invite_status(id)).map_err(not_available)?;
@@ -279,11 +284,29 @@ impl Engine {
         }
         let challenge = status.challenge.clone().ok_or_else(|| CoreError::invalid("no answer yet"))?;
         challenge.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
-        if let Some(pinned) = &local.challenge
-            && (pinned.helper_pub != challenge.helper_pub
-                || pinned.nonce != challenge.nonce
-                || pinned.helper_epoch != challenge.helper_epoch)
-        {
+        // The pin is a compare-and-set in the state lock: the first challenge seen is kept, and only a step that pinned
+        // it, or found it pinned the same, goes on to reveal. A different one later cancels the invitation.
+        let same = |p: &InviteChallenge| {
+            p.helper_pub == challenge.helper_pub
+                && p.nonce == challenge.nonce
+                && p.helper_epoch == challenge.helper_epoch
+        };
+        let pinned = self.with_circles(&me.slot, |s| {
+            let Some(i) = s.invites.iter_mut().find(|i| i.id == id) else {
+                return Ok(false);
+            };
+            match &i.challenge {
+                None => {
+                    i.challenge = Some(challenge.clone());
+                    Ok(true)
+                }
+                Some(p) => Ok(same(p)),
+            }
+        })?;
+        if pinned {
+            local.challenge = Some(challenge.clone());
+        }
+        if !pinned {
             // Never reveal for a second answer: a server could otherwise choose keys after seeing our nonce.
             if let Err(e) = api_call!(session, |api| api.circle_invite_cancel(id)) {
                 log::warn!("a Circle invitation whose answer changed could not be cancelled: {e:?}");
@@ -450,6 +473,7 @@ impl Engine {
             seen_epoch: peer.epoch.max(helper.epoch),
             peer: Some(peer),
             last_seq: 0,
+            checked_at: 0,
             since: unix_now(),
             signed,
         };
@@ -509,11 +533,15 @@ impl Engine {
         if opened.inviter_account == me.account || opened.owner_pub == me.owner_pub {
             return Err(CoreError::invalid("This is your own invitation."));
         }
-        if let Some(existing) = self.circle_state(&me.slot)?.joins.iter().find(|j| j.id == opened.id).cloned() {
-            return Ok(Self::circle_join_view(&existing));
+        let existing = self.circle_state(&me.slot)?.joins.iter().find(|j| j.id == opened.id).cloned();
+        if let Some(existing) = &existing
+            && existing.challenged
+        {
+            return Ok(Self::circle_join_view(existing));
         }
         let nonce = crate::crypto::random_bytes::<32>()?;
-        let join = HelperJoin {
+        // A join kept from an attempt whose challenge never got through is sent again as it was (same nonce).
+        let join = existing.unwrap_or(HelperJoin {
             id: opened.id.clone(),
             opened: opened.clone(),
             nonce: encode_nonce(&nonce),
@@ -530,7 +558,8 @@ impl Engine {
             link: None,
             accepted: false,
             ended: None,
-        };
+            challenged: false,
+        });
         // Kept before the challenge leaves: the nonce must outlive a lost answer.
         self.with_circles(&me.slot, |s| {
             s.joins.retain(|j| j.id != join.id);
@@ -551,6 +580,9 @@ impl Engine {
             } => CoreError::invalid("Someone else already answered this invitation."),
             other => not_available(other),
         })?;
+        let mut join = join;
+        join.challenged = true;
+        self.circle_put_join(&me, &join)?;
         Ok(Self::circle_join_view(&join))
     }
 
@@ -584,6 +616,7 @@ impl Engine {
     }
 
     async fn circle_join_step(&self, session: &Session, me: &Me, id: &str) -> Result<CircleInviteView, CoreError> {
+        let _one = self.circles_step.lock().await;
         let mut join =
             self.circle_state(&me.slot)?.joins.iter().find(|j| j.id == id).cloned().ok_or(CoreError::NotFound)?;
         if join.ended.is_some() {
@@ -712,6 +745,7 @@ impl Engine {
             seen_epoch: peer.epoch,
             peer: Some(peer),
             last_seq: 0,
+            checked_at: 0,
             since: unix_now(),
             signed,
         };
