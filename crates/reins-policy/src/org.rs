@@ -520,7 +520,7 @@ impl OrgRule {
             return false;
         }
         if let Some(min) = self.min_amount_minor
-            && !money_at_least(analysis, req.args, min, self.currency.as_deref())
+            && !money_at_least(analysis, req.tool, req.args, min, self.currency.as_deref())
         {
             return false;
         }
@@ -551,14 +551,40 @@ fn unknown_payee(analysis: &Analysis, args: &Value, facts: &Facts) -> bool {
 
 /// Whether the request moves at least `min` minor units (of `currency`, when named). An amount or currency that can't
 /// be read counts as at least; a request with no Money effect doesn't.
-fn money_at_least(analysis: &Analysis, args: &Value, min: u64, currency: Option<&str>) -> bool {
+fn money_at_least(analysis: &Analysis, tool: &str, args: &Value, min: u64, currency: Option<&str>) -> bool {
+    use reins_proto::payments::{Cart, PAYMENTS, PURCHASE_REQUEST_OP, normalize_currency, parse_amount};
     if !analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
         return false;
     }
-    let given = args.get("currency").and_then(Value::as_str).map(reins_proto::payments::normalize_currency);
+    let want = match currency.map(normalize_currency) {
+        Some(Ok(c)) => Some(c),
+        Some(Err(_)) => return true,
+        None => None,
+    };
+    if tool == "payments_purchase_request" {
+        // What the payment charges, read by the payments consumer's own parser: its checked `total`.
+        let call = reins_proto::connector::ConnectorCall {
+            service: PAYMENTS.to_owned(),
+            op: PURCHASE_REQUEST_OP.to_owned(),
+            args: args.as_object().cloned().unwrap_or_default(),
+        };
+        let Ok(cart) = Cart::from_call(&call) else {
+            return true;
+        };
+        if want.as_deref().is_some_and(|w| w != cart.currency) {
+            return true;
+        }
+        // Any other amount the agent names must be the same, or it's unknown.
+        let agrees = AMOUNT_FIELDS
+            .iter()
+            .filter_map(|k| args.get(*k))
+            .all(|v| parse_amount(v, &cart.currency, "amount").is_ok_and(|m| m == cart.total));
+        return !agrees || u64::try_from(cart.total).map_or(true, |t| t >= min);
+    }
+    let given = args.get("currency").and_then(Value::as_str).map(normalize_currency);
     let code = match (given, currency) {
-        (Some(Ok(c)), Some(want)) => {
-            if reins_proto::payments::normalize_currency(want).ok().as_deref() != Some(c.as_str()) {
+        (Some(Ok(c)), Some(w)) => {
+            if want.as_deref() != Some(c.as_str()) || w.is_empty() {
                 return true;
             }
             c
@@ -575,11 +601,12 @@ fn money_at_least(analysis: &Analysis, args: &Value, min: u64, currency: Option<
     }
     let mut amounts = Vec::with_capacity(fields.len());
     for v in fields {
-        match reins_proto::payments::parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok()) {
+        match parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok()) {
             Some(m) => amounts.push(m),
             None => return true,
         }
     }
+    amounts.sort_unstable();
     amounts.dedup();
     amounts.len() != 1 || amounts[0] >= min
 }
@@ -1694,7 +1721,8 @@ mod tests {
     }
 
     fn purchase(total: &str, currency: Option<&str>, merchant_url: Option<&str>) -> Value {
-        let mut v = json!({"merchant": "Acme Supplies", "total": total});
+        let mut v = json!({"merchant": "Acme Supplies", "total": total, "merchant_url": "https://shop.example/x",
+                           "items": [{"name": "Widget", "quantity": 1, "unit_price": total}]});
         if let Some(c) = currency {
             v["currency"] = json!(c);
         }
