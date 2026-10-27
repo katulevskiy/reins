@@ -35,11 +35,13 @@ pub mod console_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
+pub mod executor_api;
 pub mod gate;
 pub mod github;
 pub mod invariants;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod kms;
+pub mod leases;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod policy;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
@@ -49,6 +51,7 @@ pub mod reviews;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod roster;
 pub mod scim;
+pub mod sweeper;
 pub mod tenant;
 pub mod workos_api;
 
@@ -74,6 +77,8 @@ pub fn routes() -> Vec<Route> {
     }
     let mut routes = api::routes();
     routes.extend(console::routes());
+    routes.extend(executor_api::routes());
+    routes.extend(leases::routes());
     routes
 }
 
