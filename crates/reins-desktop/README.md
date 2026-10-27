@@ -204,15 +204,19 @@ Nothing just hangs. When an answer takes more than a moment (somebody has to loo
   (`systemMessage`); the waiting line goes to the hook's stderr;
 - `reins mcp` sends the harness MCP progress notifications ("Waiting for Reins 2FA on your phone…") when it asked for
   them; the server answers a call the phone has not decided within its wait with how to fetch the result later;
-- this computer shows a notification, "Check your phone", with a short chime. While the Reins app runs, the app shows
-  it through its own notification permission (on macOS only an app's own notifications appear) and takes it down once
-  the phone answered; without the app, the waiting program shows it itself (`notify-send` and `pw-play`, `paplay` or
-  `aplay` on Linux, `osascript` on macOS (older versions only), a toast on Windows):
+- this computer shows a notification, "Check your phone", with a short chime, once a request still waits for the phone
+  after `delay_ms` (3 s by default): one the phone's mode (Bypass, Auto, Overnight, Lockdown) or a standing permission
+  decides meanwhile needs nobody, and shows nothing; one Autopilot looked at and left to you shows at once. While the
+  Reins app runs, the app shows it through its own notification permission (on macOS only an app's own notifications
+  appear) and takes it down once the phone answered; without the app, the waiting program shows it itself
+  (`notify-send` and `pw-play`, `paplay` or `aplay` on Linux, taken down through `gdbus` or `busctl` once answered;
+  `osascript` on macOS (older versions only); a toast on Windows):
 
 ```toml
 [notify]
-phone = true    # "Check your phone" when a request waits for your phone
-sound = true    # with a chime
+phone = true      # "Check your phone" when a request waits for your phone
+sound = true      # with a chime
+delay_ms = 3000   # only once it still waits this long (at most 15000)
 ```
 
 Every request decided here, how it ended and who decided, goes to this computer's activity log, `activity.jsonl` in
