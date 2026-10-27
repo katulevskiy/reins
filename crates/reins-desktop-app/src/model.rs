@@ -239,6 +239,9 @@ pub struct Model {
     /// "This was wrong" sent for these requests (by the phone's request id), and the one on its way.
     pub corrected: std::collections::HashSet<String>,
     pub correcting: Option<String>,
+    /// Safety nets restored from Activity (by plan id), and the one being restored.
+    pub restored_nets: std::collections::HashSet<String>,
+    pub restoring_net: Option<String>,
     /// The vault's item names (name, kind) as the phone last gave them, and whether it is being asked.
     pub vault_names: Option<Vec<(String, String)>>,
     pub vault_asking: bool,
@@ -413,6 +416,8 @@ impl Model {
                 told: std::collections::HashMap::new(),
                 corrected: std::collections::HashSet::new(),
                 correcting: None,
+                restored_nets: std::collections::HashSet::new(),
+                restoring_net: None,
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
@@ -1767,6 +1772,38 @@ impl Model {
                         m.corrected.insert(request_id);
                     }
                     Err(e) => m.notice = Some(format!("Autopilot not told: {e}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Activity's "Restore": puts back what the safety net `plan` kept (deleted paths, branches, file copies).
+    pub fn restore_net(&mut self, plan: String, cx: &mut Context<'_, Self>) {
+        if self.restoring_net.is_some() || self.restored_nets.contains(&plan) {
+            return;
+        }
+        self.notice = None;
+        self.restoring_net = Some(plan.clone());
+        cx.notify();
+        let demo = self.args.demo;
+        let store = reins_desktop::nets::Store::open(self.backend.paths());
+        cx.spawn(async move |this, cx| {
+            let id = plan.clone();
+            let result = if demo {
+                cx.background_executor().timer(Duration::from_millis(600)).await;
+                Ok(Vec::new())
+            } else {
+                cx.background_executor().spawn(async move { reins_desktop::nets::restore(&store, &id) }).await
+            };
+            let _gone = this.update(cx, |m, cx| {
+                m.restoring_net = None;
+                match result {
+                    Ok(_) => {
+                        m.restored_nets.insert(plan);
+                    }
+                    Err(e) => m.notice = Some(format!("Not restored: {}", e.lines().next().unwrap_or_default())),
                 }
                 cx.notify();
             });

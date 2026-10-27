@@ -168,6 +168,7 @@ fn view_of(c: &Value) -> ApprovalView {
             // what a desktop app of this version reports is not in the golden set: as an older one, it asks
             branch: None,
             default_branch: None,
+            net: None,
         });
         "desktop".clone_into(&mut service);
     }

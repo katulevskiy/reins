@@ -25,6 +25,7 @@ pub mod journal;
 pub mod leases;
 pub mod mcp_bridge;
 pub mod mcp_payments;
+pub mod nets;
 pub mod notice;
 pub mod notify;
 pub mod phone;

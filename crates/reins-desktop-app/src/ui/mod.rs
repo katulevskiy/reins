@@ -192,6 +192,8 @@ struct Data {
     vault_asking: bool,
     corrected: std::collections::HashSet<String>,
     correcting: Option<String>,
+    restored_nets: std::collections::HashSet<String>,
+    restoring_net: Option<String>,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -234,6 +236,8 @@ impl Data {
             vault_asking: m.vault_asking,
             corrected: m.corrected.clone(),
             correcting: m.correcting.clone(),
+            restored_nets: m.restored_nets.clone(),
+            restoring_net: m.restoring_net.clone(),
             demo: m.demo(),
             gallery: false,
         }

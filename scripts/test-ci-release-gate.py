@@ -18,11 +18,16 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-gate-") as directory:
         "#!/usr/bin/env python3\n"
         "import os, pathlib, sys\n"
         "root = pathlib.Path(os.environ['GATE_TEST_ROOT'])\n"
+        "if sys.argv[1:3] == ['api', 'rate_limit']:\n"
+        "    print((root / 'limit').read_text() if (root / 'limit').exists() else '4000 0'); sys.exit(0)\n"
         "(root / 'args').write_text('\\n'.join(sys.argv[1:]))\n"
         "states = (root / 'states').read_text().splitlines()\n"
         "state = states.pop(0) if states else 'missing'\n"
         "(root / 'states').write_text('\\n'.join(states))\n"
         "if state == 'api-error': sys.exit(1)\n"
+        "if state == 'rate-limited':\n"
+        "    (root / 'limit').write_text('0 0'); sys.exit(1)\n"
+        "(root / 'limit').unlink(missing_ok=True)\n"
         "print(state)\n"
     )
     gh.chmod(0o755)
@@ -42,6 +47,10 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-gate-") as directory:
         (["api-error"] * 3, False),
         (["missing"] * 3, False),
         (["in_progress"] * 3, False),
+        # A spent rate limit is waited out (until its reset) without using up the attempts, a few times at most.
+        (["rate-limited"] * 3 + ["success"], True),
+        (["rate-limited"] * 3 + ["in_progress", "in_progress", "success"], True),
+        (["rate-limited"] * 4 + ["in_progress", "in_progress", "success"], False),
     ]
     environment = os.environ | {
         "PATH": f"{root}:{os.environ['PATH']}",
@@ -51,6 +60,7 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-gate-") as directory:
     }
     for states, expected in cases:
         (root / "states").write_text("\n".join(states))
+        (root / "limit").unlink(missing_ok=True)
         result = subprocess.run(
             ["bash", str(ROOT / "scripts/wait-for-ci.sh"), SHA],
             env=environment,

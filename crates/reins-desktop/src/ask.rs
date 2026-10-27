@@ -30,7 +30,13 @@ pub struct Question {
     pub question: String,
     pub detail: Option<String>,
     pub topic: Option<String>,
+    /// The safety net a hook applies if this is approved (Decisions v2 P3), one line per net. Its own argument, set
+    /// only by `reins hook` (never by `reins ask`, whose words are the agent's): the phone shows it read-only.
+    pub net: Option<String>,
 }
+
+/// The longest net the phone is told (the `net` argument's limit).
+const MAX_NET: usize = 400;
 
 /// At most `max` bytes (so also characters: servers before 0.2.8 counted bytes); a cut text ends with `…`.
 fn cut(text: &str, max: usize) -> String {
@@ -68,6 +74,7 @@ impl Question {
             question,
             detail,
             topic,
+            net: None,
         })
     }
 
@@ -78,6 +85,9 @@ impl Question {
         }
         if let Some(t) = &self.topic {
             args["topic"] = json!(t);
+        }
+        if let Some(n) = &self.net {
+            args["net"] = json!(cut(n, MAX_NET));
         }
         args
     }
@@ -243,6 +253,7 @@ pub fn test_question() -> Question {
                 .to_owned(),
         ),
         topic: None,
+        net: None,
     }
 }
 
@@ -264,12 +275,22 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
     let nonce = crate::server::random_token(16);
     let args = q.arguments(&identity.public_key(), &nonce);
     let late = || Answer::Unanswered(format!("No answer on your phone within {} s.", timeout.as_secs()));
-    let mut answer =
-        match tokio::time::timeout(timeout, client.call_waiting(ASK_TOOL, &args, None, Some(timeout))).await {
-            Ok(Ok(a)) => a,
-            Ok(Err(e)) => return link_failure(e),
-            Err(_) => return late(),
-        };
+    let mut first = tokio::time::timeout(timeout, client.call_waiting(ASK_TOOL, &args, None, Some(timeout))).await;
+    // A server older than safety nets refuses the `net` argument: the question goes without it (the phone then
+    // shows no net; the netted command is still in the detail it approves).
+    if q.net.is_some() && matches!(&first, Ok(Err(e)) if e.to_string().contains("invalid_arguments")) {
+        let mut plain = args.clone();
+        if let Some(o) = plain.as_object_mut() {
+            o.remove("net");
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        first = tokio::time::timeout(remaining, client.call_waiting(ASK_TOOL, &plain, None, Some(remaining))).await;
+    }
+    let mut answer = match first {
+        Ok(Ok(a)) => a,
+        Ok(Err(e)) => return link_failure(e),
+        Err(_) => return late(),
+    };
     loop {
         let CallAnswer {
             request_id,

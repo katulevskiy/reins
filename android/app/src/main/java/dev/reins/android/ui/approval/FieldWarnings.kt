@@ -20,8 +20,10 @@ data class FieldWarning(
     val tone: WarnTone,
     val help: String? = null,
     val maxLines: Int = Int.MAX_VALUE,
+    /** A glyph of its own instead of the tone's (a safety net reassures: it doesn't wear a warning). */
+    val icon: Glyph? = null,
 ) {
-    val glyph: Glyph get() = when (tone) {
+    val glyph: Glyph get() = icon ?: when (tone) {
         WarnTone.Red -> Glyph.Lock
         WarnTone.Amber -> Glyph.Warning
         WarnTone.Plain -> Glyph.ShieldAlert
@@ -33,7 +35,8 @@ data class FieldWarning(
  * - each danger tag ([dangerTags]): the guard rule, a command this phone couldn't read, a push that rewrites history
  *   or that couldn't be checked, hidden characters, a destructive tool, what can't be undone;
  * - that the computer reported the rule (this phone doesn't know it);
- * - a push to the repository's default branch (display only), an SSH server with no name;
+ * - a push to the repository's default branch (display only), the computer's safety net (display only), an SSH
+ *   server with no name;
  * - why it is asked every time, when no danger tag already says so;
  * - the first time this AI asks for this target;
  * - the risk Overnight's model saw (two lines; its word only once the reason went to the facts), and that it held it.
@@ -47,6 +50,10 @@ fun fieldWarnings(view: ApprovalView, suggestion: SuggestionView?, risk: RiskVie
         add(FieldWarning("ruleReported", "Your computer says so; this phone doesn't know the rule", WarnTone.Amber))
     }
     defaultBranchPush(view)?.let { add(FieldWarning("defaultBranch", "To the default branch ${untrusted(it)}", WarnTone.Amber)) }
+    // The computer's safety net (Decisions v2 P3): shown as it says, read-only; it never makes the question looser.
+    view.ask?.net?.takeIf { it.isNotBlank() }?.let { net ->
+        add(FieldWarning("netted", "Netted", WarnTone.Plain, "${untrusted(net)} Your computer says so. Restore it there, in Activity.", icon = Glyph.Undo))
+    }
     view.ssh?.takeIf { it.host.isNullOrBlank() }?.let { ssh ->
         add(FieldWarning("unknownHost", if (ssh.hostKey.isNullOrBlank()) "Unknown server" else "Server known only by its key", WarnTone.Amber))
     }

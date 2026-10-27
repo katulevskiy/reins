@@ -3,7 +3,12 @@
 //! for light (Torii dither), picked in Settings.
 //!
 //! GPUI's `img` can only centre a cover fit, and the boards place the art higher (`object-position: 50% 30%`): each
-//! picture is decoded once into a [`RenderImage`] and painted by [`Art`], covering its box at the position asked.
+//! picture is decoded into a [`RenderImage`] and painted by [`Art`], covering its box at the position asked.
+//!
+//! The phones' art is 780 × 1000; a wide window covered with it is blurred. The desktop ships its own, landscape and
+//! 3200 × 1800, made from the owner's full-size art with each picture's look (`scripts/brand/desktop-wallpapers.py`).
+//! GPUI samples a picture without mipmaps, so one drawn much smaller than it is shimmers: [`Art`] paints the halving
+//! of the picture just above the size it is drawn at ([`level`]), each made once, when first drawn.
 
 use std::panic::Location;
 use std::sync::{Arc, OnceLock};
@@ -78,26 +83,40 @@ impl Wallpaper {
         }
     }
 
-    fn bytes(self) -> &'static [u8] {
+    /// The file as shipped, and its format: the dithered art is PNG (exact, and smaller), the photos JPEG.
+    fn file(self) -> (&'static [u8], image::ImageFormat) {
+        use image::ImageFormat::{Jpeg, Png};
         match self {
-            Self::Halo => include_bytes!("../../../assets/wallpapers/halo.jpg"),
-            Self::Crescent => include_bytes!("../../../assets/wallpapers/crescent.jpg"),
-            Self::Figure => include_bytes!("../../../assets/wallpapers/figure.jpg"),
-            Self::Hands => include_bytes!("../../../assets/wallpapers/hands.jpg"),
-            Self::Ruins => include_bytes!("../../../assets/wallpapers/ruins.jpg"),
-            Self::Eyes => include_bytes!("../../../assets/wallpapers/eyes.jpg"),
-            Self::Torii => include_bytes!("../../../assets/wallpapers/torii.jpg"),
-            Self::ToriiDither => include_bytes!("../../../assets/wallpapers/torii-dither.jpg"),
+            Self::Halo => (include_bytes!("../../../assets/wallpapers/halo.png"), Png),
+            Self::Crescent => (include_bytes!("../../../assets/wallpapers/crescent.jpg"), Jpeg),
+            Self::Figure => (include_bytes!("../../../assets/wallpapers/figure.png"), Png),
+            Self::Hands => (include_bytes!("../../../assets/wallpapers/hands.png"), Png),
+            Self::Ruins => (include_bytes!("../../../assets/wallpapers/ruins.png"), Png),
+            Self::Eyes => (include_bytes!("../../../assets/wallpapers/eyes.jpg"), Jpeg),
+            Self::Torii => (include_bytes!("../../../assets/wallpapers/torii.jpg"), Jpeg),
+            Self::ToriiDither => (include_bytes!("../../../assets/wallpapers/torii-dither.png"), Png),
         }
     }
 
-    /// The picture, decoded once (as BGRA, GPUI's order); `small`: scaled down to 260 px wide, for thumbnails
-    /// (GPUI samples a picture without mipmaps, so a big one drawn small shimmers).
-    fn image(self, small: bool) -> Option<Arc<RenderImage>> {
-        static DECODED: [OnceLock<Option<Arc<RenderImage>>>; 16] = [const { OnceLock::new() }; 16];
-        let i = Self::ALL.iter().position(|w| *w == self)? * 2 + usize::from(small);
-        DECODED[i]
-            .get_or_init(|| match decode(self.bytes(), small) {
+    /// The picture's size as shipped, read once from its header.
+    fn size(self) -> Option<(u32, u32)> {
+        static SIZES: [OnceLock<Option<(u32, u32)>>; Wallpaper::ALL.len()] =
+            [const { OnceLock::new() }; Wallpaper::ALL.len()];
+        let i = Self::ALL.iter().position(|w| *w == self)?;
+        *SIZES[i].get_or_init(|| {
+            let (bytes, format) = self.file();
+            image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions().ok()
+        })
+    }
+
+    /// The picture at `level` (0: as shipped, each level half the one before), decoded once, as BGRA (GPUI's order).
+    fn image(self, level: usize) -> Option<Arc<RenderImage>> {
+        static DECODED: [[OnceLock<Option<Arc<RenderImage>>>; LEVELS]; Wallpaper::ALL.len()] =
+            [const { [const { OnceLock::new() }; LEVELS] }; Wallpaper::ALL.len()];
+        let i = Self::ALL.iter().position(|w| *w == self)?;
+        let level = level.min(LEVELS - 1);
+        DECODED[i][level]
+            .get_or_init(|| match decode(self.file(), level) {
                 Ok(img) => Some(img),
                 Err(e) => {
                     log::warn!("cannot decode the {} wallpaper: {e}", self.label());
@@ -108,12 +127,26 @@ impl Wallpaper {
     }
 }
 
-fn decode(bytes: &[u8], small: bool) -> Result<Arc<RenderImage>, String> {
-    let mut rgba =
-        image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).map_err(|e| e.to_string())?.into_rgba8();
-    if small {
-        let h = rgba.height() * 260 / rgba.width().max(1);
-        rgba = image::imageops::resize(&rgba, 260, h, image::imageops::FilterType::Triangle);
+/// How many sizes of a picture there can be: as shipped, then halved down to 1/32 (100 px wide, the smallest
+/// thumbnail's).
+const LEVELS: usize = 6;
+
+/// The level to draw a `width` px picture at, `drawn` device pixels wide: the smallest halving still at least that
+/// wide, so a picture is never shrunk to less than half when drawn, nor enlarged unless drawn bigger than it is.
+fn level(width: u32, drawn: f32) -> usize {
+    let mut level = 0;
+    #[allow(clippy::cast_precision_loss, reason = "picture sizes")]
+    while level + 1 < LEVELS && (width >> (level + 1)) as f32 >= drawn {
+        level += 1;
+    }
+    level
+}
+
+fn decode((bytes, format): (&[u8], image::ImageFormat), level: usize) -> Result<Arc<RenderImage>, String> {
+    let mut rgba = image::load_from_memory_with_format(bytes, format).map_err(|e| e.to_string())?.into_rgba8();
+    if level > 0 {
+        let (w, h) = ((rgba.width() >> level).max(1), (rgba.height() >> level).max(1));
+        rgba = image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Triangle);
     }
     for p in rgba.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
@@ -127,7 +160,6 @@ pub fn art(which: Wallpaper, x: f32, y: f32) -> Art {
         which,
         at: (x, y),
         radius: 0.0,
-        small: false,
         style: StyleRefinement::default(),
     };
     a = a.size_full();
@@ -139,18 +171,10 @@ pub struct Art {
     which: Wallpaper,
     at: (f32, f32),
     radius: f32,
-    small: bool,
     style: StyleRefinement,
 }
 
 impl Art {
-    /// Drawn small (a thumbnail): from the scaled-down picture.
-    #[must_use]
-    pub fn thumbnail(mut self) -> Self {
-        self.small = true;
-        self
-    }
-
     /// Rounds the picture's corners.
     #[must_use]
     pub fn corners(mut self, radius: f32) -> Self {
@@ -218,10 +242,14 @@ impl Element for Art {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        let Some(image) = self.which.image(self.small) else {
+        let Some((w, h)) = self.which.size() else {
             return;
         };
-        let Some(fitted) = cover(bounds, image.size(0).width.0, image.size(0).height.0, self.at) else {
+        #[allow(clippy::cast_possible_wrap, reason = "picture sizes")]
+        let Some(fitted) = cover(bounds, w as i32, h as i32, self.at) else {
+            return;
+        };
+        let Some(image) = self.which.image(level(w, fitted.size.width.as_f32() * window.scale_factor())) else {
             return;
         };
         if let Err(e) = window.paint_image_fitted(bounds, fitted, Corners::all(px(self.radius)), image, 0, false) {
@@ -296,22 +324,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_wallpaper_decodes_and_is_named_once() {
+    fn every_wallpaper_decodes_landscape_and_is_named_once() {
         for w in Wallpaper::ALL {
-            let img = w.image(false).unwrap_or_else(|| panic!("{w:?} does not decode"));
-            assert_eq!((img.size(0).width.0, img.size(0).height.0), (780, 1000), "{w:?}");
-            let small = w.image(true).unwrap();
-            assert_eq!((small.size(0).width.0, small.size(0).height.0), (260, 333), "{w:?}");
+            let img = w.image(0).unwrap_or_else(|| panic!("{w:?} does not decode"));
+            assert_eq!((img.size(0).width.0, img.size(0).height.0), (3200, 1800), "{w:?}");
+            assert_eq!(w.size(), Some((3200, 1800)), "{w:?}");
             assert_eq!(serde_json::to_string(&w).unwrap(), format!("\"{}\"", w.id()));
         }
+        let half = Wallpaper::Halo.image(1).unwrap();
+        assert_eq!((half.size(0).width.0, half.size(0).height.0), (1600, 900));
         assert_eq!((Wallpaper::DARK, Wallpaper::LIGHT), (Wallpaper::Halo, Wallpaper::ToriiDither));
+    }
+
+    /// A picture is drawn from its smallest halving at least as wide as it is drawn: never shrunk to less than half.
+    #[test]
+    fn the_level_is_the_halving_just_above_the_drawn_size() {
+        assert_eq!(level(3200, 5120.0), 0);
+        assert_eq!(level(3200, 2088.0), 0);
+        assert_eq!(level(3200, 1600.0), 1);
+        assert_eq!(level(3200, 1044.0), 1);
+        assert_eq!(level(3200, 764.0), 2);
+        assert_eq!(level(3200, 356.0), 3);
+        assert_eq!(level(3200, 52.0), LEVELS - 1);
+        assert_eq!(level(780, 1044.0), 0);
     }
 
     /// The picture covers its box and keeps its point in view: a wide box crops the top and bottom, from 30% down.
     #[test]
     fn the_cover_keeps_the_point_asked() {
         let b = Bounds::new(point(px(0.0), px(0.0)), size(px(1040.0), px(360.0)));
-        let f = cover(b, 780, 1000, (0.5, 0.3)).unwrap();
+        let f = cover(b, 3200, 1800, (0.5, 0.3)).unwrap();
         assert!((f.size.width.as_f32() - 1040.0).abs() < 0.01);
         assert!(f.size.height.as_f32() > 360.0);
         let over = f.size.height.as_f32() - 360.0;

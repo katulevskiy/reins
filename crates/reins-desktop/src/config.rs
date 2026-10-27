@@ -471,6 +471,28 @@ pub struct Config {
     /// Left out when it is the default, so a config this writes still loads in a build that predates it.
     #[serde(skip_serializing_if = "WorkspaceConfig::is_default")]
     pub workspace: WorkspaceConfig,
+    /// Safety nets (`[nets]`): the Reins trash, git backup refs and file copies for what agents run here.
+    pub nets: NetsConfig,
+}
+
+/// `[nets]`: safety nets for approved commands and file changes (`docs/design/decisions-v2/01-decision-engine.md` §5).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetsConfig {
+    /// Keep deleted files in the Reins trash, back up git refs and copy changed files before an approved request
+    /// runs.
+    pub enabled: bool,
+    /// The largest file a snapshot copies (bytes).
+    pub snapshot_max_bytes: u64,
+}
+
+impl Default for NetsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            snapshot_max_bytes: 8 << 20,
+        }
+    }
 }
 
 /// `[workspace]`: the folders where an agent's work is expected (`docs/design/decisions-v2/01-decision-engine.md`
@@ -520,6 +542,7 @@ impl Default for Config {
             secrets: crate::secrets_scan::SecretsConfig::default(),
             profiles: Vec::new(),
             workspace: WorkspaceConfig::default(),
+            nets: NetsConfig::default(),
         }
     }
 }

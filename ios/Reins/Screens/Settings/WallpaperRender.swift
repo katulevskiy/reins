@@ -7,8 +7,9 @@ import UIKit
 /// Android's), and faded into the page's paper at the bottom. Pure: no state, safe off the main thread.
 enum WallpaperRender {
     static let size = CGSize(width: 780, height: 1000)
-    /// The fade a new photo opens with (a shipped image has its own, and adds none by default).
-    static let defaultFade = 0.65
+    /// The fade a new photo opens with when the theme had none (a shipped image has its own, and adds none by
+    /// default): Android's `WallpaperChoice.PHOTO_FADE`.
+    static let defaultFade = 0.6
 
     /// The page's paper the fade runs into, in 0...255.
     static func paper(dark: Bool) -> (r: UInt8, g: UInt8, b: UInt8) { WallpaperEffects.paper(dark: dark) }
@@ -56,7 +57,8 @@ enum WallpaperRender {
             for x in 0..<px.width {
                 let i = px.index(x, y)
                 for c in 0..<3 {
-                    px.bytes[i + c] = UInt8(clamping: Int(Double(px.bytes[i + c]) * (1 - k) + target[c] * k))
+                    // Rounded, as Android's `mix`.
+                    px.bytes[i + c] = UInt8(clamping: Int((Double(px.bytes[i + c]) * (1 - k) + target[c] * k).rounded()))
                 }
             }
         }

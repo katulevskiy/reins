@@ -1,0 +1,46 @@
+name: CI emergency
+
+# Gives one pull request the macOS runners now (scripts/ci/emergency.py; docs/reference/ci.md, "Priority and locks"):
+# adds `ci:lock` to it, cancels the other pull requests' CI runs and, unless told not to, ios.yml's background runs on
+# main and at night, and re-runs the pull request's own CI if needed. It never cancels main's CI (each release waits
+# for its commit's) or a release. Dispatching needs write access. Release the runners by removing the label, or by
+# merging or closing the pull request.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+      cancel-background:
+        description: Also cancel ios.yml's runs on main and at night (they gate nothing)
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: ci-emergency
+  cancel-in-progress: false
+
+jobs:
+  emergency:
+    name: CI emergency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # scripts/ci
+      actions: write # cancel and re-run runs
+      issues: write # the ci:lock label
+      pull-requests: write # the ci:lock label on a pull request
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+      - name: Lock the pull request and cancel the others
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          CANCEL_BACKGROUND: ${{ inputs.cancel-background }}
+        run: python3 -I scripts/ci/emergency.py

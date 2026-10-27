@@ -398,6 +398,15 @@ enum ApprovalWords {
                 help: deletes(view) ? "Removes it for good. Autopilot never allows this; you're always asked." : "This reaches far or can't be undone. It's asked every time and never remembered."
             ))
         }
+        // The computer's safety net, last (the first tag is what a row and Autopilot go by): shown as it says,
+        // read-only. It never makes the question looser.
+        if let net = view.ask?.net, !net.isEmpty {
+            tags.append(DangerTag(
+                label: "Netted", id: "netted",
+                help: "\(untrusted(net)) Your computer says so. Restore it there, in Activity.",
+                destructive: false, symbol: "arrow.uturn.backward.circle"
+            ))
+        }
         return tags
     }
 

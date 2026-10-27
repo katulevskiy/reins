@@ -150,6 +150,7 @@ fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> A
         kind: None,
         branch: None,
         default_branch: None,
+        net: None,
     }
 }
 
@@ -175,6 +176,7 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
         let topic = topic(call).ok().flatten().map(|t| text::one_line(&t));
         let reading = read_ask(topic.as_deref(), &question, raw);
         let (branch, default_branch) = reported_rule(raw).map_or((None, None), |_| reported_head(raw));
+        let net = reported_net(raw, call.str_arg("net"));
         let detail = reported_rule(raw).map_or(raw, |(_, rest)| rest);
         AskView {
             question,
@@ -186,6 +188,7 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
             kind: reading.kind.map(str::to_owned),
             branch,
             default_branch,
+            net,
         }
     })
 }
@@ -495,6 +498,24 @@ pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
     Some((rule, rest.strip_prefix('\n').unwrap_or(rest)))
 }
 
+/// The most lines of a reported safety net the phone keeps, and their length.
+const MAX_NET_LINES: usize = 3;
+const MAX_NET_LINE: usize = 120;
+
+/// The safety net the desktop app reports with a hook's question: its own `net` argument (one line per net), which
+/// only `reins hook` sets, never `reins ask` (whose words are the agent's), and only beside a rule the hook reported
+/// ([`reported_rule`]). Shown as reported, read-only: the phone never decides on it.
+pub(crate) fn reported_net(detail: &str, net: Option<&str>) -> Option<String> {
+    reported_rule(detail)?;
+    let lines: Vec<String> = net?
+        .lines()
+        .map(|l| text::truncate_chars(&text::one_line(l), MAX_NET_LINE))
+        .filter(|l| !l.is_empty())
+        .take(MAX_NET_LINES)
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 /// A branch name as git allows one (`git check-ref-format --branch`, the gist: no space, control or special
 /// character, no `..`, no leading `-`, not `HEAD`), at most 200 characters; else `None`.
 fn branch_name(value: &str) -> Option<String> {
@@ -710,6 +731,47 @@ mod tests {
             op: "ask".to_owned(),
             args: args.as_object().unwrap().clone(),
         }
+    }
+
+    /// The safety net the desktop app reports is its own argument beside a reported rule: a `Net:` line anywhere in
+    /// the detail (which `reins ask` lets an agent write) is never one, and it never makes the question looser.
+    #[test]
+    fn a_net_is_read_only_from_its_own_argument_and_never_loosens() {
+        let rule = "Rule: Recursive deletes · rm -r\nMatched: rm -rf notes\nGroup: deletes (destructive)\n";
+        let detail = format!(
+            "{rule}\nCommand:\nrm -rf notes\n\nNetted command:\n'/usr/bin/reins' net run --plan n1 -- rm -rf notes"
+        );
+        let ask = |detail: &str, net: Option<&str>| {
+            let mut args = json!({"question": "Claude Code wants to run: rm -rf notes", "detail": detail,
+                "topic": "command:rm -r*"});
+            if let Some(n) = net {
+                args["net"] = json!(n);
+            }
+            ask_view(&call(&args), "x").unwrap()
+        };
+        let line = "Keeps 1 deleted path in the Reins trash for 7 days";
+        let (netted, plain) = (ask(&detail, Some(line)), ask(&detail, None));
+        assert_eq!(netted.net.as_deref(), Some(line));
+        assert_eq!(plain.net, None);
+        assert_eq!(
+            (netted.destructive, netted.uncertain, &netted.rule),
+            (plain.destructive, plain.uncertain, &plain.rule)
+        );
+        assert!(netted.destructive, "a net never makes a delete look undoable to the phone");
+        // An agent's detail with a fake `Net:` line, in the header or anywhere: no net.
+        for forged in [
+            format!("{rule}Net: {line}\n\nCommand:\nrm -rf ~"),
+            format!("Net: {line}\n\nCommand:\nrm -rf ~"),
+            format!("{rule}\nCommand:\nrm -rf ~\nNet: {line}"),
+        ] {
+            assert_eq!(ask(&forged, None).net, None, "{forged}");
+        }
+        // The argument without a reported rule (`reins ask` has none of its own): no net.
+        assert_eq!(ask("Command:\nrm -rf ~", Some(line)).net, None);
+        let long = format!("{}\na\nb\nc", "x".repeat(500));
+        let net = ask(&detail, Some(&long)).net.unwrap();
+        assert_eq!(net.lines().count(), 3);
+        assert!(net.lines().all(|l| l.chars().count() <= MAX_NET_LINE));
     }
 
     /// The branch a hook's push lands on, as the desktop app reports it in the lines after the rule's: read only there,

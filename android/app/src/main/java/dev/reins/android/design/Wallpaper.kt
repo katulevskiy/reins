@@ -55,28 +55,29 @@ import kotlinx.coroutines.withContext
 
 /**
  * The images behind Activity (Reins Next, "Activity with a wallpaper"): art that fades into the paper at its foot.
- * Halo is the dark default, Torii (with Mono) the light one; any of them (or the owner's own photo) can be picked for
- * either theme with an effect and a fade ([WallpaperChoice]).
+ * Halo (with Mono) is the dark default, Torii (with Mono) the light one; any of them (or the owner's own photo) can be
+ * picked for either theme with any effect and a fade ([WallpaperChoice]).
  *
- * An image ships as it was before any effect, with the effect the boards gave it as its [defaultEffect] (Eyes with
- * Scanlines, Torii with Mono). Halo, Crescent, Figure and Ruins ship already treated (the boards' sources are not in
- * the app): they take no effect ([takesEffects]), so nothing is dithered twice.
+ * Every image takes every effect. Its [defaultEffect] is the boards' look for it. Eyes, Hands and Torii ship as they
+ * were before any effect ([asset]). Halo, Crescent, Figure and Ruins ship with their default effect already in them
+ * ([treated]): that file is drawn for the default effect, and every other effect (and Original) is drawn from the
+ * image's untreated original ([original], the boards' crop of the owner's art; `scripts/brand/wallpaper-originals.py`).
  */
 enum class Wallpaper(
     val label: String,
     private val asset: String?,
     /** The effect picking the image gives it: the boards' look for it. */
     val defaultEffect: PhotoEffect = PhotoEffect.Original,
-    /** False for an image that ships with its effect already in it: it is drawn as it is. */
-    val takesEffects: Boolean = true,
+    /** The untreated original, when [asset] ships with [defaultEffect] already in it. */
+    private val original: String? = null,
     /** Where the image already fades into the page (the boards baked it in): an effect fades out over it. */
     val foot: PhotoEffects.Foot? = null,
 ) {
-    Halo("Halo", "halo.jpg", takesEffects = false),
-    Crescent("Crescent", "crescent.jpg", takesEffects = false),
-    Figure("Figure", "figure.jpg", takesEffects = false),
+    Halo("Halo", "halo.jpg", PhotoEffect.Mono, "halo-original.jpg", PhotoEffects.Foot(0.45, 0.97)),
+    Crescent("Crescent", "crescent.jpg", PhotoEffect.Scanlines, "crescent-original.jpg", PhotoEffects.Foot(0.5, 0.97)),
+    Figure("Figure", "figure.jpg", PhotoEffect.Halftone, "figure-original.jpg", PhotoEffects.Foot(0.5, 0.97)),
     Hands("Hands", "hands.jpg", foot = PhotoEffects.Foot(0.62, 0.98)),
-    Ruins("Ruins", "ruins.jpg", takesEffects = false),
+    Ruins("Ruins", "ruins.jpg", PhotoEffect.Dither, "ruins-original.jpg", PhotoEffects.Foot(0.5, 0.97)),
     Eyes("Eyes", "eyes.jpg", PhotoEffect.Scanlines, foot = PhotoEffects.Foot(0.5, 0.97)),
     Torii("Torii", "torii.jpg", PhotoEffect.Mono, foot = PhotoEffects.Foot(0.55, 0.97)),
 
@@ -84,16 +85,20 @@ enum class Wallpaper(
     Photo("Your photo", null),
     ;
 
+    /** Whether the shipped file has [defaultEffect] in it (and an untreated original ships beside it). */
+    val treated: Boolean get() = original != null
+
     /**
      * The effect that draws the image as it shipped before images came as originals: Eyes shipped with its scanlines
-     * in it; Torii shipped as the photo (its dither was the separate Torii dither).
+     * in it; Torii shipped as the photo (its dither was the separate Torii dither); the treated images as they ship.
      */
     val shippedLook: PhotoEffect get() = if (this == Torii) PhotoEffect.Original else defaultEffect
 
     /** The image as it is (no effect), decoded once per process (the owner's photo is read again after it changes). */
-    fun bitmap(context: Context, dark: Boolean): Bitmap? = Wallpapers.base(context, this, dark)
+    fun bitmap(context: Context, dark: Boolean): Bitmap? = Wallpapers.base(context, WallpaperChoice(this), dark)
 
-    internal fun assetPath(): String? = asset?.let { "wallpapers/$it" }
+    /** The shipped file, or with [shipped] false the file effects are drawn on (the untreated original). */
+    internal fun assetPath(shipped: Boolean = true): String? = (if (shipped) asset else original ?: asset)?.let { "wallpapers/$it" }
 
     companion object {
         fun named(name: String?): Wallpaper? = entries.firstOrNull { it.name == name }
@@ -137,13 +142,13 @@ object Wallpapers {
 
     /**
      * Bumped when the drawing itself changes, so pictures made by an earlier version are made again (3, as the
-     * iPhone's `WallpaperArt.renderVersion`: colour effects with a foot; an effect on a photo fades into the paper).
+     * iPhone's `WallpaperArt.renderVersion`: every image takes every effect, drawn from its untreated original).
      */
-    const val RENDER_VERSION = 3
+    const val RENDER_VERSION = 4
 
-    /** The name a made picture is kept under: one per image, effect drawn, fade step, theme and render version. */
+    /** The name a made picture is kept under: one per image, effect, fade step, theme and render version. */
     fun key(choice: WallpaperChoice, dark: Boolean): String =
-        "${choice.image.name}-${choice.drawnEffect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}-r$RENDER_VERSION"
+        "${choice.image.name}-${choice.effect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}-r$RENDER_VERSION"
 
     fun madeFile(context: Context, choice: WallpaperChoice, dark: Boolean): File = File(madeDir(context), key(choice, dark) + ".png")
 
@@ -172,11 +177,16 @@ object Wallpapers {
         frosted.clear()
     }
 
-    /** The image as it is: the asset, or the owner's photo (its source, else the old baked file). */
-    fun base(context: Context, image: Wallpaper, dark: Boolean): Bitmap? = synchronized(this) {
-        val k = if (image == Wallpaper.Photo) "photo:$dark" else image.name
+    /**
+     * The picture [choice]'s effect is drawn on ([WallpaperChoice.applied]): the shipped file when its effect is
+     * already in it, else the image as it was (the untreated original, or the owner's photo: its source, else the old
+     * baked file).
+     */
+    fun base(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? = synchronized(this) {
+        val image = choice.image
+        val path = image.assetPath(shipped = choice.fromShipped)
+        val k = if (image == Wallpaper.Photo) "photo:$dark" else path!!
         bases[k] ?: runCatching {
-            val path = image.assetPath()
             if (path != null) {
                 context.assets.open(path).use { BitmapFactory.decodeStream(it) }
             } else {
@@ -190,7 +200,7 @@ object Wallpapers {
      * file, so a page opens with its art as on the iPhone). Null: [bitmap] makes it.
      */
     fun ready(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? {
-        if (choice.plain) return base(context, choice.image, dark)
+        if (choice.plain) return base(context, choice, dark)
         val k = key(choice, dark)
         synchronized(this) { made[k]?.let { return it } }
         val file = madeFile(context, choice, dark).takeIf { it.isFile } ?: return null
@@ -208,8 +218,8 @@ object Wallpapers {
         val out = file.takeIf { it.isFile }?.let { f ->
             runCatching { BitmapFactory.decodeFile(f.absolutePath) }.getOrNull()?.also { f.setLastModified(System.currentTimeMillis()) }
         } ?: run {
-            val src = base(context, choice.image, dark) ?: return null
-            PhotoEffects.apply(src, choice.drawnEffect, choice.fadeStep / 100f, dark, choice.image.foot).also {
+            val src = base(context, choice, dark) ?: return null
+            PhotoEffects.apply(src, choice.applied, choice.fadeStep / 100f, dark, choice.image.foot).also {
                 // A photo replaced while this was made: shown this once, not kept as the new photo's.
                 if (choice.image != Wallpaper.Photo || version == photoVersion) keep(context, file, it, dark)
             }
@@ -294,16 +304,17 @@ object Wallpapers {
 class WallpaperArt(val choice: WallpaperChoice, val dark: Boolean, val bitmap: Bitmap)
 
 /**
- * The picture for [choice] in a theme: at once when it is the image as it is (or was made before), else made off the
- * main thread. Until it is ready the last picture stays, or with none the image as it is shows, so there is always art.
+ * The picture for [choice] in a theme: at once when it is a file as it ships (or was made before), else made off the
+ * main thread. Until it is ready the last picture stays, or with none the picture it is drawn on ([WallpaperChoice.base])
+ * shows, so there is always art.
  */
 @Composable
 fun rememberWallpaper(choice: WallpaperChoice?, dark: Boolean): WallpaperArt? {
     val context = LocalContext.current
     val version = Wallpapers.photoVersion
     val now = remember(choice, dark, version) { choice?.let { ch -> Wallpapers.ready(context, ch, dark)?.let { WallpaperArt(ch, dark, it) } } }
-    val plain = remember(choice?.image, dark, version) {
-        choice?.let { WallpaperChoice(it.image) }?.let { p -> Wallpapers.ready(context, p, dark)?.let { WallpaperArt(p, dark, it) } }
+    val plain = remember(choice?.base, dark, version) {
+        choice?.base?.let { p -> Wallpapers.ready(context, p, dark)?.let { WallpaperArt(p, dark, it) } }
     }
     var last by remember { mutableStateOf(now) }
     LaunchedEffect(choice, dark, version) {

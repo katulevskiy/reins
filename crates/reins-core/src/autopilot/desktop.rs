@@ -254,6 +254,7 @@ impl Engine {
             kind: None,
             branch: None,
             default_branch: None,
+            net: None,
         })
     }
 

@@ -280,7 +280,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         var faded = choice
         faded.fade = 1.7
         XCTAssertEqual(faded.fade, 1, "the fade stays in 0...1")
-        XCTAssertEqual(WallpaperChoice.defaultFor(.dark), WallpaperChoice(image: .halo, effect: .original, fade: 0))
+        XCTAssertEqual(WallpaperChoice.defaultFor(.dark), WallpaperChoice(image: .halo, effect: .mono, fade: 0), "Halo as it ships")
         XCTAssertEqual(WallpaperChoice.defaultFor(.light), WallpaperChoice(image: .torii, effect: .mono, fade: 0))
     }
 
@@ -288,11 +288,55 @@ final class OutsideAndSettingsTests: XCTestCase {
         let current = WallpaperChoice(image: .halo, effect: .original, fade: 0.4)
         XCTAssertEqual(current.with(image: .eyes), WallpaperChoice(image: .eyes, effect: .scanlines, fade: 0.4))
         XCTAssertEqual(current.with(image: .torii), WallpaperChoice(image: .torii, effect: .mono, fade: 0.4))
-        XCTAssertEqual(WallpaperChoice(image: .eyes, effect: .dither, fade: 0.4).with(image: .ruins), WallpaperChoice(image: .ruins, effect: .original, fade: 0.4))
+        XCTAssertEqual(WallpaperChoice(image: .eyes, effect: .dither, fade: 0.4).with(image: .ruins), WallpaperChoice(image: .ruins, effect: .dither, fade: 0.4))
+        XCTAssertEqual(current.with(image: .halo), WallpaperChoice(image: .halo, effect: .mono, fade: 0.4))
         XCTAssertEqual(current.with(image: .own), WallpaperChoice(image: .own, effect: .original, fade: 0.4))
-        // The shipped images that come as they were take effects; the treated ones take none.
-        XCTAssertEqual(Wallpaper.shipped.filter(\.takesEffects), [.hands, .eyes, .torii])
-        XCTAssertEqual(WallpaperChoice(image: .halo, effect: .dither, fade: 0.2).drawn, WallpaperChoice(image: .halo, effect: .original, fade: 0.2))
+        // Picked as it ships: a treated image's own effect with no fade is its shipped file.
+        for image in Wallpaper.shipped where image.treated {
+            let art = WallpaperArt(choice: .of(image), dark: true)
+            XCTAssertTrue(art.isAsset, "\(image)")
+            XCTAssertEqual(art.assetName, image.assetName, "\(image)")
+        }
+    }
+
+    /// The shipped set, in the picker's order, with each image's own effect: Android's list (`WallpaperChoiceTest`).
+    func testTheShippedSetAndItsDefaultsMatchAndroid() {
+        XCTAssertEqual(Wallpaper.shipped.map(\.title), ["Halo", "Crescent", "Figure", "Hands", "Ruins", "Eyes", "Torii"])
+        XCTAssertEqual(Wallpaper.shipped.map(\.defaultEffect), [.mono, .scanlines, .halftone, .original, .dither, .scanlines, .mono])
+        XCTAssertEqual(Wallpaper.shipped.filter(\.treated), [.halo, .crescent, .figure, .ruins])
+        XCTAssertEqual(Wallpaper.own.title, "Your photo")
+        XCTAssertEqual(WallpaperEffect.allCases.map(\.title), ["Original", "Dither", "Mono", "Scanlines", "Halftone"])
+        XCTAssertTrue(Wallpaper.shipped.allSatisfy { $0.foot != nil })
+        XCTAssertEqual(WallpaperRender.defaultFade, 0.6, "Android's PHOTO_FADE")
+        for image in Wallpaper.shipped {
+            XCTAssertNotNil(UIImage(named: image.assetName), "\(image) ships")
+            XCTAssertNotNil(UIImage(named: image.originalAssetName), "\(image)'s original ships")
+        }
+    }
+
+    /// Every stock image offers every effect (so the Effect row is never hidden): each draws its own picture.
+    func testEveryShippedImageTakesEveryEffect() throws {
+        for image in Wallpaper.shipped {
+            let thumbs = WallpaperArt.thumbs(image, dark: true, photo: 0)
+            XCTAssertEqual(Set(thumbs.keys), Set(WallpaperEffect.allCases), "\(image)")
+            let drawn = try WallpaperEffect.allCases.map { try colours(try XCTUnwrap(thumbs[$0])) }
+            XCTAssertEqual(Set(drawn).count, drawn.count, "\(image): every effect looks different")
+        }
+        // Another effect, or Original, on a treated image is drawn from its untreated original.
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither), dark: true).isAsset)
+        XCTAssertEqual(WallpaperArt(choice: WallpaperChoice(image: .halo), dark: true).assetName, "wallpaper-halo-original")
+    }
+
+    /// The default effect with the default fade is exactly the shipped file, pixel for pixel.
+    @MainActor
+    func testTheDefaultEffectWithNoFadeIsTheShippedFileExactly() throws {
+        for image in Wallpaper.shipped where image != .eyes && image != .torii {
+            for dark in [true, false] {
+                let drawn = try XCTUnwrap(WallpaperArt(choice: .of(image), dark: dark).ready(), "\(image)")
+                let shipped = try XCTUnwrap(UIImage(named: image.assetName)?.cgImage)
+                XCTAssertEqual(try colours(try XCTUnwrap(drawn.image.cgImage)), try colours(shipped), "\(image) as picked is the shipped file")
+            }
+        }
     }
 
     func testChoicesKeptBeforeTheOriginalsLookAsTheyDid() throws {
@@ -300,15 +344,16 @@ final class OutsideAndSettingsTests: XCTestCase {
             // Original meant the picture as shipped: Eyes had its scanlines, Torii was the photo.
             ("eyes|original|30", WallpaperChoice(image: .eyes, effect: .scanlines, fade: 0.3)),
             ("torii|original|30", WallpaperChoice(image: .torii, effect: .original, fade: 0.3)),
-            ("halo|original|0", WallpaperChoice(image: .halo)),
+            ("halo|original|0", WallpaperChoice(image: .halo, effect: .mono)),
             // Torii dither is Torii with Mono; an effect on it now goes on the photo.
             ("torii-dither|original|30", WallpaperChoice(image: .torii, effect: .mono, fade: 0.3)),
             ("torii-dither|halftone|30", WallpaperChoice(image: .torii, effect: .halftone, fade: 0.3)),
             // Colour (a lift of the colour) is gone: the picture as shipped.
             ("eyes|colour|0", WallpaperChoice(image: .eyes, effect: .scanlines)),
             ("own|colour|65", WallpaperChoice(image: .own, effect: .original, fade: 0.65)),
-            // An image that ships treated is not treated again.
-            ("halo|dither|0", WallpaperChoice(image: .halo)),
+            // An image that ships treated was drawn as it ships, whatever the effect: its own effect now.
+            ("halo|dither|0", WallpaperChoice(image: .halo, effect: .mono)),
+            ("crescent|halftone|20", WallpaperChoice(image: .crescent, effect: .scanlines, fade: 0.2)),
             // Effects on an image that came as it was stay.
             ("hands|dither|10", WallpaperChoice(image: .hands, effect: .dither, fade: 0.1)),
             ("own|scanlines|65", WallpaperChoice(image: .own, effect: .scanlines, fade: 0.65)),
@@ -344,7 +389,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .own), "read before the move: as it was")
         WallpaperChoice.migrate(defaults: defaults)
         XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.dark)), "own|original|0", "a baked photo is drawn as it is")
-        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.light)), "crescent|original|0")
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.light)), "crescent|scanlines|0", "Crescent as it shipped")
         XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.dark)), "the old key is read once")
         XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.light)))
         // A choice made since is never overwritten by an old key.
@@ -353,6 +398,29 @@ final class OutsideAndSettingsTests: XCTestCase {
         WallpaperChoice.migrate(defaults: defaults)
         XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .eyes, effect: .dither, fade: 0.3))
         XCTAssertNil(defaults.object(forKey: Wallpaper.legacyKey(.dark)))
+    }
+
+    /// A choice kept before every image took every effect (the third key) looks as it did: a treated image was drawn as
+    /// it ships, which is now its own effect; the art cached for it stays.
+    func testATreatedImageKeptBeforeEveryImageTookEffectsLooksAsItDid() throws {
+        let defaults = try scratchDefaults()
+        let caches = try scratchDirectory()
+        defaults.set("halo|original|30", forKey: WallpaperChoice.thirdKey(.dark))
+        defaults.set("hands|dither|0", forKey: WallpaperChoice.thirdKey(.light))
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .halo, effect: .mono, fade: 0.3), "read before the move: as it was")
+        WallpaperChoice.migrate(defaults: defaults, caches: caches)
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.dark)), "halo|mono|30")
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.light)), "hands|dither|0")
+        XCTAssertNil(defaults.object(forKey: WallpaperChoice.thirdKey(.dark)), "the third key is read once")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: caches.path), "only the second key's old art goes")
+        // The same picture as before: the shipped file faded, nothing drawn on it.
+        let art = WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .mono, fade: 0.3), dark: true)
+        XCTAssertEqual(art.assetName, Wallpaper.halo.assetName)
+        XCTAssertEqual(art.choice.applied, .original)
+        // Halo with Original, picked since, stays: the untreated original.
+        defaults.set(WallpaperChoice(image: .halo).rawValue, forKey: WallpaperChoice.key(.dark))
+        WallpaperChoice.migrate(defaults: defaults, caches: caches)
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .halo))
     }
 
     func testWithNothingSavedEachThemeOpensOnItsShippedDefault() throws {
@@ -377,7 +445,7 @@ final class OutsideAndSettingsTests: XCTestCase {
 
     func testTheCacheNamesEverythingThatChangesTheArt() {
         let base = WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .dither, fade: 0.2), dark: true)
-        XCTAssertEqual(base.key, "dark_eyes_dither_f20_r3")
+        XCTAssertEqual(base.key, "dark_eyes_dither_f20_r4")
         let keys: Set<String> = [
             base.key,
             WallpaperArt(choice: WallpaperChoice(image: .torii, effect: .dither, fade: 0.2), dark: true).key,
@@ -395,8 +463,10 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertTrue(WallpaperArt(choice: .defaultFor(.dark), dark: true).isAsset)
         XCTAssertFalse(WallpaperArt(choice: .defaultFor(.light), dark: false).isAsset, "Torii with Mono is drawn")
         XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .scanlines), dark: true).isAsset)
-        XCTAssertTrue(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .scanlines), dark: true).isAsset, "a treated image is drawn as it is")
-        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, fade: 0.01), dark: true).isAsset)
+        XCTAssertTrue(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .mono), dark: true).isAsset, "a treated image with its own effect is its file")
+        XCTAssertTrue(WallpaperArt(choice: WallpaperChoice(image: .halo), dark: true).isAsset, "Halo with Original is its untreated original")
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .scanlines), dark: true).isAsset, "another effect is drawn")
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .mono, fade: 0.01), dark: true).isAsset)
         XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .own), dark: true).isAsset, "your photo is always drawn to the wallpaper's size")
     }
 
@@ -404,8 +474,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         let choice = WallpaperChoice(image: .own, effect: .halftone, fade: 0.5)
         XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: false).choice, WallpaperChoice(image: .torii, effect: .halftone, fade: 0.5))
         XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: true).choice, choice)
-        // Halo ships treated: it takes no effect.
-        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .dark, hasPhoto: false).choice, WallpaperChoice(image: .halo, effect: .original, fade: 0.5))
+        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .dark, hasPhoto: false).choice, WallpaperChoice(image: .halo, effect: .halftone, fade: 0.5))
     }
 
     func testTheCacheKeepsEachThemesNewestFew() throws {

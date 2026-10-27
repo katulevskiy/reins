@@ -19,6 +19,7 @@ struct ActivityScreen: View {
     @State private var positioned = false
     /// Which rows are on screen; not observed, so scrolling does not draw the whole list again.
     @State private var seen = SeenRows()
+    @State private var scroller = ListScroller()
     @State private var atTop = true
     @State private var away = false
     /// The filter chips, shown by the filter button (they also show whenever a filter is on).
@@ -95,58 +96,63 @@ struct ActivityScreen: View {
         let searching = self.searching
         let wallpaper = wallpaperShown
         ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        // The header and what is broken stay pinned above (`stickyHeader`); this marks the top for Latest.
-                        Color.clear.frame(height: 1).id("top")
-                        if !searchOpen && (filtersShown || !model.activityFilters.isEmpty) {
-                            ActivityFilterBar(filters: filtersBinding, facets: facets)
-                                .padding(.top, 14)
-                                .transition(.opacity)
-                        }
-                        if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
-                        if searching {
-                            found
-                        } else {
-                            browse(wallpaper: wallpaper)
+            // Latest floats beside the list, not on it: its tap never goes to the scroll view.
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            // The header and what is broken stay pinned above (`stickyHeader`); this marks the top for Latest.
+                            Color.clear.frame(height: 1).id("top")
+                            if !searchOpen && (filtersShown || !model.activityFilters.isEmpty) {
+                                ActivityFilterBar(filters: filtersBinding, facets: facets)
+                                    .padding(.top, 14)
+                                    .transition(.opacity)
+                            }
+                            if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
+                            if searching {
+                                found
+                            } else {
+                                browse(wallpaper: wallpaper)
+                            }
                         }
                     }
+                    .padding(.bottom, 32)
+                    .background { ListScrollerFinder(scroller: scroller) }
+                    Color.clear.frame(height: 1).id("end")
                 }
-                .padding(.bottom, 32)
-                Color.clear.frame(height: 1).id("end")
-            }
-            .stickyHeader(scrolled: headerScrolled) {
-                // What is broken runs into the top as a field; the title row stays under it while the river scrolls.
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(spacing: 0) { warnings }
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { warningsHeight = $0 }
-                    header.padding(.bottom, 8)
+                .stickyHeader(scrolled: headerScrolled) {
+                    // What is broken runs into the top as a field; the title row stays under it while the river scrolls.
+                    VStack(alignment: .leading, spacing: 0) {
+                        VStack(spacing: 0) { warnings }
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { warningsHeight = $0 }
+                        header.padding(.bottom, 8)
+                    }
                 }
-            }
-            .scrollDismissesKeyboard(.immediately)
-            #if DEBUG
-            // `-scrollEnd` (screenshots): scroll down after opening, the header pinned over the river.
-            .task {
-                guard ProcessInfo.processInfo.arguments.contains("-scrollEnd") else { return }
-                try? await Task.sleep(for: .seconds(2))
-                withAnimation { proxy.scrollTo("end", anchor: .bottom) }
-            }
-            #endif
-            .accessibilityContainer("activityList")
-            .refreshable {
-                await model.refreshPending()
-                feedback.play(.refresh)
-            }
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
-                if (y > 1) != headerScrolled { headerScrolled = y > 1 }
-                atTop = y < 24
-                let far = y > 900
-                if far != away { withAnimation(.smooth) { away = far } }
-            }
-            .overlay(alignment: .bottom) {
+                .scrollDismissesKeyboard(.immediately)
+                #if DEBUG
+                // `-scrollEnd` (screenshots): scroll down after opening, the header pinned over the river.
+                .task {
+                    guard ProcessInfo.processInfo.arguments.contains("-scrollEnd") else { return }
+                    try? await Task.sleep(for: .seconds(2))
+                    withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                }
+                #endif
+                .accessibilityContainer("activityList")
+                .refreshable {
+                    await model.refreshPending()
+                    feedback.play(.refresh)
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
+                    if (y > 1) != headerScrolled { headerScrolled = y > 1 }
+                    atTop = y < 24
+                    let far = y > 900
+                    if far != away { withAnimation(.smooth) { away = far } }
+                }
+                .task(id: model.activity.isEmpty) { await position(proxy) }
                 if away {
                     Button {
+                        // One tap, even mid-glide: stop the momentum first, or it wins over the scroll to the top.
+                        scroller.stop()
                         withAnimation(.smooth) { proxy.scrollTo("top", anchor: .top) }
                         feedback.play(.tap)
                     } label: {
@@ -167,7 +173,6 @@ struct ActivityScreen: View {
                     .accessibilityIdentifier("scrollToLatest")
                 }
             }
-            .task(id: model.activity.isEmpty) { await position(proxy) }
         }
         .environment(\.onWallpaper, wallpaper)
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
@@ -190,7 +195,7 @@ struct ActivityScreen: View {
             // as Settings stores it (`halo|dither|40`).
             for (flag, scheme) in [("-wallpaperDark", ColorScheme.dark), ("-wallpaperLight", .light)] {
                 guard let i = args.firstIndex(of: flag), i + 1 < args.count else { continue }
-                let choice = WallpaperChoice(rawValue: args[i + 1]) ?? Wallpaper(rawValue: args[i + 1]).map { WallpaperChoice(image: $0) }
+                let choice = WallpaperChoice(rawValue: args[i + 1]) ?? Wallpaper(rawValue: args[i + 1]).map(WallpaperChoice.of)
                 if let choice { AppGroup.defaults.set(choice.rawValue, forKey: WallpaperChoice.key(scheme)) }
             }
         }
@@ -728,6 +733,44 @@ struct ActivityScreen: View {
 private final class SeenRows {
     var visible: Set<Int64> = []
     var settle: Task<Void, Never>?
+}
+
+/// The list's own scroll view, found from inside its content, so Latest can stop a glide still going on. Deliberately
+/// not observable: the screen's body never reads it.
+@MainActor
+private final class ListScroller {
+    weak var view: UIScrollView?
+
+    /// Stops a drag's glide where it is: a scroll to the top asked mid-glide would otherwise lose to the momentum.
+    func stop() {
+        guard let view, view.isDecelerating || view.isDragging else { return }
+        view.setContentOffset(view.contentOffset, animated: false)
+    }
+}
+
+/// Finds the scroll view it sits in for `ListScroller`, once it is on screen.
+private struct ListScrollerFinder: UIViewRepresentable {
+    var scroller: ListScroller
+
+    func makeUIView(context: Context) -> Finder {
+        let view = Finder()
+        view.scroller = scroller
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: Finder, context: Context) {}
+
+    final class Finder: UIView {
+        var scroller: ListScroller?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            var next = superview
+            while let v = next, !(v is UIScrollView) { next = v.superview }
+            if let scroll = next as? UIScrollView { scroller?.view = scroll }
+        }
+    }
 }
 
 /// Where the entries you have not seen begin.

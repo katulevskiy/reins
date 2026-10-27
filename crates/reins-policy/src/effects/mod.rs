@@ -16,6 +16,7 @@ mod infra;
 mod inline;
 mod level;
 mod model;
+pub mod nets;
 mod programs;
 mod shell;
 mod workspace;

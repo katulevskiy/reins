@@ -148,6 +148,7 @@ fn phone_worded(question: &str, (topic, agent_topic): (&str, &str), cwd: &Path, 
             }
             .to_owned(),
         ),
+        net: None,
     }
 }
 

@@ -328,6 +328,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         question: q.to_owned(),
         detail: Some("terraform apply -auto-approve".to_owned()),
         topic: Some("command:terraform apply".to_owned()),
+        net: None,
     };
     // The third: a long command, cut to 300 characters with an ellipsis (more than 300 bytes), and a detail of
     // multi-byte text, both within the limits counted in characters.
@@ -338,12 +339,21 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         if text == long {
             q.detail = Some(format!("Command:\n{}", "é".repeat(7_000)));
         }
+        // A hook's question with a safety net (P3): the server takes the `net` argument, the phone shows it.
+        let net = "Keeps 1 deleted path in the Reins trash for 7 days";
+        if approve && text != long {
+            q.detail = Some(
+                "Rule: Your rule · terraform apply\nMatched: terraform apply\n\nCommand:\nterraform apply".to_owned(),
+            );
+            q.net = Some(net.to_owned());
+        }
         let asked = reins_desktop::ask::ask_phone(&paths, &identity, &q, Duration::from_secs(60));
         let user = async {
             let item = next_item(&phone).await;
             let view = phone.core.approval_view(item.id.clone()).await.unwrap();
             let shown = view.ask.clone().expect("an ask view");
             assert_eq!(shown.question, q.question);
+            assert_eq!(shown.net.as_deref(), q.net.as_deref());
             if approve {
                 phone
                     .core
@@ -596,6 +606,7 @@ async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
         question: "Deploy now?".to_owned(),
         detail: None,
         topic: None,
+        net: None,
     };
     let entry = reins_desktop::journal::Entry::new(reins_desktop::journal::Kind::Ask, &q.question);
     let (answer, _) = with_phone_open(

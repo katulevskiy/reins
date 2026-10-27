@@ -159,6 +159,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.blobs = seeded.blobs
         s.connections = DemoData.connections(now)
         s.activity = DemoData.activity(now)
+        // `-demoLongRiver` (tests): 80 more of today's entries, so the river is long enough to fling. Off by default so
+        // the history stays as tests expect.
+        if ProcessInfo.processInfo.arguments.contains("-demoLongRiver") {
+            let more = (0..<80).map { i in
+                DemoData.entry(1_000 + Int64(i), at: now - 61 - Int64(i), action: "read", outcome: "released", detail: "Email \(i + 1)")
+            }
+            s.activity = (s.activity + more).sorted { $0.at > $1.at }
+        }
         s.grants = DemoData.grants(now)
         s.accounts = DemoData.accounts(now)
         s.accountStatuses = ["gmail/work@corp.example": .needsConsent]

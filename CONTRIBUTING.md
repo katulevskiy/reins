@@ -86,12 +86,18 @@ x86_64-pc-windows-gnu -- -D warnings`. Code that only Windows runs lives behind 
 function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` without one, so its tests run everywhere.
 
 CI (`.github/workflows/ci.yml`) runs once per pull request update and on every push to `main`, not on pushes
-to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Pull requests that
-only touch the docs skip the Rust jobs, and changes to the release workflow alone skip the build lanes. Caches (Rust,
+to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Its `plan` job
+(`scripts/ci/plan.py`) runs, on a pull request, the suites whose inputs the change touches, taken from the Cargo graph
+(a `reins-core` change runs the server, Android and iOS suites, not the desktop ones), and on `main` every suite.
+Either way it skips a suite that already passed on the same inputs. On a pull request the desktop macOS job runs only
+when the change can be macOS specific; add the `ci:full` label and re-run to run it anyway. The one check to look at is **CI result**. macOS jobs wait for free runners in
+turn (`macos-gate.yml`, releases first); `ci:priority` moves a pull request to the front, and the **CI emergency**
+workflow locks the runners for one. See [docs/reference/ci.md](docs/reference/ci.md). Caches (Rust,
 Gradle, Robolectric, the Android native outputs) are written only by runs on `main`, pushes and a weekly run that
-selects every lane; pull requests and branch runs restore `main`'s and write none. A newer push to a pull request
-cancels its run in progress; runs on `main` are never cancelled. Server/core tests use Nextest's prebuilt binary and one workspace feature set, with doctests retained
-in a separate Cargo pass. Clippy runs on its own runner to avoid Cargo's build-directory lock.
+selects every lane; pull requests and branch runs restore `main`'s and write none but their tiny pass records. A newer
+push to a pull request cancels its run in progress; runs on `main` are never cancelled. Server/core tests use Nextest's
+prebuilt binary and one workspace feature set, with doctests retained in a separate Cargo pass. Clippy runs on its own
+runner to avoid Cargo's build-directory lock.
 
 Android (needs the Android SDK and NDK; see [android/README.md](android/README.md)):
 
@@ -179,7 +185,7 @@ Standalone macOS CLI builds (both architectures) remain a separate cargo run to 
 requires macOS 12), before any signing secret is fetched. All of that is one job, `macos`: the account runs
 five GitHub-hosted macOS jobs at once, shared with CI, so a release takes one macOS runner before publication (and one
 after it, for TestFlight). CI's macOS jobs wait while a release still waits for its runner
-(`.github/workflows/macos-gate.yml`, at most an hour). The iOS core's uniffi-bindgen is a host tool built with the unoptimized `host-tool` profile. Android builds each ABI and the Kotlin bindings on separate workers; native
+(`.github/workflows/macos-gate.yml`; docs/reference/ci.md, "Admission"). The iOS core's uniffi-bindgen is a host tool built with the unoptimized `host-tool` profile. Android builds each ABI and the Kotlin bindings on separate workers; native
 outputs are reused only for an exact native source/configuration hash. CI uses separate debug output caches and
 retains both Android flavor test suites. Every packaged APK verifies both ELF
 architectures as well as the production signing certificate and installed identity.
