@@ -119,8 +119,6 @@ fn only_plain_allowlisted_scripts_are_netted() {
         "x=$(rm -rfv old)",
         "rm -rf old <(true)",
         // programs off the list, and the ones that run code or set variables
-        "sh -c 'rm -rf older'; rm -rf old",
-        "find old -delete; rm -rf old",
         "mapfile -C 'rm() { :; }' -c 1 a < f; rm -rf old",
         "printf -v x %s; rm -rf old",
         "printf -vHOME %s; rm -rf old",
@@ -128,7 +126,29 @@ fn only_plain_allowlisted_scripts_are_netted() {
         "set -- \"$x\"; rm -rf old",
         "read x; rm -rf old",
         "eval x; rm -rf old",
-        "cargo build && rm -rf old",
+        "export X; rm -rf old",
+        "declare -x X; rm -rf old",
+        "set -a; rm -rf old",
+        "shopt -s expand_aliases; rm -rf old",
+        "trap x EXIT; rm -rf old",
+        "alias rm=x; rm -rf old",
+        "hash -r; rm -rf old",
+        "enable -n echo; rm -rf old",
+        "builtin cd x; rm -rf old",
+        "command rm -rf old",
+        "exec 3>f; rm -rf old",
+        "let x=1; rm -rf old",
+        "source ./x; rm -rf old",
+        ". ./x; rm -rf old",
+        "pushd x; rm -rf old",
+        "umask 077; rm -rf old",
+        "unset x; rm -rf old",
+        "type rm; rm -rf old",
+        "time rm -rf old",
+        "coproc x; rm -rf old",
+        "kill -0 1; rm -rf old",
+        "~/bin/tool; rm -rf old",
+        "./*.sh; rm -rf old",
         // a heredoc
         "cat <<EOF > f\nx\nEOF\nrm -rf old",
         // globs outside rm and git (`printf -*` could expand to `-v NAME`), and printf at all
@@ -142,6 +162,8 @@ fn only_plain_allowlisted_scripts_are_netted() {
         assert!(p.is_none(), "{c}: {p:?}");
     }
     assert!(plan("echo done; rm -rf old ./*.tmp; ls ~/x").is_some(), "plain words, and globs in rm, are fine");
+    // Any literal external program, with plain words.
+    assert!(plan("cargo build -p x && rm -rf old && python3 tools/x.py --flag ~/y && /usr/bin/du -sh out").is_some());
 }
 
 #[test]
@@ -150,6 +172,12 @@ fn masking_attributes_netted_deletes() {
     let p = plan("rm -rf old && rm -f notes.md").expect("a net");
     assert_eq!(p.netted_paths.len(), 2, "{p:?}");
     assert_eq!(p.after.level, Level::L1);
+    // A delete another program does (`sh -c`) is not netted and keeps its level; the plain `rm` beside it is netted.
+    let p = plan("sh -c 'rm -rf older'; rm -rf old").expect("a net for the plain rm");
+    assert_eq!(p.netted_paths, vec!["/home/me/Documents/dev/notes/old".to_owned()]);
+    assert_eq!(p.after.level, Level::L3, "the sh -c delete keeps its level: {p:?}");
+    let p = plan("find older -delete; rm -rf old").expect("a net for the plain rm");
+    assert_eq!(p.after.level, Level::L3, "find's delete keeps its level: {p:?}");
     // A delete the net doesn't run (git without a nettable shape) keeps its level.
     let p = plan("rm -rf old; git rm -rq --cached x");
     assert!(p.is_none_or(|p| p.netted_paths == vec!["/home/me/Documents/dev/notes/old".to_owned()]));
@@ -379,8 +407,6 @@ fn shadowing_forms_are_never_netted() {
         // A command word that could be any of them.
         "E=eval; $E 'rm() { :; }'; rm -rf old",
         "$(printf eval) x; rm -rf old",
-        // The agent calling reins itself.
-        "reins net list; rm -rf old",
     ] {
         // No plan: the request is decided on its own analysis, at the level it has without a net.
         let p = plan(c);

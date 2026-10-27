@@ -430,12 +430,121 @@ fn visit_command(c: &Command, f: &mut dyn FnMut(&Command)) {
     }
 }
 
-/// The command words a netted script may hold: the netted programs, and commands that can't change what a later
-/// command word runs or where it looks (no builtin that sets variables, defines functions or aliases, or runs text).
-const ALLOWED: &[&str] = &[
-    "rm", "git", "cd", "pwd", "echo", "ls", "test", "[", "true", "false", ":", "mkdir", "cat", "grep", "wc", "head",
-    "tail", "sleep", "du", "df",
+/// The shell builtins a netted script may run: ones that can't change what a later command word runs, where it looks,
+/// or which variables it sees.
+const SAFE_BUILTINS: &[&str] = &["cd", "pwd", "echo", "test", "[", "true", "false", ":"];
+
+/// Every bash builtin and keyword (and the POSIX special builtins). Any of them other than [`SAFE_BUILTINS`] keeps a
+/// script from being netted: they set or export variables, define functions or aliases, change options, run text, or
+/// replace the shell.
+const BUILTINS: &[&str] = &[
+    "alias",
+    "bg",
+    "bind",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "command",
+    "compgen",
+    "complete",
+    "compopt",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "echo",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "kill",
+    "let",
+    "local",
+    "logout",
+    "mapfile",
+    "popd",
+    "printf",
+    "pushd",
+    "pwd",
+    "read",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+    ".",
+    ":",
+    "[",
+    "[[",
+    "]]",
+    "coproc",
+    "time",
+    "function",
+    "select",
+    "until",
+    "while",
+    "for",
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "do",
+    "done",
+    "case",
+    "esac",
+    "in",
+    "{",
+    "}",
+    "!",
+    "newgrp",
+    "ulimit",
+    "autoload",
+    "setopt",
+    "unsetopt",
+    "zmodload",
+    "emulate",
+    "noglob",
+    "nocorrect",
+    "builtin",
+    "functions",
+    "whence",
+    "where",
+    "rehash",
+    "unhash",
+    "disable",
 ];
+
+/// Whether `program` may run in a netted script: a safe builtin, or a literal program that is no builtin or keyword
+/// (an external program can't change the shell's own state; a function the user's shell defines under its name could,
+/// and `reins net run`'s checks turn that into a refusal, never into an un-netted run shown as netted).
+fn allowed_program(program: &str) -> bool {
+    !program.is_empty() && (SAFE_BUILTINS.contains(&program) || !BUILTINS.contains(&program))
+}
 
 /// A word with nothing computed in it: literal text, quoted text, or a leading `~` (the home folder, from an
 /// environment the script can't change, since it assigns nothing). With `globs`, also a glob: only for `rm` and `git`
@@ -446,7 +555,7 @@ fn plain_word(w: &Word, globs: bool) -> bool {
 }
 
 /// Whether a script may be netted at all. Fail closed by design: every command in it is a simple command whose words
-/// are all plain ([`plain_word`]) and whose program is in [`ALLOWED`], with no assignment, no heredoc, and only plain
+/// are all plain ([`plain_word`]) and whose program passes [`allowed_program`], with no assignment, no heredoc, and only plain
 /// redirection targets; lists, pipelines, `&&` and `||` join them. No function, loop, conditional, subshell,
 /// substitution or arithmetic, and globs only in `rm` and `git` words.
 /// Anything else keeps its level and is asked as it would be without a net.
@@ -459,7 +568,7 @@ fn allowed(script: &Script) -> bool {
                         return false;
                     };
                     let globs = matches!(program.as_str(), "rm" | "git");
-                    ALLOWED.contains(&program.as_str())
+                    allowed_program(&program)
                         && s.assigns.is_empty()
                         && s.heredocs.is_empty()
                         && s.words.iter().all(|w| plain_word(w, globs))
@@ -546,7 +655,9 @@ pub fn rewrite(
         return None;
     }
     let original = ast::parse(command);
-    if !original.complete || !allowed(&original.script) {
+    // Keywords the syntax tree keeps no word for (`time`, `coproc`): anywhere they stand alone as a word, no net.
+    let keywords = ["time", "coproc"].iter().any(|k| !candidates(command, k).is_empty());
+    if !original.complete || keywords || !allowed(&original.script) {
         return None;
     }
     let pre = prefix(r);
