@@ -255,6 +255,10 @@ class AppNotifier(
      */
     override fun circleChanged(event: CircleEvent) {
         onCircles()
+        if (event is CircleEvent.Alert) {
+            circleAlert(event)
+            return
+        }
         val review = (event as? CircleEvent.ReviewWaiting)?.review ?: return
         if (Foreground.focused) {
             // In front, For others shows it; the chime says something arrived.
@@ -284,6 +288,25 @@ class AppNotifier(
             .addExtras(android.os.Bundle().apply { putString(EXTRA_CIRCLE, review.id) })
             .build()
         manager.notify(tag, notificationId(CIRCLE_PREFIX + review.id), notification)
+    }
+
+    /**
+     * A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
+     * Posted in front too (it explains itself), quietly there.
+     */
+    private fun circleAlert(event: CircleEvent.Alert) {
+        if (!manager.areNotificationsEnabled()) return
+        val notification = Notification.Builder(context, channel(Kind.Status))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(untrusted(event.person).ifBlank { "Reins" })
+            .setContentText(untrusted(event.text))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setOnlyAlertOnce(Foreground.focused)
+            .setAutoCancel(true)
+            .setContentIntent(openForOthers(event.linkId))
+            .build()
+        manager.notify(tag, notificationId(CIRCLE_ALERT_PREFIX + event.linkId), notification)
     }
 
     /** Takes away the notifications of Circle reviews that no longer wait ([waiting] are the ids that do). */
@@ -703,6 +726,7 @@ class AppNotifier(
         const val EXTRA_CIRCLE = "dev.reins.android.CIRCLE"
         /** Keeps a review's notification id apart from a request's of the same id. */
         private const val CIRCLE_PREFIX = "circle:"
+        private const val CIRCLE_ALERT_PREFIX = "circle-alert:"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4

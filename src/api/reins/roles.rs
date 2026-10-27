@@ -464,6 +464,8 @@ async fn announce_new_primary(
     );
     if entry.reason == RosterReason::Recovery {
         warn!("Reins: user {user} recovered the primary role on device {}", entry.primary.device_id);
+        // A new owner key: Circle peers check it (a guardian is alerted).
+        super::circles::owner_key_changed(&user, conn, pool).await;
     }
     Ok(())
 }

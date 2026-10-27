@@ -15,6 +15,9 @@ use crate::{
     error::MapResult,
 };
 
+/// Packets per page of a helper's inbox, and per batch of an owner's news.
+pub const INBOX_PAGE: i64 = 500;
+
 /// Invitation states an invitation can still move from (`reins_proto::circle::InviteState::is_open`).
 pub const OPEN_INVITE_STATES: [&str; 4] = ["open", "challenged", "revealed", "accepted"];
 
@@ -135,6 +138,12 @@ impl ReinsCircleLink {
         conn.run(move |c| q_update_link(c, self, from)).await.map_res("Error updating a Circle link")
     }
 
+    pub async fn delete(id: &str, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| diesel::delete(reins_circle_links::table.find(id)).execute(c).map(|_| ()))
+            .await
+            .map_res("Error deleting a Circle link")
+    }
+
     /// Whether `a` and `b` share a link (either way round) that isn't ended.
     pub async fn linked(a: &str, b: &str, conn: &DbConn) -> bool {
         conn.run(move |c| q_linked(c, a, b)).await
@@ -150,9 +159,9 @@ impl ReinsCirclePacket {
         conn.run(move |c| q_find_packet(c, id)).await
     }
 
-    /// `helper`'s packets: waiting ones, and those changed at `since` or later.
-    pub async fn inbox(helper: &str, since: i64, conn: &DbConn) -> Vec<Self> {
-        conn.run(move |c| q_inbox(c, helper, since)).await
+    /// `helper`'s packets: waiting ones first, then those changed at `since` or later; one page from `offset`.
+    pub async fn inbox(helper: &str, since: i64, offset: i64, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |c| q_inbox(c, helper, since, offset)).await
     }
 
     /// `owner`'s packets whose news (an answer, an expiry) its phone hasn't taken.
@@ -281,14 +290,27 @@ fn q_find_packet(c: &mut DbConnInner, id: &str) -> Option<ReinsCirclePacket> {
     reins_circle_packets::table.find(id).first(c).ok()
 }
 
-fn q_inbox(c: &mut DbConnInner, helper: &str, since: i64) -> Vec<ReinsCirclePacket> {
-    reins_circle_packets::table
+fn q_inbox(c: &mut DbConnInner, helper: &str, since: i64, offset: i64) -> Vec<ReinsCirclePacket> {
+    let waiting: Vec<ReinsCirclePacket> = reins_circle_packets::table
         .filter(reins_circle_packets::helper_uuid.eq(helper))
-        .filter(reins_circle_packets::state.eq("waiting").or(reins_circle_packets::updated_at.ge(since)))
+        .filter(reins_circle_packets::state.eq("waiting"))
         .order(reins_circle_packets::created_at.asc())
-        .limit(500)
         .load(c)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let changed: Vec<ReinsCirclePacket> = reins_circle_packets::table
+        .filter(reins_circle_packets::helper_uuid.eq(helper))
+        .filter(reins_circle_packets::state.ne("waiting"))
+        .filter(reins_circle_packets::updated_at.ge(since))
+        .order(reins_circle_packets::updated_at.desc())
+        .limit(INBOX_PAGE * 4)
+        .load(c)
+        .unwrap_or_default();
+    waiting
+        .into_iter()
+        .chain(changed)
+        .skip(usize::try_from(offset).unwrap_or(0))
+        .take(usize::try_from(INBOX_PAGE).unwrap_or(500))
+        .collect()
 }
 
 fn q_owner_news(c: &mut DbConnInner, owner: &str) -> Vec<ReinsCirclePacket> {
@@ -297,7 +319,7 @@ fn q_owner_news(c: &mut DbConnInner, owner: &str) -> Vec<ReinsCirclePacket> {
         .filter(reins_circle_packets::owner_seen.eq(false))
         .filter(reins_circle_packets::state.ne("waiting"))
         .order(reins_circle_packets::updated_at.asc())
-        .limit(500)
+        .limit(INBOX_PAGE)
         .load(c)
         .unwrap_or_default()
 }
@@ -372,8 +394,9 @@ fn q_purge(c: &mut DbConnInner, now: i64) -> QueryResult<()> {
     diesel::delete(
         reins_circle_packets::table
             .filter(reins_circle_packets::state.ne("waiting"))
-            .filter(reins_circle_packets::owner_seen.eq(true))
-            .filter(reins_circle_packets::updated_at.lt(now - 7 * 86_400)),
+            // Settled and taken: a day; never taken by the owner's phone: a week.
+            .filter(reins_circle_packets::owner_seen.eq(true).or(reins_circle_packets::updated_at.lt(now - 7 * 86_400)))
+            .filter(reins_circle_packets::updated_at.lt(now - 86_400)),
     )
     .execute(c)
     .map(|_| ())
@@ -500,8 +523,8 @@ mod tests {
         q_insert_packet(&mut c, &packet("p1", "l1", "dana", "alex", 100)).unwrap();
         q_insert_packet(&mut c, &packet("p2", "l1", "dana", "alex", 50)).unwrap();
         q_insert_packet(&mut c, &packet("p3", "l2", "sam", "pat", 100)).unwrap();
-        assert_eq!(q_inbox(&mut c, "alex", 1_000).len(), 2);
-        assert!(q_inbox(&mut c, "dana", 0).is_empty(), "the owner has no inbox of its own packets");
+        assert_eq!(q_inbox(&mut c, "alex", 1_000, 0).len(), 2);
+        assert!(q_inbox(&mut c, "dana", 0, 0).is_empty(), "the owner has no inbox of its own packets");
         assert!(q_owner_news(&mut c, "dana").is_empty(), "nothing answered yet");
         let mut p = q_find_packet(&mut c, "p1").unwrap();
         p.state = "answered".to_owned();

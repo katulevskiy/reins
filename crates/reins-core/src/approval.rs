@@ -177,7 +177,8 @@ impl Engine {
             self.approve_claimed(request_id, choice, crate::authorization::AuthorizationSource::OwnerReview),
         )
         .await;
-        if result.is_ok() {
+        // Learned only from an approval that ran: one waiting for the Circle may still be denied.
+        if result.is_ok() && !self.circle_waiting(request_id) {
             self.ap_learn(request_id, Verdict::Approve);
         }
         result
@@ -210,7 +211,7 @@ impl Engine {
         let (_, mut parked) = self.parked(request_id)?;
         // A Circle request runs only once everyone it needs approved (04, 08 R3): the owner's tap fills the owner's
         // slot; until the others answer, nothing runs and the card waits.
-        if !self.circle_gate(request_id, &choice, source)? {
+        if !self.circle_gate(request_id, crate::circles::Tap::Request(&choice), source)? {
             return Ok(());
         }
         if self.store.invocation_started(request_id)? {

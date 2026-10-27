@@ -1101,6 +1101,10 @@ impl Engine {
     }
 
     pub(crate) fn permission_route(&self, request: &RelayRequest) -> Result<PermissionReservation, CoreError> {
+        // A co-signer or a guardian must approve it (04, 08 R3): no managed permit runs it; it is parked for review.
+        if self.circle_requires_review(request) {
+            return Ok(PermissionReservation::Review);
+        }
         let Some(account) = request.account.as_deref() else {
             return Ok(PermissionReservation::Review);
         };
