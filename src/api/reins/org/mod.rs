@@ -29,16 +29,25 @@ pub mod admin;
 pub mod api;
 pub mod attest;
 pub mod audit;
+pub mod channels;
 pub mod console;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
+pub mod console_routing;
+pub mod console_routing_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
 pub mod executor_api;
 pub mod gate;
 pub mod github;
+#[allow(
+    dead_code,
+    clippy::type_complexity,
+    reason = "shared with O4 (kept identical), whose policy repo uses its writes and webhook secret"
+)]
+pub mod github_reader;
 pub mod invariants;
 pub mod kms;
 pub mod leases;
@@ -47,9 +56,13 @@ pub mod policy;
 pub mod posture;
 pub mod reviews;
 pub mod roster;
+pub mod routing;
 pub mod scim;
 pub mod sweeper;
+pub mod templates;
 pub mod tenant;
+pub mod web_approval;
+pub mod web_approval_pages;
 pub mod workos_api;
 
 use reins_proto::org::{Capability, Role, role_grants};
@@ -77,6 +90,9 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console_managed::routes());
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
+    routes.extend(routing::sla::routes());
+    routes.extend(channels::slack::routes());
+    routes.extend(channels::teams::routes());
     routes
 }
 

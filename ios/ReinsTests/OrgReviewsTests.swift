@@ -16,6 +16,8 @@ private final class FakeOrgCore: OrgReviewsCore, @unchecked Sendable {
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws {
         decisions.append((id, approve, at, signature))
     }
+    func orgPasskeys() async throws -> [OrgPasskeyView] { [] }
+    func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String) async throws {}
 }
 
 /// A device key that records what it signed.
@@ -37,7 +39,8 @@ final class OrgReviewsTests: XCTestCase {
         OrgReviewView(
             id: id, kind: kind, orgName: "Acme", requester: "dana@acme.com", connection: "Claude", title: "Send an email",
             lines: ["Sends an email to ext@other.com"], requires: "Security", level: "L2", zone: "external",
-            digest: String(repeating: "a", count: 64), snapshot: "snap", expiresAt: 1_700_000_900, own: own
+            digest: String(repeating: "a", count: 64), snapshot: "snap", expiresAt: 1_700_000_900, own: own,
+            needs: [], progress: "", step: nil, urgent: false, reason: nil
         )
     }
 

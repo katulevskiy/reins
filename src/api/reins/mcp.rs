@@ -89,6 +89,9 @@ pub enum Action {
         modern: bool,
         /// The client asked not to wait (`_meta["dev.reins/defer"]`): the call becomes a ticket at once.
         defer: bool,
+        /// Why the agent says it needs this (`_meta["dev.reins/reason"]`): shown to org reviewers, and what an org's
+        /// reason-requiring permit asks for. Never evidence of anything else.
+        reason: Option<String>,
     },
     /// A `resources/*` request about tickets (they need the database); answered with [`resource_reply`].
     Resource {
@@ -101,6 +104,8 @@ pub enum Action {
 
 /// The `_meta` key a client sets on `tools/call` to get a ticket at once instead of waiting.
 pub const META_DEFER: &str = "dev.reins/defer";
+/// The `_meta` key a client sets on `tools/call` to say why it needs the call (organizations, O3).
+pub const META_REASON: &str = "dev.reins/reason";
 /// URI prefix of a ticket resource (`reins://tickets/rt_…`).
 pub const TICKET_URI: &str = "reins://tickets/";
 
@@ -305,6 +310,11 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
                 arguments: params.get("arguments").cloned().unwrap_or_else(|| Value::Object(Map::new())),
                 modern,
                 defer: params.get("_meta").and_then(|m| m.get(META_DEFER)).and_then(Value::as_bool).unwrap_or(false),
+                reason: params
+                    .get("_meta")
+                    .and_then(|m| m.get(META_REASON))
+                    .and_then(Value::as_str)
+                    .map(|r| r.chars().take(1000).collect()),
             }
         }
         "resources/list"
@@ -572,8 +582,10 @@ mod tests {
                 arguments,
                 modern,
                 defer,
+                reason,
             } => {
                 assert_eq!((id, name.as_str(), modern, defer), (json!(7), "gmail_search", true, false));
+                assert_eq!(reason, None);
                 assert_eq!(arguments, json!({"query": "from:bank"}));
             }
             other => panic!("{other:?}"),

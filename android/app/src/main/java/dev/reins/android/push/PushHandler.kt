@@ -26,11 +26,17 @@ class PushHandler(
     private val onElsewhere: (WorkProfiles.Active) -> Unit = {},
     /** An org review waits: notify it for the profile it is for (null: this one), opening that profile's reviews. */
     private val onOrgReview: (WorkProfiles.Active?, String) -> Unit = { _, _ -> },
+    /** A web passkey waits for this phone's confirmation: notified like a review, opening the same screen. */
+    private val onOrgPasskey: (WorkProfiles.Active?, String) -> Unit = { _, _ -> },
 ) {
     suspend fun handle(payload: PushPayload): PushOutcome {
         val owner = ownerOf(payload.profileTag)
         if (payload.kind == PushPayload.ORG_REVIEW) {
             onOrgReview((owner as? PushOwner.Elsewhere)?.profile, payload.id)
+            return PushOutcome.DONE
+        }
+        if (payload.kind == PushPayload.ORG_PASSKEY) {
+            onOrgPasskey((owner as? PushOwner.Elsewhere)?.profile, payload.id)
             return PushOutcome.DONE
         }
         if (owner is PushOwner.Elsewhere) {
@@ -65,6 +71,7 @@ class PushHandler(
             ownerOf = { tag -> PushRouting.ownerOf(container, tag) },
             onElsewhere = container.notifier::otherProfile,
             onOrgReview = { target, id -> container.notifier.orgReview(target ?: container.profile, id) },
+            onOrgPasskey = { target, id -> container.notifier.orgPasskey(target ?: container.profile, id) },
         )
     }
 }

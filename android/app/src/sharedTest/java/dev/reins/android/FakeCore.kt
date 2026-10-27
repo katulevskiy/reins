@@ -855,6 +855,8 @@ class FakeCore : ReinsCoreInterface {
         orgReviews = emptyList()
         orgDecisions.clear()
         orgDecideError = null
+        orgPasskeys = emptyList()
+        passkeyConfirmations.clear()
         memberPolicies.clear()
         ssoBeginWorks.clear()
         enrollments.clear()
@@ -938,6 +940,20 @@ class FakeCore : ReinsCoreInterface {
         if (orgReviews.none { it.id == id }) throw CoreException.NotFound()
         orgDecisions += listOf(id, approve, at, signature)
         orgReviews = orgReviews.filterNot { it.id == id }
+    }
+
+    /** The member's web passkeys (`orgPasskeys`); a Personal account (no [org]) has none. */
+    @Volatile var orgPasskeys: List<dev.reins.core.OrgPasskeyView> = emptyList()
+
+    /** `orgConfirmPasskey` calls: (id, approve, at, signature). */
+    val passkeyConfirmations = CopyOnWriteArrayList<List<Any>>()
+
+    override suspend fun orgPasskeys(): List<dev.reins.core.OrgPasskeyView> = if (org == null) emptyList() else orgPasskeys
+
+    override suspend fun orgConfirmPasskey(id: String, approve: Boolean, at: Long, signature: String) {
+        if (orgPasskeys.none { it.credentialId == id }) throw CoreException.NotFound()
+        passkeyConfirmations += listOf(id, approve, at, signature)
+        orgPasskeys = if (approve) orgPasskeys.map { if (it.credentialId == id) it.copy(confirmed = true) else it } else orgPasskeys.filterNot { it.credentialId == id }
     }
 
     override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) {

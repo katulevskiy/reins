@@ -8,13 +8,15 @@
 //! reviews (signed by enrolled devices the roster lists). Then it judges the request itself.
 
 use reins_audit::verify_envelope;
+use reins_policy::effects::Level;
 use reins_policy::org::{
-    Approval, ManagedOutcome, ManagedRequest, ManagedVerdict, MemberPolicy, Met, OrgPolicy, evaluate_managed,
-    obligations_met,
+    Approval, ManagedOutcome, ManagedRequest, ManagedVerdict, MemberPolicy, Met, OrgPolicy, ResolvedSets, RosterFacts,
+    evaluate_managed, obligations_met_resolved,
 };
 use reins_proto::managed::{
-    DecisionRecord, Envelope, EnvelopeKind, Job, JobKind, LEASE_TOOL, ReviewDecision, ReviewSubject, Roster,
-    RosterMember, Verdict, member_policy_message, request_digest, review_message,
+    DecisionRecord, Envelope, EnvelopeKind, Job, JobKind, LEASE_TOOL, ReviewDecision, ReviewSignature, ReviewSubject,
+    Roster, RosterMember, Verdict, member_policy_message, request_digest, review_message, webauthn_challenge,
+    webauthn_signed_bytes,
 };
 
 use crate::config::{MAX_ROSTER_AGE_SECS, Pins};
@@ -154,6 +156,7 @@ pub fn verify_job_with(
         tool: &job.tool,
         args: &job.args,
         now: at,
+        reason: record.reason.as_deref(),
     };
     let ours = evaluate_managed(&request(record.evaluated_at), &decided_with, member_policy.as_ref());
     let differs = |ours: &str| Refusal::VerdictDiffers {
@@ -163,8 +166,8 @@ pub fn verify_job_with(
     match (ours.outcome, record.verdict) {
         (ManagedOutcome::Auto, Verdict::Auto) => {}
         (ManagedOutcome::Review, Verdict::Approved) => {
-            let approvals = verified_approvals(&record, &roster)?;
-            match weigh(&ours, &record, &approvals) {
+            let approvals = verified_approvals(&record, &roster, pins, ours.evaluation.level)?;
+            match weigh(&ours, &record, &roster, &approvals) {
                 Met::Yes => {}
                 Met::Waiting(ids) => return Err(Refusal::MissingApprovals(ids)),
                 Met::Denied => return Err(differs("denied")),
@@ -180,8 +183,8 @@ pub fn verify_job_with(
             return Err(Refusal::Stale(format!("now denied ({})", why(&now_verdict))));
         }
         ManagedOutcome::Review => {
-            let approvals = verified_approvals(&record, &roster)?;
-            if weigh(&now_verdict, &record, &approvals) != Met::Yes {
+            let approvals = verified_approvals(&record, &roster, pins, now_verdict.evaluation.level)?;
+            if weigh(&now_verdict, &record, &roster, &approvals) != Met::Yes {
                 return Err(Refusal::Stale(format!("now needs a review ({})", why(&now_verdict))));
             }
         }
@@ -290,8 +293,36 @@ struct Reviewed<'a> {
     approve: bool,
 }
 
-/// Every review in the decision, each signed by a decision-capable device of its reviewer over 06 §3's message.
-fn verified_approvals<'a>(record: &DecisionRecord, roster: &'a Roster) -> Result<Vec<Reviewed<'a>>, Refusal> {
+/// Whether a signed web approval (O3) stands: a passkey the roster lists for this member, asserted at the pinned
+/// server origin over the review message's challenge, user-verified and device-bound, its signature good, and the
+/// request not L3 by this executor's own evaluation (05 §6: L3 always needs the app).
+fn web_approval_ok(a: &ReviewSignature, member: &RosterMember, msg: &[u8], pins: &Pins, level: Level) -> bool {
+    let (Some(proof), Some(origin)) = (&a.webauthn, pins.web_origin.as_deref()) else {
+        return false;
+    };
+    if level == Level::L3 {
+        return false;
+    }
+    let Some(rp_id) = reqwest::Url::parse(origin).ok().and_then(|u| u.host_str().map(str::to_owned)) else {
+        return false;
+    };
+    let Some(key) = member.passkeys.iter().find(|p| p.credential_id == a.device) else {
+        return false;
+    };
+    match webauthn_signed_bytes(proof, &webauthn_challenge(msg), origin, &rp_id) {
+        Ok(signed) => p256_verify(&key.key, &a.sig, &signed),
+        Err(_) => false,
+    }
+}
+
+/// Every review in the decision, each signed by a decision-capable device of its reviewer over 06 §3's message, or by
+/// a passkey of theirs the roster lists (a signed web approval, never for L3).
+fn verified_approvals<'a>(
+    record: &DecisionRecord,
+    roster: &'a Roster,
+    pins: &Pins,
+    level: Level,
+) -> Result<Vec<Reviewed<'a>>, Refusal> {
     record
         .approvals
         .iter()
@@ -314,10 +345,11 @@ fn verified_approvals<'a>(record: &DecisionRecord, roster: &'a Roster) -> Result
                 &record.snapshot,
                 a.at,
             );
-            let ok = member
-                .devices
-                .iter()
-                .any(|d| d.device == a.device && d.may_decide && p256_verify(&d.key, &a.sig, &msg));
+            let ok = if a.webauthn.is_some() {
+                web_approval_ok(a, member, &msg, pins, level)
+            } else {
+                member.devices.iter().any(|d| d.device == a.device && d.may_decide && p256_verify(&d.key, &a.sig, &msg))
+            };
             if ok {
                 Ok(Reviewed {
                     member,
@@ -330,7 +362,35 @@ fn verified_approvals<'a>(record: &DecisionRecord, roster: &'a Roster) -> Result
         .collect()
 }
 
-fn weigh(verdict: &ManagedVerdict, record: &DecisionRecord, reviewed: &[Reviewed<'_>]) -> Met {
+/// The countersigned resolution, checked against the roster: a member stays only where the obligation's reviewers or
+/// its escalation chain admit them ([`reins_policy::org::ReviewSpec::may_resolve`]): groups, roles and named members
+/// from the roster, the manager from the roster's `manager`, backups from its `backups`. Code owners, on-call and
+/// resource owners are taken on the countersignature (`docs/security-model.md`).
+fn checked_resolution(verdict: &ManagedVerdict, record: &DecisionRecord, roster: &Roster) -> ResolvedSets {
+    let facts = RosterFacts {
+        requester_manager: roster.member(&record.member).and_then(|m| m.manager.as_deref()),
+        backups: &roster.backups,
+    };
+    let mut out = ResolvedSets::new();
+    for o in &verdict.obligations {
+        let Some(named) = record.resolved.get(&o.id) else {
+            continue;
+        };
+        let kept = named
+            .iter()
+            .filter(|u| {
+                roster
+                    .member(u)
+                    .is_some_and(|m| o.spec.may_resolve(&m.user, &m.groups, &m.roles, &record.member, &facts))
+            })
+            .cloned()
+            .collect();
+        out.insert(o.id.clone(), kept);
+    }
+    out
+}
+
+fn weigh(verdict: &ManagedVerdict, record: &DecisionRecord, roster: &Roster, reviewed: &[Reviewed<'_>]) -> Met {
     let approvals: Vec<Approval<'_>> = reviewed
         .iter()
         .map(|r| Approval {
@@ -340,7 +400,12 @@ fn weigh(verdict: &ManagedVerdict, record: &DecisionRecord, reviewed: &[Reviewed
             approve: r.approve,
         })
         .collect();
-    obligations_met(&verdict.obligations, &record.member, &approvals)
+    obligations_met_resolved(
+        &verdict.obligations,
+        &record.member,
+        &approvals,
+        &checked_resolution(verdict, record, roster),
+    )
 }
 
 /// The DER prefix of a P-256 SubjectPublicKeyInfo, up to the uncompressed point.
@@ -690,5 +755,108 @@ mod tests {
         let mut j = f.job("github_create_issue", args, &record);
         j.member_policy = Some(f.member_policy(&mine, &f.lee));
         assert!(matches!(check(&f, &j), Err(Refusal::VerdictDiffers { .. })));
+    }
+
+    // ---- O3: signed web approvals and countersigned resolutions.
+
+    #[test]
+    fn passkey_approvals_verify_against_the_roster() {
+        let f = Fixture::new();
+        let (mut job, _) = f.reviewed_job();
+        redecide(&f, &mut job, |r| r.approvals = vec![f.web_approve(r, KIM, &f.kim_passkey, 0x05)]);
+        assert!(check(&f, &job).is_ok(), "{:?}", check(&f, &job));
+        // A passkey the roster doesn't list for Kim (Lee's), a synced one, one without user verification.
+        for (key, flags) in [(&f.lee_passkey, 0x05), (&f.kim_passkey, 0x0d), (&f.kim_passkey, 0x01)] {
+            let (mut job, _) = f.reviewed_job();
+            redecide(&f, &mut job, |r| r.approvals = vec![f.web_approve(r, KIM, key, flags)]);
+            assert_eq!(
+                check(&f, &job),
+                Err(Refusal::BadApproval {
+                    member: KIM.into()
+                }),
+                "{flags:#x}"
+            );
+        }
+        // Asserted at another origin.
+        let (mut job, _) = f.reviewed_job();
+        redecide(&f, &mut job, |r| {
+            let mut a = f.web_approve(r, KIM, &f.kim_passkey, 0x05);
+            let msg = review_message(
+                ORG,
+                ReviewSubject::Request,
+                &r.request,
+                &r.digest,
+                ReviewDecision::Approve,
+                &r.snapshot,
+                a.at,
+            );
+            let (sig, proof) = f.kim_passkey.assert(&webauthn_challenge(&msg), "https://evil.example", 0x05);
+            (a.sig, a.webauthn) = (sig, Some(proof));
+            r.approvals = vec![a];
+        });
+        assert!(matches!(check(&f, &job), Err(Refusal::BadApproval { .. })));
+        // An executor with no web origin pinned takes no web approval.
+        let (mut job, _) = f.reviewed_job();
+        redecide(&f, &mut job, |r| r.approvals = vec![f.web_approve(r, KIM, &f.kim_passkey, 0x05)]);
+        let mut pins = f.pins();
+        pins.web_origin = None;
+        let p = f.policy_env(&f.policy);
+        assert!(matches!(verify_job(&job, &pins, &p, &p, &f.roster_env(), now()), Err(Refusal::BadApproval { .. })));
+    }
+
+    #[test]
+    fn passkey_approvals_are_refused_for_l3() {
+        let f = Fixture::new();
+        // Deleting a repository is L3: Lee's own review. On the phone it verifies; on the web it never does.
+        let args = json!({"method": "DELETE", "path": "/repos/acme/api"});
+        let mut record = f.record("github_api_write", &args, None);
+        assert_eq!(record.verdict, Verdict::Approved, "{record:?}");
+        record.approvals = vec![f.approve(&record, LEE, &f.lee)];
+        let job = f.job("github_api_write", args.clone(), &record);
+        assert!(check(&f, &job).is_ok(), "{:?}", check(&f, &job));
+        record.approvals = vec![f.web_approve(&record, LEE, &f.lee_passkey, 0x05)];
+        let job = f.job("github_api_write", args, &record);
+        assert_eq!(
+            check(&f, &job),
+            Err(Refusal::BadApproval {
+                member: LEE.into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_manager_not_in_the_roster_is_refused() {
+        let mut f = Fixture::new();
+        f.policy.rules.push(org_rule(
+            "mgr",
+            "acme/mgr",
+            Then::Review,
+            // Escalation only to the manager again, so Security admins (Kim) can't be named through the chain.
+            Some(reins_policy::org::ReviewSpec {
+                escalate: vec![reins_policy::org::Reviewers::Manager],
+                ..reins_policy::org::ReviewSpec::by(reins_policy::org::Reviewers::Manager)
+            }),
+        ));
+        let args = issue("acme/mgr");
+        let mut record = f.record("github_create_issue", &args, None);
+        // The decision service says Sam is Lee's manager; the roster says Kim.
+        record.resolved.insert("mgr".into(), vec![SAM.into()]);
+        record.approvals = vec![f.approve(&record, SAM, &f.sam)];
+        let job = f.job("github_create_issue", args.clone(), &record);
+        assert!(matches!(check(&f, &job), Err(Refusal::BadApproval { .. } | Refusal::MissingApprovals(_))));
+        // Sam's device may not decide anyway; with Kim named and approving it runs, and only so.
+        record.resolved.insert("mgr".into(), vec![KIM.into()]);
+        record.approvals = vec![f.approve(&record, KIM, &f.kim)];
+        let job = f.job("github_create_issue", args.clone(), &record);
+        assert!(check(&f, &job).is_ok(), "{:?}", check(&f, &job));
+        // Kim, but the roster names nobody as Lee's manager now.
+        f.manager = None;
+        assert_eq!(check(&f, &job), Err(Refusal::MissingApprovals(vec!["mgr".into()])));
+        // The requester named as their own manager never counts.
+        f.manager = Some(LEE.into());
+        record.resolved.insert("mgr".into(), vec![LEE.into()]);
+        record.approvals = vec![f.approve(&record, LEE, &f.lee)];
+        let job = f.job("github_create_issue", args, &record);
+        assert_eq!(check(&f, &job), Err(Refusal::MissingApprovals(vec!["mgr".into()])));
     }
 }

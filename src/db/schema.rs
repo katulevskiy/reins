@@ -712,6 +712,7 @@ table! {
         claimed_at -> Nullable<BigInt>,
         finished_at -> Nullable<BigInt>,
         receipt -> Nullable<Text>,
+        resolved -> Nullable<Text>,
     }
 }
 
@@ -866,6 +867,113 @@ joinable!(collections_groups -> groups (groups_uuid));
 joinable!(event -> users_organizations (uuid));
 joinable!(auth_requests -> users (user_uuid));
 joinable!(sso_users -> users (user_uuid));
+
+table! {
+    reins_org_people (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        manager_user -> Nullable<Text>,
+        manager_source -> Nullable<Text>,
+        github_login -> Nullable<Text>,
+        github_verified_via -> Nullable<Text>,
+        slack_user -> Nullable<Text>,
+        teams_aad -> Nullable<Text>,
+        teams_conversation -> Nullable<Text>,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_group_settings (org_uuid, group_uuid) {
+        org_uuid -> Text,
+        group_uuid -> Text,
+        backup_group -> Nullable<Text>,
+        window_secs -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_oncall (org_uuid, alias) {
+        org_uuid -> Text,
+        alias -> Text,
+        provider -> Text,
+        schedule_id -> Text,
+        key_id -> Nullable<Text>,
+        sealed -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_org_channels (org_uuid, kind) {
+        org_uuid -> Text,
+        kind -> Text,
+        key_id -> Nullable<Text>,
+        sealed -> Nullable<Text>,
+        enabled -> Bool,
+        installed_at -> Nullable<BigInt>,
+        claim -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_org_github_reader (org_uuid) {
+        org_uuid -> Text,
+        app_id -> BigInt,
+        installation_id -> BigInt,
+        key_id -> Nullable<Text>,
+        sealed -> Nullable<Text>,
+        webhook_key_id -> Nullable<Text>,
+        webhook_sealed -> Nullable<Text>,
+        set_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_steps (request_uuid, obligation, step) {
+        request_uuid -> Text,
+        obligation -> Text,
+        step -> Integer,
+        reviewers -> Text,
+        resolved -> Text,
+        source -> Text,
+        started_at -> BigInt,
+        deadline -> BigInt,
+    }
+}
+
+table! {
+    reins_org_web_passkeys (credential_id) {
+        credential_id -> Text,
+        org_uuid -> Text,
+        user_uuid -> Text,
+        passkey -> Text,
+        created_at -> BigInt,
+        confirmed_at -> Nullable<BigInt>,
+        confirmed_device -> Nullable<Text>,
+        revoked_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_web_tokens (token_hash) {
+        token_hash -> Text,
+        org_uuid -> Text,
+        request_uuid -> Text,
+        user_uuid -> Text,
+        expires_at -> BigInt,
+        used_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_posted (request_uuid, user_uuid, channel) {
+        request_uuid -> Text,
+        user_uuid -> Text,
+        channel -> Text,
+        external_ref -> Text,
+        posted_at -> BigInt,
+    }
+}
 
 allow_tables_to_appear_in_same_query!(reins_connections, reins_refresh_tokens);
 allow_tables_to_appear_in_same_query!(reins_org_leases, reins_org_requests);

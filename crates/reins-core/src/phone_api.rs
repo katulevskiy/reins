@@ -367,6 +367,31 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::POST, &format!("/org/reviews/{id}")).json(answer)).await.map(drop)
     }
 
+    /// O3 `GET /org/passkeys`: the web passkeys this member registered; none for an account that isn't an org's
+    /// member (404).
+    pub async fn org_passkeys(&self) -> Result<Vec<crate::org::PasskeyItem>, ApiFailure> {
+        match Self::json(self.request(Method::GET, "/org/passkeys")).await {
+            Ok(items) => Ok(items),
+            Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// O3 `POST /org/passkeys/{id}/confirm`: this device's signed confirmation (or refusal) of a web passkey.
+    pub async fn org_confirm_passkey(&self, id: &str, answer: &crate::org::PasskeyConfirm) -> Result<(), ApiFailure> {
+        crate::org::check_credential_id(id)?;
+        Self::send(self.request(Method::POST, &format!("/org/passkeys/{id}/confirm")).json(answer)).await.map(drop)
+    }
+
+    /// O3 `DELETE /org/passkeys/<id>`: revokes one of this member's web passkeys (no signature: it only narrows).
+    pub async fn org_revoke_passkey(&self, id: &str) -> Result<(), ApiFailure> {
+        crate::org::check_credential_id(id)?;
+        Self::send(self.request(Method::DELETE, &format!("/org/passkeys/{id}"))).await.map(drop)
+    }
+
     /// O2 `PUT /org/member-policy`: the member's own stricter policy, signed by this device.
     pub async fn org_member_policy(&self, policy: &reins_proto::managed::SignedMemberPolicy) -> Result<(), ApiFailure> {
         Self::send(self.request(Method::PUT, "/org/member-policy").json(policy)).await.map(drop)

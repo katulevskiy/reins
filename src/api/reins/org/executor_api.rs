@@ -550,7 +550,7 @@ mod tests {
             access: reins_proto::managed::LeaseAccess::Push,
             box_key: reins_proto::canon::encode_payload(&[9u8; 32]),
         };
-        super::super::leases::q_request_lease(c, &lee, &ask, now).unwrap().0.id
+        super::super::leases::q_request_lease(c, &lee, &ask, &Default::default(), now).unwrap().0.id
     }
 
     /// `ex` claims the one lease job there is and reports it minted at `at`.

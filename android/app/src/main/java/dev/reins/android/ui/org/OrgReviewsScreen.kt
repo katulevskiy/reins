@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,7 @@ import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.Card
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.Pill
 import dev.reins.android.design.RText
@@ -33,8 +36,9 @@ import dev.reins.core.OrgReviewView
 
 /**
  * Settings > Reviews (a work profile's): what waits for this member's review in their org. Each card shows the org, who
- * must approve, the title and the lines the phone built from what it signs; Approve and Deny sign with the key this
- * phone enrolled to the org. Your own admin change is confirmed instead.
+ * must approve, the title and the lines the phone built from what it signs, then who else must still decide and where
+ * an escalation took it; Approve and Deny sign with the key this phone enrolled to the org. Your own admin change is
+ * confirmed instead. A web passkey added in the browser waits on top until this phone confirms it.
  */
 @Composable
 fun OrgReviewsScreen(viewModel: OrgReviewsViewModel, onBack: () -> Unit) {
@@ -43,10 +47,15 @@ fun OrgReviewsScreen(viewModel: OrgReviewsViewModel, onBack: () -> Unit) {
     Screen(title = "Reviews", onBack = onBack) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "orgReviewsError") }
+            ui.passkeys.forEach { key ->
+                WebPasskeyCard(key, busy = ui.busy == key.credentialId, enabled = ui.busy == null) { approve ->
+                    viewModel.confirmPasskey(key, approve)
+                }
+            }
             val reviews = ui.reviews
             when {
                 reviews == null -> Unit
-                reviews.isEmpty() -> EmptyState(Glyph.ShieldCheck, "No reviews", null, tag = "noOrgReviews")
+                reviews.isEmpty() && ui.passkeys.isEmpty() -> EmptyState(Glyph.ShieldCheck, "No reviews", null, tag = "noOrgReviews")
                 else -> reviews.forEach { review ->
                     ReviewCard(review, busy = ui.busy == review.id, enabled = ui.busy == null) { approve -> viewModel.answer(review, approve) }
                 }
@@ -62,6 +71,7 @@ private fun ReviewCard(review: OrgReviewView, busy: Boolean, enabled: Boolean, o
     Card(Modifier.testTag("orgReview:${review.id}")) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (review.urgent) Pill("Urgent", c.danger, Modifier.testTag("orgUrgent:${review.id}"), glyph = Glyph.Warning)
                 Pill(untrustedName(review.orgName, 40), c.violet, glyph = Glyph.Briefcase)
                 Pill("requires ${untrustedName(review.requires, 40)}", c.ink, glyph = Glyph.ShieldCheck)
             }
@@ -69,6 +79,9 @@ private fun ReviewCard(review: OrgReviewView, busy: Boolean, enabled: Boolean, o
             val who = listOf(review.requester, review.connection).filter { it.isNotBlank() }.joinToString(" · ")
             if (who.isNotEmpty()) RText(untrusted(who), RType.sans(13.5f), c.inkMeta, maxLines = 1)
             review.lines.forEach { RText(untrusted(it), RType.sans(14.5f, lineHeight = 20f), c.ink) }
+            OrgRouting.reason(review)?.let { RouteLine(Glyph.Robot, it, c.inkMeta, "orgReason:${review.id}", maxLines = 3) }
+            OrgRouting.needsLine(review)?.let { RouteLine(Glyph.People, it, c.ink2, "orgNeeds:${review.id}") }
+            OrgRouting.stepLine(review)?.let { RouteLine(Glyph.Timer, it, c.warning, "orgStep:${review.id}") }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SignalButton(
                     "Deny",
@@ -87,5 +100,33 @@ private fun ReviewCard(review: OrgReviewView, busy: Boolean, enabled: Boolean, o
                 ) { onAnswer(true) }
             }
         }
+    }
+}
+
+/** A review's routing in a few words, from what the server says is still waited for. */
+object OrgRouting {
+    /** "Needs On-call: payments · 1 of 2"; null when one approval decides and nothing else waits. */
+    fun needsLine(review: OrgReviewView): String? {
+        val needs = review.needs.map { untrustedName(it, 60) }.filter { it.isNotEmpty() }
+        val progress = untrustedName(review.progress, 20)
+        val parts = buildList {
+            if (needs.isNotEmpty()) add("Needs " + needs.joinToString(", "))
+            if (progress.isNotEmpty()) add(progress)
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    /** "Escalated to Security admin", when an escalation took it there. */
+    fun stepLine(review: OrgReviewView): String? = review.step?.let { untrustedName(it, 80) }?.takeIf { it.isNotEmpty() }
+
+    /** The agent's reason, as it gave it. */
+    fun reason(review: OrgReviewView): String? = review.reason?.let { untrusted(it) }?.takeIf { it.isNotEmpty() }
+}
+
+@Composable
+private fun RouteLine(glyph: Glyph, text: String, color: Color, tag: String, maxLines: Int = 2) {
+    Row(Modifier.testTag(tag), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        GlyphIcon(glyph, color, size = 15.dp)
+        RText(text, RType.sans(13.5f, lineHeight = 18f), color, maxLines = maxLines)
     }
 }

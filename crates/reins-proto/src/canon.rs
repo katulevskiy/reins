@@ -71,6 +71,8 @@ pub mod contexts {
     pub const ORG_EXEC: &str = "reins/org-exec/v1";
     /// A member's own policy, signed by their device ([`crate::managed::member_policy_message`]).
     pub const ORG_MEMBER_POLICY: &str = "reins/org-member-policy/v1";
+    /// A member's enrolled phone confirming a web passkey of theirs ([`crate::managed::passkey_confirm_message`]).
+    pub const ORG_PASSKEY: &str = "reins/org-passkey/v1";
     /// A Circle owner's commitment to its nonce ([`crate::circle::invite_commitment`]).
     pub const CIRCLE_COMMIT: &str = "reins/circle-commit/v1";
     /// The six digits two Circle members compare ([`crate::circle::InviteTranscript::code`]).
