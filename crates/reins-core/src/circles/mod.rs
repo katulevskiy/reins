@@ -13,6 +13,7 @@
 //! signing key (packets, answers) and box key (what others seal to it), and the roster credential key (the sealed
 //! copies). Only the approval phone (the roster's primary) does any of it.
 
+pub(crate) mod guardian;
 mod invite;
 mod net;
 mod review;
@@ -81,11 +82,27 @@ pub(crate) struct Held {
     /// The last signed change this phone accepted for the link.
     pub last_seq: u64,
     pub since: i64,
+    /// A guardianship's state after the changes this phone accepted (P7); `None` until one changed it (it is the
+    /// signed terms then: [`Held::guardian_status`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardian: Option<circle::GuardianStatus>,
 }
 
 impl Held {
     pub fn id(&self) -> &str {
         &self.arrangement.id
+    }
+
+    /// A guardianship's state now (`None` for other kinds).
+    pub fn guardian_status(&self) -> Option<circle::GuardianStatus> {
+        let terms = self.arrangement.terms.guardian_terms()?;
+        Some(self.guardian.clone().unwrap_or_else(|| circle::GuardianStatus::of(&terms)))
+    }
+
+    /// Whether its obligations bind at `now` (the owner's side): active, and for a guardianship, until its end takes
+    /// effect (a notice running, a minor's request waiting for consent: still in force).
+    pub fn in_force(&self, now: i64) -> bool {
+        self.standing == Standing::Active && self.guardian_status().is_none_or(|g| g.in_force(now))
     }
 
     /// The other party.
@@ -107,12 +124,19 @@ impl Held {
             deferred: terms.class == circle::Class::Deferred,
             window_secs: terms.window_secs,
             state: match self.standing {
+                Standing::Active if !self.in_force(crate::store::unix_now()) => CircleLinkState::Ended,
                 Standing::Active => CircleLinkState::Active,
                 Standing::Paused | Standing::Pending => CircleLinkState::Paused,
                 Standing::Ended => CircleLinkState::Ended,
                 Standing::Suspended => CircleLinkState::Suspended,
             },
             since: self.since,
+            ending: self
+                .guardian_status()
+                .and_then(|g| g.ending.filter(|_| !g.ended))
+                .map(|e| e.effective_at)
+                .filter(|at| *at != circle::UNTIL_CONSENT),
+            needs_consent: self.guardian_status().is_some_and(|g| g.needs_consent()),
         }
     }
 }
@@ -127,6 +151,12 @@ pub(crate) struct CircleState {
     pub holds: Vec<review::Hold>,
     pub reviews: Vec<review::Review>,
     pub notices: Vec<review::NoticeRow>,
+    /// What this account learned as a guardian (P7): checked changes and the server's notices.
+    pub guardian_notices: Vec<guardian::GuardianRow>,
+    /// When the last weekly digest went out, per guardianship (the ward's side).
+    pub digests: Vec<(String, i64)>,
+    /// Each decision a guardian made on this account's requests (the ward's side), newest last.
+    pub guardian_decisions: Vec<guardian::GuardianDecision>,
 }
 
 impl CircleState {
@@ -332,7 +362,7 @@ impl Engine {
         let links = api_call!(session, |api| api.circle_links()).map_err(not_available)?;
         let credential = self.owner_seed(&me.slot)?.map(|s| s.credential_key());
         let mut changed = false;
-        for link in links {
+        for link in &links {
             let state = self.circle_state(&me.slot)?;
             let known = state.held(&link.id).cloned();
             if known.as_ref().is_none_or(|h| h.standing == Standing::Pending) {
@@ -349,12 +379,17 @@ impl Engine {
                 let Ok(signed) = serde_json::from_slice::<SignedArrangement>(&plain) else {
                     continue;
                 };
-                match self.circle_adopt(me, &link, signed, known.as_ref()) {
+                match self.circle_adopt(me, link, signed, known.as_ref()) {
                     Ok(()) => changed = true,
                     Err(e) => log::warn!("a Circle link was not accepted: {e}"),
                 }
             }
-            if let Some(change) = &link.change
+            // A guardianship's every step is checked against its terms (`guardian`); other links take the last change.
+            if link.kind == circle::CircleKind::Guardian {
+                if self.circle_guardian_sync(me, link)? {
+                    changed = true;
+                }
+            } else if let Some(change) = &link.change
                 && let Some(h) = self.circle_state(&me.slot)?.held(&link.id).cloned()
                 && h.standing != Standing::Ended
             {
@@ -401,6 +436,9 @@ impl Engine {
                 changed = true;
             }
         }
+        if self.circle_guardian_vanished(me, &links)? {
+            changed = true;
+        }
         if changed {
             self.notifier.circle_changed(CircleEvent::Changed);
         }
@@ -444,6 +482,7 @@ impl Engine {
             last_seq: 0,
             since: a.created_at,
             signed,
+            guardian: None,
         };
         self.with_circles(&me.slot, |s| {
             s.held.retain(|h| h.id() != a.id);
@@ -475,6 +514,13 @@ impl Engine {
         if let Err(e) = self.circle_take_inbox(session, &me).await {
             log::warn!("Circle reviews: {e}");
         }
+        // As a guardian: what the server observed about a ward, checked where this phone can (P7).
+        if state.held.iter().any(|h| h.side == Side::Helper && h.arrangement.terms.kind == circle::CircleKind::Guardian)
+            && let Err(e) = Box::pin(self.guardian_take_notices(session, &me)).await
+        {
+            log::warn!("Guardian notices: {e}");
+        }
+        Box::pin(self.guardian_digest(session, &me)).await;
         Box::pin(self.circle_expire(session, &me)).await;
         Ok(())
     }
@@ -500,6 +546,14 @@ impl Engine {
 
     /// Pause or resume (the owner), as a signed change.
     pub(crate) async fn circle_pause(&self, link_id: &str, paused: bool) -> Result<(), CoreError> {
+        if let Some(slot) = self.circle_slot_now()
+            && let Some(h) = self.circle_state(&slot)?.held(link_id)
+            && h.arrangement.terms.kind == circle::CircleKind::Guardian
+            && h.side == Side::Owner
+            && paused
+        {
+            return Err(CoreError::invalid("A guardian's review can't be paused."));
+        }
         let to = if paused {
             LinkState::Paused
         } else {
@@ -508,8 +562,16 @@ impl Engine {
         self.circle_change(link_id, to).await
     }
 
-    /// End (either side; the helper leaving).
+    /// End (either side; the helper leaving). A ward ending a guardianship asks to: it ends after the notice it chose,
+    /// or (a minor's) when the guardian consents ([`Engine::guardian_request_end`]).
     pub(crate) async fn circle_end(&self, link_id: &str) -> Result<(), CoreError> {
+        if let Some(slot) = self.circle_slot_now()
+            && let Some(h) = self.circle_state(&slot)?.held(link_id)
+            && h.arrangement.terms.kind == circle::CircleKind::Guardian
+            && h.side == Side::Owner
+        {
+            return self.guardian_request_end(link_id).await;
+        }
         self.circle_change(link_id, LinkState::Ended).await
     }
 

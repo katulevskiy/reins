@@ -131,9 +131,20 @@ pub(crate) fn terms_of(draft: &CircleDraft) -> Result<Terms, CoreError> {
             Redaction::Summary
         },
         scope_line,
-        guardian: None,
+        guardian: if kind == circle::CircleKind::Guardian {
+            let notice_days = draft
+                .notice_days
+                .ok_or_else(|| CoreError::invalid("Choose how much notice ending it takes: 0, 3 or 7 days."))?;
+            Some(circle::GuardianTerms {
+                notice_days,
+                minor: None,
+                digest: false,
+            })
+        } else {
+            None
+        },
     };
-    terms.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
+    terms.validate_new().map_err(|e| CoreError::invalid(e.to_string()))?;
     Ok(terms)
 }
 
@@ -453,6 +464,7 @@ impl Engine {
             last_seq: 0,
             since: unix_now(),
             signed,
+            guardian: None,
         };
         // Kept before the server hears: a retry after a lost answer finds it.
         self.with_circles(&me.slot, |s| {
@@ -571,6 +583,7 @@ impl Engine {
             deferred: terms.as_ref().is_some_and(|t| t.class == Class::Deferred),
             window_secs: terms.as_ref().map_or(0, |t| t.window_secs),
             full_cards: terms.as_ref().is_some_and(|t| t.redaction == Redaction::Full),
+            notice_days: terms.as_ref().and_then(|t| t.guardian.as_ref()).map(|g| g.notice_days),
             code: j.code.clone(),
             stage,
         }
@@ -632,6 +645,7 @@ impl Engine {
             let sealed: SealedTerms = serde_json::from_slice(&plain).map_err(|_| CoreError::invalid("bad terms"))?;
             let a: Arrangement = serde_json::from_str(&sealed.body).map_err(|_| CoreError::invalid("bad terms"))?;
             a.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
+            a.terms.validate_new().map_err(|e| CoreError::invalid(e.to_string()))?;
             // The terms name exactly the two keys the code is about to pin, and this account as it answered.
             if a.owner.account != o.inviter_account
                 || a.owner.owner_pub != o.owner_pub
@@ -715,6 +729,7 @@ impl Engine {
             last_seq: 0,
             since: unix_now(),
             signed,
+            guardian: None,
         };
         self.with_circles(&me.slot, |s| {
             s.held.retain(|h| h.id() != arrangement.id);
@@ -817,6 +832,7 @@ mod tests {
             window_secs: None,
             fall_back_to_me: true,
             full_cards: true,
+            notice_days: Some(3),
         };
         let t = terms_of(&draft(CircleRole::Cosign, CircleScopePreset::Money, false)).unwrap();
         assert_eq!(t.window_secs, circle::INSTANT_DEFAULT_SECS);

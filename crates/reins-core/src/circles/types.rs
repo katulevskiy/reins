@@ -69,6 +69,9 @@ pub struct CircleDraft {
     pub fall_back_to_me: bool,
     /// The helper sees the card as the owner does (else a summary). Never for a watcher.
     pub full_cards: bool,
+    /// A guardianship's notice: 0, 3 or 7 days, chosen by the ward (this account) and shown before the code. Required
+    /// for a guardian; ignored for the others.
+    pub notice_days: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -128,6 +131,8 @@ pub struct CircleInviteView {
     pub deferred: bool,
     pub window_secs: u64,
     pub full_cards: bool,
+    /// A guardianship's notice, as the ward chose it.
+    pub notice_days: Option<u8>,
     pub code: Option<String>,
     pub stage: CircleJoinStage,
 }
@@ -156,6 +161,11 @@ pub struct CirclePerson {
     pub window_secs: u64,
     pub state: CircleLinkState,
     pub since: i64,
+    /// A guardianship the ward asked to end: when it ends (`None` while it waits for the guardian's consent, or isn't
+    /// ending).
+    pub ending: Option<i64>,
+    /// A minor's end request waits for the guardian.
+    pub needs_consent: bool,
 }
 
 /// On the owner's card: who else decides, and how far it got ("Needs Alex too", "Alex approved, waiting for you").
@@ -218,6 +228,8 @@ pub struct CircleNoticeView {
     pub text: String,
     pub outcome: Option<String>,
     pub at: i64,
+    /// A guardian's weekly digest: one line per automatic decision ("Mon · Auto · Mine · Undoable").
+    pub lines: Vec<String>,
 }
 
 /// What the apps hear from the core about Circles ([`crate::Notifier::circle_changed`]).
@@ -228,6 +240,80 @@ pub enum CircleEvent {
     ReviewWaiting {
         review: CircleReviewView,
     },
+    /// Something about a ward this account guards needs a look (an end request, a reset, a recovery, an early end):
+    /// "Sam: guardianship changed".
+    GuardianNotice {
+        notice: GuardianNoticeView,
+    },
     /// Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
     Changed,
+}
+
+// ---- guardianship (P7, 04 §4) ---------------------------------------------------------------------------------------
+
+/// Which family feature gave an age signal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum AgeSignalPlatform {
+    /// Apple's Declared Age Range.
+    Apple,
+    /// Google Play Age Signals.
+    GooglePlay,
+}
+
+/// What the phone's family features said about this account's owner (the apps' age seam).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum AgeSignalInput {
+    Adult,
+    /// Under 18, with the range's upper bound when the platform gave one.
+    Minor {
+        upper: Option<u8>,
+        platform: AgeSignalPlatform,
+    },
+    /// No signal (declined, unsupported, no family features): the ward's own acceptance counts.
+    Unavailable,
+}
+
+/// What a guardian is told (Settings › Circles, and the notification).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct GuardianNoticeView {
+    pub id: String,
+    pub link_id: String,
+    /// The ward's email.
+    pub ward: String,
+    /// "Asked to leave", "Ended early", "Reset the account".
+    pub line: String,
+    pub at: i64,
+    /// This phone checked it (a signed change, the roster chain); else "Reported by the server".
+    pub verified: bool,
+    /// The ward asked to leave and only the guardian's consent ends it: "Allow?".
+    pub needs_consent: bool,
+}
+
+/// A decision the guardian made (the ward's view).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct GuardianDecisionView {
+    pub at: i64,
+    pub title: String,
+    pub approved: bool,
+    pub note: Option<String>,
+}
+
+/// One guardianship as the ward sees it (04 §4: the scope, every decision and note, the way out).
+#[allow(clippy::struct_excessive_bools, reason = "a flat UniFFI record the screens read field by field")]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WardView {
+    pub link_id: String,
+    /// The guardian's email.
+    pub guardian: String,
+    pub scope_line: String,
+    pub notice_days: u8,
+    pub minor: bool,
+    /// The guardian asked to mark this account a minor's: accept or ignore.
+    pub minor_proposed: bool,
+    pub decisions: Vec<GuardianDecisionView>,
+    /// When it ends, once asked (`None` while a minor's request waits for consent).
+    pub ending: Option<i64>,
+    pub needs_consent: bool,
+    /// The weekly summary of automatic decisions in scope goes to the guardian.
+    pub digest: bool,
 }

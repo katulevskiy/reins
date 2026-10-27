@@ -1433,13 +1433,26 @@ pub struct Notice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
     pub at: i64,
+    /// A guardian's weekly digest: one line per automatic decision in scope ("Mon · Auto · Mine · Undoable"), at most
+    /// [`MAX_NOTICE_LINES`]. Never a body, a recipient or a title.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<String>,
 }
+
+/// The most lines a notice carries.
+pub const MAX_NOTICE_LINES: usize = 50;
 
 impl Notice {
     pub fn validate(&self) -> Result<(), ValidationError> {
         clean("notice.text", &self.text, MAX_CARD_LINE)?;
         if let Some(outcome) = &self.outcome {
             shown("notice.outcome", outcome, MAX_CARD_SHORT, false)?;
+        }
+        if self.lines.len() > MAX_NOTICE_LINES {
+            return Err(invalid("notice.lines", format!("at most {MAX_NOTICE_LINES}")));
+        }
+        for line in &self.lines {
+            shown("notice.lines", line, MAX_CARD_LINE, false)?;
         }
         Ok(())
     }
@@ -2208,6 +2221,7 @@ mod tests {
             text: "Bypass on\u{200b}".to_owned(),
             outcome: None,
             at: 1,
+            lines: Vec::new(),
         });
         assert!(notice.validate().is_err());
     }

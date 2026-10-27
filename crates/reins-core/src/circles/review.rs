@@ -223,10 +223,13 @@ impl Engine {
         if state.holds.iter().any(|h| h.id == id) {
             return Ok(false);
         }
+        // In force: active, and a guardianship until its end takes effect (its notice running, or a minor's request
+        // waiting for consent: the guardian's review stays, 04 §4).
+        let in_force_at = unix_now();
         let active: Vec<&circle::Arrangement> = state
             .held
             .iter()
-            .filter(|h| h.side == Side::Owner && matches!(h.standing, Standing::Active))
+            .filter(|h| h.side == Side::Owner && h.in_force(in_force_at))
             .map(|h| &h.arrangement)
             .collect();
         // A paused arrangement adds nothing; a suspended one (the helper's keys changed) still binds, and its requests
@@ -527,6 +530,17 @@ impl Engine {
                             {
                                 p.vote = Some(answer.vote);
                                 p.note.clone_from(&answer.note);
+                                // The ward sees every decision its guardian made, and the note (04 §4).
+                                if p.kind == CircleKind::Guardian {
+                                    s.guardian_decisions.push(super::guardian::GuardianDecision {
+                                        link: p.arrangement.clone(),
+                                        at: unix_now(),
+                                        title: hold.card.title.clone(),
+                                        approved: answer.vote == Vote::Approve,
+                                        note: answer.note.clone(),
+                                    });
+                                    super::guardian::trim_decisions(&mut s.guardian_decisions);
+                                }
                             }
                             Ok(())
                         })?;
@@ -781,6 +795,7 @@ impl Engine {
                 text: circle::shown_text(&format!("{outcome}: {}", hold.card.title), circle::MAX_CARD_LINE, false),
                 outcome: Some(outcome.clone()),
                 at: unix_now(),
+                lines: Vec::new(),
             };
             if let Err(e) = self.circle_notice(session, me, link, notice).await {
                 log::info!("a Circle notice could not be sent: {e}");
@@ -847,6 +862,7 @@ impl Engine {
                 text: circle::shown_text(text, circle::MAX_CARD_LINE, false),
                 outcome: None,
                 at: unix_now(),
+                lines: Vec::new(),
             };
             if let Err(e) = self.circle_notice(&session, &me, &link, notice).await {
                 log::info!("a Circle notice could not be sent: {e}");
@@ -1006,6 +1022,7 @@ impl Engine {
                 text: n.notice.text.clone(),
                 outcome: n.notice.outcome.clone(),
                 at: n.notice.at,
+                lines: n.notice.lines.clone(),
             })
             .collect();
         out.sort_by_key(|n| std::cmp::Reverse(n.at));

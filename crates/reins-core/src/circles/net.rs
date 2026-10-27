@@ -2,8 +2,9 @@
 
 use reins_proto::{
     circle::{
-        AnswerItem, InboxItem, InviteAccept, InviteActivate, InviteChallenge, InviteCreated, InviteOpened,
-        InviteReveal, InviteStatus, JoinBody, LinkView, NewAnswer, NewInvite, NewPacket, Seen, SignedChange,
+        AnswerItem, GuardianNotice, InboxItem, InviteAccept, InviteActivate, InviteChallenge, InviteCreated,
+        InviteOpened, InviteReveal, InviteStatus, JoinBody, LinkView, NewAnswer, NewInvite, NewPacket, Seen,
+        SignedChange,
     },
     roster::Roster,
 };
@@ -74,6 +75,11 @@ impl PhoneApi<'_> {
 
     pub(crate) async fn circle_links(&self) -> Result<Vec<LinkView>, ApiFailure> {
         Self::json(self.request(Method::GET, "/circles/links")).await
+    }
+
+    /// This account's new notices as a guardian (each returned once).
+    pub(crate) async fn guardian_notices(&self) -> Result<Vec<GuardianNotice>, ApiFailure> {
+        Self::json(self.request(Method::GET, "/guardian/notices")).await
     }
 
     pub(crate) async fn circle_change(&self, id: &str, change: &SignedChange) -> Result<(), ApiFailure> {

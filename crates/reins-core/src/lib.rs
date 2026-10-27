@@ -66,9 +66,10 @@ pub use autopilot::{
     SuggestionView, TaskView, ThresholdReplay, Verdict,
 };
 pub use circles::{
-    CircleDraft, CircleEvent, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleJoinStage,
-    CircleLinkState, CircleNoticeView, CirclePerson, CircleProgress, CircleReviewState, CircleReviewView, CircleRole,
-    CircleScopePreset,
+    AgeSignalInput, AgeSignalPlatform, CircleDraft, CircleEvent, CircleInviteProgress, CircleInviteStart,
+    CircleInviteView, CircleJoinStage, CircleLinkState, CircleNoticeView, CirclePerson, CircleProgress,
+    CircleReviewState, CircleReviewView, CircleRole, CircleScopePreset, GuardianDecisionView, GuardianNoticeView,
+    WardView,
 };
 pub use connector::LoginProgress;
 pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceEvent, SmsMessage, SmsThread};

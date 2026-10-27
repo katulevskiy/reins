@@ -17,8 +17,8 @@ use crate::autopilot::{
     TaskView, ThresholdReplay, Verdict, ZoneChoice,
 };
 use crate::circles::{
-    CircleDraft, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleNoticeView, CirclePerson,
-    CircleReviewView,
+    AgeSignalInput, CircleDraft, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleNoticeView,
+    CirclePerson, CircleReviewView, GuardianNoticeView, WardView,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -1305,6 +1305,86 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             let result = engine.run_account(async { engine.circle_notices() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a guardian: asks to mark the ward's account a minor's (the ward accepts or not).
+    pub async fn guardian_propose_minor(&self, link_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.guardian_propose_minor(&link_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
+    pub async fn guardian_accept_minor(&self, link_id: String, signal: AgeSignalInput) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.guardian_accept_minor(&link_id, signal)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a guardian: consents to a minor's request to leave (it ends now).
+    pub async fn guardian_consent_end(&self, link_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.guardian_consent_end(&link_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a ward: turns the guardian's weekly summary of automatic decisions on or off.
+    pub async fn guardian_set_digest(&self, link_id: String, on: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.guardian_set_digest(&link_id, on)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a guardian: what this account was told about its wards, newest first (checked, or "Reported by the
+    /// server"). `refresh`: ask the server first.
+    pub async fn guardian_notices(&self, refresh: bool) -> Result<Vec<GuardianNoticeView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine
+                .run_account(async {
+                    if refresh {
+                        engine.circles_sync(&*engine.session()?, true).await?;
+                    }
+                    engine.guardian_notices()
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// As a ward: one guardianship, its scope, every decision and note, and how it ends.
+    pub async fn guardian_ward_view(&self, link_id: String) -> Result<WardView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.guardian_ward_view(&link_id) }).await;
             runtime.finish(&engine, result)
         })
         .await
