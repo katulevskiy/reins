@@ -157,9 +157,11 @@ final class OutsideAndSettingsTests: XCTestCase {
     }
 
     /// Every pixel's colour, as 0xRRGGBB.
-    private func colours(_ image: CGImage) throws -> [Int] {
+    /// Every pixel's colour; `aboveFoot`: only the picture above the bottom an effect fades into the paper.
+    private func colours(_ image: CGImage, aboveFoot: Bool = false) throws -> [Int] {
         let px = try XCTUnwrap(Pixels(fill: image, width: image.width, height: image.height))
-        return stride(from: 0, to: px.bytes.count, by: 4).map { Int(px.bytes[$0]) << 16 | Int(px.bytes[$0 + 1]) << 8 | Int(px.bytes[$0 + 2]) }
+        let rows = aboveFoot ? Int(Double(px.height) * (1 - WallpaperRender.effectFoot)) : px.height
+        return stride(from: 0, to: rows * px.width * 4, by: 4).map { Int(px.bytes[$0]) << 16 | Int(px.bytes[$0 + 1]) << 8 | Int(px.bytes[$0 + 2]) }
     }
 
     /// The share of pixels whose channels differ by more than 40: how much of a picture is in colour.
@@ -209,14 +211,14 @@ final class OutsideAndSettingsTests: XCTestCase {
 
     func testDitherUsesThreeLevelsAChannel() throws {
         let out = try XCTUnwrap(WallpaperRender.render(try colourful(), effect: .dither, fade: 0, dark: true, size: CGSize(width: 390, height: 500)))
-        let levels = Set(try colours(out).flatMap { [$0 >> 16 & 0xFF, $0 >> 8 & 0xFF, $0 & 0xFF] })
+        let levels = Set(try colours(out, aboveFoot: true).flatMap { [$0 >> 16 & 0xFF, $0 >> 8 & 0xFF, $0 & 0xFF] })
         XCTAssertEqual(levels, [0, 128, 255])
     }
 
     func testMonoUsesTheThemesTwoTones() throws {
         for (dark, tones) in [(true, Set([0x000000, 0xE8ECFF])), (false, Set([0xF6F6F8, 0x46464E]))] {
             let out = try XCTUnwrap(WallpaperRender.render(try photo(), effect: .mono, fade: 0, dark: dark, size: CGSize(width: 260, height: 333)))
-            XCTAssertEqual(Set(try colours(out)), tones, "dark \(dark)")
+            XCTAssertEqual(Set(try colours(out, aboveFoot: true)), tones, "dark \(dark)")
         }
     }
 
@@ -227,7 +229,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         }
         let out = try XCTUnwrap(WallpaperRender.render(try XCTUnwrap(black.cgImage), effect: .halftone, fade: 0, dark: true, size: CGSize(width: 200, height: 250)))
         let paper = WallpaperRender.paper(dark: true)
-        XCTAssertEqual(Set(try colours(out)), [Int(paper.r) << 16 | Int(paper.g) << 8 | Int(paper.b)], "no dots in the dark, the paper all over")
+        XCTAssertEqual(Set(try colours(out, aboveFoot: true)), [Int(paper.r) << 16 | Int(paper.g) << 8 | Int(paper.b)], "no dots in the dark, the paper all over")
     }
 
     func testMoreFadeStartsHigher() {
@@ -241,7 +243,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertGreaterThan(Int(bottom.0), 0x80, "the photo's light bottom, not the dark paper")
     }
 
-    func testAnEffectAlwaysFadesItsFootIntoThePaper() throws {
+    func testAnEffectOnAnImageWithoutAFootStillEndsOnThePaper() throws {
         for effect in WallpaperEffect.allCases where effect != .original {
             let art = try XCTUnwrap(WallpaperRender.render(try photo(), effect: effect, fade: 0, dark: true, size: CGSize(width: 78, height: 100)))
             let bottom = try pixel(art, 40, 99)
@@ -375,7 +377,7 @@ final class OutsideAndSettingsTests: XCTestCase {
 
     func testTheCacheNamesEverythingThatChangesTheArt() {
         let base = WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .dither, fade: 0.2), dark: true)
-        XCTAssertEqual(base.key, "dark_eyes_dither_f20_r2")
+        XCTAssertEqual(base.key, "dark_eyes_dither_f20_r3")
         let keys: Set<String> = [
             base.key,
             WallpaperArt(choice: WallpaperChoice(image: .torii, effect: .dither, fade: 0.2), dark: true).key,

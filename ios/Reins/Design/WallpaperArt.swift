@@ -40,9 +40,9 @@ struct WallpaperArt: Hashable {
         return parts.joined(separator: "_")
     }
 
-    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (2: an effect's
-    /// foot fades into the paper).
-    static let renderVersion = 2
+    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (3: colour effects
+    /// with a foot; an effect on your photo fades into the paper).
+    static let renderVersion = 3
 
     /// A shipped image as it ships: drawn from its asset, nothing rendered.
     var isAsset: Bool { choice.image != .own && choice.effect == .original && choice.hundredths == 0 }

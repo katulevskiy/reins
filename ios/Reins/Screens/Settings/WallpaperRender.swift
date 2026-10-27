@@ -20,9 +20,10 @@ enum WallpaperRender {
         let w = max(1, Int(size.width)), h = max(1, Int(size.height))
         guard var px = Pixels(fill: source, width: w, height: h) else { return nil }
         WallpaperEffects.apply(effect, to: &px, dark: dark, foot: foot)
-        // An effect redraws the whole image, a shipped one's baked fade too (Dither turns it pure black): its foot
-        // always runs into the paper, so the art never ends on a hard line. Original keeps the bottom as chosen.
-        fadeOut(&px, amount: fade, dark: dark, minimumFoot: effect == .original ? 0 : effectFoot)
+        // An image with no foot of its own (your photo) still meets the paper under an effect, which can turn its
+        // bottom pure black: the art never ends on a hard line. Original keeps the bottom as chosen.
+        let minimumFoot = effect == .original || foot != nil ? 0 : effectFoot
+        fadeOut(&px, amount: fade, dark: dark, minimumFoot: minimumFoot)
         return px.image()
     }
 
@@ -36,7 +37,7 @@ enum WallpaperRender {
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }.cgImage
     }
 
-    /// The share of the height at the bottom that an effect always fades into the paper, whatever the added fade.
+    /// The share of the height at the bottom that an effect fades into the paper on an image with no foot of its own.
     static let effectFoot = 0.2
 
     /// Where the fade starts, as a share of the height from the top: later with less fade, none at 0.
