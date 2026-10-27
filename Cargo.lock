@@ -8453,6 +8453,7 @@ name = "reins-proto"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "idna",
  "ring",
  "serde",
  "serde_json",

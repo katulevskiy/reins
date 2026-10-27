@@ -17,6 +17,7 @@ pub mod gmail;
 pub mod ids;
 pub mod join;
 pub mod oplog;
+pub mod org;
 pub mod pairing;
 pub mod payments;
 pub mod relay;
