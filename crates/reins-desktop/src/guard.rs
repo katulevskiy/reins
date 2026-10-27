@@ -129,6 +129,7 @@ pub const DEFAULT_FILES: &[&str] = &[
     "reins/session.json",
     "reins/control.token",
     "reins/phone-key.json",
+    "reins/config.toml",
 ];
 
 /// Built-in exceptions to the file patterns.
@@ -234,7 +235,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         id: "reins",
         label: "Reins's own sign-in",
-        detail: "This computer's session with Reins, the daemon's control token, the phone key it trusts",
+        detail: "This computer's session with Reins, the daemon's control token, the phone key it trusts, its settings",
         commands: builtin::REINS_STATE.commands,
         files: builtin::REINS_STATE.files,
     },
@@ -421,6 +422,14 @@ mod tests {
     use reins_policy::shell::{decode_powershell, program_name, word_matches};
 
     use super::*;
+
+    #[test]
+    fn writing_reins_settings_is_asked() {
+        let g = GuardConfig::default();
+        let m = g.check_file("/home/me/.config/reins/config.toml").expect("asked");
+        assert_eq!(group_of(&m.pattern).map(|g| g.id), Some("reins"));
+        assert!(g.check_command("sed -i 's/false/true/' ~/.config/reins/config.toml").is_some());
+    }
 
     /// The phone reads a hook's question with its own copy of the built-in rules: the same groups, the same labels,
     /// the same allow list.

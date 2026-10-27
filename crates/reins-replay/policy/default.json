@@ -1,8 +1,12 @@
 {
   "name": "Personal default (01 §4)",
-  "mine": ["auto", "auto", "auto", "ask"],
-  "friends": ["auto", "ask", "auto", "ask"],
-  "work": ["auto", "ask", "ask", "ask"],
-  "outside": ["ask", "ask", "ask", "ask"],
+  "matrix": {
+    "mine": ["auto", "auto", "auto", "ask"],
+    "friends": ["auto", "ask_first", "auto", "ask"],
+    "work": ["auto", "ask", "ask", "ask"],
+    "outside": ["ask", "ask", "ask", "ask"]
+  },
+  "rules": [],
+  "tasks": [],
   "ask_on_partial": false
 }

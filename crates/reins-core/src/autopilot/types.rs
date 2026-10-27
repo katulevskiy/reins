@@ -375,6 +375,9 @@ pub struct SuggestionView {
     /// The risk, when the model rates it.
     #[uniffi(default)]
     pub risk: Option<RiskView>,
+    /// What the matrix decided, or would have decided in shadow (Decisions v2).
+    #[uniffi(default)]
+    pub matrix: Option<MatrixView>,
 }
 
 /// What Autopilot knew about an activity entry (spec §8).
@@ -397,6 +400,12 @@ pub struct AutopilotNote {
     /// The risk, when the model rated it.
     #[uniffi(default)]
     pub risk: Option<RiskView>,
+    /// What the matrix decided, or would have decided in shadow (Decisions v2).
+    #[uniffi(default)]
+    pub matrix: Option<MatrixView>,
+    /// The request it was about ("Ask me next time" takes it).
+    #[uniffi(default)]
+    pub request_id: String,
 }
 
 /// A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
@@ -504,4 +513,185 @@ pub struct ModelOutput {
     /// `laya_config.json` declares the `risk` output; empty otherwise.
     #[uniffi(default)]
     pub risk: Vec<f32>,
+}
+
+// ---- Decisions v2: zones, the matrix, setup and questions (`docs/design/decisions-v2/01-decision-engine.md` §3–§9) --
+
+/// Whose a thing is (01 §3), least trusted last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ZoneChoice {
+    Mine,
+    Friends,
+    Work,
+    Outside,
+}
+
+impl From<reins_policy::context::Zone> for ZoneChoice {
+    fn from(z: reins_policy::context::Zone) -> Self {
+        use reins_policy::context::Zone;
+        match z {
+            Zone::Mine => Self::Mine,
+            Zone::Friends => Self::Friends,
+            Zone::Work => Self::Work,
+            Zone::Outside => Self::Outside,
+        }
+    }
+}
+
+impl From<ZoneChoice> for reins_policy::context::Zone {
+    fn from(z: ZoneChoice) -> Self {
+        match z {
+            ZoneChoice::Mine => Self::Mine,
+            ZoneChoice::Friends => Self::Friends,
+            ZoneChoice::Work => Self::Work,
+            ZoneChoice::Outside => Self::Outside,
+        }
+    }
+}
+
+/// A matrix cell (01 §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum CellChoice {
+    Auto,
+    Ask,
+    /// Ask the first time per resource, then Auto.
+    AskFirst,
+}
+
+impl From<reins_policy::matrix::Cell> for CellChoice {
+    fn from(c: reins_policy::matrix::Cell) -> Self {
+        use reins_policy::matrix::Cell;
+        match c {
+            Cell::Auto => Self::Auto,
+            Cell::Ask => Self::Ask,
+            Cell::AskFirst => Self::AskFirst,
+        }
+    }
+}
+
+impl From<CellChoice> for reins_policy::matrix::Cell {
+    fn from(c: CellChoice) -> Self {
+        match c {
+            CellChoice::Auto => Self::Auto,
+            CellChoice::Ask => Self::Ask,
+            CellChoice::AskFirst => Self::AskFirst,
+        }
+    }
+}
+
+/// What a fact is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum FactChoice {
+    /// A GitHub user or organization.
+    Owner,
+    /// One repository (`owner/name`).
+    Repo,
+    /// An email domain.
+    Domain,
+    /// A person (an address, a number, a handle).
+    Person,
+    /// A computer or server.
+    Host,
+    /// A chat or group.
+    Chat,
+}
+
+impl From<reins_policy::context::FactKind> for FactChoice {
+    fn from(k: reins_policy::context::FactKind) -> Self {
+        use reins_policy::context::FactKind;
+        match k {
+            FactKind::Owner => Self::Owner,
+            FactKind::Repo => Self::Repo,
+            FactKind::Domain => Self::Domain,
+            FactKind::Person => Self::Person,
+            FactKind::Host => Self::Host,
+            FactKind::Chat => Self::Chat,
+        }
+    }
+}
+
+impl From<FactChoice> for reins_policy::context::FactKind {
+    fn from(k: FactChoice) -> Self {
+        match k {
+            FactChoice::Owner => Self::Owner,
+            FactChoice::Repo => Self::Repo,
+            FactChoice::Domain => Self::Domain,
+            FactChoice::Person => Self::Person,
+            FactChoice::Host => Self::Host,
+            FactChoice::Chat => Self::Chat,
+        }
+    }
+}
+
+/// One thing on the "Your world" screen.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WorldItem {
+    pub kind: FactChoice,
+    pub key: String,
+    /// What the screen shows ("acme", "ann@example.com").
+    pub label: String,
+    /// "github" | "email" | "messages" | "computers": the section it is listed in.
+    pub service: String,
+    pub zone: ZoneChoice,
+    /// The owner confirmed it (else it is a proposal, which decides nothing until confirmed).
+    pub confirmed: bool,
+    /// Requests that touched it in the last 30 days.
+    pub count: u32,
+}
+
+/// One row of the matrix, with real names from the owner's world.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MatrixRowView {
+    pub zone: ZoneChoice,
+    /// L0 (undoable), L1 (recoverable), L2 (reaches people), L3 (can't be undone).
+    pub cells: Vec<CellChoice>,
+    /// Up to three names in this zone ("dkat", "acme").
+    pub names: Vec<String>,
+}
+
+/// Auto's setup (01 §9.1) and where it stands.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct AutoSetup {
+    /// The owner finished the setup: turning on Auto no longer guides first.
+    pub done: bool,
+    /// The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+    /// decide is recorded on each entry).
+    pub matrix_decides: bool,
+    pub world: Vec<WorldItem>,
+    pub matrix: Vec<MatrixRowView>,
+    /// Open "Auto needs information" questions.
+    pub questions: u32,
+}
+
+/// "Auto needs information": a party a request named that Auto doesn't know (01 §3, later questions).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct AutoQuestion {
+    pub id: String,
+    pub kind: FactChoice,
+    /// What it is about ("octo", "bob@acme.io").
+    pub key: String,
+    /// "github" | "email" | "messages" | "computers".
+    pub service: String,
+    /// The AI connection whose request named it.
+    pub connection_label: String,
+    pub request_id: Option<String>,
+    pub at: i64,
+    /// The answer the card preselects (Outside unless a fact suggests otherwise).
+    pub proposed: ZoneChoice,
+}
+
+/// What the matrix decided, or would have decided in shadow, for a request.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MatrixView {
+    /// `Approve` = Auto, `Ask`, or `Deny` (an explicit rule).
+    pub outcome: Verdict,
+    /// Asked because of a hard obligation (no permit could cover it).
+    pub hard: bool,
+    pub zone: ZoneChoice,
+    /// 0..=3.
+    pub level: u8,
+    /// "Auto · Mine · Undoable".
+    pub line: String,
+    /// Recorded only: something else decided.
+    pub shadow: bool,
 }

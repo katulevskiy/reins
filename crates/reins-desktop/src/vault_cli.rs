@@ -168,6 +168,7 @@ pub(crate) fn relayed(r: &Refusal) -> String {
     match r {
         // Our own words (no answer in time).
         Refusal::Waiting(m) => printable(m),
+        Refusal::Parked(p) => printable(&p.message),
         Refusal::Denied(m) | Refusal::Unavailable(m) => format!("phone (via the Reins server): {}", printable(m)),
     }
 }

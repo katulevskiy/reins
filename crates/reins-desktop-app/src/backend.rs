@@ -118,6 +118,8 @@ pub enum Setting {
     Ssh(bool),
     /// git for this host goes through Reins.
     Host(String, bool),
+    /// Auto's setup on this computer is done, with these zones (`[auto]`).
+    AutoSetup(Box<reins_policy::context::Facts>),
 }
 
 /// The activity log as last read, and what its files looked like then.
@@ -553,6 +555,7 @@ impl Backend {
             Setting::NotifyDelay(ms) => settings::set_notify_delay(&self.paths, *ms),
             Setting::Ssh(on) => settings::set_ssh_enabled(&self.paths, *on),
             Setting::Host(h, on) => settings::set_host_enabled(&self.paths, h, *on),
+            Setting::AutoSetup(facts) => settings::set_auto_setup(&self.paths, facts),
         }?;
         if change == Change::Live || !restart {
             return Ok(None);

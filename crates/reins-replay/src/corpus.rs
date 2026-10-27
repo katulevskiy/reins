@@ -129,9 +129,40 @@ pub struct Context {
     /// The repositories' default branch.
     #[serde(default)]
     pub default_branch: Option<String>,
+    /// The repository a command's `origin` is when it runs in a known worktree (the desktop reads it from the
+    /// worktree's `.git/config`; the corpus keeps the owner's main repository).
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// More verified facts (zones of owners, people, hosts), on top of `mine_owners` and `mine_hosts`.
+    #[serde(default)]
+    pub facts: reins_policy::context::Facts,
     /// Environment variables the hook passes from the agent's environment (not secrets: `PATH`, `XDG_RUNTIME_DIR`).
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl Context {
+    /// The verified facts: the owner's GitHub owners and devices are Mine, then `facts`.
+    #[must_use]
+    pub fn facts(&self) -> reins_policy::context::Facts {
+        use reins_policy::context::{FactKind, Zone};
+        let mut f = reins_policy::context::Facts::default();
+        for o in &self.mine_owners {
+            f.set(FactKind::Owner, o, Zone::Mine);
+        }
+        for h in &self.mine_hosts {
+            f.set(FactKind::Host, h, Zone::Mine);
+        }
+        let extra = &self.facts;
+        f.owners.extend(extra.owners.clone());
+        f.repos.extend(extra.repos.clone());
+        f.own_addresses.extend(extra.own_addresses.clone());
+        f.domains.extend(extra.domains.clone());
+        f.people.extend(extra.people.clone());
+        f.hosts.extend(extra.hosts.clone());
+        f.chats.extend(extra.chats.clone());
+        f
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

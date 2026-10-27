@@ -1356,6 +1356,45 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     private fun frames(n: Int = 20) = repeat(n) { rule.mainClock.advanceTimeBy(50) }
 
+    /** Turning on Auto the first time (Decisions v2): Your world, the matrix, Turn on. */
+    @Test
+    fun autoSetup() {
+        core.model = installed
+        core.autoSetupDone = false
+        core.world = listOf(
+            dev.reins.core.WorldItem(dev.reins.core.FactChoice.OWNER, "dkat", "dkat", "github", dev.reins.core.ZoneChoice.MINE, true, 140u),
+            dev.reins.core.WorldItem(dev.reins.core.FactChoice.OWNER, "acme", "acme", "github", dev.reins.core.ZoneChoice.WORK, false, 14u),
+            dev.reins.core.WorldItem(dev.reins.core.FactChoice.PERSON, "ann@example.com", "ann@example.com", "email", dev.reins.core.ZoneChoice.FRIENDS, false, 3u),
+            dev.reins.core.WorldItem(dev.reins.core.FactChoice.HOST, "m2a.local", "m2a.local", "computers", dev.reins.core.ZoneChoice.MINE, true, 0u),
+        )
+        openAutopilot()
+        tap("mode:AUTO")
+        await("autoSetup")
+        frames()
+        shoot("64-auto-setup-world")
+        tap("autoSetupNext")
+        await("matrix")
+        frames()
+        shoot("64b-auto-setup-matrix")
+        tap("autoSetupNext")
+        await("turnOnAuto")
+        frames()
+        shoot("64c-auto-setup-turn-on")
+    }
+
+    /** "Auto needs information" cards under what waits. */
+    @Test
+    fun questionCards() {
+        core.autoQuestionList = listOf(
+            dev.reins.core.AutoQuestion("github:octo", dev.reins.core.FactChoice.OWNER, "octo", "github", "Claude Code", "r1", now, dev.reins.core.ZoneChoice.OUTSIDE),
+            dev.reins.core.AutoQuestion("email:bob@acme.io", dev.reins.core.FactChoice.PERSON, "bob@acme.io", "email", "My ChatGPT", "r2", now - 60, dev.reins.core.ZoneChoice.OUTSIDE),
+        )
+        launch()
+        await("question:github:octo")
+        frames()
+        shoot("15-question-cards")
+    }
+
     @Test
     fun autopilotModes() {
         core.model = installed

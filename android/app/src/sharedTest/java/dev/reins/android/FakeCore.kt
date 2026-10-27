@@ -574,6 +574,59 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == requestId }
     }
 
+    // ---- tickets (Decisions v2): Later, a denial's note, Why? ------------------------------------------------------
+
+    /** `decideLater` calls, by request id. */
+    val laterCalls = CopyOnWriteArrayList<String>()
+    /** `denyWithNote` calls: (request id, note). */
+    val notedDenials = CopyOnWriteArrayList<Pair<String, String?>>()
+    /** `askWhy` calls: (request id, question). */
+    val whyQuestions = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** The window Later gives (the server's default Deferred window). */
+    @Volatile var deferredWindowSecs: Long = 14_400
+
+    override suspend fun decideLater(requestId: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        if (!item.canDefer || item.ticket != null) throw CoreException.Invalid("This request can't wait.")
+        laterCalls += requestId
+        val at = now()
+        val ticket = dev.reins.core.TicketView("rt_$requestId", "deferred", at, at + deferredWindowSecs, null, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) {
+        notedDenials += requestId to note
+        pending = pending.filterNot { it.id == requestId }
+    }
+
+    override suspend fun askWhy(requestId: String, question: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        whyQuestions += requestId to question
+        val at = now()
+        val ticket = item.ticket?.copy(state = "needs_info", question = question, agentReply = null)
+            ?: dev.reins.core.TicketView("rt_$requestId", "needs_info", at, at + deferredWindowSecs, question, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    /** This phone's signing key, as agents and the desktop app pin it; [signingKeyCalls] counts the reads. */
+    @Volatile var signingKey: String = "4821 9930 1274"
+    val signingKeyCalls = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun signingKeyFingerprint(): String {
+        signingKeyCalls.incrementAndGet()
+        return signingKey
+    }
+
+    fun resetTickets() {
+        laterCalls.clear()
+        notedDenials.clear()
+        whyQuestions.clear()
+        deferredWindowSecs = 14_400
+        signingKey = "4821 9930 1274"
+        signingKeyCalls.set(0)
+    }
+
     override suspend fun gmailStatus() = gmail
 
     override suspend fun grants() = grants
@@ -1307,6 +1360,7 @@ class FakeCore : ReinsCoreInterface {
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
         replay = null
         downloads.set(0)
+        resetDecisions()
     }
 
     private fun defaultProfile() = profiles.firstOrNull { it.isDefault } ?: profiles.first()
@@ -1513,6 +1567,117 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun correctDecision(activityId: Long, shouldHave: Verdict) {
         corrections += activityId to shouldHave
         activity = activity.map { e -> if (e.id == activityId) e.copy(autopilot = e.autopilot?.copy(correctable = false)) else e }
+    }
+
+    // ---- Decisions v2: Auto's setup, questions, Ask me next time --------------------------------------------------
+
+    /** The setup was finished: picking Auto sets the mode at once. Tests of the setup turn it off. */
+    @Volatile var autoSetupDone = true
+    @Volatile var matrixDecides = false
+    @Volatile var world: List<WorldItem> = emptyList()
+    /** Rows Mine, Friends, Work, Outside; cells L0..L3 (01 §4's defaults). */
+    @Volatile var matrix: List<List<CellChoice>> = defaultMatrix()
+    @Volatile var autoQuestionList: List<AutoQuestion> = emptyList()
+    /** `setWorldZone` calls that changed something: kind, key, zone. */
+    val worldZoneCalls = CopyOnWriteArrayList<Triple<FactChoice, String, ZoneChoice>>()
+    val matrixCellCalls = CopyOnWriteArrayList<Triple<ZoneChoice, UByte, CellChoice>>()
+    val finishSetupCalls = java.util.concurrent.atomic.AtomicInteger()
+    val answeredQuestions = CopyOnWriteArrayList<Pair<String, ZoneChoice>>()
+    val dismissedQuestions = CopyOnWriteArrayList<String>()
+    val askedNextTime = CopyOnWriteArrayList<String>()
+    /** Every owner check the setup and the questions asked with, refused or not (their reasons). */
+    val autoOwnerReasons = CopyOnWriteArrayList<String>()
+
+    fun resetDecisions() {
+        autoSetupDone = true
+        matrixDecides = false
+        world = emptyList()
+        matrix = defaultMatrix()
+        autoQuestionList = emptyList()
+        listOf(worldZoneCalls, matrixCellCalls, answeredQuestions, dismissedQuestions, askedNextTime, autoOwnerReasons).forEach { it.clear() }
+        finishSetupCalls.set(0)
+    }
+
+    private fun defaultMatrix(): List<List<CellChoice>> = listOf(
+        listOf(CellChoice.AUTO, CellChoice.AUTO, CellChoice.AUTO, CellChoice.ASK),
+        listOf(CellChoice.AUTO, CellChoice.ASK_FIRST, CellChoice.AUTO, CellChoice.ASK),
+        listOf(CellChoice.AUTO, CellChoice.ASK, CellChoice.ASK, CellChoice.ASK),
+        listOf(CellChoice.ASK, CellChoice.ASK, CellChoice.ASK, CellChoice.ASK),
+    )
+
+    private suspend fun ownerConfirms(owner: OwnerCheck, reason: String) {
+        autoOwnerReasons += reason
+        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
+    }
+
+    private fun zoneLabel(z: ZoneChoice) = z.name.lowercase().replaceFirstChar { it.uppercase() }
+
+    private fun strictness(c: CellChoice) = when (c) {
+        CellChoice.AUTO -> 0
+        CellChoice.ASK_FIRST -> 1
+        CellChoice.ASK -> 2
+    }
+
+    override suspend fun autoSetup(): AutoSetup {
+        val zones = listOf(ZoneChoice.MINE, ZoneChoice.FRIENDS, ZoneChoice.WORK, ZoneChoice.OUTSIDE)
+        val rows = zones.mapIndexed { i, z ->
+            val names = world.filter { it.zone == z }.sortedWith(compareByDescending<WorldItem> { it.count }.thenBy { it.label }).take(3).map { it.label }
+            MatrixRowView(z, matrix[i], names)
+        }
+        return AutoSetup(autoSetupDone, matrixDecides, world, rows, autoQuestionList.size.toUInt())
+    }
+
+    override suspend fun setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck) {
+        // As the core: toward Mine (looser than where it is; an unknown thing is Outside) asks the owner first.
+        val current = world.firstOrNull { it.kind == kind && it.key == key && it.confirmed }?.zone ?: ZoneChoice.OUTSIDE
+        if (zone.ordinal < current.ordinal) ownerConfirms(owner, "Treat $key as ${zoneLabel(zone)}")
+        worldZoneCalls += Triple(kind, key, zone)
+        world = if (world.any { it.kind == kind && it.key == key }) {
+            world.map { if (it.kind == kind && it.key == key) it.copy(zone = zone, confirmed = true) else it }
+        } else {
+            world + WorldItem(kind, key, key, if (kind == FactChoice.OWNER || kind == FactChoice.REPO) "github" else "email", zone, true, 0u)
+        }
+        autoQuestionList = autoQuestionList.filterNot { it.kind == kind && it.key == key }
+    }
+
+    override suspend fun setMatrixCell(zone: ZoneChoice, level: UByte, cell: CellChoice, owner: OwnerCheck) {
+        if (level > 3u) throw CoreException.Invalid("a level is 0 to 3")
+        val row = zone.ordinal
+        if (strictness(cell) < strictness(matrix[row][level.toInt()])) ownerConfirms(owner, "Let Auto do more in ${zoneLabel(zone)}")
+        matrixCellCalls += Triple(zone, level, cell)
+        matrix = matrix.mapIndexed { i, cells -> if (i == row) cells.mapIndexed { l, c -> if (l == level.toInt()) cell else c } else cells }
+    }
+
+    override suspend fun finishAutoSetup(owner: OwnerCheck) {
+        ownerConfirms(owner, "Turn on Auto")
+        finishSetupCalls.incrementAndGet()
+        world = world.map { it.copy(confirmed = true) }
+        autoSetupDone = true
+        setAutopilotMode(null, AutopilotMode.AUTO, null)
+    }
+
+    override suspend fun setMatrixDecides(on: Boolean, owner: OwnerCheck) {
+        if (on && !matrixDecides) ownerConfirms(owner, "Let the matrix decide")
+        matrixDecides = on
+    }
+
+    override suspend fun autoQuestions(): List<AutoQuestion> = autoQuestionList.sortedByDescending { it.at }
+
+    override suspend fun answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck) {
+        val q = autoQuestionList.firstOrNull { it.id == id } ?: throw CoreException.NotFound()
+        setWorldZone(q.kind, q.key, zone, owner)
+        answeredQuestions += id to zone
+        autoQuestionList = autoQuestionList.filterNot { it.id == id }
+    }
+
+    override suspend fun dismissAutoQuestion(id: String) {
+        if (autoQuestionList.none { it.id == id }) throw CoreException.NotFound()
+        dismissedQuestions += id
+        autoQuestionList = autoQuestionList.filterNot { it.id == id }
+    }
+
+    override suspend fun askMeNextTime(requestId: String) {
+        askedNextTime += requestId
     }
 
     override suspend fun modelStatus(): ModelStatus = model

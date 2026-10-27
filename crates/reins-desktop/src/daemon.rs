@@ -253,7 +253,8 @@ impl Daemon {
         let run_listener = crate::run_socket::bind(paths)?;
         let counts = Arc::new(crate::stats::Stats::default());
         let proxy = Proxy::new(&config, Arc::clone(&authorizer))?
-            .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts));
+            .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts))
+            .with_tickets(paths.clone());
         let phone = Arc::new(crate::phone::PhoneLink::new(
             config.mode,
             paths.clone(),
@@ -264,6 +265,11 @@ impl Daemon {
         let leases = Arc::new(crate::leases::LeaseCache::default());
         let secrets = Arc::new(crate::leases::SecretsService::new(Arc::clone(&leases), Arc::clone(&phone)));
         let revocations = Box::pin(crate::leases::poll_revocations(leases, paths.clone(), Arc::clone(&identity)));
+        // Collects what the reviewer decided later: passes for parked commands, and parked pushes, pushed.
+        let tickets = crate::tickets::refresher(paths.clone());
+        let revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
+            tokio::join!(revocations, tickets);
+        });
         let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
         let overview = {
             let started_at = crate::now_unix();

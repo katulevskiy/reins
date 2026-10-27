@@ -362,6 +362,37 @@ desktop key; approve anything; read your vault; read your grants, activity log o
 
 Push notifications through Firebase carry only a request id. The phone then fetches the request from the server.
 
+## Deferred decisions
+
+A request that waits for review longer than its Instant window becomes a ticket, and the server keeps it until its
+deadline (up to 7 days).
+
+**Stored in clear:**
+- the metadata: ticket id, state, deadlines, connection, and the request digest;
+- the reviewer's note on a denial, and their "Why?" question, because the agent has no key and must read them;
+- a write's minimal result (ids, a status, a link).
+
+**Never stored in clear:**
+- the request body: it is sealed on the server to the approval device's box key, and the clear copy is dropped;
+- an agent's answer to a "Why?", sealed the same way;
+- a read's result: it passes through memory to the agent waiting for it, and is never stored.
+
+The request did reach the server over TLS, as every request does.
+
+**Why a compromised server can't fake an outcome:**
+- Every transition the phone makes is signed with its device key. The phone acts only on what its own record proves:
+  - it runs a collected read only on its own valid approval of that exact request;
+  - it releases only the items the owner picked, once;
+  - it signs an expiry only when its own clock and record agree.
+- Webhooks carry only those signed events, so a server can delay or drop them but not forge `ticket.approved`.
+- Each event names the state it moves from and is accepted once. An approval signed at one point of a ticket's
+  history can't be replayed at another.
+- Agents and the desktop app pin the phone's signing key. The phone shows it as twelve digits (a connection's More),
+  so a key a server swapped in shows as different digits.
+- On the desktop, a ticket counts as approved only after the app opens the phone's sealed answer and checks its
+  nonce, the digest of the raw command and its expiry. A one-time pass is refused for any call whose shown text isn't
+  exactly the raw call, or which contains invisible or bidi characters.
+
 ## The desktop app
 
 - It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which

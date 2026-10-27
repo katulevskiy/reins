@@ -241,7 +241,8 @@ override the OS settings. `REINS_DEMO_TEST=1` sends
 the test as the app opens, `REINS_DEMO_EMPTY=1` leaves the samples out (the empty states), `REINS_DEMO_CALM=1` leaves
 out the request waiting on the phone (the calm Home), `REINS_DEMO_PAUSED=1` (or `manual`) starts with git paused.
 `REINS_DEMO_PAUSE=1` opens the "Pause git" sheet (`manual`: at Until I resume; `hold`: held from the start, so it
-pauses two seconds later), `REINS_DEMO_FILTER=1` Activity's filters, `REINS_DEMO_HEALTH=1` Home's health checks.
+pauses two seconds later), `REINS_DEMO_FILTER=1` Activity's filters, `REINS_DEMO_HEALTH=1` Home's health checks,
+`REINS_DEMO_AUTO_SETUP=1` the Auto setup on this computer (`phone`: at its second step).
 `REINS_DEMO_SESSION=1`
 starts with a work session running ("Fix the login bug", 1 h 12 min left), `form` with the form open and filled in,
 `waiting` with it sent; `REINS_DEMO_HELP=<id>` opens that (?) (`hero`, `keys`, `rules`, …); in the demo the pretend phone approves a session after 3 seconds (a minute with `waiting`) and

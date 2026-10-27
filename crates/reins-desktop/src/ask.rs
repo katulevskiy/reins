@@ -46,13 +46,79 @@ fn cut(text: &str, max: usize) -> String {
     s
 }
 
-fn one_line(text: &str) -> String {
-    text.split(char::is_control).flat_map(str::split_whitespace).collect::<Vec<_>>().join(" ")
+/// `text` on one line: control characters and whitespace folded to single spaces. The line and paragraph separators,
+/// which are whitespace, are written out first ([`visible`]) rather than folded away.
+pub(crate) fn one_line(text: &str) -> String {
+    let breaks: String = text
+        .chars()
+        .map(|c| {
+            if invisible(c) && c.is_whitespace() && !c.is_control() {
+                visible(c.encode_utf8(&mut [0; 4]))
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    breaks.split(char::is_control).flat_map(str::split_whitespace).collect::<Vec<_>>().join(" ")
+}
+
+/// A character that shows nothing, or changes how the text around it reads: every control character (Cc), format
+/// characters (Cf: soft hyphen, zero widths, bidi marks and overrides, invisible operators, BOM, interlinear
+/// annotations, tags), the line and paragraph separators (Zl, Zp), private use (Co), and the fillers and variation
+/// selectors that render as nothing. Text with one is never passable ([`reaches_whole`], [`crate::hooks::passable`]).
+#[must_use]
+pub fn invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            u32::from(c),
+            0xAD | 0x34F
+                | 0x600..=0x605
+                | 0x61C
+                | 0x6DD
+                | 0x70F
+                | 0x890..=0x891
+                | 0x8E2
+                | 0x115F..=0x1160
+                | 0x17B4..=0x17B5
+                | 0x180B..=0x180F
+                | 0x200B..=0x200F
+                | 0x2028..=0x202E
+                | 0x2060..=0x206F
+                | 0x3164
+                | 0xE000..=0xF8FF
+                | 0xFE00..=0xFE0F
+                | 0xFEFF
+                | 0xFFA0
+                | 0xFFF0..=0xFFFB
+                | 0x110BD
+                | 0x110CD
+                | 0x13430..=0x1343F
+                | 0x1BCA0..=0x1BCA3
+                | 0x1D173..=0x1D17A
+                | 0xE0000..=0xE0FFF
+                | 0xF0000..=0x0010_FFFF
+        )
+}
+
+/// `text` with each invisible character that is not a control character written out (`⟨U+202E⟩`), so the reviewer
+/// sees it. Control characters are left to the caller (dropped, or kept as line breaks and tabs).
+#[must_use]
+pub fn visible(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if invisible(c) && !c.is_control() {
+            let _infallible = write!(out, "⟨U+{:04X}⟩", u32::from(c));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 impl Question {
     /// The question on one line (≤ 300 bytes), the detail without control characters but newlines and tabs (≤
-    /// 8,000), the topic on one line (≤ 100). An empty question is refused. A long command fits: the question is cut,
+    /// 8,000), the topic on one line (≤ 100). What the phone is sent has its invisible characters written out
+    /// ([`Question::sent`]). An empty question is refused. A long command fits: the question is cut,
     /// the detail keeps the whole command (up to its limit).
     pub fn new(question: &str, detail: Option<&str>, topic: Option<&str>) -> Result<Self, String> {
         let question = cut(&one_line(question), MAX_QUESTION);
@@ -71,16 +137,54 @@ impl Question {
         })
     }
 
-    fn arguments(&self, client_key: &str, nonce: &str) -> Value {
-        let mut args = json!({"question": self.question, "client_key": client_key, "nonce": nonce});
-        if let Some(d) = &self.detail {
+    /// The question as the phone is sent it: each invisible character written out (`⟨U+202E⟩`, [`visible`]) so the
+    /// reviewer sees it, then cut to the same limits.
+    #[must_use]
+    pub fn sent(&self) -> Self {
+        // Text with nothing to write out goes as it was built (already within the phone's limits, counted in
+        // characters); only text that grew by writing out invisible characters is cut again.
+        let shown = |text: &str, max: usize| {
+            let v = visible(text);
+            if v == text {
+                v
+            } else {
+                cut(&v, max)
+            }
+        };
+        Self {
+            question: shown(&self.question, MAX_QUESTION),
+            detail: self.detail.as_deref().map(|d| shown(d, MAX_DETAIL)),
+            topic: self.topic.as_deref().map(|t| shown(t, MAX_TOPIC)),
+        }
+    }
+
+    fn arguments(&self, client_key: &str, nonce: &str, digest: Option<&str>) -> Value {
+        let sent = self.sent();
+        let mut args = json!({"question": sent.question, "client_key": client_key, "nonce": nonce});
+        if let Some(d) = digest {
+            args["digest"] = json!(d);
+        }
+        if let Some(d) = &sent.detail {
             args["detail"] = json!(d);
         }
-        if let Some(t) = &self.topic {
+        if let Some(t) = &sent.topic {
             args["topic"] = json!(t);
         }
         args
     }
+}
+
+/// Whether the question, detail and topic as given reach the phone whole and as they read: none is cut to fit, and
+/// none holds an [`invisible`] character (the detail may break lines and hold tabs); only whitespace is folded for
+/// display. Passable text is an allowlist: printable characters and spaces. A question that is not may still be
+/// asked, but never becomes a ticket or a pass: the reviewer would approve something they did not see as it is.
+#[must_use]
+pub fn reaches_whole(question: &str, detail: Option<&str>, topic: Option<&str>) -> bool {
+    let shown = |text: &str, breaks: bool| !text.chars().any(|c| invisible(c) && !(breaks && matches!(c, '\n' | '\t')));
+    shown(question, false)
+        && one_line(question).len() <= MAX_QUESTION
+        && detail.is_none_or(|d| shown(d, true) && d.trim_end().len() <= MAX_DETAIL)
+        && topic.is_none_or(|t| shown(t, false) && one_line(t).len() <= MAX_TOPIC)
 }
 
 /// The outcome of a question.
@@ -103,6 +207,31 @@ impl Answer {
             Self::Unanswered(_) => 2,
         }
     }
+}
+
+/// A question the reviewer will decide later: its ticket, the nonce the eventual answer echoes, and when an answer is
+/// expected (Unix seconds; 0: not said).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parked {
+    pub ticket: String,
+    pub nonce: String,
+    pub expected_by: i64,
+}
+
+impl Parked {
+    /// For callers that know no tickets: not answered now.
+    #[must_use]
+    pub fn unanswered(&self) -> Answer {
+        Answer::Unanswered(format!("Parked for review (ticket {}); not approved yet.", self.ticket))
+    }
+}
+
+/// How a question to the phone may become a ticket: `digest`, what a later approval lets through once
+/// ([`crate::tickets::pass_digest`] over the raw call); `defer`, asking the server to park it at once (`reins ask --defer`).
+#[derive(Clone, Copy, Debug)]
+pub struct Ticketing<'a> {
+    pub digest: &'a str,
+    pub defer: bool,
 }
 
 /// Who answers, from the config's mode and whether the app is logged in.
@@ -130,17 +259,30 @@ pub async fn ask(
     interactive: bool,
     prompter: &dyn Prompter,
 ) -> Answer {
+    ask_ticketed(paths, config, q, timeout, interactive, prompter, None).await.unwrap_or_else(|p| p.unanswered())
+}
+
+/// [`ask`]; with `ticketing`, a question the phone's reviewer will decide later comes back as [`Parked`].
+pub async fn ask_ticketed(
+    paths: &Paths,
+    config: &Config,
+    q: &Question,
+    timeout: Duration,
+    interactive: bool,
+    prompter: &dyn Prompter,
+    ticketing: Option<Ticketing<'_>>,
+) -> Result<Answer, Parked> {
     match decider(paths, config) {
-        Err(e) => Answer::Unanswered(e),
+        Err(e) => Ok(Answer::Unanswered(e)),
         Ok(Decider::Phone) => {
             let identity = match Identity::load_or_create(&paths.identity_file()) {
                 Ok(id) => id,
-                Err(e) => return Answer::Unanswered(e.to_string()),
+                Err(e) => return Ok(Answer::Unanswered(e.to_string())),
             };
-            ask_phone(paths, &identity, q, timeout).await
+            ask_phone_ticketed(paths, &identity, q, timeout, ticketing).await
         }
-        Ok(Decider::Local) if interactive => ask_terminal_stdin(q, timeout).await,
-        Ok(Decider::Local) => ask_desktop(prompter, q, timeout).await,
+        Ok(Decider::Local) if interactive => Ok(ask_terminal_stdin(q, timeout).await),
+        Ok(Decider::Local) => Ok(ask_desktop(prompter, q, timeout).await),
     }
 }
 
@@ -188,6 +330,24 @@ pub async fn ask_logged_entry(
     entry: Entry,
     tell: Option<&(dyn Fn(&str) + Sync)>,
 ) -> (Answer, bool, Entry) {
+    let (answer, timed_out, entry) =
+        ask_logged_ticketed(paths, config, q, timeout, interactive, prompter, entry, tell, None).await;
+    (answer.unwrap_or_else(|p| p.unanswered()), timed_out, entry)
+}
+
+/// [`ask_logged_entry`] with [`ask_ticketed`]'s `ticketing`: a question parked for review is logged and told as such.
+#[allow(clippy::too_many_arguments, reason = "the question, where it goes and how it is logged")]
+pub async fn ask_logged_ticketed(
+    paths: &Paths,
+    config: &Config,
+    q: &Question,
+    timeout: Duration,
+    interactive: bool,
+    prompter: &dyn Prompter,
+    entry: Entry,
+    tell: Option<&(dyn Fn(&str) + Sync)>,
+    ticketing: Option<Ticketing<'_>>,
+) -> (Result<Answer, Parked>, bool, Entry) {
     let journal = Journal::new(paths);
     let who = match decider(paths, config) {
         Ok(Decider::Phone) => JournalDecider::Phone,
@@ -196,7 +356,8 @@ pub async fn ask_logged_entry(
     let mut entry = entry.decider(who);
     let started = Instant::now();
     let asked_at = tokio::time::Instant::now();
-    let (asking, mut heard) = crate::told::listen(ask(paths, config, q, timeout, interactive, prompter));
+    let (asking, mut heard) =
+        crate::told::listen(ask_ticketed(paths, config, q, timeout, interactive, prompter, ticketing));
     let mut asking = std::pin::pin!(asking);
     let quick = tokio::select! {
         a = &mut asking => Some(a),
@@ -215,6 +376,19 @@ pub async fn ask_logged_entry(
         let notify_at = (who == JournalDecider::Phone).then(|| asked_at + journal.notify_delay());
         crate::phone::hearing(&journal, &mut entry, &mut heard, notify_at, asking).await
     };
+    let answer = match answer {
+        Ok(a) => a,
+        Err(parked) => {
+            // Not timed out: waiting for a later review, which the ticket tells.
+            entry.hear(&heard.borrow_and_update());
+            entry.end(Outcome::TimedOut, Some(&format!("Parked for review (ticket {}).", parked.ticket)));
+            journal.record(&entry);
+            if !interactive && let Some(tell) = tell {
+                tell(&format!("reins: parked for review on your phone (ticket {}).", parked.ticket));
+            }
+            return (Err(parked), false, entry);
+        }
+    };
     let (outcome, reason) = outcome(&answer, started.elapsed(), timeout);
     entry.hear(&heard.borrow_and_update());
     entry.end(outcome, reason.as_deref());
@@ -225,7 +399,7 @@ pub async fn ask_logged_entry(
     {
         tell(&crate::phone::ended_line(who, outcome, reason.as_deref(), timeout));
     }
-    (answer, outcome == Outcome::TimedOut, entry)
+    (Ok(answer), outcome == Outcome::TimedOut, entry)
 }
 
 /// How long "Send a test to my phone" waits.
@@ -256,18 +430,31 @@ pub async fn send_test(paths: &Paths, config: &Config, prompter: &dyn Prompter) 
 
 /// Asks the phone through the Reins server and waits up to `timeout` for its sealed answer.
 pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout: Duration) -> Answer {
+    ask_phone_ticketed(paths, identity, q, timeout, None).await.unwrap_or_else(|p| p.unanswered())
+}
+
+/// [`ask_phone`]; with `ticketing` the question carries the command's digest, and comes back [`Parked`] when the
+/// reviewer will decide later.
+pub async fn ask_phone_ticketed(
+    paths: &Paths,
+    identity: &Identity,
+    q: &Question,
+    timeout: Duration,
+    ticketing: Option<Ticketing<'_>>,
+) -> Result<Answer, Parked> {
     let client = match DesktopClient::new(paths) {
         Ok(c) => c,
-        Err(e) => return Answer::Unanswered(e),
+        Err(e) => return Ok(Answer::Unanswered(e)),
     };
     let deadline = Instant::now() + timeout;
     let nonce = crate::server::random_token(16);
-    let args = q.arguments(&identity.public_key(), &nonce);
-    let late = || Answer::Unanswered(format!("No answer on your phone within {} s.", timeout.as_secs()));
+    let args = q.arguments(&identity.public_key(), &nonce, ticketing.map(|t| t.digest));
+    let defer = ticketing.is_some_and(|t| t.defer);
+    let late = || Ok(Answer::Unanswered(format!("No answer on your phone within {} s.", timeout.as_secs())));
     let mut answer =
-        match tokio::time::timeout(timeout, client.call_waiting(ASK_TOOL, &args, None, Some(timeout))).await {
+        match tokio::time::timeout(timeout, client.call_with(ASK_TOOL, &args, None, Some(timeout), defer)).await {
             Ok(Ok(a)) => a,
-            Ok(Err(e)) => return link_failure(e),
+            Ok(Err(e)) => return Ok(link_failure(e)),
             Err(_) => return late(),
         };
     loop {
@@ -279,7 +466,34 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
         match status {
             CallStatus::Answered(outcome) => {
                 log::info!("{ASK_TOOL}: the phone answered request {request_id}");
-                return open(identity, &nonce, outcome);
+                return Ok(open(identity, &nonce, outcome));
+            }
+            CallStatus::Deferred {
+                ticket,
+                expected_by,
+                ..
+            } => {
+                log::info!("{ASK_TOOL}: request {request_id} parked for review as {ticket}");
+                let parked = Parked {
+                    ticket,
+                    nonce,
+                    expected_by,
+                };
+                // Without a digest no later approval can be bound to this question: not approved now, and no ticket.
+                return if ticketing.is_some() {
+                    Err(parked)
+                } else {
+                    Ok(parked.unanswered())
+                };
+            }
+            CallStatus::Closed {
+                state,
+                ..
+            } => {
+                return Ok(Answer::Unanswered(format!(
+                    "Not approved: the question is {}.",
+                    state.as_str().replace('_', " ")
+                )));
             }
             CallStatus::Pending | CallStatus::Offline => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -290,7 +504,7 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 answer = match tokio::time::timeout(remaining, client.poll(&request_id)).await {
                     Ok(Ok(a)) => a,
-                    Ok(Err(e)) => return link_failure(e),
+                    Ok(Err(e)) => return Ok(link_failure(e)),
                     Err(_) => return late(),
                 };
             }
@@ -502,8 +716,41 @@ mod tests {
         assert!(Question::new(" \n ", None, None).is_err());
         let q = Question::new("q", Some("  "), Some("")).unwrap();
         assert_eq!((q.detail, q.topic), (None, None));
-        let args = Question::new("q", None, None).unwrap().arguments("k", "n");
+        let args = Question::new("q", None, None).unwrap().arguments("k", "n", None);
         assert_eq!(args, json!({"question": "q", "client_key": "k", "nonce": "n"}));
+        let args = Question::new("q", None, None).unwrap().arguments("k", "n", Some("d"));
+        assert_eq!(args["digest"], "d");
+    }
+
+    #[test]
+    fn invisible_characters_are_shown_and_never_reach_whole() {
+        let q = Question::new("Deploy\u{202e}txt\u{2028}?", Some("make deploy\u{200b}\nok\u{2028}x"), None).unwrap();
+        // The phone is sent them written out; a separator never folds away, even locally.
+        assert_eq!(q.question, "Deploy\u{202e}txt⟨U+2028⟩?");
+        let sent = q.sent();
+        assert_eq!(sent.question, "Deploy⟨U+202E⟩txt⟨U+2028⟩?");
+        assert_eq!(sent.detail.as_deref(), Some("make deploy⟨U+200B⟩\nok⟨U+2028⟩x"));
+        let args = q.arguments("k", "n", None);
+        assert_eq!(
+            (args["question"].as_str(), args["detail"].as_str()),
+            (Some(sent.question.as_str()), sent.detail.as_deref())
+        );
+        assert!(reaches_whole("Deploy?", Some("make deploy\n\tnow"), Some("command:make")));
+        for (question, detail) in [
+            ("Deploy\u{202e}?", None),
+            ("Deploy?", Some("make\u{feff} deploy")),
+            ("Deploy?", Some("make\u{2029}deploy")),
+            ("Deploy?", Some("make\u{e0041}deploy")),
+            ("Deploy\u{7}?", None),
+        ] {
+            assert!(!reaches_whole(question, detail, None), "{question:?} {detail:?}");
+        }
+        for c in ['\u{ad}', '\u{61c}', '\u{180e}', '\u{2066}', '\u{3164}', '\u{fe0f}', '\u{fff9}', '\u{f0000}'] {
+            assert!(invisible(c), "{c:?}");
+        }
+        for c in ['a', ' ', 'é', 'ж', '→', '…'] {
+            assert!(!invisible(c), "{c:?}");
+        }
     }
 
     #[test]

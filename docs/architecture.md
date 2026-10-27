@@ -94,7 +94,8 @@ acknowledged `seq` and, for the primary, its latest heartbeat), `reins_ops` (sig
 Vaultwarden's `organizations`, `users_organizations` and `groups` and add `reins_orgs` (tier, sign-in binding),
 `reins_org_domains` and `reins_org_verified_domains`, `reins_org_members` (each member's state in its org: the
 org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin changes), `reins_org_devices`
-(enrolled devices, attestations, posture) and `reins_org_events` (the hash-linked admin events). Everything else is in memory with a time limit, so
+(enrolled devices, attestations, posture) and `reins_org_events` (the hash-linked admin events), and for deferred decisions `reins_tickets`,
+`reins_ticket_events`, `reins_device_keys` and `reins_callbacks`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows
@@ -164,6 +165,63 @@ of one relay wait, up to the 10 minutes.
 
 For reads, the phone runs the search itself and checks each result against the grants. The AI's query is only a
 prefilter, so query syntax cannot widen what a grant allows.
+
+### Deferred decisions (tickets)
+
+A request nobody answers within its **Instant window** (`REINS_INSTANT_WINDOW_SECS`, default 2 min, at most 10)
+becomes a **ticket**, and the agent gets it at once instead of waiting:
+`{"status": "pending_review", "ticket": "rt_…", "expected_by": …, "next": …}`. This is not an error. The same happens
+when the agent asks for it (`_meta["dev.reins/defer"]` on `tools/call`, or `X-Reins-Defer: 1`; `reins ask --defer`),
+or when the reviewer taps **Later**. A ticket waits for its **Deferred window** (`REINS_DEFERRED_WINDOW_SECS`,
+default 4 h, at most 7 days). Phones from before tickets publish no box key; their requests stay Instant and expire
+after 10 minutes as before.
+
+- **Storage:**
+  - `reins_tickets` keeps metadata in clear: the ticket, its state, its deadlines, the connection and the request
+    digest (SHA-256 over the connection, the account and the call).
+  - The request itself is sealed on the server to the approval device's X25519 box key (`reins_device_keys`, published
+    with `PUT /reins/api/device`), and the clear copy is dropped.
+  - An agent's answer to a "Why?" is sealed the same way.
+- **Transitions** (`reins_proto::ticket::TicketState`) are recorded in `reins_ticket_events`:
+  - the phone's are signed with its Ed25519 device key and checked by the server against the key the device published;
+  - the server's own transitions (deferral, expiry, a cancellation, an agent's reply) are marked unsigned.
+- **Who runs it** (08 R9):
+  - **Writes** run on the phone when approved. Only a minimal result (ids, a status, a link) is kept for the agent.
+  - **Reads and desktop answers** are only approved. They run when the agent collects them (`reins_get_result`,
+    `reins_wait`, `GET /reins/desktop/calls/rt_…`): the phone runs the read again, releases only the items the owner
+    picked, and the result passes through memory to the waiting agent. A collect uses the approval once.
+  - Before anything runs, the phone revalidates: the request must be exactly the one approved (its digest), within its
+    window.
+- **Tools:** `reins_get_result` (a ticket or a request id), `reins_wait` (up to 10 minutes), `reins_cancel`,
+  `reins_tickets`, and `reins_reply` (answers a reviewer's "Why?").
+- **MCP resources:** tickets are also resources (`reins://tickets/rt_…`). A client that subscribes gets
+  `notifications/resources/updated` on `GET /mcp` with `Accept: text/event-stream`.
+- **Webhooks:** a connection can register an https callback (`PUT /reins/agent/callback`), after it echoes a
+  challenge.
+  - Reins POSTs only events the approval device signed (`ticket.approved`, `.denied`, `.expired`, `.stale`, `.done`),
+    with `Reins-Signature` and `Reins-Key`.
+  - A server can delay or drop them, but not forge an approval.
+- **Ordering and races:**
+  - The phone posts its signed approval first, and runs a write only once the server accepted it (the ticket was not
+    cancelled, expired or made stale meanwhile).
+  - A request the phone has already fetched is never parked behind its back. It becomes a ticket only by the phone's
+    own signed Later, or by the phone itself when the Instant window passes. It can't be withdrawn once fetched.
+  - The phone re-reads the open tickets on every sync, so one delivered while it couldn't keep it is not lost.
+  - An approved read's result waits five minutes for its agent. The ticket is done only once an agent received it,
+    and a parked push once the desktop app reports it pushed.
+- **Limits:** at most 50 open tickets per connection, and an identical call returns its open ticket. On the desktop,
+  pushes to one ref run in ticket order.
+- **Keys:**
+  - With phone roles, tickets are sealed to and checked against the roster primary's keys.
+  - A new approval phone closes the tickets sealed to the old one.
+  - The phone shows its signing key as twelve digits under a connection's More. Agents and the desktop app pin the key
+    and refuse a changed one until the user compares.
+- **Desktop:**
+  - A parked hook answers the agent with `Parked for review (ticket …)`. Later hook calls of the same session carry the
+    news.
+  - An approved command passes the hook once, bound to the digest of the exact raw call, for an hour.
+  - A parked `git push` is kept and pushed on approval, only if every ref is still where git found it; otherwise the
+    ticket is Stale. `reins tickets` and `reins wait` cover scripts.
 
 ### Pairing an AI or the desktop app
 

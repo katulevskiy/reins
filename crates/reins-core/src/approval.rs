@@ -213,6 +213,17 @@ impl Engine {
                 "This request was already attempted. Check Activity and the provider before creating a new request; do not repeat this approval.",
             ));
         }
+        // A ticket runs only as the request it was made for, within its window (03 §6); the owner's picks are what a
+        // later collect may release.
+        self.revalidate_ticket(request_id, &parked.request)?;
+        if source == crate::authorization::AuthorizationSource::OwnerReview {
+            self.record_ticket_selection(request_id, &choice.selected_message_ids)?;
+        }
+        // A ticket's approval is signed and accepted by the server before anything runs: cancelled, expired or stale
+        // meanwhile means nothing runs (07 review: never execute first and report after).
+        if source != crate::authorization::AuthorizationSource::TicketCollect {
+            self.approve_ticket_first(&session, request_id).await?;
+        }
         // This explicit source follows the entry point; Auto, Bypass and Overnight cannot impersonate an owner tap.
         self.authorization_execute(&parked.request, source)?;
         let now = unix_now();
@@ -412,6 +423,25 @@ impl Engine {
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn deny_claimed(&self, request_id: &str) -> Result<(), CoreError> {
+        self.deny_claimed_with(request_id, None).await
+    }
+
+    /// The user refused, with a note for the agent ("Use the staging bucket").
+    pub async fn deny_with_note(&self, request_id: &str, note: Option<String>) -> Result<(), CoreError> {
+        let Some(_claim) = self.claim(request_id) else {
+            return Err(CoreError::NotFound);
+        };
+        let note = note.and_then(|n| reins_proto::ticket::clean_text(&n, reins_proto::ticket::MAX_NOTE_CHARS));
+        let decision = Decision::new("", self.ap_human_note(request_id));
+        let (result, _) = deciding(decision, self.deny_claimed_with(request_id, note)).await;
+        if result.is_ok() {
+            self.ap_learn(request_id, Verdict::Deny);
+        }
+        result
+    }
+
+    /// [`Engine::deny_claimed`] with the reviewer's note to the agent.
+    pub(crate) async fn deny_claimed_with(&self, request_id: &str, note: Option<String>) -> Result<(), CoreError> {
         // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
         self.require_decider()?;
         let session = self.session()?;
@@ -438,7 +468,7 @@ impl Engine {
             &session,
             request_id,
             RelayOutcome::Denied {
-                reason: None,
+                reason: note,
             },
         )
         .await

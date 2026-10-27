@@ -284,6 +284,43 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(categories.first { $0.identifier == "autopilot" }?.actions.map(\.identifier), ["report"])
     }
 
+    func testATicketsNotificationOffersDenyWithANote() {
+        let categories = NotificationRouter.categories()
+        let waiting = categories.first { $0.identifier == NotificationCategory.waiting.rawValue }
+        XCTAssertEqual(waiting?.actions.map(\.identifier), [NotificationAction.deny, NotificationAction.denyNote])
+        let note = waiting?.actions.last as? UNTextInputNotificationAction
+        XCTAssertNotNil(note, "the note is typed in the notification")
+        XCTAssertEqual(note?.title, "Deny with note")
+        XCTAssertEqual(note?.options.contains(.destructive), true)
+        XCTAssertEqual(note?.options.contains(.authenticationRequired), true, "only on an unlocked phone")
+        XCTAssertEqual(note?.options.contains(.foreground), false, "answered without opening the app")
+        XCTAssertFalse(waiting?.actions.contains { $0.identifier == NotificationAction.approve } ?? true, "never approved from here")
+        XCTAssertEqual(waiting?.hiddenPreviewsBodyPlaceholder, "Something is waiting for you")
+        XCTAssertEqual(NotificationCategory.waiting.thread, "requests")
+        XCTAssertTrue(NotificationSweep.itemCategories.contains(NotificationCategory.waiting.rawValue), "swept once the ticket is gone")
+    }
+
+    func testATicketArrivesQuietlyUnlessLittleTimeIsLeft() {
+        func ticket(deadline: Int64, reply: String? = nil) -> PendingItem {
+            var t = item()
+            t.quick = true
+            t.ticket = TicketView(ticket: "rt_1", state: "deferred", deferredAt: now, deadline: deadline, question: reply == nil ? nil : "Why?", agentReply: reply, stale: nil)
+            t.waitUntil = deadline
+            return t
+        }
+        let quiet = NotificationContent.pending(ticket(deadline: now + 4 * 3_600), settings: FeedbackSettings(), now: now)
+        XCTAssertEqual(quiet.categoryIdentifier, "waiting", "a routine ticket is still not approved from the notification")
+        XCTAssertEqual(quiet.interruptionLevel, .active)
+        XCTAssertNil(quiet.sound, "quiet by default")
+        XCTAssertTrue(quiet.body.hasSuffix("Due in 4 h"), quiet.body)
+        let urgent = NotificationContent.pending(ticket(deadline: now + 1_800), settings: FeedbackSettings(), now: now)
+        XCTAssertEqual(urgent.interruptionLevel, .timeSensitive, "under an hour left")
+        XCTAssertNotNil(urgent.sound)
+        let answered = NotificationContent.pending(ticket(deadline: now + 7_200, reply: "For the release"), settings: FeedbackSettings(), now: now)
+        XCTAssertTrue(answered.body.hasSuffix("Agent says: For the release"), "the agent's words, labelled as its own")
+        XCTAssertEqual(NotificationContent.pending(item(), settings: FeedbackSettings()).interruptionLevel, .timeSensitive, "Instant as before")
+    }
+
     func testTheExtensionLeavesModelWorkToTheApp() {
         func settings(_ mode: AutopilotMode, connection: AutopilotMode = .manual, model: ModelState = .installed) -> AutopilotSettings {
             AutopilotSettings(

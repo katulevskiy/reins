@@ -127,6 +127,8 @@ libsqlite3-sys = { version = "0.38.2", optional = true }
 # Crypto-related libraries
 rand = "0.10.2"
 ring = "0.17.14"
+# Seals a parked request to the approval device (Decisions v2, 03 §9).
+crypto_box = { version = "0.9.1", features = ["seal", "std"] }
 rustls = { version = "0.23.44", features = ["ring", "std"], default-features = false }
 subtle = "2.6.1"
 

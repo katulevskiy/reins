@@ -47,6 +47,7 @@ pub mod sso;
 pub mod starter;
 pub mod store;
 pub mod text;
+pub mod tickets;
 pub mod titles;
 pub mod traits;
 pub mod types;

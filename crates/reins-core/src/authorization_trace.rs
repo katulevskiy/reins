@@ -66,6 +66,8 @@ pub(crate) struct AuthorizedResponse {
 pub enum AuthorizationReviewSource {
     Automatic,
     Owner,
+    /// The owner's earlier approval of a ticket, used when an agent collected it.
+    OwnerTicket,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +234,7 @@ impl Engine {
             source: match source {
                 AuthorizationSource::Automatic => AuthorizationReviewSource::Automatic,
                 AuthorizationSource::OwnerReview => AuthorizationReviewSource::Owner,
+                AuthorizationSource::TicketCollect => AuthorizationReviewSource::OwnerTicket,
             },
             verified_facts: normalized
                 .action

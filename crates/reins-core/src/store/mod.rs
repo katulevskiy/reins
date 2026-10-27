@@ -22,6 +22,7 @@ pub(crate) mod permissions;
 mod protected;
 pub(crate) mod records;
 mod snapshot;
+pub(crate) mod tickets;
 pub(crate) use protected::{ExecutionLease, Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
 mod secrets;
 mod sync;
@@ -59,6 +60,25 @@ const DEK_CHECK_PLAINTEXT: &[u8] = b"reins-dek-check";
 const SCHEMA: &str = "
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS received (id TEXT PRIMARY KEY, request TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tickets (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    request TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    execution TEXT NOT NULL,
+    valid_secs INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    deferred_at INTEGER NOT NULL,
+    deadline INTEGER NOT NULL,
+    question TEXT,
+    reply TEXT,
+    stale TEXT,
+    approved_at INTEGER,
+    valid_until INTEGER,
+    expiry_signed INTEGER NOT NULL DEFAULT 0,
+    approved_ids TEXT
+);
 CREATE TABLE IF NOT EXISTS session (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     server_url TEXT NOT NULL,
@@ -168,7 +188,7 @@ fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
-const MIGRATIONS: [&str; 12] = [
+const MIGRATIONS: [&str; 13] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -310,7 +330,30 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // The sync engine's own bookkeeping next to the log (`oplog::local`): the outbox of this phone's ops, the mirror of
     // what each record was in the store, and its marks.
     oplog::local::SCHEMA,
+    // Deferred decisions: the requests that became tickets, with their deadlines and this phone's approvals.
+    TICKETS_SCHEMA,
 ];
+const TICKETS_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS received (id TEXT PRIMARY KEY, request TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tickets (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    request TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    execution TEXT NOT NULL,
+    valid_secs INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    deferred_at INTEGER NOT NULL,
+    deadline INTEGER NOT NULL,
+    question TEXT,
+    reply TEXT,
+    stale TEXT,
+    approved_at INTEGER,
+    valid_until INTEGER,
+    expiry_signed INTEGER NOT NULL DEFAULT 0,
+    approved_ids TEXT
+);
+";
 const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
     AND json_extract(grant_json, '$.scope.service') = 'desktop';
@@ -579,6 +622,23 @@ impl Store {
             params![format!("app.{key}"), value],
         )?;
         Ok(())
+    }
+
+    /// A value sealed with the data key (`key` is its associated data), as stored by [`Self::meta_set_sealed`]. `None`
+    /// when there is none; an error when it can't be opened (another data key, a changed row).
+    pub(crate) fn meta_get_sealed(&self, key: &str) -> Result<Option<Vec<u8>>, CoreError> {
+        let Some(text) = self.meta_get(key)? else {
+            return Ok(None);
+        };
+        let blob =
+            data_encoding::BASE64.decode(text.as_bytes()).map_err(|_| CoreError::storage("corrupt sealed value"))?;
+        self.unseal(key, &blob).map(Some)
+    }
+
+    /// Seals `value` with the data key and keeps it under `key`.
+    pub(crate) fn meta_set_sealed(&self, key: &str, value: &[u8]) -> Result<(), CoreError> {
+        let sealed = self.seal(key, value)?;
+        self.meta_set(key, &data_encoding::BASE64.encode(&sealed))
     }
 
     pub(crate) fn bound_owner(&self) -> Option<Owner> {
@@ -931,7 +991,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());

@@ -471,6 +471,42 @@ pub struct Config {
     /// Left out when it is the default, so a config this writes still loads in a build that predates it.
     #[serde(skip_serializing_if = "WorkspaceConfig::is_default")]
     pub workspace: WorkspaceConfig,
+    /// Auto on this computer (`[auto]`): the facts it zones requests with, its matrix, and whether the matrix decides.
+    /// Left out of a written configuration while it is the default.
+    #[serde(skip_serializing_if = "AutoConfig::is_default")]
+    pub auto: AutoConfig,
+}
+
+/// `[auto]`: Decisions v2 on this computer (`docs/design/decisions-v2/08-review-resolutions.md` R1: the engine and
+/// the context graph run where the facts are). Off (`matrix_decides = false`) the matrix only runs in shadow: what it
+/// would decide is kept on the Activity entry and the guard decides as before.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AutoConfig {
+    /// The matrix decides hook requests (Auto: allowed without the phone; Ask: asked even without a guard rule).
+    pub matrix_decides: bool,
+    /// The owner went through this computer's setup.
+    pub setup_done: bool,
+    /// Zones of GitHub owners, repositories and hosts, as the owner set them here.
+    pub facts: reins_policy::context::Facts,
+    pub matrix: reins_policy::matrix::Matrix,
+}
+
+impl AutoConfig {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The snapshot hook requests are evaluated against: these facts and this matrix, no rules.
+    #[must_use]
+    pub fn snapshot(&self) -> reins_policy::matrix::Snapshot {
+        reins_policy::matrix::Snapshot {
+            matrix: self.matrix.clone(),
+            facts: self.facts.clone(),
+            ..reins_policy::matrix::Snapshot::default()
+        }
+    }
 }
 
 /// `[workspace]`: the folders where an agent's work is expected (`docs/design/decisions-v2/01-decision-engine.md`
@@ -520,6 +556,7 @@ impl Default for Config {
             secrets: crate::secrets_scan::SecretsConfig::default(),
             profiles: Vec::new(),
             workspace: WorkspaceConfig::default(),
+            auto: AutoConfig::default(),
         }
     }
 }

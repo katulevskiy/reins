@@ -198,6 +198,14 @@ class MainSafeCore(
 
     override suspend fun deny(requestId: String) = io { deny(requestId) }
 
+    override suspend fun decideLater(requestId: String) = io { decideLater(requestId) }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) = io { denyWithNote(requestId, note) }
+
+    override suspend fun askWhy(requestId: String, question: String) = io { askWhy(requestId, question) }
+
+    override suspend fun signingKeyFingerprint(): String = io { signingKeyFingerprint() }
+
     override suspend fun gmailStatus(): GmailStatus = io { gmailStatus() }
 
     override suspend fun grants(): List<GrantView> = io { grants() }
@@ -461,6 +469,29 @@ class MainSafeCore(
     override suspend fun autopilotSuggestion(requestId: String): SuggestionView? = io { autopilotSuggestion(requestId) }
 
     override suspend fun correctDecision(activityId: Long, shouldHave: Verdict) = io { correctDecision(activityId, shouldHave) }
+
+    // ---- Decisions v2: Auto's setup, questions, Ask me next time --------------------------------------------------
+
+    override suspend fun autoSetup(): dev.reins.core.AutoSetup = io { autoSetup() }
+
+    override suspend fun setWorldZone(kind: dev.reins.core.FactChoice, key: String, zone: dev.reins.core.ZoneChoice, owner: OwnerCheck) =
+        io { setWorldZone(kind, key, zone, owner) }
+
+    override suspend fun setMatrixCell(zone: dev.reins.core.ZoneChoice, level: UByte, cell: dev.reins.core.CellChoice, owner: OwnerCheck) =
+        io { setMatrixCell(zone, level, cell, owner) }
+
+    override suspend fun finishAutoSetup(owner: OwnerCheck) = io { finishAutoSetup(owner) }
+
+    override suspend fun setMatrixDecides(on: Boolean, owner: OwnerCheck) = io { setMatrixDecides(on, owner) }
+
+    override suspend fun autoQuestions(): List<dev.reins.core.AutoQuestion> = io { autoQuestions() }
+
+    override suspend fun answerAutoQuestion(id: String, zone: dev.reins.core.ZoneChoice, owner: OwnerCheck) =
+        io { answerAutoQuestion(id, zone, owner) }
+
+    override suspend fun dismissAutoQuestion(id: String) = io { dismissAutoQuestion(id) }
+
+    override suspend fun askMeNextTime(requestId: String) = io { askMeNextTime(requestId) }
 
     override suspend fun modelStatus(): ModelStatus = io { modelStatus() }
 

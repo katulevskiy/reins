@@ -2707,262 +2707,6 @@ public func FfiConverterTypeOwnerCheck_lower(_ value: OwnerCheck) -> UInt64 {
 
 
 
-/**
- * The device's profiles (`<base>/profiles.json`).
- */
-public protocol ProfileRegistryProtocol: AnyObject, Sendable {
-    
-    /**
-     * The profile the app shows now (Personal unless another was chosen).
-     */
-    func active()  -> AccountProfile
-    
-    /**
-     * Reserves a new work profile for "Add work account": its data directory and key alias, before anyone signs in.
-     * Sign in on a core at that directory, then [`Self::confirm_managed`] with the account's org, or
-     * [`Self::remove`] it. An earlier unfinished one is dropped.
-     */
-    func beginManaged(serverUrl: String) throws  -> AccountProfile
-    
-    /**
-     * Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
-     * the Personal account, or when this phone already has that org's work profile.
-     */
-    func confirmManaged(id: String, orgId: String, orgName: String, email: String) throws  -> AccountProfile
-    
-    /**
-     * Every profile, Personal first (not the ones still signing in).
-     */
-    func list()  -> [AccountProfile]
-    
-    /**
-     * Remembers the Personal account's email (so a work profile can't be the same account).
-     */
-    func notePersonal(email: String?) throws 
-    
-    /**
-     * Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
-     * profile can't be removed here.
-     */
-    func remove(id: String) throws 
-    
-    /**
-     * Shows `id` from now on.
-     */
-    func setActive(id: String) throws 
-    
-}
-/**
- * The device's profiles (`<base>/profiles.json`).
- */
-open class ProfileRegistry: ProfileRegistryProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_reins_core_fn_clone_profileregistry(self.handle, $0) }
-    }
-    /**
-     * The registry of the profiles kept under `base_dir` (the folder that holds today's `core` directory).
-     */
-public convenience init(baseDir: String) {
-    let handle =
-        try! rustCall() {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_constructor_profileregistry_new(
-        FfiConverterString.lower(baseDir),uniffiCallStatus
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_reins_core_fn_free_profileregistry(handle, $0) }
-    }
-
-    
-
-    
-    /**
-     * The profile the app shows now (Personal unless another was chosen).
-     */
-open func active() -> AccountProfile  {
-    return try!  FfiConverterTypeAccountProfile_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_active(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Reserves a new work profile for "Add work account": its data directory and key alias, before anyone signs in.
-     * Sign in on a core at that directory, then [`Self::confirm_managed`] with the account's org, or
-     * [`Self::remove`] it. An earlier unfinished one is dropped.
-     */
-open func beginManaged(serverUrl: String)throws  -> AccountProfile  {
-    return try  FfiConverterTypeAccountProfile_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_begin_managed(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(serverUrl),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
-     * the Personal account, or when this phone already has that org's work profile.
-     */
-open func confirmManaged(id: String, orgId: String, orgName: String, email: String)throws  -> AccountProfile  {
-    return try  FfiConverterTypeAccountProfile_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_confirm_managed(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(id),
-        FfiConverterString.lower(orgId),
-        FfiConverterString.lower(orgName),
-        FfiConverterString.lower(email),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Every profile, Personal first (not the ones still signing in).
-     */
-open func list() -> [AccountProfile]  {
-    return try!  FfiConverterSequenceTypeAccountProfile.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_list(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Remembers the Personal account's email (so a work profile can't be the same account).
-     */
-open func notePersonal(email: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_note_personal(
-            self.uniffiCloneHandle(),
-        FfiConverterOptionString.lower(email),uniffiCallStatus
-    )
-}
-}
-    
-    /**
-     * Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
-     * profile can't be removed here.
-     */
-open func remove(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_remove(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(id),uniffiCallStatus
-    )
-}
-}
-    
-    /**
-     * Shows `id` from now on.
-     */
-open func setActive(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_method_profileregistry_set_active(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(id),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeProfileRegistry: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = ProfileRegistry
-
-    public static func lift(_ handle: UInt64) throws -> ProfileRegistry {
-        return ProfileRegistry(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: ProfileRegistry) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProfileRegistry {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: ProfileRegistry, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProfileRegistry_lift(_ handle: UInt64) throws -> ProfileRegistry {
-    return try FfiConverterTypeProfileRegistry.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProfileRegistry_lower(_ value: ProfileRegistry) -> UInt64 {
-    return FfiConverterTypeProfileRegistry.lower(value)
-}
-
-
-
-
-
-
 public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
@@ -3053,6 +2797,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String) async throws  -> [VaultPasskeyView]
     
     /**
+     * Answers a question with a zone (anything but Outside asks `owner` first).
+     */
+    func answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck) async throws 
+    
+    /**
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
     func answerBlob(id: String, approve: Bool) async throws 
@@ -3080,9 +2829,24 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approveQuick(requestId: String) async throws 
     
     /**
+     * "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
+     */
+    func askMeNextTime(requestId: String) async throws 
+    
+    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
     func assignProfile(connectionId: String, profileId: String?) async throws 
+    
+    /**
+     * The open "Auto needs information" questions, newest first. They are listed, never notified.
+     */
+    func autoQuestions() async throws  -> [AutoQuestion]
+    
+    /**
+     * Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
+     */
+    func autoSetup() async throws  -> AutoSetup
     
     /**
      * The "Try it" playground: how a profile judges a situation typed in the §4 format (nothing is kept).
@@ -3176,6 +2940,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func dismissAccountSyncNotice() async throws 
     
     /**
+     * Dismisses a question: the thing stays Outside and isn't asked about again.
+     */
+    func dismissAutoQuestion(id: String) async throws 
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
@@ -3214,6 +2983,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Opens one email listed in the activity: fetched from Gmail now, `account` being the entry's account.
      */
     func fetchEmail(account: String?, messageId: String) async throws  -> EmailContent
+    
+    /**
+     * Finishes Auto's setup and turns Auto on, after `owner` confirms.
+     */
+    func finishAutoSetup(owner: OwnerCheck) async throws 
     
     /**
      * Asks the token provider for a token and reports whether Gmail is usable.
@@ -3328,33 +3102,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func modelUpdatePending() async  -> Bool
     
     /**
-     * A fresh challenge for enrolling this device to the work account's org: sign
-     * `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
-     */
-    func orgChallenge() async throws  -> String
-    
-    /**
-     * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
-     * over the challenge, the platform's attestations and the posture.
-     */
-    func orgEnroll(challenge: String, input: EnrollInput) async throws 
-    
-    /**
-     * The signed-in account's organization (a work profile's); `None` for a Personal account.
-     */
-    func orgMembership() async throws  -> OrgView?
-    
-    /**
-     * Reports the enrolled device's posture now (at start-up and when it changes).
-     */
-    func orgReportPosture(posture: PostureInput) async throws 
-    
-    /**
-     * Whether `server_url` offers organizations ("Add work account" is shown only then).
-     */
-    func orgsOffered(serverUrl: String) async throws  -> Bool
-    
-    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -3419,11 +3166,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The proposals waiting for the primary (on every phone of the roster).
      */
     func proposals() async throws  -> [ProposalView]
-    
-    /**
-     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
-     */
-    func pushTag() async throws  -> String?
     
     func registerDevice(fcmToken: String?) async throws 
     
@@ -3604,6 +3346,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setDefaultProfile(profileId: String) async throws 
     
     /**
+     * Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
+     */
+    func setMatrixCell(zone: ZoneChoice, level: UInt8, cell: CellChoice, owner: OwnerCheck) async throws 
+    
+    /**
+     * Lets the matrix decide (asks `owner`), or returns it to shadow.
+     */
+    func setMatrixDecides(on: Bool, owner: OwnerCheck) async throws 
+    
+    /**
      * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
@@ -3634,6 +3386,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws 
     
     /**
+     * Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
+     */
+    func setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck) async throws 
+    
+    /**
      * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
      */
     func shuffleConnectionBlobatar(connectionId: String) async throws  -> Blobatar
@@ -3650,12 +3407,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
      */
     func ssoBegin(serverUrl: String) async throws  -> SsoStart
-    
-    /**
-     * "Add work account": like `sso_begin`, sent straight to the organization that verified `domain` (`acme.com`)
-     * through its SSO or Team provider. Run it on the work profile's own core (`ProfileRegistry`), then `sso_finish`.
-     */
-    func ssoBeginWork(serverUrl: String, domain: String) async throws  -> SsoStart
     
     /**
      * Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
@@ -4243,6 +3994,25 @@ open func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String)asyn
 }
     
     /**
+     * Answers a question with a zone (anything but Outside asks `owner` first).
+     */
+open func answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_answer_auto_question(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterTypeZoneChoice_lower(zone),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
 open func answerBlob(id: String, approve: Bool)async throws   {
@@ -4354,6 +4124,25 @@ open func approveQuick(requestId: String)async throws   {
 }
     
     /**
+     * "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
+     */
+open func askMeNextTime(requestId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_ask_me_next_time(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
 open func assignProfile(connectionId: String, profileId: String?)async throws   {
@@ -4368,6 +4157,44 @@ open func assignProfile(connectionId: String, profileId: String?)async throws   
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The open "Auto needs information" questions, newest first. They are listed, never notified.
+     */
+open func autoQuestions()async throws  -> [AutoQuestion]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_auto_questions(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeAutoQuestion.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
+     */
+open func autoSetup()async throws  -> AutoSetup  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_auto_setup(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAutoSetup_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4730,6 +4557,25 @@ open func dismissAccountSyncNotice()async throws   {
 }
     
     /**
+     * Dismisses a question: the thing stays Outside and isn't asked about again.
+     */
+open func dismissAutoQuestion(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_dismiss_auto_question(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
 open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus  {
@@ -4877,6 +4723,25 @@ open func fetchEmail(account: String?, messageId: String)async throws  -> EmailC
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeEmailContent_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Finishes Auto's setup and turns Auto on, after `owner` confirms.
+     */
+open func finishAutoSetup(owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_finish_auto_setup(
+                        self.uniffiCloneHandle(),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5333,103 +5198,6 @@ open func modelUpdatePending()async  -> Bool  {
 }
     
     /**
-     * A fresh challenge for enrolling this device to the work account's org: sign
-     * `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
-     */
-open func orgChallenge()async throws  -> String  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_org_challenge(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterString.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
-     * over the challenge, the platform's attestations and the posture.
-     */
-open func orgEnroll(challenge: String, input: EnrollInput)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_org_enroll(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(challenge),FfiConverterTypeEnrollInput_lower(input)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The signed-in account's organization (a work profile's); `None` for a Personal account.
-     */
-open func orgMembership()async throws  -> OrgView?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_org_membership(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeOrgView.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Reports the enrolled device's posture now (at start-up and when it changes).
-     */
-open func orgReportPosture(posture: PostureInput)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_org_report_posture(
-                        self.uniffiCloneHandle(),FfiConverterTypePostureInput_lower(posture)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_void,
-            completeFunc: ffi_reins_core_rust_future_complete_void,
-            freeFunc: ffi_reins_core_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * Whether `server_url` offers organizations ("Add work account" is shown only then).
-     */
-open func orgsOffered(serverUrl: String)async throws  -> Bool  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_orgs_offered(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_i8,
-            completeFunc: ffi_reins_core_rust_future_complete_i8,
-            freeFunc: ffi_reins_core_rust_future_free_i8,
-            liftFunc: FfiConverterBool.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -5660,25 +5428,6 @@ open func proposals()async throws  -> [ProposalView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeProposalView.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
-     */
-open func pushTag()async throws  -> String?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_push_tag(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6318,6 +6067,44 @@ open func setDefaultProfile(profileId: String)async throws   {
 }
     
     /**
+     * Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
+     */
+open func setMatrixCell(zone: ZoneChoice, level: UInt8, cell: CellChoice, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_matrix_cell(
+                        self.uniffiCloneHandle(),FfiConverterTypeZoneChoice_lower(zone),FfiConverterUInt8.lower(level),FfiConverterTypeCellChoice_lower(cell),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Lets the matrix decide (asks `owner`), or returns it to shadow.
+     */
+open func setMatrixDecides(on: Bool, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_matrix_decides(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(on),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
@@ -6425,6 +6212,25 @@ open func setThresholds(profileId: String, approveAt: Float, denyAt: Float)async
 }
     
     /**
+     * Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
+     */
+open func setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_world_zone(
+                        self.uniffiCloneHandle(),FfiConverterTypeFactChoice_lower(kind),FfiConverterString.lower(key),FfiConverterTypeZoneChoice_lower(zone),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
      */
 open func shuffleConnectionBlobatar(connectionId: String)async throws  -> Blobatar  {
@@ -6474,26 +6280,6 @@ open func ssoBegin(serverUrl: String)async throws  -> SsoStart  {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_sso_begin(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeSsoStart_lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * "Add work account": like `sso_begin`, sent straight to the organization that verified `domain` (`acme.com`)
-     * through its SSO or Team provider. Run it on the work profile's own core (`ProfileRegistry`), then `sso_finish`.
-     */
-open func ssoBeginWork(serverUrl: String, domain: String)async throws  -> SsoStart  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_sso_begin_work(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(domain)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
@@ -7923,115 +7709,6 @@ public func FfiConverterTypeAccountPermissionsView_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeAccountPermissionsView_lower(_ value: AccountPermissionsView) -> RustBuffer {
     return FfiConverterTypeAccountPermissionsView.lower(value)
-}
-
-
-/**
- * One profile, with everything a platform needs to run its core.
- */
-public struct AccountProfile: Equatable, Hashable {
-    public var id: String
-    public var kind: ProfileKind
-    /**
-     * `Personal`, or the org's name (the badge on cards and rows).
-     */
-    public var label: String
-    public var orgId: String?
-    public var email: String?
-    public var serverUrl: String?
-    /**
-     * The core's data directory.
-     */
-    public var dataDir: String
-    /**
-     * Appended to the platform's data-key alias / Keychain account (`""` for Personal: the existing one).
-     */
-    public var keyAlias: String
-    /**
-     * Put in front of notification channel ids and thread identifiers (`""` for Personal).
-     */
-    public var channelPrefix: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(id: String, kind: ProfileKind, 
-        /**
-         * `Personal`, or the org's name (the badge on cards and rows).
-         */label: String, orgId: String?, email: String?, serverUrl: String?, 
-        /**
-         * The core's data directory.
-         */dataDir: String, 
-        /**
-         * Appended to the platform's data-key alias / Keychain account (`""` for Personal: the existing one).
-         */keyAlias: String, 
-        /**
-         * Put in front of notification channel ids and thread identifiers (`""` for Personal).
-         */channelPrefix: String) {
-        self.id = id
-        self.kind = kind
-        self.label = label
-        self.orgId = orgId
-        self.email = email
-        self.serverUrl = serverUrl
-        self.dataDir = dataDir
-        self.keyAlias = keyAlias
-        self.channelPrefix = channelPrefix
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AccountProfile: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAccountProfile: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountProfile {
-        return
-            try AccountProfile(
-                id: FfiConverterString.read(from: &buf), 
-                kind: FfiConverterTypeProfileKind.read(from: &buf), 
-                label: FfiConverterString.read(from: &buf), 
-                orgId: FfiConverterOptionString.read(from: &buf), 
-                email: FfiConverterOptionString.read(from: &buf), 
-                serverUrl: FfiConverterOptionString.read(from: &buf), 
-                dataDir: FfiConverterString.read(from: &buf), 
-                keyAlias: FfiConverterString.read(from: &buf), 
-                channelPrefix: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AccountProfile, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.id, into: &buf)
-        FfiConverterTypeProfileKind.write(value.kind, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
-        FfiConverterOptionString.write(value.orgId, into: &buf)
-        FfiConverterOptionString.write(value.email, into: &buf)
-        FfiConverterOptionString.write(value.serverUrl, into: &buf)
-        FfiConverterString.write(value.dataDir, into: &buf)
-        FfiConverterString.write(value.keyAlias, into: &buf)
-        FfiConverterString.write(value.channelPrefix, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAccountProfile_lift(_ buf: RustBuffer) throws -> AccountProfile {
-    return try FfiConverterTypeAccountProfile.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAccountProfile_lower(_ value: AccountProfile) -> RustBuffer {
-    return FfiConverterTypeAccountProfile.lower(value)
 }
 
 
@@ -10161,66 +9838,6 @@ public func FfiConverterTypeAttentionReason_lower(_ value: AttentionReason) -> R
 }
 
 
-public struct AttestationInput: Equatable, Hashable {
-    public var kind: AttestationKindInput
-    /**
-     * As the platform gave it, base64.
-     */
-    public var data: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(kind: AttestationKindInput, 
-        /**
-         * As the platform gave it, base64.
-         */data: String) {
-        self.kind = kind
-        self.data = data
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension AttestationInput: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAttestationInput: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttestationInput {
-        return
-            try AttestationInput(
-                kind: FfiConverterTypeAttestationKindInput.read(from: &buf), 
-                data: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: AttestationInput, into buf: inout [UInt8]) {
-        FfiConverterTypeAttestationKindInput.write(value.kind, into: &buf)
-        FfiConverterString.write(value.data, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAttestationInput_lift(_ buf: RustBuffer) throws -> AttestationInput {
-    return try FfiConverterTypeAttestationInput.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAttestationInput_lower(_ value: AttestationInput) -> RustBuffer {
-    return FfiConverterTypeAttestationInput.lower(value)
-}
-
-
 /**
  * A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
  */
@@ -10335,6 +9952,200 @@ public func FfiConverterTypeAutoDecisionView_lower(_ value: AutoDecisionView) ->
 
 
 /**
+ * "Auto needs information": a party a request named that Auto doesn't know (01 §3, later questions).
+ */
+public struct AutoQuestion: Equatable, Hashable {
+    public var id: String
+    public var kind: FactChoice
+    /**
+     * What it is about ("octo", "bob@acme.io").
+     */
+    public var key: String
+    /**
+     * "github" | "email" | "messages" | "computers".
+     */
+    public var service: String
+    /**
+     * The AI connection whose request named it.
+     */
+    public var connectionLabel: String
+    public var requestId: String?
+    public var at: Int64
+    /**
+     * The answer the card preselects (Outside unless a fact suggests otherwise).
+     */
+    public var proposed: ZoneChoice
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: FactChoice, 
+        /**
+         * What it is about ("octo", "bob@acme.io").
+         */key: String, 
+        /**
+         * "github" | "email" | "messages" | "computers".
+         */service: String, 
+        /**
+         * The AI connection whose request named it.
+         */connectionLabel: String, requestId: String?, at: Int64, 
+        /**
+         * The answer the card preselects (Outside unless a fact suggests otherwise).
+         */proposed: ZoneChoice) {
+        self.id = id
+        self.kind = kind
+        self.key = key
+        self.service = service
+        self.connectionLabel = connectionLabel
+        self.requestId = requestId
+        self.at = at
+        self.proposed = proposed
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AutoQuestion: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAutoQuestion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AutoQuestion {
+        return
+            try AutoQuestion(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFactChoice.read(from: &buf), 
+                key: FfiConverterString.read(from: &buf), 
+                service: FfiConverterString.read(from: &buf), 
+                connectionLabel: FfiConverterString.read(from: &buf), 
+                requestId: FfiConverterOptionString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                proposed: FfiConverterTypeZoneChoice.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AutoQuestion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeFactChoice.write(value.kind, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.connectionLabel, into: &buf)
+        FfiConverterOptionString.write(value.requestId, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterTypeZoneChoice.write(value.proposed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutoQuestion_lift(_ buf: RustBuffer) throws -> AutoQuestion {
+    return try FfiConverterTypeAutoQuestion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutoQuestion_lower(_ value: AutoQuestion) -> RustBuffer {
+    return FfiConverterTypeAutoQuestion.lower(value)
+}
+
+
+/**
+ * Auto's setup (01 §9.1) and where it stands.
+ */
+public struct AutoSetup: Equatable, Hashable {
+    /**
+     * The owner finished the setup: turning on Auto no longer guides first.
+     */
+    public var done: Bool
+    /**
+     * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+     * decide is recorded on each entry).
+     */
+    public var matrixDecides: Bool
+    public var world: [WorldItem]
+    public var matrix: [MatrixRowView]
+    /**
+     * Open "Auto needs information" questions.
+     */
+    public var questions: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The owner finished the setup: turning on Auto no longer guides first.
+         */done: Bool, 
+        /**
+         * The matrix decides in Auto once the setup is done (else, or switched off, it runs in shadow: what it would
+         * decide is recorded on each entry).
+         */matrixDecides: Bool, world: [WorldItem], matrix: [MatrixRowView], 
+        /**
+         * Open "Auto needs information" questions.
+         */questions: UInt32) {
+        self.done = done
+        self.matrixDecides = matrixDecides
+        self.world = world
+        self.matrix = matrix
+        self.questions = questions
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AutoSetup: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAutoSetup: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AutoSetup {
+        return
+            try AutoSetup(
+                done: FfiConverterBool.read(from: &buf), 
+                matrixDecides: FfiConverterBool.read(from: &buf), 
+                world: FfiConverterSequenceTypeWorldItem.read(from: &buf), 
+                matrix: FfiConverterSequenceTypeMatrixRowView.read(from: &buf), 
+                questions: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AutoSetup, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.matrixDecides, into: &buf)
+        FfiConverterSequenceTypeWorldItem.write(value.world, into: &buf)
+        FfiConverterSequenceTypeMatrixRowView.write(value.matrix, into: &buf)
+        FfiConverterUInt32.write(value.questions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutoSetup_lift(_ buf: RustBuffer) throws -> AutoSetup {
+    return try FfiConverterTypeAutoSetup.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutoSetup_lower(_ value: AutoSetup) -> RustBuffer {
+    return FfiConverterTypeAutoSetup.lower(value)
+}
+
+
+/**
  * What Autopilot knew about an activity entry (spec §8).
  */
 public struct AutopilotNote: Equatable, Hashable {
@@ -10364,6 +10175,14 @@ public struct AutopilotNote: Equatable, Hashable {
      * The risk, when the model rated it.
      */
     public var risk: RiskView?
+    /**
+     * What the matrix decided, or would have decided in shadow (Decisions v2).
+     */
+    public var matrix: MatrixView?
+    /**
+     * The request it was about ("Ask me next time" takes it).
+     */
+    public var requestId: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10382,7 +10201,13 @@ public struct AutopilotNote: Equatable, Hashable {
          */correctable: Bool, 
         /**
          * The risk, when the model rated it.
-         */risk: RiskView? = nil) {
+         */risk: RiskView? = nil, 
+        /**
+         * What the matrix decided, or would have decided in shadow (Decisions v2).
+         */matrix: MatrixView? = nil, 
+        /**
+         * The request it was about ("Ask me next time" takes it).
+         */requestId: String = "") {
         self.mode = mode
         self.suggested = suggested
         self.pApprove = pApprove
@@ -10394,6 +10219,8 @@ public struct AutopilotNote: Equatable, Hashable {
         self.reason = reason
         self.correctable = correctable
         self.risk = risk
+        self.matrix = matrix
+        self.requestId = requestId
     }
 
     
@@ -10422,7 +10249,9 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
                 neighbours: FfiConverterSequenceString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
                 correctable: FfiConverterBool.read(from: &buf), 
-                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf), 
+                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf), 
+                requestId: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -10438,6 +10267,8 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
         FfiConverterString.write(value.reason, into: &buf)
         FfiConverterBool.write(value.correctable, into: &buf)
         FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
+        FfiConverterOptionTypeMatrixView.write(value.matrix, into: &buf)
+        FfiConverterString.write(value.requestId, into: &buf)
     }
 }
 
@@ -12525,88 +12356,6 @@ public func FfiConverterTypeEmailView_lower(_ value: EmailView) -> RustBuffer {
 
 
 /**
- * The device key the app made in secure hardware for this org, its signature over
- * [`crate::profiles::org_enrollment_message`] of the challenge, and what vouches for it.
- */
-public struct EnrollInput: Equatable, Hashable {
-    /**
-     * SubjectPublicKeyInfo DER, base64 (P-256).
-     */
-    public var deviceKey: String
-    /**
-     * ECDSA P-256 SHA-256, DER, base64.
-     */
-    public var signature: String
-    public var hardware: Bool
-    public var attestations: [AttestationInput]
-    public var posture: PostureInput
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * SubjectPublicKeyInfo DER, base64 (P-256).
-         */deviceKey: String, 
-        /**
-         * ECDSA P-256 SHA-256, DER, base64.
-         */signature: String, hardware: Bool, attestations: [AttestationInput], posture: PostureInput) {
-        self.deviceKey = deviceKey
-        self.signature = signature
-        self.hardware = hardware
-        self.attestations = attestations
-        self.posture = posture
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension EnrollInput: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeEnrollInput: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnrollInput {
-        return
-            try EnrollInput(
-                deviceKey: FfiConverterString.read(from: &buf), 
-                signature: FfiConverterString.read(from: &buf), 
-                hardware: FfiConverterBool.read(from: &buf), 
-                attestations: FfiConverterSequenceTypeAttestationInput.read(from: &buf), 
-                posture: FfiConverterTypePostureInput.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: EnrollInput, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.deviceKey, into: &buf)
-        FfiConverterString.write(value.signature, into: &buf)
-        FfiConverterBool.write(value.hardware, into: &buf)
-        FfiConverterSequenceTypeAttestationInput.write(value.attestations, into: &buf)
-        FfiConverterTypePostureInput.write(value.posture, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEnrollInput_lift(_ buf: RustBuffer) throws -> EnrollInput {
-    return try FfiConverterTypeEnrollInput.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEnrollInput_lower(_ value: EnrollInput) -> RustBuffer {
-    return FfiConverterTypeEnrollInput.lower(value)
-}
-
-
-/**
  * This phone asked to view the account: poll with `enroll_poll` until it shows the code to compare.
  */
 public struct EnrollStart: Equatable, Hashable {
@@ -14352,6 +14101,182 @@ public func FfiConverterTypeLiveSyncState_lower(_ value: LiveSyncState) -> RustB
 
 
 /**
+ * One row of the matrix, with real names from the owner's world.
+ */
+public struct MatrixRowView: Equatable, Hashable {
+    public var zone: ZoneChoice
+    /**
+     * L0 (undoable), L1 (recoverable), L2 (reaches people), L3 (can't be undone).
+     */
+    public var cells: [CellChoice]
+    /**
+     * Up to three names in this zone ("dkat", "acme").
+     */
+    public var names: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(zone: ZoneChoice, 
+        /**
+         * L0 (undoable), L1 (recoverable), L2 (reaches people), L3 (can't be undone).
+         */cells: [CellChoice], 
+        /**
+         * Up to three names in this zone ("dkat", "acme").
+         */names: [String]) {
+        self.zone = zone
+        self.cells = cells
+        self.names = names
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension MatrixRowView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMatrixRowView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MatrixRowView {
+        return
+            try MatrixRowView(
+                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
+                cells: FfiConverterSequenceTypeCellChoice.read(from: &buf), 
+                names: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MatrixRowView, into buf: inout [UInt8]) {
+        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
+        FfiConverterSequenceTypeCellChoice.write(value.cells, into: &buf)
+        FfiConverterSequenceString.write(value.names, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMatrixRowView_lift(_ buf: RustBuffer) throws -> MatrixRowView {
+    return try FfiConverterTypeMatrixRowView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMatrixRowView_lower(_ value: MatrixRowView) -> RustBuffer {
+    return FfiConverterTypeMatrixRowView.lower(value)
+}
+
+
+/**
+ * What the matrix decided, or would have decided in shadow, for a request.
+ */
+public struct MatrixView: Equatable, Hashable {
+    /**
+     * `Approve` = Auto, `Ask`, or `Deny` (an explicit rule).
+     */
+    public var outcome: Verdict
+    /**
+     * Asked because of a hard obligation (no permit could cover it).
+     */
+    public var hard: Bool
+    public var zone: ZoneChoice
+    /**
+     * 0..=3.
+     */
+    public var level: UInt8
+    /**
+     * "Auto · Mine · Undoable".
+     */
+    public var line: String
+    /**
+     * Recorded only: something else decided.
+     */
+    public var shadow: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `Approve` = Auto, `Ask`, or `Deny` (an explicit rule).
+         */outcome: Verdict, 
+        /**
+         * Asked because of a hard obligation (no permit could cover it).
+         */hard: Bool, zone: ZoneChoice, 
+        /**
+         * 0..=3.
+         */level: UInt8, 
+        /**
+         * "Auto · Mine · Undoable".
+         */line: String, 
+        /**
+         * Recorded only: something else decided.
+         */shadow: Bool) {
+        self.outcome = outcome
+        self.hard = hard
+        self.zone = zone
+        self.level = level
+        self.line = line
+        self.shadow = shadow
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension MatrixView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMatrixView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MatrixView {
+        return
+            try MatrixView(
+                outcome: FfiConverterTypeVerdict.read(from: &buf), 
+                hard: FfiConverterBool.read(from: &buf), 
+                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
+                level: FfiConverterUInt8.read(from: &buf), 
+                line: FfiConverterString.read(from: &buf), 
+                shadow: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MatrixView, into buf: inout [UInt8]) {
+        FfiConverterTypeVerdict.write(value.outcome, into: &buf)
+        FfiConverterBool.write(value.hard, into: &buf)
+        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
+        FfiConverterUInt8.write(value.level, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterBool.write(value.shadow, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMatrixView_lift(_ buf: RustBuffer) throws -> MatrixView {
+    return try FfiConverterTypeMatrixView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMatrixView_lower(_ value: MatrixView) -> RustBuffer {
+    return FfiConverterTypeMatrixView.lower(value)
+}
+
+
+/**
  * A call to a tool of an added MCP server, spelled out for the approval.
  */
 public struct McpCallView: Equatable, Hashable {
@@ -15210,97 +15135,6 @@ public func FfiConverterTypeNewDeviceEvent_lift(_ buf: RustBuffer) throws -> New
 #endif
 public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> RustBuffer {
     return FfiConverterTypeNewDeviceEvent.lower(value)
-}
-
-
-/**
- * The work account's organization, as the app shows it.
- */
-public struct OrgView: Equatable, Hashable {
-    public var orgId: String
-    public var name: String
-    /**
-     * `team`, `business`, `enterprise`.
-     */
-    public var tier: String
-    /**
-     * The roles' labels (`Security admin`, …).
-     */
-    public var roles: [String]
-    /**
-     * This device is enrolled (and not removed).
-     */
-    public var enrolled: Bool
-    public var githubOrgs: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(orgId: String, name: String, 
-        /**
-         * `team`, `business`, `enterprise`.
-         */tier: String, 
-        /**
-         * The roles' labels (`Security admin`, …).
-         */roles: [String], 
-        /**
-         * This device is enrolled (and not removed).
-         */enrolled: Bool, githubOrgs: [String]) {
-        self.orgId = orgId
-        self.name = name
-        self.tier = tier
-        self.roles = roles
-        self.enrolled = enrolled
-        self.githubOrgs = githubOrgs
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension OrgView: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeOrgView: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgView {
-        return
-            try OrgView(
-                orgId: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                tier: FfiConverterString.read(from: &buf), 
-                roles: FfiConverterSequenceString.read(from: &buf), 
-                enrolled: FfiConverterBool.read(from: &buf), 
-                githubOrgs: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: OrgView, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.orgId, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.tier, into: &buf)
-        FfiConverterSequenceString.write(value.roles, into: &buf)
-        FfiConverterBool.write(value.enrolled, into: &buf)
-        FfiConverterSequenceString.write(value.githubOrgs, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrgView_lift(_ buf: RustBuffer) throws -> OrgView {
-    return try FfiConverterTypeOrgView.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeOrgView_lower(_ value: OrgView) -> RustBuffer {
-    return FfiConverterTypeOrgView.lower(value)
 }
 
 
@@ -16307,81 +16141,6 @@ public func FfiConverterTypePermissionScopeSelection_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypePermissionScopeSelection_lower(_ value: PermissionScopeSelection) -> RustBuffer {
     return FfiConverterTypePermissionScopeSelection.lower(value)
-}
-
-
-/**
- * What the platform measured about the device (06 §6).
- */
-public struct PostureInput: Equatable, Hashable {
-    public var screenLock: Bool
-    public var osName: String
-    public var osVersion: String
-    /**
-     * `None`: the check could not run.
-     */
-    public var rooted: Bool?
-    public var appVersion: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(screenLock: Bool, osName: String, osVersion: String, 
-        /**
-         * `None`: the check could not run.
-         */rooted: Bool?, appVersion: String) {
-        self.screenLock = screenLock
-        self.osName = osName
-        self.osVersion = osVersion
-        self.rooted = rooted
-        self.appVersion = appVersion
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension PostureInput: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePostureInput: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PostureInput {
-        return
-            try PostureInput(
-                screenLock: FfiConverterBool.read(from: &buf), 
-                osName: FfiConverterString.read(from: &buf), 
-                osVersion: FfiConverterString.read(from: &buf), 
-                rooted: FfiConverterOptionBool.read(from: &buf), 
-                appVersion: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: PostureInput, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.screenLock, into: &buf)
-        FfiConverterString.write(value.osName, into: &buf)
-        FfiConverterString.write(value.osVersion, into: &buf)
-        FfiConverterOptionBool.write(value.rooted, into: &buf)
-        FfiConverterString.write(value.appVersion, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePostureInput_lift(_ buf: RustBuffer) throws -> PostureInput {
-    return try FfiConverterTypePostureInput.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePostureInput_lower(_ value: PostureInput) -> RustBuffer {
-    return FfiConverterTypePostureInput.lower(value)
 }
 
 
@@ -19406,6 +19165,10 @@ public struct SuggestionView: Equatable, Hashable {
      * The risk, when the model rates it.
      */
     public var risk: RiskView?
+    /**
+     * What the matrix decided, or would have decided in shadow (Decisions v2).
+     */
+    public var matrix: MatrixView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -19433,7 +19196,10 @@ public struct SuggestionView: Equatable, Hashable {
          */judged: Bool, 
         /**
          * The risk, when the model rates it.
-         */risk: RiskView? = nil) {
+         */risk: RiskView? = nil, 
+        /**
+         * What the matrix decided, or would have decided in shadow (Decisions v2).
+         */matrix: MatrixView? = nil) {
         self.requestId = requestId
         self.verdict = verdict
         self.mode = mode
@@ -19449,6 +19215,7 @@ public struct SuggestionView: Equatable, Hashable {
         self.floor = floor
         self.judged = judged
         self.risk = risk
+        self.matrix = matrix
     }
 
     
@@ -19481,7 +19248,8 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
                 novel: FfiConverterBool.read(from: &buf), 
                 floor: FfiConverterBool.read(from: &buf), 
                 judged: FfiConverterBool.read(from: &buf), 
-                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf), 
+                matrix: FfiConverterOptionTypeMatrixView.read(from: &buf)
         )
     }
 
@@ -19501,6 +19269,7 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.floor, into: &buf)
         FfiConverterBool.write(value.judged, into: &buf)
         FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
+        FfiConverterOptionTypeMatrixView.write(value.matrix, into: &buf)
     }
 }
 
@@ -20369,6 +20138,107 @@ public func FfiConverterTypeVaultUse_lower(_ value: VaultUse) -> RustBuffer {
 
 
 /**
+ * One thing on the "Your world" screen.
+ */
+public struct WorldItem: Equatable, Hashable {
+    public var kind: FactChoice
+    public var key: String
+    /**
+     * What the screen shows ("acme", "ann@example.com").
+     */
+    public var label: String
+    /**
+     * "github" | "email" | "messages" | "computers": the section it is listed in.
+     */
+    public var service: String
+    public var zone: ZoneChoice
+    /**
+     * The owner confirmed it (else it is a proposal, which decides nothing until confirmed).
+     */
+    public var confirmed: Bool
+    /**
+     * Requests that touched it in the last 30 days.
+     */
+    public var count: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: FactChoice, key: String, 
+        /**
+         * What the screen shows ("acme", "ann@example.com").
+         */label: String, 
+        /**
+         * "github" | "email" | "messages" | "computers": the section it is listed in.
+         */service: String, zone: ZoneChoice, 
+        /**
+         * The owner confirmed it (else it is a proposal, which decides nothing until confirmed).
+         */confirmed: Bool, 
+        /**
+         * Requests that touched it in the last 30 days.
+         */count: UInt32) {
+        self.kind = kind
+        self.key = key
+        self.label = label
+        self.service = service
+        self.zone = zone
+        self.confirmed = confirmed
+        self.count = count
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension WorldItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWorldItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WorldItem {
+        return
+            try WorldItem(
+                kind: FfiConverterTypeFactChoice.read(from: &buf), 
+                key: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                service: FfiConverterString.read(from: &buf), 
+                zone: FfiConverterTypeZoneChoice.read(from: &buf), 
+                confirmed: FfiConverterBool.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WorldItem, into buf: inout [UInt8]) {
+        FfiConverterTypeFactChoice.write(value.kind, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterTypeZoneChoice.write(value.zone, into: &buf)
+        FfiConverterBool.write(value.confirmed, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWorldItem_lift(_ buf: RustBuffer) throws -> WorldItem {
+    return try FfiConverterTypeWorldItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWorldItem_lower(_ value: WorldItem) -> RustBuffer {
+    return FfiConverterTypeWorldItem.lower(value)
+}
+
+
+/**
  * Whether this phone can open the account's vault.
  */
 
@@ -21058,86 +20928,6 @@ public func FfiConverterTypeAttentionLevel_lower(_ value: AttentionLevel) -> Rus
 
 
 
-
-public enum AttestationKindInput: Equatable, Hashable {
-    
-    case appAttest
-    case androidKeyAttestation
-    case playIntegrity
-    case none
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension AttestationKindInput: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeAttestationKindInput: FfiConverterRustBuffer {
-    typealias SwiftType = AttestationKindInput
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttestationKindInput {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .appAttest
-        
-        case 2: return .androidKeyAttestation
-        
-        case 3: return .playIntegrity
-        
-        case 4: return .none
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: AttestationKindInput, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .appAttest:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .androidKeyAttestation:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .playIntegrity:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .none:
-            writeInt(&buf, Int32(4))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAttestationKindInput_lift(_ buf: RustBuffer) throws -> AttestationKindInput {
-    return try FfiConverterTypeAttestationKindInput.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeAttestationKindInput_lower(_ value: AttestationKindInput) -> RustBuffer {
-    return FfiConverterTypeAttestationKindInput.lower(value)
-}
-
-
-
 /**
  * Something about Autopilot changed that the app shows (the bypass notification, the mode pill).
  */
@@ -21355,6 +21145,85 @@ public func FfiConverterTypeAutopilotMode_lift(_ buf: RustBuffer) throws -> Auto
 #endif
 public func FfiConverterTypeAutopilotMode_lower(_ value: AutopilotMode) -> RustBuffer {
     return FfiConverterTypeAutopilotMode.lower(value)
+}
+
+
+
+/**
+ * A matrix cell (01 §4).
+ */
+
+public enum CellChoice: Equatable, Hashable {
+    
+    case auto
+    case ask
+    /**
+     * Ask the first time per resource, then Auto.
+     */
+    case askFirst
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CellChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCellChoice: FfiConverterRustBuffer {
+    typealias SwiftType = CellChoice
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CellChoice {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .auto
+        
+        case 2: return .ask
+        
+        case 3: return .askFirst
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CellChoice, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .auto:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .ask:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .askFirst:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCellChoice_lift(_ buf: RustBuffer) throws -> CellChoice {
+    return try FfiConverterTypeCellChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCellChoice_lower(_ value: CellChoice) -> RustBuffer {
+    return FfiConverterTypeCellChoice.lower(value)
 }
 
 
@@ -22028,6 +21897,121 @@ public func FfiConverterTypeEnrollProgress_lift(_ buf: RustBuffer) throws -> Enr
 #endif
 public func FfiConverterTypeEnrollProgress_lower(_ value: EnrollProgress) -> RustBuffer {
     return FfiConverterTypeEnrollProgress.lower(value)
+}
+
+
+
+/**
+ * What a fact is about.
+ */
+
+public enum FactChoice: Equatable, Hashable {
+    
+    /**
+     * A GitHub user or organization.
+     */
+    case owner
+    /**
+     * One repository (`owner/name`).
+     */
+    case repo
+    /**
+     * An email domain.
+     */
+    case domain
+    /**
+     * A person (an address, a number, a handle).
+     */
+    case person
+    /**
+     * A computer or server.
+     */
+    case host
+    /**
+     * A chat or group.
+     */
+    case chat
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FactChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFactChoice: FfiConverterRustBuffer {
+    typealias SwiftType = FactChoice
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FactChoice {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .owner
+        
+        case 2: return .repo
+        
+        case 3: return .domain
+        
+        case 4: return .person
+        
+        case 5: return .host
+        
+        case 6: return .chat
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FactChoice, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .owner:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .repo:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .domain:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .person:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .host:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .chat:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFactChoice_lift(_ buf: RustBuffer) throws -> FactChoice {
+    return try FfiConverterTypeFactChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFactChoice_lower(_ value: FactChoice) -> RustBuffer {
+    return FfiConverterTypeFactChoice.lower(value)
 }
 
 
@@ -23460,72 +23444,6 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 
 
 
-
-public enum ProfileKind: Equatable, Hashable {
-    
-    case personal
-    case managed
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension ProfileKind: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeProfileKind: FfiConverterRustBuffer {
-    typealias SwiftType = ProfileKind
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProfileKind {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .personal
-        
-        case 2: return .managed
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: ProfileKind, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .personal:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .managed:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProfileKind_lift(_ buf: RustBuffer) throws -> ProfileKind {
-    return try FfiConverterTypeProfileKind.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeProfileKind_lower(_ value: ProfileKind) -> RustBuffer {
-    return FfiConverterTypeProfileKind.lower(value)
-}
-
-
-
 /**
  * Why an item deserves a closer look. Declaration order breaks ties between equal weights.
  */
@@ -24065,6 +23983,89 @@ public func FfiConverterTypeVerdict_lift(_ buf: RustBuffer) throws -> Verdict {
 #endif
 public func FfiConverterTypeVerdict_lower(_ value: Verdict) -> RustBuffer {
     return FfiConverterTypeVerdict.lower(value)
+}
+
+
+
+/**
+ * Whose a thing is (01 §3), least trusted last.
+ */
+
+public enum ZoneChoice: Equatable, Hashable {
+    
+    case mine
+    case friends
+    case work
+    case outside
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ZoneChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeZoneChoice: FfiConverterRustBuffer {
+    typealias SwiftType = ZoneChoice
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ZoneChoice {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .mine
+        
+        case 2: return .friends
+        
+        case 3: return .work
+        
+        case 4: return .outside
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ZoneChoice, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .mine:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .friends:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .work:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .outside:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeZoneChoice_lift(_ buf: RustBuffer) throws -> ZoneChoice {
+    return try FfiConverterTypeZoneChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeZoneChoice_lower(_ value: ZoneChoice) -> RustBuffer {
+    return FfiConverterTypeZoneChoice.lower(value)
 }
 
 
@@ -24743,6 +24744,30 @@ fileprivate struct FfiConverterOptionTypeGrantScopeChoice: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMatrixView: FfiConverterRustBuffer {
+    typealias SwiftType = MatrixView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMatrixView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMatrixView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
     typealias SwiftType = McpCallView?
 
@@ -24759,30 +24784,6 @@ fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMcpCallView.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeOrgView: FfiConverterRustBuffer {
-    typealias SwiftType = OrgView?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeOrgView.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeOrgView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -25299,31 +25300,6 @@ fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeAccountProfile: FfiConverterRustBuffer {
-    typealias SwiftType = [AccountProfile]
-
-    public static func write(_ value: [AccountProfile], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeAccountProfile.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AccountProfile] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [AccountProfile]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeAccountProfile.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeAccountView: FfiConverterRustBuffer {
     typealias SwiftType = [AccountView]
 
@@ -25549,23 +25525,23 @@ fileprivate struct FfiConverterSequenceTypeAttentionReason: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeAttestationInput: FfiConverterRustBuffer {
-    typealias SwiftType = [AttestationInput]
+fileprivate struct FfiConverterSequenceTypeAutoQuestion: FfiConverterRustBuffer {
+    typealias SwiftType = [AutoQuestion]
 
-    public static func write(_ value: [AttestationInput], into buf: inout [UInt8]) {
+    public static func write(_ value: [AutoQuestion], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeAttestationInput.write(item, into: &buf)
+            FfiConverterTypeAutoQuestion.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AttestationInput] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AutoQuestion] {
         let len: Int32 = try readInt(&buf)
-        var seq = [AttestationInput]()
+        var seq = [AutoQuestion]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeAttestationInput.read(from: &buf))
+            seq.append(try FfiConverterTypeAutoQuestion.read(from: &buf))
         }
         return seq
     }
@@ -26016,6 +25992,31 @@ fileprivate struct FfiConverterSequenceTypeHandoverView: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeHandoverView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMatrixRowView: FfiConverterRustBuffer {
+    typealias SwiftType = [MatrixRowView]
+
+    public static func write(_ value: [MatrixRowView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMatrixRowView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MatrixRowView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MatrixRowView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMatrixRowView.read(from: &buf))
         }
         return seq
     }
@@ -26774,6 +26775,31 @@ fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeWorldItem: FfiConverterRustBuffer {
+    typealias SwiftType = [WorldItem]
+
+    public static func write(_ value: [WorldItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeWorldItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [WorldItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [WorldItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeWorldItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAccountPermissionPreset: FfiConverterRustBuffer {
     typealias SwiftType = [AccountPermissionPreset]
 
@@ -26841,6 +26867,31 @@ fileprivate struct FfiConverterSequenceTypeActivityOutcome: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeActivityOutcome.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCellChoice: FfiConverterRustBuffer {
+    typealias SwiftType = [CellChoice]
+
+    public static func write(_ value: [CellChoice], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCellChoice.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CellChoice] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CellChoice]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCellChoice.read(from: &buf))
         }
         return seq
     }
@@ -27070,17 +27121,6 @@ public func paymentsParseAmount(text: String, currency: String)throws  -> Int64 
     )
 })
 }
-/**
- * The bytes a work profile's device key signs to enroll the device ([`reins_proto::org::enrollment_message`]).
- */
-public func orgEnrollmentMessage(challenge: String) -> Data  {
-    return try!  FfiConverterData.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_reins_core_fn_func_org_enrollment_message(
-        FfiConverterString.lower(challenge),uniffiCallStatus
-    )
-})
-}
 
 private enum InitializationResult {
     case ok
@@ -27104,9 +27144,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_payments_parse_amount() != 22380) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
@@ -27157,6 +27194,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_add_vault_passkey() != 42076) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_answer_auto_question() != 20247) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_answer_blob() != 10725) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27175,7 +27215,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_ask_me_next_time() != 14829) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_assign_profile() != 6030) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_auto_questions() != 22152) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_auto_setup() != 44664) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_autopilot_evaluate() != 55479) {
@@ -27235,6 +27284,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_dismiss_account_sync_notice() != 25355) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_dismiss_auto_question() != 20301) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27257,6 +27309,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_fetch_email() != 21111) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_finish_auto_setup() != 11391) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_gmail_status() != 55396) {
@@ -27331,21 +27386,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_model_update_pending() != 36444) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_org_enroll() != 20244) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_org_membership() != 16935) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_by_code() != 29957) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27380,9 +27420,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_proposals() != 10001) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_push_tag() != 15550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
@@ -27484,6 +27521,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_default_profile() != 2528) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_matrix_cell() != 19935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_set_matrix_decides() != 7476) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 3100) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27502,6 +27545,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_thresholds() != 38198) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_world_zone() != 41970) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_shuffle_connection_blobatar() != 1265) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27509,9 +27555,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_sso_begin_work() != 61458) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
@@ -27703,27 +27746,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_devicebridge_sms_send() != 18382) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_profileregistry_active() != 10535) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_begin_managed() != 29294) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_confirm_managed() != 21692) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_list() != 15158) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_note_personal() != 43240) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_remove() != 19697) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_profileregistry_set_active() != 40978) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_googletokenprovider_access_token() != 46941) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -27755,9 +27777,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_constructor_profileregistry_new() != 63460) {
         return InitializationResult.apiChecksumMismatch
     }
 

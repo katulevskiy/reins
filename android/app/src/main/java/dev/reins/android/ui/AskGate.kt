@@ -10,8 +10,11 @@ import dev.reins.core.PendingItem
  * moment before the decision (`AppState.markAutoDecided` keeps it out).
  */
 object AskGate {
-    /** The item to pop up by itself: the first one that waits for the owner and has not popped up before. */
-    fun next(waiting: List<PendingItem>, presented: Set<String>): PendingItem? = waiting.firstOrNull { it.id !in presented }
+    /**
+     * The item to pop up by itself: the first one that waits for the owner and has not popped up before. A ticket never
+     * pops up: the agent is not waiting on it, and it waits under "Waiting for you".
+     */
+    fun next(waiting: List<PendingItem>, presented: Set<String>): PendingItem? = waiting.firstOrNull { it.id !in presented && it.ticket == null }
 
     /** Whether the sheet open on [open] is the ask a mode or Autopilot just decided ([decidedId]): it closes. */
     fun closes(open: SheetTarget?, decidedId: String): Boolean = open != null && open.id == decidedId

@@ -1,7 +1,8 @@
 import SwiftUI
 
 // The Autopilot parts of the Activity screens (the Android app's ActivityAutopilot.kt): the modes in words, an entry's
-// outcome pill, "Why Autopilot allowed it" and the "This was wrong" dock. The header's mode chip is ActivityModeMenu.
+// outcome pill, "Why Autopilot allowed it", the "This was wrong" dock, the matrix's line and "Ask me next time". The
+// header's mode chip is ActivityModeMenu.
 
 /// Autopilot's modes in words, colours and symbols, as these screens show them.
 enum ModeLook {
@@ -317,6 +318,9 @@ struct AutopilotWhySheet: View {
                         .padding(.top, 12)
                         .onAppear { correctionShown = true }
                 }
+                if let entry, MatrixLook.asksNextTime(entry) {
+                    AskMeNextTimeDock(entry: entry)
+                }
             }
             .padding(.bottom, 24)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
@@ -444,6 +448,141 @@ struct ThisWasWrongDock: View {
             thanked = true
         }
         busy = false
+    }
+}
+
+/// What the matrix decided for an entry, or would have in shadow (01 §9.3), in words and a symbol (pure, unit-tested).
+enum MatrixLook {
+    /// "Auto · Mine · Undoable"; "Would be: Ask · Work · Reaches people" while the matrix only watches.
+    static func text(_ m: MatrixView) -> String {
+        let line = untrustedName(m.line, limit: 80)
+        return m.shadow ? "Would be: \(line)" : line
+    }
+
+    static func symbol(_ m: MatrixView) -> String {
+        if m.shadow { return "eye" }
+        switch m.outcome {
+        case .approve: return "bolt"
+        case .ask: return m.hard ? "lock" : "person.fill.questionmark"
+        case .deny: return "nosign"
+        }
+    }
+
+    /// "Ask me next time" is for what Auto itself let through, under the matrix.
+    static func asksNextTime(_ entry: ActivityEntry) -> Bool {
+        entry.decidedBy == "autopilot" && entry.outcome != "denied" && entry.autopilot?.matrix != nil
+    }
+}
+
+/// The matrix's line under an entry's facts: one quiet row with its symbol.
+struct MatrixLine: View {
+    var matrix: MatrixView
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: MatrixLook.symbol(matrix))
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Palette.inkMeta)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text(verbatim: MatrixLook.text(matrix))
+                .font(RFont.sans(14.5))
+                .foregroundStyle(Palette.ink2)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("matrixLine")
+    }
+}
+
+/// "Ask me next time" (01 §7) on what Auto let through: from now on that kind of thing here asks, and Auto pauses it for
+/// a day. Stricter only, so nothing to confirm. Shown once the request it was is known.
+struct AskMeNextTimeDock: View {
+    var entry: ActivityEntry
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+    @State private var requestId: String?
+    @State private var busy = false
+    @State private var done = false
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if done || requestId != nil {
+                SheetGroup { content }.padding(.top, 12)
+            } else {
+                Color.clear.frame(height: 0)
+            }
+        }
+        .task(id: entry.id) { requestId = await AskMeNextTime.requestId(entry, model: model) }
+    }
+
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
+            if done {
+                GlyphFact(glyph: .check, value: "Auto asks about these again.", tint: Palette.success, glyphTint: Palette.success)
+                    .accessibilityIdentifier("askedNextTime")
+            } else if let requestId {
+                Button {
+                    Task { await ask(requestId) }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "hand.raised")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(Palette.violet)
+                            .frame(width: 20)
+                        Text("Ask me next time").textRole(.row).foregroundStyle(Palette.violet)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if busy { ProgressView() }
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 56)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(RowButtonStyle())
+                .disabled(busy)
+                .accessibilityIdentifier("askMeNextTime")
+            }
+            if let error {
+                GlyphFact(glyph: .circleAlert, value: error, tint: Palette.danger, glyphTint: Palette.danger)
+            }
+        }
+    }
+
+    private func ask(_ requestId: String) async {
+        busy = true
+        error = await AskMeNextTime.apply(model, requestId: requestId)
+        if error == nil { done = true }
+        busy = false
+    }
+}
+
+@MainActor
+enum AskMeNextTime {
+    /// The request an entry was: its Autopilot note says, else the approval it kept. nil for an older entry without
+    /// either. The demo has no kept approvals for its seeded history, so it names one.
+    static func requestId(_ entry: ActivityEntry, model: AppModel) async -> String? {
+        guard MatrixLook.asksNextTime(entry) else { return nil }
+        if let id = entry.autopilot?.requestId, !id.isEmpty { return id }
+        if let shown = try? await model.core.activityApproval(entryId: entry.id) { return shown.requestId }
+        return model.demo ? "entry-\(entry.id)" : nil
+    }
+
+    /// nil when it worked, else what to say.
+    static func apply(_ model: AppModel, requestId: String) async -> String? {
+        model.feedback.play(.undo)
+        do {
+            try await model.core.askMeNextTime(requestId: requestId)
+            await model.refreshPending()
+            return nil
+        } catch {
+            model.feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
     }
 }
 

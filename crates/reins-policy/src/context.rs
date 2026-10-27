@@ -1,0 +1,906 @@
+//! The context graph (`docs/design/decisions-v2/01-decision-engine.md` §3): whose a resource or a person is, as a
+//! zone (Mine, Friends, Work, Outside), from **verified facts only**.
+//!
+//! [`Facts`] holds what the owner confirmed and what Reins verified from the providers (connected accounts, the GitHub
+//! login and its orgs, people Reins itself sent to). Nothing here takes a fact from what an agent wrote: a request's
+//! effects only name keys, and a key is looked up exactly (lowercased ASCII, never by prefix or similarity). A key
+//! that isn't known is Outside, and is reported as an [`Unknown`] so that the owner can be asked about it.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+
+use crate::effects::{self, Analysis, Area, Channel, CodeSource, Effect, NetMethod};
+
+/// Whose a thing is, least trusted last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Zone {
+    Mine,
+    Friends,
+    Work,
+    Outside,
+}
+
+impl Zone {
+    pub const ALL: [Self; 4] = [Self::Mine, Self::Friends, Self::Work, Self::Outside];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mine => "Mine",
+            Self::Friends => "Friends",
+            Self::Work => "Work",
+            Self::Outside => "Outside",
+        }
+    }
+}
+
+/// What a fact is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactKind {
+    /// A GitHub (or GitLab) user or organization.
+    Owner,
+    /// One repository, `owner/name`.
+    Repo,
+    /// An email domain (never a public mail provider's).
+    Domain,
+    /// A person: an email address, a phone number, a chat handle.
+    Person,
+    /// A network host.
+    Host,
+    /// A chat or group.
+    Chat,
+}
+
+/// Domains anyone can have an address at: a zone for one of them would cover strangers.
+pub const PUBLIC_MAIL_DOMAINS: &[&str] = &[
+    "gmail.com",
+    "googlemail.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "proton.me",
+    "protonmail.com",
+    "pm.me",
+    "aol.com",
+    "gmx.com",
+    "gmx.net",
+    "yandex.ru",
+    "mail.ru",
+    "fastmail.com",
+    "hey.com",
+    "yahoo.co.uk",
+    "hotmail.co.uk",
+    "live.co.uk",
+    "qq.com",
+    "163.com",
+    "zoho.com",
+];
+
+/// Verified facts about resources and parties. Keys are lowercase ASCII.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Facts {
+    pub owners: BTreeMap<String, Zone>,
+    pub repos: BTreeMap<String, Zone>,
+    /// The owner's own addresses (connected accounts): Mine.
+    pub own_addresses: BTreeSet<String>,
+    pub domains: BTreeMap<String, Zone>,
+    pub people: BTreeMap<String, Zone>,
+    pub hosts: BTreeMap<String, Zone>,
+    pub chats: BTreeMap<String, Zone>,
+}
+
+/// The longest key kept (an email address can't be longer).
+pub const MAX_KEY: usize = 254;
+
+/// The lookup form of a key: trimmed and lowercased, `None` when empty or not ASCII (a lookalike can't match).
+#[must_use]
+pub fn key(raw: &str) -> Option<String> {
+    let k = raw.trim().to_ascii_lowercase();
+    (!k.is_empty() && k.len() <= MAX_KEY && k.is_ascii() && !k.chars().any(char::is_control)).then_some(k)
+}
+
+impl Facts {
+    /// Records `zone` for `kind`/`raw`. `false` (and nothing changes) for a key that can't be a fact: empty, not ASCII,
+    /// or a public mail domain.
+    pub fn set(&mut self, kind: FactKind, raw: &str, zone: Zone) -> bool {
+        let Some(k) = key(raw) else {
+            return false;
+        };
+        if kind == FactKind::Domain && PUBLIC_MAIL_DOMAINS.contains(&k.as_str()) {
+            return false;
+        }
+        self.map_mut(kind).insert(k, zone);
+        true
+    }
+
+    /// Forgets a fact.
+    pub fn remove(&mut self, kind: FactKind, raw: &str) {
+        if let Some(k) = key(raw) {
+            self.map_mut(kind).remove(&k);
+        }
+    }
+
+    /// The zone recorded for `kind`/`raw`, if any.
+    #[must_use]
+    pub fn get(&self, kind: FactKind, raw: &str) -> Option<Zone> {
+        let k = key(raw)?;
+        self.map(kind).get(&k).copied()
+    }
+
+    fn map(&self, kind: FactKind) -> &BTreeMap<String, Zone> {
+        match kind {
+            FactKind::Owner => &self.owners,
+            FactKind::Repo => &self.repos,
+            FactKind::Domain => &self.domains,
+            FactKind::Person => &self.people,
+            FactKind::Host => &self.hosts,
+            FactKind::Chat => &self.chats,
+        }
+    }
+
+    fn map_mut(&mut self, kind: FactKind) -> &mut BTreeMap<String, Zone> {
+        match kind {
+            FactKind::Owner => &mut self.owners,
+            FactKind::Repo => &mut self.repos,
+            FactKind::Domain => &mut self.domains,
+            FactKind::Person => &mut self.people,
+            FactKind::Host => &mut self.hosts,
+            FactKind::Chat => &mut self.chats,
+        }
+    }
+}
+
+/// A key a request names that the facts don't know: the owner can be asked about it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Unknown {
+    pub kind: FactKind,
+    pub key: String,
+}
+
+/// A request's zone, what it named that isn't known, and the resource it acts on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub zone: Zone,
+    pub unknown: Vec<Unknown>,
+    /// The single repository (its fact key), else the recipients (sorted, joined by `,`), else the host.
+    pub resource: Option<String>,
+    /// Each repository, recipient or host on its own (a rule's resource must match every one to permit).
+    pub parts: Vec<String>,
+}
+
+/// The host a bare `owner` or `owner/name` key means. Facts for any other host carry it: `gitlab.com/acme`.
+pub const GITHUB: &str = "github.com";
+
+/// A GitHub-style login or repository name part.
+fn login(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 100 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// A host name: lowercase letters, digits, dots and dashes, with a dot.
+fn host_name(s: &str) -> bool {
+    s.contains('.') && s.len() <= 253 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
+}
+
+/// A repository: its host, owner and name (lowercase).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RepoRef {
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+}
+
+impl RepoRef {
+    /// The owner's fact key: `owner` on GitHub, `host/owner` elsewhere.
+    #[must_use]
+    pub fn owner_key(&self) -> String {
+        if self.host == GITHUB {
+            self.owner.clone()
+        } else {
+            format!("{}/{}", self.host, self.owner)
+        }
+    }
+
+    /// The repository's fact key: `owner/name` on GitHub, `host/owner/name` elsewhere.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.owner_key(), self.name)
+    }
+}
+
+/// A repository named with its host: `https://host/o/n(.git)`, `ssh://git@host/o/n`, `git@host:o/n` or `host/o/n`.
+/// A bare `o/n` is `bare_host`'s (a GitHub tool says `github.com`), and nothing without one: in a command a bare
+/// name is a remote's name, not a repository.
+#[must_use]
+pub fn parse_repo(repo: &str, bare_host: Option<&str>) -> Option<RepoRef> {
+    let r = repo.trim();
+    let (host, path) = if let Some((_, rest)) = r.split_once("://") {
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        let host = host.split_once(':').map_or(host, |(h, _)| h);
+        (host.to_ascii_lowercase(), path)
+    } else if let Some((user_host, path)) = r.split_once(':') {
+        let (_, host) = user_host.rsplit_once('@')?;
+        (host.to_ascii_lowercase(), path)
+    } else {
+        let mut parts = r.splitn(3, '/');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(h), Some(_), Some(_)) if h.contains('.') => {
+                (h.to_ascii_lowercase(), r.split_once('/').map_or("", |(_, p)| p))
+            }
+            (Some(_), Some(_), None) => (bare_host?.to_ascii_lowercase(), r),
+            _ => return None,
+        }
+    };
+    if !host_name(&host) {
+        return None;
+    }
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (o, n) = path.split_once('/')?;
+    (login(o) && login(n)).then(|| RepoRef {
+        host,
+        owner: o.to_ascii_lowercase(),
+        name: n.to_ascii_lowercase(),
+    })
+}
+
+/// The zone of a repository: its own fact, else its owner's (on the same host); unknown owners are Outside.
+#[must_use]
+pub fn repo_zone(facts: &Facts, repo: &RepoRef) -> (Zone, Option<Unknown>) {
+    if let Some(z) = facts.repos.get(&repo.key()) {
+        return (*z, None);
+    }
+    let owner = repo.owner_key();
+    match facts.owners.get(&owner) {
+        Some(z) => (*z, None),
+        None => (
+            Zone::Outside,
+            Some(Unknown {
+                kind: FactKind::Owner,
+                key: owner,
+            }),
+        ),
+    }
+}
+
+/// An email address's domain, when it looks like one address.
+fn address_domain(addr: &str) -> Option<&str> {
+    let (local, domain) = addr.rsplit_once('@')?;
+    (!local.is_empty() && !local.contains(char::is_whitespace) && domain.contains('.') && login(domain))
+        .then_some(domain)
+}
+
+/// `Name <a@b.c>` → `a@b.c`.
+fn bare_address(party: &str) -> &str {
+    match (party.rfind('<'), party.rfind('>')) {
+        (Some(a), Some(b)) if a < b => &party[a + 1..b],
+        _ => party,
+    }
+}
+
+/// A chat party a fact can be kept for: a numeric id, an `@username` or a `+number`. A chat's display name isn't:
+/// names aren't unique and anyone can take one.
+fn chat_id(s: &str) -> bool {
+    let digits = |t: &str| !t.is_empty() && t.len() <= 20 && t.chars().all(|c| c.is_ascii_digit());
+    match s.as_bytes().first() {
+        Some(b'@') => s.len() > 1 && s.len() <= 33 && s[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        Some(b'+' | b'-') => digits(&s[1..]),
+        _ => digits(s),
+    }
+}
+
+/// The zone of one party a message reaches.
+#[must_use]
+pub fn party_zone(facts: &Facts, channel: &Channel, party: &str) -> (Zone, Option<Unknown>) {
+    let unknown = |kind: FactKind, k: Option<String>| {
+        (
+            Zone::Outside,
+            k.map(|key| Unknown {
+                kind,
+                key,
+            }),
+        )
+    };
+    match channel {
+        Channel::Email | Channel::Calendar => {
+            let Some(addr) = key(bare_address(party)) else {
+                return (Zone::Outside, None);
+            };
+            if facts.own_addresses.contains(&addr) {
+                return (Zone::Mine, None);
+            }
+            if let Some(z) = facts.people.get(&addr) {
+                return (*z, None);
+            }
+            match address_domain(&addr) {
+                Some(d) => match facts.domains.get(d) {
+                    Some(z) if !PUBLIC_MAIL_DOMAINS.contains(&d) => (*z, None),
+                    _ => unknown(FactKind::Person, Some(addr.clone())),
+                },
+                None => unknown(FactKind::Person, None),
+            }
+        }
+        // Telegram and texts: by id only (the owner's own chat too, which they answer once as Mine).
+        Channel::Telegram | Channel::Sms => {
+            let Some(k) = key(party).filter(|k| chat_id(k)) else {
+                return (Zone::Outside, None);
+            };
+            if let Some(z) = facts.chats.get(&k).or_else(|| facts.people.get(&k)) {
+                return (*z, None);
+            }
+            unknown(FactKind::Chat, Some(k))
+        }
+        Channel::GitHub => match parse_repo(party, Some(GITHUB)) {
+            Some(r) => repo_zone(facts, &r),
+            None => (Zone::Outside, None),
+        },
+        Channel::Other(_) => (Zone::Outside, None),
+    }
+}
+
+/// The zone of a network host: this computer and the owner's own hosts by fact.
+#[must_use]
+pub fn host_zone(facts: &Facts, host: &str) -> (Zone, Option<Unknown>) {
+    if effects::local_host(host) {
+        return (Zone::Mine, None);
+    }
+    let Some(k) = key(host) else {
+        return (Zone::Outside, None);
+    };
+    match facts.hosts.get(&k) {
+        Some(z) => (*z, None),
+        None => (
+            Zone::Outside,
+            login(&k).then_some(Unknown {
+                kind: FactKind::Host,
+                key: k,
+            }),
+        ),
+    }
+}
+
+/// Which repository a command's `origin` and "this repository" are.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RepoAt {
+    /// The one `cwd` is in.
+    Cwd,
+    /// The one in this folder: the command starts with `cd <folder>` (a literal path) and moves nowhere else.
+    Dir(String),
+    /// Not known: `git -C`, `--git-dir`, `--work-tree`, `GIT_DIR=`, `GIT_WORK_TREE=`, a `cd` later in the command or
+    /// to a target that can't be read. What goes to `origin` is then Outside.
+    Unknown,
+}
+
+/// Where `command`, run in `cwd` (in the repository at `top`), acts.
+#[must_use]
+pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoAt {
+    // Words, with each command separator as a word of its own (`;`).
+    let spaced: String = command
+        .chars()
+        .map(|c| {
+            if matches!(c, ';' | '&' | '|' | '(' | ')' | '{' | '}' | '\n') {
+                ';'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .replace(';', " ; ");
+    let tokens: Vec<String> =
+        spaced.split_whitespace().map(|t| t.trim_matches(|c| c == '"' || c == '\'').to_owned()).collect();
+    let literal = |t: &str| t != ";" && !t.starts_with('-') && !t.contains(['$', '`', '*', '?', '\\']);
+    let inside =
+        |abs: &str| top.map(|t| t.trim_end_matches('/')).is_some_and(|t| abs == t || abs.starts_with(&format!("{t}/")));
+    let mut at = RepoAt::Cwd;
+    let mut in_git = false;
+    for (i, t) in tokens.iter().enumerate() {
+        if t.starts_with("GIT_DIR=") || t.starts_with("GIT_WORK_TREE=") {
+            return RepoAt::Unknown;
+        }
+        match t.as_str() {
+            "cd" | "pushd" => {
+                let target = match tokens.get(i + 1) {
+                    Some(target) if literal(target) => effects::normalize(target, cwd, home),
+                    _ => return RepoAt::Unknown,
+                };
+                if inside(&target) {
+                    continue;
+                }
+                // Only a leading `cd` says where everything after it runs.
+                if i == 0 && at == RepoAt::Cwd {
+                    at = RepoAt::Dir(target);
+                } else {
+                    return RepoAt::Unknown;
+                }
+            }
+            "git" => in_git = true,
+            "-C" | "--git-dir" | "--work-tree" if in_git => return RepoAt::Unknown,
+            _ if in_git && (t.starts_with("--git-dir=") || t.starts_with("--work-tree=")) => return RepoAt::Unknown,
+            _ if !t.starts_with('-') => in_git = false,
+            _ => {}
+        }
+    }
+    at
+}
+
+/// What a request acts on beyond what its effects name.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Base<'a> {
+    /// The repository the request runs in or names as its own: what a push to `origin` (or with no remote), a local
+    /// ref and "this repository" mean. `None`: not known, so those are Outside.
+    pub repo: Option<&'a str>,
+    /// Other remotes by name → URL, read strictly from the repository's configuration. A name not here is Outside.
+    pub remotes: Option<&'a BTreeMap<String, String>>,
+    /// The host a bare `owner/name` means (a GitHub tool: [`GITHUB`]). `None`: a bare name is a remote's name.
+    pub bare_host: Option<&'a str>,
+}
+
+/// A request's zone: the least trusted zone of everything it changes or reaches (01 §3). Reads add no zone (01 §3 would
+/// make every read outside the workspace Outside, so `grep Host ~/.ssh/config` would ask at L0; a read's risk is its
+/// level and the always-ask floor). With nothing that sets a zone, it is the base repository's, else Mine.
+#[must_use]
+pub fn request_zone(a: &Analysis, facts: &Facts, base: &Base<'_>) -> Resolved {
+    let mut zone: Option<Zone> = None;
+    let mut unknown: Vec<Unknown> = Vec::new();
+    let mut repos: BTreeSet<String> = BTreeSet::new();
+    let mut parties: BTreeSet<String> = BTreeSet::new();
+    let mut hosts: BTreeSet<String> = BTreeSet::new();
+    let mut add = |z: Zone, u: Option<Unknown>| {
+        zone = Some(zone.map_or(z, |cur| cur.max(z)));
+        if let Some(u) = u
+            && !unknown.contains(&u)
+        {
+            unknown.push(u);
+        }
+    };
+    let base_ref = base.repo.and_then(|b| parse_repo(b, base.bare_host));
+    let base_zone = || base_ref.as_ref().map_or((Zone::Outside, None), |r| repo_zone(facts, r));
+    // A repository as a push or a ref change names it.
+    let pushed = |repo: &str, repos: &mut BTreeSet<String>| -> (Zone, Option<Unknown>) {
+        let r = repo.trim();
+        if r.is_empty() {
+            // A local ref (`git branch -D`, `git stash drop`): nothing leaves this computer, and its level says how
+            // recoverable it is.
+            return (Zone::Mine, None);
+        }
+        let found = if r == "origin" {
+            base_ref.clone()
+        } else if let Some(p) = parse_repo(r, base.bare_host) {
+            Some(p)
+        } else {
+            // Another remote: what its configuration says, else not known.
+            base.remotes.and_then(|m| m.get(r)).and_then(|url| parse_repo(url, None))
+        };
+        match found {
+            Some(p) => {
+                repos.insert(p.key());
+                repo_zone(facts, &p)
+            }
+            None => (Zone::Outside, None),
+        }
+    };
+    let area = |area: &Area| match area {
+        // A path worked out only at run time is assumed in the workspace's zone (01 §2.4); its level is already the
+        // worst plausible one and its certainty Partial or None, which the model or the floor weighs.
+        Area::Generated | Area::Scratch | Area::Source | Area::Unknown => (Zone::Mine, None),
+        Area::Home | Area::System => (Zone::Outside, None),
+        Area::Remote(h) => host_zone(facts, h),
+    };
+    for e in &a.effects {
+        match e {
+            Effect::FileWrite {
+                path,
+            } => {
+                let (z, u) = area(&path.area);
+                add(z, u);
+            }
+            Effect::FileDelete {
+                paths,
+                ..
+            } => {
+                for p in paths {
+                    let (z, u) = area(&p.area);
+                    add(z, u);
+                }
+                if paths.is_empty() {
+                    add(Zone::Outside, None);
+                }
+            }
+            Effect::GitPush {
+                repo,
+                ..
+            }
+            | Effect::GitRefDelete {
+                repo,
+                ..
+            } => {
+                let (z, u) = pushed(repo, &mut repos);
+                add(z, u);
+            }
+            Effect::Message {
+                channel,
+                to,
+                ..
+            } => {
+                if to.is_empty() {
+                    add(Zone::Outside, None);
+                }
+                for p in to {
+                    let (z, u) = if *channel != Channel::GitHub {
+                        parties.insert(p.trim().to_ascii_lowercase());
+                        party_zone(facts, channel, p)
+                    } else if let Some(r) = parse_repo(p, Some(GITHUB)) {
+                        repos.insert(r.key());
+                        repo_zone(facts, &r)
+                    } else {
+                        // "this repository": the one the request acts on, else Outside.
+                        if let Some(b) = &base_ref {
+                            repos.insert(b.key());
+                        }
+                        base_zone()
+                    };
+                    add(z, u);
+                }
+            }
+            Effect::Network {
+                host,
+                method: NetMethod::Write | NetMethod::Connect | NetMethod::UploadExecutable,
+            } => {
+                hosts.insert(host.to_ascii_lowercase());
+                let (z, u) = host_zone(facts, host);
+                add(z, u);
+            }
+            Effect::Infra {
+                local: false,
+                ..
+            }
+            | Effect::Exec {
+                source: CodeSource::Downloaded,
+                ..
+            }
+            | Effect::Publish {
+                ..
+            }
+            | Effect::SecretOut {
+                ..
+            } => add(Zone::Outside, None),
+            Effect::Permission {
+                resource,
+                ..
+            } => {
+                let (z, u) =
+                    parse_repo(resource, base.bare_host).map_or((Zone::Outside, None), |r| repo_zone(facts, &r));
+                add(z, u);
+            }
+            Effect::FileRead {
+                ..
+            }
+            | Effect::Network {
+                ..
+            }
+            | Effect::Infra {
+                ..
+            }
+            | Effect::Exec {
+                ..
+            }
+            | Effect::DataRead {
+                ..
+            }
+            | Effect::DataWrite {
+                ..
+            }
+            | Effect::SecretUse {
+                ..
+            }
+            | Effect::Money {
+                ..
+            }
+            | Effect::Unknown {
+                ..
+            } => {}
+        }
+    }
+    let zone = zone.unwrap_or_else(|| match base.repo {
+        Some(_) => {
+            let (z, u) = base_zone();
+            if let Some(u) = u
+                && !unknown.contains(&u)
+            {
+                unknown.push(u);
+            }
+            z
+        }
+        None => Zone::Mine,
+    });
+    let parts: Vec<String> = if repos.is_empty() && parties.is_empty() {
+        hosts.iter().cloned().collect()
+    } else {
+        repos.iter().chain(&parties).cloned().collect()
+    };
+    let resource = if repos.len() == 1 && parties.is_empty() {
+        repos.into_iter().next()
+    } else if !parties.is_empty() && repos.is_empty() {
+        Some(parties.into_iter().collect::<Vec<_>>().join(","))
+    } else if hosts.len() == 1 && repos.is_empty() && parties.is_empty() {
+        hosts.into_iter().next()
+    } else {
+        None
+    };
+    Resolved {
+        zone,
+        unknown,
+        resource,
+        parts,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effects::{Context, Workspace, analyze_command, analyze_tool};
+    use serde_json::json;
+
+    fn facts() -> Facts {
+        let mut f = Facts::default();
+        f.set(FactKind::Owner, "dkat", Zone::Mine);
+        f.set(FactKind::Owner, "acme", Zone::Work);
+        f.set(FactKind::Repo, "octo/x", Zone::Friends);
+        f.set(FactKind::Domain, "acme.io", Zone::Work);
+        f.set(FactKind::Person, "ann@example.com", Zone::Friends);
+        f.own_addresses.insert("me@gmail.com".to_owned());
+        f
+    }
+
+    fn base(repo: &str) -> Base<'_> {
+        Base {
+            repo: Some(repo),
+            ..Base::default()
+        }
+    }
+
+    fn ctx() -> Context {
+        Context::new("/home/me/Documents/dev/app", Workspace::standard("/home/me"))
+    }
+
+    fn push(repo: &str) -> Analysis {
+        Analysis::new(
+            vec![Effect::GitPush {
+                repo: repo.to_owned(),
+                refname: "refs/heads/feat".to_owned(),
+                default_branch: Some(false),
+                rewrites: Some(false),
+                commits: 1,
+            }],
+            effects::Certainty::Full,
+            Vec::new(),
+        )
+    }
+
+    fn mail(to: &[&str]) -> Analysis {
+        analyze_tool("gmail_send", &json!({ "to": to }))
+    }
+
+    #[test]
+    fn zones_from_facts() {
+        let f = facts();
+        assert_eq!(request_zone(&push("github.com/dkat/reins"), &f, &Base::default()).zone, Zone::Mine);
+        assert_eq!(request_zone(&push("https://github.com/acme/api.git"), &f, &Base::default()).zone, Zone::Work);
+        assert_eq!(request_zone(&push("git@github.com:octo/x.git"), &f, &Base::default()).zone, Zone::Friends);
+        assert_eq!(request_zone(&analyze_command("rm -rf target", &ctx()), &f, &Base::default()).zone, Zone::Mine);
+        assert_eq!(request_zone(&analyze_command("rm -rf ~/x", &ctx()), &f, &Base::default()).zone, Zone::Outside);
+        let r = request_zone(&push("github.com/dkat/reins"), &f, &Base::default());
+        assert_eq!(r.resource.as_deref(), Some("dkat/reins"));
+    }
+
+    #[test]
+    fn unknown_is_outside_and_named() {
+        let r = request_zone(&push("github.com/octo/y"), &facts(), &Base::default());
+        assert_eq!(r.zone, Zone::Outside);
+        assert_eq!(
+            r.unknown,
+            vec![Unknown {
+                kind: FactKind::Owner,
+                key: "octo".to_owned()
+            }]
+        );
+        // a placeholder, not a party, is Outside and not asked about
+        let r = request_zone(&analyze_tool("gmail_set_vacation", &json!({})), &facts(), &Base::default());
+        assert_eq!(r.zone, Zone::Outside);
+        assert!(r.unknown.is_empty(), "{:?}", r.unknown);
+    }
+
+    #[test]
+    fn lookalikes_are_outside() {
+        let f = facts();
+        assert_eq!(request_zone(&push("github.com/dkat-evil/reins"), &f, &Base::default()).zone, Zone::Outside);
+        assert_eq!(request_zone(&push("github.com/DKAT/reins"), &f, &Base::default()).zone, Zone::Mine, "case only");
+        assert_eq!(
+            request_zone(&push("github.com/dk\u{0430}t/reins"), &f, &Base::default()).zone,
+            Zone::Outside,
+            "Cyrillic a"
+        );
+        assert_eq!(request_zone(&mail(&["me@gmail.com.evil.io"]), &f, &Base::default()).zone, Zone::Outside);
+        assert_eq!(request_zone(&mail(&["me@gmail.com"]), &f, &Base::default()).zone, Zone::Mine);
+        assert_eq!(
+            request_zone(&mail(&["x@sub.acme.io"]), &f, &Base::default()).zone,
+            Zone::Outside,
+            "not a subdomain match"
+        );
+        assert_eq!(host_zone(&f, "localhost.evil.io").0, Zone::Outside);
+        assert_eq!(host_zone(&f, "localhost").0, Zone::Mine);
+    }
+
+    #[test]
+    fn one_outside_party_makes_it_outside() {
+        let f = facts();
+        let r = request_zone(&mail(&["me@gmail.com", "x@stranger.io"]), &f, &Base::default());
+        assert_eq!(r.zone, Zone::Outside);
+        assert_eq!(r.unknown.len(), 1);
+        assert_eq!(request_zone(&mail(&["me@gmail.com", "ann@example.com"]), &f, &Base::default()).zone, Zone::Friends);
+        let two = Analysis::new(
+            [push("github.com/dkat/a").effects, push("github.com/octo/z").effects].concat(),
+            effects::Certainty::Full,
+            Vec::new(),
+        );
+        assert_eq!(request_zone(&two, &f, &Base::default()).zone, Zone::Outside);
+        assert_eq!(request_zone(&mail(&[]), &f, &Base::default()).zone, Zone::Outside, "nobody named is not nobody");
+    }
+
+    #[test]
+    fn public_mail_domains_are_never_zoned() {
+        let mut f = Facts::default();
+        assert!(!f.set(FactKind::Domain, "gmail.com", Zone::Work));
+        assert!(!f.set(FactKind::Domain, "", Zone::Work));
+        assert!(!f.set(FactKind::Owner, "dk\u{0430}t", Zone::Mine));
+        assert!(!f.set(FactKind::Person, &format!("{}@x.io", "a".repeat(300)), Zone::Friends), "too long");
+        assert!(f.domains.is_empty() && f.owners.is_empty());
+    }
+
+    #[test]
+    fn reads_add_no_zone() {
+        assert_eq!(
+            request_zone(&analyze_command("cat ~/.bashrc", &ctx()), &facts(), &Base::default()).zone,
+            Zone::Mine
+        );
+        assert_eq!(
+            request_zone(&analyze_tool("gmail_search", &json!({"q": "x"})), &facts(), &Base::default()).zone,
+            Zone::Mine
+        );
+    }
+
+    #[test]
+    fn work_domain_recipients_are_work() {
+        assert_eq!(request_zone(&mail(&["Bob <bob@acme.io>"]), &facts(), &Base::default()).zone, Zone::Work);
+    }
+
+    #[test]
+    fn only_origin_or_no_remote_is_the_base() {
+        let f = facts();
+        let mine = base("github.com/dkat/app");
+        for cmd in ["git push origin feat/x", "git push"] {
+            assert_eq!(request_zone(&analyze_command(cmd, &ctx()), &f, &mine).zone, Zone::Mine, "{cmd}");
+        }
+        // Another remote: what its URL says, else Outside.
+        let other = analyze_command("git push upstream feat/x", &ctx());
+        assert_eq!(request_zone(&other, &f, &mine).zone, Zone::Outside);
+        let mut remotes = BTreeMap::new();
+        remotes.insert("upstream".to_owned(), "git@github.com:acme/app.git".to_owned());
+        let with = Base {
+            remotes: Some(&remotes),
+            ..mine
+        };
+        assert_eq!(request_zone(&other, &f, &with).zone, Zone::Work);
+        remotes.insert("upstream".to_owned(), "https://evil.example/dkat/app".to_owned());
+        let with = Base {
+            remotes: Some(&remotes),
+            ..mine
+        };
+        assert_eq!(request_zone(&other, &f, &with).zone, Zone::Outside);
+        // A remote named like a repository is still a remote.
+        let named = analyze_command("git push dkat/app feat/x", &ctx());
+        assert_eq!(request_zone(&named, &f, &mine).zone, Zone::Outside);
+    }
+
+    #[test]
+    fn facts_are_keyed_by_host() {
+        let f = facts();
+        assert_eq!(
+            request_zone(&push("https://attacker.example/dkat/reins"), &f, &Base::default()).zone,
+            Zone::Outside
+        );
+        assert_eq!(request_zone(&push("gitlab.com/dkat/reins"), &f, &Base::default()).zone, Zone::Outside);
+        assert_eq!(
+            request_zone(&push("ssh://git@github.com:22/dkat/reins.git"), &f, &Base::default()).zone,
+            Zone::Mine
+        );
+        // A bare owner/name is GitHub's only where a GitHub tool says so.
+        assert_eq!(request_zone(&push("dkat/reins"), &f, &Base::default()).zone, Zone::Outside);
+        let gh = Base {
+            bare_host: Some(GITHUB),
+            ..Base::default()
+        };
+        assert_eq!(request_zone(&push("dkat/reins"), &f, &gh).zone, Zone::Mine);
+        let gitlab = Base {
+            bare_host: Some("gitlab.com"),
+            ..Base::default()
+        };
+        let r = request_zone(&push("dkat/reins"), &f, &gitlab);
+        assert_eq!(r.zone, Zone::Outside, "GitLab doesn't use GitHub's facts");
+        assert_eq!(r.unknown[0].key, "gitlab.com/dkat");
+    }
+
+    #[test]
+    fn chats_are_known_by_id_only() {
+        let mut f = facts();
+        let tg = |to: &str| analyze_tool("telegram_send", &json!({ "chat": to }));
+        for name in ["me", "self", "Saved Messages"] {
+            let r = request_zone(&tg(name), &f, &Base::default());
+            assert_eq!(r.zone, Zone::Outside, "{name}");
+            assert!(r.unknown.is_empty(), "a name is never a question: {name}");
+        }
+        let r = request_zone(&tg("123456"), &f, &Base::default());
+        assert_eq!((r.zone, r.unknown[0].kind), (Zone::Outside, FactKind::Chat));
+        f.set(FactKind::Chat, "123456", Zone::Mine);
+        assert_eq!(request_zone(&tg("123456"), &f, &Base::default()).zone, Zone::Mine);
+        assert_eq!(request_zone(&tg("@pal"), &f, &Base::default()).zone, Zone::Outside);
+    }
+
+    #[test]
+    fn parts_name_every_party() {
+        let r = request_zone(&mail(&["me@gmail.com", "ann@example.com"]), &facts(), &Base::default());
+        assert_eq!(r.parts, vec!["ann@example.com".to_owned(), "me@gmail.com".to_owned()]);
+    }
+
+    #[test]
+    fn where_a_command_acts() {
+        let (cwd, top, home) = ("/home/me/dev/app/src", Some("/home/me/dev/app"), "/home/me");
+        for c in [
+            "git -C ../other push origin main",
+            "git --git-dir=/x/.git push",
+            "GIT_DIR=/x/.git git push origin",
+            "git push origin && cd /home/me/dev/other && git push origin",
+            "cd && git push",
+            "cd $DIR && git push",
+            "cd /a && cd /b && git push",
+        ] {
+            assert_eq!(repo_at(c, cwd, top, home), RepoAt::Unknown, "{c}");
+        }
+        for c in [
+            "git push origin main",
+            "cd .. && git push origin main",
+            "cd /home/me/dev/app/lib && gh pr create",
+            "make -C build",
+        ] {
+            assert_eq!(repo_at(c, cwd, top, home), RepoAt::Cwd, "{c}");
+        }
+        assert_eq!(
+            repo_at("cd ~/dev/other && git push origin", cwd, top, home),
+            RepoAt::Dir("/home/me/dev/other".to_owned())
+        );
+        assert_eq!(
+            repo_at("pushd ../../other; git push", cwd, top, home),
+            RepoAt::Dir("/home/me/dev/other".to_owned())
+        );
+    }
+
+    #[test]
+    fn origin_is_the_base_repository() {
+        let a = analyze_command("git push origin feat/x", &ctx());
+        let f = facts();
+        assert_eq!(request_zone(&a, &f, &base("github.com/dkat/app")).zone, Zone::Mine);
+        assert_eq!(request_zone(&a, &f, &Base::default()).zone, Zone::Outside, "no repository known: Outside");
+        let comment = analyze_tool("github_comment", &json!({"body": "hi"}));
+        assert_eq!(request_zone(&comment, &f, &base("github.com/dkat/app")).zone, Zone::Mine, "this repository");
+        assert_eq!(request_zone(&comment, &f, &Base::default()).zone, Zone::Outside);
+    }
+}

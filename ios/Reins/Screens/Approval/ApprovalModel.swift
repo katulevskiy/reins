@@ -113,6 +113,37 @@ final class ApprovalModel {
         app.answerInBackground(id, failed: "Not denied") { try await core.deny(requestId: id) }
         finished = true
     }
+
+    /// Denies with a note the agent receives ("Use the staging bucket"); an empty note is a plain denial.
+    func deny(_ app: AppModel, note: String) async {
+        guard !busy, !readOnly else { return }
+        guard let note = TicketInbox.note(note) else { return await deny(app) }
+        app.feedback.play(.denied)
+        let (core, id) = (app.core, requestId)
+        app.answerInBackground(id, failed: "Not denied") { try await core.denyWithNote(requestId: id, note: note) }
+        finished = true
+    }
+
+    /// Later: the request becomes a ticket under "Waiting for you"; the agent is told at once and carries on. Nothing
+    /// is approved, so no check.
+    func decideLater(_ app: AppModel) async {
+        guard !busy, !readOnly else { return }
+        app.feedback.play(.tap)
+        let (core, id) = (app.core, requestId)
+        app.ticketInBackground(id, failed: "Not moved to later", leaveStack: true) { try await core.decideLater(requestId: id) }
+        finished = true
+    }
+
+    /// Why?: the question goes to the agent; the request waits as a ticket for its answer. An empty question does
+    /// nothing.
+    func askWhy(_ app: AppModel, question: String) async {
+        guard !busy, !readOnly, let question = TicketInbox.question(question) else { return }
+        app.feedback.play(.tap)
+        let (core, id) = (app.core, requestId)
+        let instant = app.pending.first { $0.id == id }?.ticket == nil
+        app.ticketInBackground(id, failed: "Not asked", leaveStack: instant) { try await core.askWhy(requestId: id, question: question) }
+        finished = true
+    }
 }
 
 extension ApprovalView {

@@ -48,6 +48,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             full_certainty: r.full_certainty.unwrap_or(0.0),
             asks: r.asks,
             ask_rate: r.ask_rate,
+            developer_ask_rate: Some(r.developer_ask_rate),
         };
         let text = serde_json::to_string_pretty(&b).map_err(|e| e.to_string())?;
         std::fs::write(&baseline_path, format!("{text}\n")).map_err(|e| format!("{}: {e}", baseline_path.display()))?;

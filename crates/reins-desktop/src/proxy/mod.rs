@@ -172,6 +172,7 @@ pub fn refusal_kind(r: &Refusal) -> &'static str {
     match r {
         Refusal::Denied(_) => "denied",
         Refusal::Waiting(_) => "waiting",
+        Refusal::Parked(_) => "parked",
         Refusal::Unavailable(_) => "unavailable",
     }
 }
@@ -213,6 +214,8 @@ pub struct Proxy {
     journal: Journal,
     stats: Arc<Stats>,
     timeout: Duration,
+    /// Where a push the reviewer will decide later is kept until approved (`None`: such a push fails, as it waits).
+    tickets: Option<crate::config::Paths>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -251,7 +254,15 @@ impl Proxy {
             journal: Journal::off(),
             stats: Arc::default(),
             timeout: Duration::from_secs(config.approval_timeout_secs),
+            tickets: None,
         })
+    }
+
+    /// Keeps pushes parked for review under `paths` ([`crate::tickets`]), to push them once approved.
+    #[must_use]
+    pub fn with_tickets(mut self, paths: crate::config::Paths) -> Self {
+        self.tickets = Some(paths);
+        self
     }
 
     /// Logs decisions to `journal` and counts connections in `stats`.
@@ -667,21 +678,106 @@ impl Proxy {
                 summary: record,
             },
         );
-        let credential =
-            match self.awaiting_entry(peer, repo, entry, true, self.authorizer.push(repo, &summary, &digest)).await {
-                Ok(c) => c,
-                Err(r) => {
-                    self.journal.forget_push(&entry_id);
-                    log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
-                    return Ok(reject(r.message(), &with_hint(r.message())));
-                }
-            };
+        let credential = match self
+            .awaiting_entry(peer, repo, entry, true, self.authorizer.push(repo, &summary, &digest))
+            .await
+        {
+            Ok(c) => c,
+            Err(Refusal::Parked(held)) => {
+                self.journal.forget_push(&entry_id);
+                let parked = ParkedRequest {
+                    repo,
+                    name: &name,
+                    summary: &push_what(repo, &summary),
+                    commands: &commands,
+                    digest: &digest,
+                    head: &push.head,
+                    gzip,
+                };
+                return Ok(match self.park(&held, &parked, &raw).await {
+                    Ok(()) => {
+                        log::info!("POST {who} {suffix}: push parked as {}", held.ticket);
+                        reject(&format!("parked for review ({})", held.ticket), &held.message)
+                    }
+                    Err(e) => {
+                        log::warn!("POST {who} {suffix}: push {} not kept: {e}", held.ticket);
+                        let message = format!(
+                            "Reins: parked for review (ticket {}), but this push cannot be kept here ({e}). Run git \
+                                 push again once it is approved.",
+                            held.ticket
+                        );
+                        reject("parked for review", &message)
+                    }
+                });
+            }
+            Err(r) => {
+                self.journal.forget_push(&entry_id);
+                log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
+                return Ok(reject(r.message(), &with_hint(r.message())));
+            }
+        };
         let resp = self.send(Method::POST, repo, &suffix, &parts.headers, Out::Held(&raw), Some(&credential)).await?;
         log::info!("POST {who} {suffix}: push allowed, {}", resp.status().as_u16());
         if Self::denied_by_upstream(resp.status()) {
             return Ok(Self::upstream_refused(repo, resp.status()));
         }
         Ok(Self::forward(resp))
+    }
+}
+
+/// What a parked push keeps besides its body.
+struct ParkedRequest<'a> {
+    repo: &'a Repo,
+    name: &'a str,
+    summary: &'a str,
+    commands: &'a [(String, String, String)],
+    digest: &'a str,
+    head: &'a crate::git::ReceiveHead,
+    gzip: bool,
+}
+
+impl Proxy {
+    /// Keeps a push the reviewer will decide later: its body under `parked/`, and a ticket that says where it goes and
+    /// what it must find there, for [`crate::tickets::refresh`] to push once approved.
+    async fn park(
+        &self,
+        parking: &crate::auth::Parking,
+        p: &ParkedRequest<'_>,
+        raw: &Arc<Spool>,
+    ) -> Result<(), String> {
+        let paths = self.tickets.clone().ok_or("this proxy keeps no parked pushes")?;
+        if raw.len() > crate::tickets::MAX_PARKED_BODY {
+            return Err(format!("it is larger than {} MiB", crate::tickets::MAX_PARKED_BODY >> 20));
+        }
+        let mut upstream = self.upstream(p.repo, "").map_err(|_| "no upstream for this repository".to_owned())?;
+        upstream.set_query(None);
+        let ticket = crate::tickets::LocalTicket {
+            ticket: parking.ticket.clone(),
+            kind: crate::tickets::TicketKind::Push,
+            session: None,
+            summary: p.summary.to_owned(),
+            digest: p.digest.to_owned(),
+            nonce: parking.nonce.clone(),
+            created_at: crate::now_unix(),
+            expected_by: parking.expected_by,
+            state: reins_proto::ticket::TicketState::Deferred.as_str().to_owned(),
+            told: None,
+            repo: Some(p.repo.label()),
+            refs: p.commands.to_vec(),
+            note: None,
+            stale: None,
+            push: Some(crate::tickets::ParkedPush {
+                upstream: upstream.as_str().trim_end_matches('/').to_owned(),
+                repo: p.name.to_owned(),
+                gzip: p.gzip,
+                sideband: p.head.has_capability("side-band-64k") || p.head.has_capability("side-band"),
+                report: p.head.has_capability("report-status") || p.head.has_capability("report-status-v2"),
+            }),
+        };
+        let raw = Arc::clone(raw);
+        tokio::task::spawn_blocking(move || crate::tickets::park_push(&paths, ticket, &raw))
+            .await
+            .map_err(|_| "keeping the push failed".to_owned())?
     }
 }
 

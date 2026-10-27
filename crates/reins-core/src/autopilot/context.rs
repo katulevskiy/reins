@@ -81,6 +81,7 @@ pub fn denied_detail() -> String {
     match by.as_str() {
         "autopilot" => "denied by Autopilot",
         "lockdown" => "denied by Lockdown",
+        "rule" => "denied by your rule",
         _ => "denied by the user",
     }
     .to_owned()
@@ -103,7 +104,9 @@ pub fn told() -> Option<reins_proto::autopilot::Decided> {
     DECISION
         .try_with(|d| {
             let by = match d.decided_by.as_str() {
-                "autopilot" => DecidedBy::Autopilot,
+                // An explicit rule decided it on its own: the desktop app (which has no word for a rule) shows it as
+                // an automatic decision.
+                "autopilot" | "rule" => DecidedBy::Autopilot,
                 "overnight" => DecidedBy::Overnight,
                 "bypass" => DecidedBy::Bypass,
                 "lockdown" => DecidedBy::Lockdown,
