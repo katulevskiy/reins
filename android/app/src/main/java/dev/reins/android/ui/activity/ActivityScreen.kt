@@ -810,14 +810,30 @@ private fun NoticeRow(
     maxLines: Int = 4,
 ) {
     val c = LocalColors.current
+    // A raised card like the waiting and connect cards, solid so it reads over the wallpaper: the glyph in its own
+    // tile, the line, and OK.
+    val shape = RoundedCornerShape(26.dp)
     Row(
-        Modifier.padding(horizontal = 24.dp).padding(top = 14.dp).fillMaxWidth().hairlineBelow(c.rule).padding(bottom = 12.dp).testTag(tag),
+        Modifier
+            .padding(horizontal = 16.dp)
+            .padding(top = 12.dp)
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.paperRaised)
+            .then(if (!c.dark) Modifier.border(1.dp, c.rule, shape) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .testTag(tag),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(glyph, c.violet, size = 18.dp)
-        RText(text, RType.sans(14f), c.ink, Modifier.weight(1f), maxLines = maxLines)
-        SignalButton("OK", Modifier.testTag(okTag), style = ButtonStyle.Soft, size = ButtonSize.Compact, onClick = onDismiss)
+        Box(
+            Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(c.violet.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            GlyphIcon(glyph, c.violet, size = 18.dp)
+        }
+        RText(text, RType.sans(15f), c.ink, Modifier.weight(1f), maxLines = maxLines)
+        SignalButton("OK", Modifier.testTag(okTag), size = ButtonSize.Compact, onClick = onDismiss)
     }
 }
 
