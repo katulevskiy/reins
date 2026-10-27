@@ -18,7 +18,7 @@ use crate::db::{
         Membership, Organization,
         reins_org::{self, ReinsOrg, ReinsOrgDomain, ReinsOrgRole, SUBJECT_MEMBER},
     },
-    schema::{organizations, users_organizations},
+    schema::organizations,
 };
 
 /// Where the verification record is published, under the domain.
@@ -74,6 +74,9 @@ pub fn create_org(
         if reins_org::q_verified_owner(c, &domain)?.is_some() {
             return Err(OrgError::Taken("Another organization has verified this domain."));
         }
+        if !reins_org::q_orgs_of_user_any(c, creator)?.is_empty() {
+            return Err(OrgError::Invalid("This account already belongs to an organization."));
+        }
         let org = Organization::new(name.clone(), creator_email, None, None);
         let org_uuid = org.uuid.to_string();
         diesel::insert_into(organizations::table).values(&org).execute(c)?;
@@ -94,7 +97,7 @@ pub fn create_org(
             },
         )?;
         let membership = Membership::new(creator.to_owned().into(), org.uuid.clone(), None);
-        diesel::insert_into(users_organizations::table).values(&membership).execute(c)?;
+        reins_org::q_add_member(c, &membership, Some(creator), now)?;
         reins_org::q_grant(
             c,
             &ReinsOrgRole {

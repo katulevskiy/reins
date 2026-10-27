@@ -25,7 +25,7 @@ use crate::db::{
     DbConn, DbConnInner, DbPool,
     models::{
         UserId,
-        reins_org::{self, CutOff},
+        reins_org::{self, CutOff, SUBJECT_MEMBER, state},
     },
 };
 
@@ -43,6 +43,17 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// The member's state in the org after this removal.
+    #[must_use]
+    pub fn state(self) -> &'static str {
+        match self {
+            Self::DirectorySuspend => state::SUSPENDED_BY_DIRECTORY,
+            Self::DirectoryDelete => state::DEPROVISIONED_BY_DIRECTORY,
+            Self::AdminRemoval => state::REMOVED_BY_ADMIN,
+            Self::ProviderMembershipLost => state::SUSPENDED_BY_PROVIDER,
+        }
+    }
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -101,36 +112,36 @@ pub fn q_deprovision(
     now: i64,
 ) -> Result<Option<Removal>, OrgError> {
     let started = Instant::now();
-    let Some(membership) = reins_org::q_membership(c, org, user)? else {
+    let Some(member) = reins_org::q_member_state(c, org, user)? else {
         return Ok(None);
     };
-    let active = membership.status >= reins_org::ACTIVE_STATUS;
-    let delete = reason == Reason::DirectoryDelete;
-    if !active && !delete {
+    let new_state = reason.state();
+    // Only an active member is removed; a suspended one may still be deleted by the directory that suspended them.
+    let escalation = reason == Reason::DirectoryDelete && member.state == state::SUSPENDED_BY_DIRECTORY;
+    if !member.is_active() && !escalation {
         return Ok(None);
     }
+    let membership = member.membership_uuid.clone();
     // The one membership rule every path shares: the directory may cut off the last Org owner, but the tenant keeps
-    // its owner (and asks for recovery) rather than being left with none.
-    let plan = super::invariants::plan_membership_end(c, org, membership.uuid.as_ref(), OnLastOwner::KeepOwner)?;
-    let keep_owner = plan == EndPlan::KeepOwner;
+    // its owner (and asks for recovery) rather than being left with none. `escalation`: already decided.
+    let keep_owner = if member.is_active() {
+        super::invariants::plan_membership_end(c, org, &membership, OnLastOwner::KeepOwner)? == EndPlan::KeepOwner
+    } else {
+        !reins_org::q_subject_roles(c, org, SUBJECT_MEMBER, &membership)?.is_empty()
+            && super::invariants::recovery_mode(c, org)?
+    };
+    // Account-wide on purpose: this account is this org's alone (`reins_org_members`, one org per account).
     let cut = reins_org::q_cut_off_user(c, user)?;
     let enrolled_devices = reins_org::q_revoke_devices(c, org, user, now)?;
-    if keep_owner {
+    let clear_external = reason == Reason::AdminRemoval;
+    reins_org::q_end_membership(c, org, user, &membership, new_state, keep_owner, clear_external, actor, now)?;
+    if keep_owner && member.is_active() {
         super::invariants::show_owner_recovery(c, org, now)?;
-        event(
-            c,
-            org,
-            "org.owner_recovery_needed",
-            actor,
-            Some(membership.uuid.as_ref()),
-            &json!({"reason": reason.as_str()}),
-            now,
-        )?;
-    } else {
-        reins_org::q_end_membership(c, org, membership.uuid.as_ref(), delete)?;
+        event(c, org, "org.owner_recovery_needed", actor, Some(&membership), &json!({"reason": reason.as_str()}), now)?;
     }
-    if delete && !keep_owner {
-        // The account itself goes too (its vault, keys and the rest), through the WorkOS sync's retried deletion.
+    if reason == Reason::DirectoryDelete && !keep_owner {
+        // The Managed account itself goes too (its vault, keys and the rest), through the WorkOS sync's retried
+        // deletion. It is this org's account; a Personal account is a different one.
         let pending = super::super::workos_sync::pending_deletion(&UserId::from(user.to_owned()));
         crate::db::models::reins_workos::q_set_setting(c, &pending, user)?;
     }
@@ -139,9 +150,10 @@ pub fn q_deprovision(
         org,
         "member.deprovisioned",
         actor,
-        Some(membership.uuid.as_ref()),
+        Some(&membership),
         &json!({
             "reason": reason.as_str(),
+            "state": new_state,
             "kept_as_last_owner": keep_owner,
             "devices": cut.devices,
             "enrolled_devices": enrolled_devices,
@@ -232,8 +244,7 @@ mod tests {
         schema::{devices, reins_connections, reins_refresh_tokens, users, users_organizations},
     };
 
-    fn member_with_everything(c: &mut DbConnInner, user: &str, m: &str, connections: usize, phones: usize) {
-        add_member(c, "o1", m, user, ACTIVE_STATUS);
+    fn with_everything(c: &mut DbConnInner, user: &str, connections: usize, phones: usize) {
         for i in 0..phones {
             let d = Device::new(DeviceId::from(format!("{user}-d{i}")), user.to_owned().into(), "Phone".to_owned(), 0);
             diesel::insert_into(devices::table).values(&d).execute(c).unwrap();
@@ -258,15 +269,34 @@ mod tests {
         }
     }
 
+    fn member_with_everything(c: &mut DbConnInner, org: &str, user: &str, m: &str, connections: usize, phones: usize) {
+        add_member(c, org, m, user, ACTIVE_STATUS);
+        with_everything(c, user, connections, phones);
+    }
+
     fn setup() -> DbConnInner {
         let mut c = db();
         add_org(&mut c, "o1");
-        add_user(&mut c, "u1", "dana@acme.com");
-        add_user(&mut c, "u2", "lee@acme.com");
-        member_with_everything(&mut c, "u1", "m1", 3, 2);
-        member_with_everything(&mut c, "u2", "m2", 1, 1);
+        member_with_everything(&mut c, "o1", "u1", "m1", 3, 2);
+        member_with_everything(&mut c, "o1", "u2", "m2", 1, 1);
         add_group(&mut c, "o1", "g1", &["m1", "m2"]);
         c
+    }
+
+    fn devices_of(c: &mut DbConnInner, user: &str) -> i64 {
+        devices::table.filter(devices::user_uuid.eq(user)).count().get_result(c).unwrap()
+    }
+
+    fn connections_of(c: &mut DbConnInner, user: &str) -> i64 {
+        reins_connections::table.filter(reins_connections::user_uuid.eq(user)).count().get_result(c).unwrap()
+    }
+
+    fn enabled(c: &mut DbConnInner, user: &str) -> bool {
+        users::table.filter(users::uuid.eq(user)).select(users::enabled).first(c).unwrap()
+    }
+
+    fn state_of(c: &mut DbConnInner, org: &str, user: &str) -> String {
+        reins_org::q_member_state(c, org, user).unwrap().unwrap().state
     }
 
     #[test]
@@ -274,37 +304,74 @@ mod tests {
         let mut c = setup();
         let r = q_deprovision(&mut c, "o1", "u1", Reason::DirectorySuspend, None, 5).unwrap().unwrap();
         assert_eq!((r.cut.devices, r.cut.connections), (2, 3));
-        assert_eq!(devices::table.filter(devices::user_uuid.eq("u1")).count().get_result::<i64>(&mut c).unwrap(), 0);
-        assert_eq!(devices::table.filter(devices::user_uuid.eq("u2")).count().get_result::<i64>(&mut c).unwrap(), 1);
-        assert_eq!(
-            reins_connections::table
-                .filter(reins_connections::user_uuid.eq("u1"))
-                .count()
-                .get_result::<i64>(&mut c)
-                .unwrap(),
-            0
-        );
+        assert_eq!((devices_of(&mut c, "u1"), devices_of(&mut c, "u2")), (0, 1));
+        assert_eq!((connections_of(&mut c, "u1"), connections_of(&mut c, "u2")), (0, 1));
         assert_eq!(reins_refresh_tokens::table.count().get_result::<i64>(&mut c).unwrap(), 1);
-        let enabled: bool = users::table.filter(users::uuid.eq("u1")).select(users::enabled).first(&mut c).unwrap();
-        assert!(!enabled);
+        // The org's own state says it; the account-wide flag is never touched.
+        assert_eq!(state_of(&mut c, "o1", "u1"), state::SUSPENDED_BY_DIRECTORY);
+        assert!(enabled(&mut c, "u1"));
         let status: i32 = users_organizations::table
             .filter(users_organizations::uuid.eq("m1"))
             .select(users_organizations::status)
             .first(&mut c)
             .unwrap();
-        assert!(status < 0, "revoked, restorable");
+        assert!(status < 0, "revoked in Vaultwarden too, restorable");
         assert_eq!(reins_org::q_group_members(&mut c, "g1").unwrap(), ["m2"]);
         let e = crate::db::models::reins_org_event::q_events(&mut c, "o1", None, 1).unwrap().remove(0);
         assert_eq!((e.kind.as_str(), e.subject.as_deref()), ("member.deprovisioned", Some("m1")));
     }
 
+    /// Two orgs and a Personal account: removing a member of one org touches nothing of the other org, and nothing of
+    /// anyone's Personal account (a different account), and no account flag.
     #[test]
-    fn a_directory_delete_removes_the_membership_and_queues_the_account() {
+    fn one_orgs_removal_never_reaches_another_org_or_a_personal_account() {
+        let mut c = setup();
+        add_org(&mut c, "o2");
+        member_with_everything(&mut c, "o2", "v1", "n1", 2, 1);
+        add_user(&mut c, "personal", "dana@gmail.com");
+        with_everything(&mut c, "personal", 2, 1);
+        q_deprovision(&mut c, "o1", "u1", Reason::DirectoryDelete, None, 5).unwrap().unwrap();
+        q_deprovision(&mut c, "o1", "u2", Reason::AdminRemoval, Some("x"), 5).unwrap().unwrap();
+        assert_eq!(state_of(&mut c, "o2", "v1"), state::ACTIVE);
+        assert_eq!((devices_of(&mut c, "v1"), connections_of(&mut c, "v1")), (1, 2));
+        assert_eq!((devices_of(&mut c, "personal"), connections_of(&mut c, "personal")), (1, 2));
+        assert!(enabled(&mut c, "v1") && enabled(&mut c, "personal"));
+        // o2's view: no event of o1's removals.
+        assert!(crate::db::models::reins_org_event::q_events(&mut c, "o2", None, 100).unwrap().is_empty());
+        // And o1 can't remove o2's member: not its member.
+        assert!(q_deprovision(&mut c, "o1", "v1", Reason::AdminRemoval, None, 6).unwrap().is_none());
+        assert!(q_deprovision(&mut c, "o1", "personal", Reason::DirectoryDelete, None, 6).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_account_belongs_to_one_org_at_most() {
+        let mut c = setup();
+        add_org(&mut c, "o2");
+        let m = crate::db::models::Membership::new("u1".to_owned().into(), "o2".to_owned().into(), None);
+        assert!(reins_org::q_add_member(&mut c, &m, None, 1).is_err());
+        assert!(reins_org::q_membership(&mut c, "o2", "u1").unwrap().is_none(), "nothing half-written");
+    }
+
+    #[test]
+    fn a_directory_delete_keeps_the_membership_record_and_queues_the_account() {
         let mut c = setup();
         q_deprovision(&mut c, "o1", "u1", Reason::DirectoryDelete, None, 5).unwrap().unwrap();
-        assert!(reins_org::q_membership(&mut c, "o1", "u1").unwrap().is_none());
+        assert_eq!(state_of(&mut c, "o1", "u1"), state::DEPROVISIONED_BY_DIRECTORY);
         let pending = super::super::super::workos_sync::pending_deletion(&UserId::from("u1".to_owned()));
         assert!(crate::db::models::reins_workos::q_get_setting(&mut c, &pending).unwrap().is_some());
+    }
+
+    #[test]
+    fn an_admin_removal_unlinks_the_directory() {
+        let mut c = setup();
+        diesel::update(users_organizations::table.filter(users_organizations::uuid.eq("m1")))
+            .set(users_organizations::external_id.eq("directory_user_1"))
+            .execute(&mut c)
+            .unwrap();
+        q_deprovision(&mut c, "o1", "u1", Reason::AdminRemoval, Some("u2"), 5).unwrap().unwrap();
+        let m = reins_org::q_membership(&mut c, "o1", "u1").unwrap().unwrap();
+        assert_eq!(m.external_id, None);
+        assert_eq!(state_of(&mut c, "o1", "u1"), state::REMOVED_BY_ADMIN);
     }
 
     #[test]
@@ -318,16 +385,15 @@ mod tests {
     #[test]
     fn the_directory_never_leaves_an_org_without_an_owner() {
         let mut c = setup();
-        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
         let r = q_deprovision(&mut c, "o1", "u1", Reason::DirectoryDelete, None, 5).unwrap().unwrap();
         // Cut off like anyone…
         assert_eq!((r.cut.devices, r.cut.connections), (2, 3));
-        let enabled: bool = users::table.filter(users::uuid.eq("u1")).select(users::enabled).first(&mut c).unwrap();
-        assert!(!enabled);
-        // …but still the owner, the account kept, and the tenant flagged.
-        assert_eq!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap(), [reins_proto::org::Role::OrgOwner]);
-        assert!(super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        assert_eq!(state_of(&mut c, "o1", "u1"), state::DEPROVISIONED_BY_DIRECTORY);
+        // …but still holding the role, the account kept, recovery open and shown.
+        assert_eq!(reins_org::q_granted_roles(&mut c, "o1", "m1").unwrap(), [reins_proto::org::Role::OrgOwner]);
         assert!(super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
+        assert!(super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
         let pending = super::super::super::workos_sync::pending_deletion(&UserId::from("u1".to_owned()));
         assert!(crate::db::models::reins_workos::q_get_setting(&mut c, &pending).unwrap().is_none());
         let kinds: Vec<String> = crate::db::models::reins_org_event::q_events(&mut c, "o1", None, 2)
@@ -338,11 +404,24 @@ mod tests {
         assert_eq!(kinds, ["member.deprovisioned", "org.owner_recovery_needed"]);
         // A second owner present: the directory removes the first as usual.
         let mut c = setup();
-        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
-        grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m2", reins_proto::org::Role::OrgOwner);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m2", reins_proto::org::Role::OrgOwner);
         q_deprovision(&mut c, "o1", "u1", Reason::DirectorySuspend, None, 5).unwrap().unwrap();
-        assert!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap().is_empty());
-        assert!(!super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        assert!(reins_org::q_granted_roles(&mut c, "o1", "m1").unwrap().is_empty());
+        assert!(!super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
+    }
+
+    #[test]
+    fn nothing_outside_the_org_opens_recovery() {
+        let mut c = setup();
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m1", reins_proto::org::Role::OrgOwner);
+        // The account disabled globally (an admin of the server, another reason): the org still has its owner.
+        diesel::update(users::table.filter(users::uuid.eq("u1")))
+            .set(users::enabled.eq(false))
+            .execute(&mut c)
+            .unwrap();
+        assert!(!super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
+        assert_eq!(super::super::invariants::owners(&mut c, "o1").unwrap(), ["m1"]);
     }
 
     struct Counting(AtomicU32);
@@ -380,8 +459,7 @@ mod tests {
     fn it_takes_well_under_a_minute() {
         let mut c = db();
         add_org(&mut c, "o1");
-        add_user(&mut c, "u1", "dana@acme.com");
-        member_with_everything(&mut c, "u1", "m1", 50, 5);
+        member_with_everything(&mut c, "o1", "u1", "m1", 50, 5);
         let started = Instant::now();
         let r = c.transaction(|c| q_deprovision(c, "o1", "u1", Reason::DirectoryDelete, None, 5)).unwrap().unwrap();
         let elapsed = started.elapsed();

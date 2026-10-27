@@ -13,15 +13,51 @@ use reins_proto::org::{Capability, IdentityKind, Role, Tier, role_grants};
 use crate::db::{
     DbConnInner,
     schema::{
-        groups, groups_users, reins_org_changes, reins_org_devices, reins_org_domains, reins_org_roles,
-        reins_org_verified_domains, reins_orgs, users_organizations,
+        groups, groups_users, reins_org_changes, reins_org_devices, reins_org_domains, reins_org_members,
+        reins_org_roles, reins_org_verified_domains, reins_orgs, users_organizations,
     },
 };
 
 use super::{Membership, MembershipStatus};
 
-/// A membership counts (signs in, holds roles) when it was accepted or confirmed and is not revoked.
+/// Vaultwarden's status of a membership that counts. Reins mirrors [`ReinsOrgMember::state`] into it (active: at least
+/// Accepted; otherwise revoked), but the state is what decides.
 pub const ACTIVE_STATUS: i32 = MembershipStatus::Accepted as i32;
+
+/// A member's state in its org ([`ReinsOrgMember`]).
+pub mod state {
+    pub const ACTIVE: &str = "active";
+    /// The directory marked them inactive; the directory can restore them.
+    pub const SUSPENDED_BY_DIRECTORY: &str = "suspended_by_directory";
+    /// The directory deleted them; the account is erased.
+    pub const DEPROVISIONED_BY_DIRECTORY: &str = "deprovisioned_by_directory";
+    /// An admin removed them (two-person); only a new admin action brings them back.
+    pub const REMOVED_BY_ADMIN: &str = "removed_by_admin";
+    /// Their sign-in provider no longer counts them (a Team org's GitHub membership).
+    pub const SUSPENDED_BY_PROVIDER: &str = "suspended_by_provider";
+    /// The states the directory caused (owner recovery may follow them).
+    pub const BY_DIRECTORY: [&str; 2] = [SUSPENDED_BY_DIRECTORY, DEPROVISIONED_BY_DIRECTORY];
+}
+
+/// One account's state in its org: the org-side authority for sign-in, roles, owners and recovery.
+#[derive(Clone, Debug, PartialEq, Eq, Identifiable, Queryable, Insertable)]
+#[diesel(table_name = reins_org_members)]
+#[diesel(primary_key(org_uuid, user_uuid))]
+pub struct ReinsOrgMember {
+    pub org_uuid: String,
+    pub user_uuid: String,
+    pub membership_uuid: String,
+    pub state: String,
+    pub changed_at: i64,
+    pub changed_by: Option<String>,
+}
+
+impl ReinsOrgMember {
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.state == state::ACTIVE
+    }
+}
 
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable, AsChangeset)]
 #[diesel(table_name = reins_orgs)]
@@ -145,30 +181,109 @@ pub fn q_save_org(c: &mut DbConnInner, org: &ReinsOrg) -> QueryResult<()> {
     diesel::update(reins_orgs::table.filter(reins_orgs::org_uuid.eq(&org.org_uuid))).set(org).execute(c).map(|_| ())
 }
 
-/// The tenants `user` is an active member of.
+/// The tenants `user` is an active member of (at most one).
 pub fn q_orgs_of_user(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<ReinsOrg>> {
-    let orgs: Vec<String> = users_organizations::table
-        .filter(users_organizations::user_uuid.eq(user))
-        .filter(users_organizations::status.ge(ACTIVE_STATUS))
-        .select(users_organizations::org_uuid)
+    let orgs: Vec<String> = reins_org_members::table
+        .filter(reins_org_members::user_uuid.eq(user))
+        .filter(reins_org_members::state.eq(state::ACTIVE))
+        .select(reins_org_members::org_uuid)
         .load(c)?;
     reins_orgs::table.filter(reins_orgs::org_uuid.eq_any(orgs)).order(reins_orgs::created_at.asc()).load(c)
 }
 
-/// The tenants `user` has a membership in, whatever its status (a removed member is still the org's to refuse).
+/// The tenant `user` belongs to, whatever their state there (a removed member is still the org's to refuse).
 pub fn q_orgs_of_user_any(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<String>> {
-    let orgs: Vec<String> = users_organizations::table
-        .filter(users_organizations::user_uuid.eq(user))
-        .select(users_organizations::org_uuid)
-        .load(c)?;
-    reins_orgs::table
-        .filter(reins_orgs::org_uuid.eq_any(orgs))
-        .order(reins_orgs::created_at.asc())
-        .select(reins_orgs::org_uuid)
+    reins_org_members::table.filter(reins_org_members::user_uuid.eq(user)).select(reins_org_members::org_uuid).load(c)
+}
+
+/// `user`'s state row in `org`.
+pub fn q_member_state(c: &mut DbConnInner, org: &str, user: &str) -> QueryResult<Option<ReinsOrgMember>> {
+    reins_org_members::table
+        .filter(reins_org_members::org_uuid.eq(org))
+        .filter(reins_org_members::user_uuid.eq(user))
+        .first(c)
+        .optional()
+}
+
+/// The state row of a membership.
+pub fn q_member_state_by_membership(
+    c: &mut DbConnInner,
+    org: &str,
+    membership: &str,
+) -> QueryResult<Option<ReinsOrgMember>> {
+    reins_org_members::table
+        .filter(reins_org_members::org_uuid.eq(org))
+        .filter(reins_org_members::membership_uuid.eq(membership))
+        .first(c)
+        .optional()
+}
+
+/// Makes `membership` (of `user`) a member of `org`, active: the Vaultwarden membership row and its state row, in one
+/// go. Fails when the account belongs to another org already (one org per account, a unique index).
+pub fn q_add_member(c: &mut DbConnInner, membership: &Membership, by: Option<&str>, now: i64) -> QueryResult<()> {
+    c.transaction(|c| {
+        diesel::insert_into(users_organizations::table).values(membership).execute(c)?;
+        diesel::insert_into(reins_org_members::table)
+            .values(&ReinsOrgMember {
+                org_uuid: membership.org_uuid.to_string(),
+                user_uuid: membership.user_uuid.to_string(),
+                membership_uuid: membership.uuid.to_string(),
+                state: state::ACTIVE.to_owned(),
+                changed_at: now,
+                changed_by: by.map(str::to_owned),
+            })
+            .execute(c)
+            .map(|_| ())
+    })
+}
+
+/// Sets `user`'s state in `org` and mirrors it into the Vaultwarden membership (active: restored; otherwise revoked).
+/// Touches nothing outside this org's rows.
+pub fn q_set_state(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    new_state: &str,
+    by: Option<&str>,
+    now: i64,
+) -> QueryResult<()> {
+    diesel::update(
+        reins_org_members::table
+            .filter(reins_org_members::org_uuid.eq(org))
+            .filter(reins_org_members::user_uuid.eq(user)),
+    )
+    .set((
+        reins_org_members::state.eq(new_state),
+        reins_org_members::changed_at.eq(now),
+        reins_org_members::changed_by.eq(by),
+    ))
+    .execute(c)?;
+    let target = users_organizations::table
+        .filter(users_organizations::org_uuid.eq(org))
+        .filter(users_organizations::user_uuid.eq(user));
+    if new_state == state::ACTIVE {
+        // Vaultwarden's revocation moves the status 128 below; restoring moves it back.
+        diesel::update(target.filter(users_organizations::status.lt(MembershipStatus::Invited as i32)))
+            .set(users_organizations::status.eq(users_organizations::status + 128))
+            .execute(c)?;
+    } else {
+        diesel::update(target.filter(users_organizations::status.gt(MembershipStatus::Revoked as i32)))
+            .set(users_organizations::status.eq(users_organizations::status - 128))
+            .execute(c)?;
+    }
+    Ok(())
+}
+
+/// The active members' user ids among `memberships`.
+fn active_users_of(c: &mut DbConnInner, org: &str, memberships: &[String]) -> QueryResult<Vec<String>> {
+    reins_org_members::table
+        .filter(reins_org_members::org_uuid.eq(org))
+        .filter(reins_org_members::membership_uuid.eq_any(memberships))
+        .filter(reins_org_members::state.eq(state::ACTIVE))
+        .select(reins_org_members::user_uuid)
         .load(c)
 }
 
-/// The org's display name (`organizations.name`).
 pub fn q_org_name(c: &mut DbConnInner, org: &str) -> QueryResult<Option<String>> {
     crate::db::schema::organizations::table
         .filter(crate::db::schema::organizations::uuid.eq(org))
@@ -300,21 +415,23 @@ pub fn q_groups_of(c: &mut DbConnInner, membership: &str) -> QueryResult<Vec<Str
         .load(c)
 }
 
-/// The roles of `membership`: its own and those of every group it is in. Empty when the membership is not active.
+/// The roles of `membership`: its own and those of every group it is in. Empty unless the member is active here.
 pub fn q_roles_of(c: &mut DbConnInner, org: &str, membership: &str) -> QueryResult<Vec<Role>> {
-    let Some(m) = q_membership_by_uuid(c, org, membership)? else {
-        return Ok(Vec::new());
-    };
-    if m.status < ACTIVE_STATUS {
+    if !q_member_state_by_membership(c, org, membership)?.is_some_and(|m| m.is_active()) {
         return Ok(Vec::new());
     }
+    q_granted_roles(c, org, membership)
+}
+
+/// The roles granted to `membership` and its groups, whatever the member's state (a kept last owner's role).
+pub fn q_granted_roles(c: &mut DbConnInner, org: &str, membership: &str) -> QueryResult<Vec<Role>> {
     let groups = q_groups_of(c, membership)?;
-    let direct = reins_org_roles::table
+    let mut names: Vec<String> = reins_org_roles::table
         .filter(reins_org_roles::org_uuid.eq(org))
         .filter(reins_org_roles::subject_kind.eq(SUBJECT_MEMBER))
         .filter(reins_org_roles::subject_id.eq(membership))
-        .select(reins_org_roles::role);
-    let mut names: Vec<String> = direct.load(c)?;
+        .select(reins_org_roles::role)
+        .load(c)?;
     names.extend(
         reins_org_roles::table
             .filter(reins_org_roles::org_uuid.eq(org))
@@ -329,7 +446,6 @@ pub fn q_roles_of(c: &mut DbConnInner, org: &str, membership: &str) -> QueryResu
     Ok(roles)
 }
 
-/// The roles granted to a subject itself (not through groups).
 pub fn q_subject_roles(c: &mut DbConnInner, org: &str, kind: &str, id: &str) -> QueryResult<Vec<Role>> {
     let names: Vec<String> = reins_org_roles::table
         .filter(reins_org_roles::org_uuid.eq(org))
@@ -375,7 +491,7 @@ pub fn q_revoke_all(c: &mut DbConnInner, org: &str, kind: &str, id: &str) -> Que
     .map(|_| ())
 }
 
-/// The users (uuids) whose active membership holds a role granting `cap`, directly or through a group.
+/// The users (uuids) active in `org` whose membership holds a role granting `cap`, directly or through a group.
 pub fn q_holders(c: &mut DbConnInner, org: &str, cap: Capability) -> QueryResult<Vec<String>> {
     let roles: Vec<&str> = Role::ALL.iter().filter(|r| role_grants(**r, cap)).map(|r| r.as_str()).collect();
     let rows: Vec<(String, String)> = reins_org_roles::table
@@ -394,19 +510,7 @@ pub fn q_holders(c: &mut DbConnInner, org: &str, cap: Capability) -> QueryResult
                 .load::<String>(c)?,
         );
     }
-    let mut users: Vec<String> = users_organizations::table
-        .filter(users_organizations::org_uuid.eq(org))
-        .filter(users_organizations::uuid.eq_any(&memberships))
-        .filter(users_organizations::status.ge(ACTIVE_STATUS))
-        .select(users_organizations::user_uuid)
-        .load(c)?;
-    // A disabled account (cut off by the directory, kept as the last owner) can't act or approve.
-    let disabled: Vec<String> = crate::db::schema::users::table
-        .filter(crate::db::schema::users::uuid.eq_any(&users))
-        .filter(crate::db::schema::users::enabled.eq(false))
-        .select(crate::db::schema::users::uuid)
-        .load(c)?;
-    users.retain(|u| !disabled.contains(u));
+    let mut users = active_users_of(c, org, &memberships)?;
     users.sort();
     users.dedup();
     Ok(users)
@@ -472,17 +576,25 @@ pub fn q_decide(c: &mut DbConnInner, uuid: &str, state: &str, by: &str, at: i64)
 // Enrolled devices
 // ---------------------------------------------------------------------------------------------------------------
 
-/// Enrolls (or re-enrolls) a device: a new key replaces the old one.
-pub fn q_upsert_device(c: &mut DbConnInner, row: &ReinsOrgDevice) -> QueryResult<()> {
+/// Enrolls a device, or re-enrolls it with a new key; `false`, writing nothing, when the org revoked it: a revoked
+/// device stays revoked (a tombstone), and only an admin's action could bring it back.
+pub fn q_enroll_device(c: &mut DbConnInner, row: &ReinsOrgDevice) -> QueryResult<bool> {
     c.transaction(|c| {
-        diesel::delete(
-            reins_org_devices::table
-                .filter(reins_org_devices::org_uuid.eq(&row.org_uuid))
-                .filter(reins_org_devices::user_uuid.eq(&row.user_uuid))
-                .filter(reins_org_devices::device_uuid.eq(&row.device_uuid)),
-        )
-        .execute(c)?;
-        diesel::insert_into(reins_org_devices::table).values(row).execute(c).map(|_| ())
+        if let Some(existing) = q_device(c, &row.org_uuid, &row.user_uuid, &row.device_uuid)? {
+            if existing.revoked_at.is_some() {
+                return Ok(false);
+            }
+            diesel::delete(
+                reins_org_devices::table
+                    .filter(reins_org_devices::org_uuid.eq(&row.org_uuid))
+                    .filter(reins_org_devices::user_uuid.eq(&row.user_uuid))
+                    .filter(reins_org_devices::device_uuid.eq(&row.device_uuid))
+                    .filter(reins_org_devices::revoked_at.is_null()),
+            )
+            .execute(c)?;
+        }
+        diesel::insert_into(reins_org_devices::table).values(row).execute(c)?;
+        Ok(true)
     })
 }
 
@@ -552,13 +664,13 @@ pub struct CutOff {
     pub push_token: Option<String>,
 }
 
-/// Signs `user` out everywhere and disables the account: every Vaultwarden device, the approval device and the phone
-/// roster, the SSO session mappings, every AI and desktop connection with its refresh tokens. One transaction, the
-/// caller's.
+/// Signs the Managed account `user` out everywhere: every Vaultwarden device, the approval device and the phone roster,
+/// the SSO session mappings, every AI and desktop connection with its refresh tokens. One transaction, the caller's.
+/// Account-wide on purpose, and only ever called for an account that belongs to the calling org (one org per account,
+/// `reins_org_members`): a Personal account is another account, and `users.enabled` is never touched (the org's own
+/// member state keeps the account out of the org's sign-in).
 pub fn q_cut_off_user(c: &mut DbConnInner, user: &str) -> QueryResult<CutOff> {
-    use crate::db::schema::{
-        devices, reins_connections, reins_devices, reins_refresh_tokens, reins_sso_sessions, users,
-    };
+    use crate::db::schema::{devices, reins_connections, reins_devices, reins_refresh_tokens, reins_sso_sessions};
     let push_token: Option<Option<String>> = reins_devices::table
         .filter(reins_devices::user_uuid.eq(user))
         .select(reins_devices::fcm_token)
@@ -579,7 +691,6 @@ pub fn q_cut_off_user(c: &mut DbConnInner, user: &str) -> QueryResult<CutOff> {
     diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::user_uuid.eq(user))).execute(c)?;
     super::reins_roster::q_delete_all(c, user)?;
     let devices = diesel::delete(devices::table.filter(devices::user_uuid.eq(user))).execute(c)?;
-    diesel::update(users::table.filter(users::uuid.eq(user))).set(users::enabled.eq(false)).execute(c)?;
     Ok(CutOff {
         devices,
         connections: connections.len(),
@@ -588,23 +699,34 @@ pub fn q_cut_off_user(c: &mut DbConnInner, user: &str) -> QueryResult<CutOff> {
     })
 }
 
-/// Ends a membership: revoked (it can be restored) or deleted, and in both cases out of every group and without its
-/// own role grants.
-pub fn q_end_membership(c: &mut DbConnInner, org: &str, membership: &str, delete: bool) -> QueryResult<()> {
-    diesel::delete(groups_users::table.filter(groups_users::users_organizations_uuid.eq(membership))).execute(c)?;
-    q_revoke_all(c, org, SUBJECT_MEMBER, membership)?;
-    let target = users_organizations::table
-        .filter(users_organizations::org_uuid.eq(org))
-        .filter(users_organizations::uuid.eq(membership));
-    if delete {
-        diesel::delete(target).execute(c)?;
-    } else {
-        // Vaultwarden's revocation: the status moves below `Revoked` and can move back.
-        diesel::update(target.filter(users_organizations::status.gt(MembershipStatus::Revoked as i32)))
-            .set(users_organizations::status.eq(users_organizations::status - 128))
-            .execute(c)?;
+/// Ends `user`'s membership in `org` with `new_state`: out of every group and without its own role grants (unless
+/// `keep_roles`: a kept last owner), and, for an admin's removal, unlinked from the directory (`clear_external`), so
+/// the directory can't bring it back. The membership row stays, as the org's record that this account was its member.
+pub fn q_end_membership(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    membership: &str,
+    new_state: &str,
+    keep_roles: bool,
+    clear_external: bool,
+    by: Option<&str>,
+    now: i64,
+) -> QueryResult<()> {
+    if !keep_roles {
+        diesel::delete(groups_users::table.filter(groups_users::users_organizations_uuid.eq(membership))).execute(c)?;
+        q_revoke_all(c, org, SUBJECT_MEMBER, membership)?;
     }
-    Ok(())
+    if clear_external {
+        diesel::update(
+            users_organizations::table
+                .filter(users_organizations::org_uuid.eq(org))
+                .filter(users_organizations::uuid.eq(membership)),
+        )
+        .set(users_organizations::external_id.eq(None::<String>))
+        .execute(c)?;
+    }
+    q_set_state(c, org, user, new_state, by, now)
 }
 
 #[cfg(all(test, sqlite))]
@@ -665,6 +787,22 @@ pub(crate) mod tests {
                 users_organizations::status.eq(status),
                 users_organizations::atype.eq(2),
             ))
+            .execute(c)
+            .unwrap();
+        let st = if status >= ACTIVE_STATUS {
+            state::ACTIVE
+        } else {
+            state::REMOVED_BY_ADMIN
+        };
+        diesel::insert_into(reins_org_members::table)
+            .values(&ReinsOrgMember {
+                org_uuid: org.to_owned(),
+                user_uuid: user.to_owned(),
+                membership_uuid: m.to_owned(),
+                state: st.to_owned(),
+                changed_at: 1,
+                changed_by: None,
+            })
             .execute(c)
             .unwrap();
     }
@@ -875,11 +1013,14 @@ pub(crate) mod tests {
             enrolled_at: 1,
             revoked_at: None,
         };
-        q_upsert_device(&mut c, &dev("u1", "d1")).unwrap();
-        q_upsert_device(&mut c, &dev("u1", "d1")).unwrap();
-        q_upsert_device(&mut c, &dev("u2", "d2")).unwrap();
+        assert!(q_enroll_device(&mut c, &dev("u1", "d1")).unwrap());
+        assert!(q_enroll_device(&mut c, &dev("u1", "d1")).unwrap(), "a new key for an enrolled device");
+        assert!(q_enroll_device(&mut c, &dev("u2", "d2")).unwrap());
         assert_eq!(q_revoke_devices(&mut c, "o1", "u1", 9).unwrap(), 1);
         assert_eq!(q_revoke_devices(&mut c, "o1", "u1", 10).unwrap(), 0);
+        assert_eq!(q_device(&mut c, "o1", "u1", "d1").unwrap().unwrap().revoked_at, Some(9));
+        // A revoked device can't enroll itself again, and its revocation stays.
+        assert!(!q_enroll_device(&mut c, &dev("u1", "d1")).unwrap());
         assert_eq!(q_device(&mut c, "o1", "u1", "d1").unwrap().unwrap().revoked_at, Some(9));
         assert_eq!(q_device(&mut c, "o1", "u2", "d2").unwrap().unwrap().revoked_at, None);
     }

@@ -12,6 +12,18 @@
 //!
 //! Everything is off unless `REINS_ORGS_ENABLED` is set. An org never sees an account that is not its member: no
 //! answer, page, event or error names one.
+//!
+//! **Tenant scope.** Each member's state in its org (`reins_org_members`: active, suspended or deprovisioned by the
+//! directory, removed by an admin, suspended by the provider) is the org-side authority for sign-in, roles, owners and
+//! recovery, and an account belongs to one org at most (a unique index): a Managed account is its org's alone, and a
+//! Personal account is always a different account. Org code never writes `users.enabled`. It writes outside its own
+//! rows only here:
+//!
+//! - creating the tenant (`organizations`) and its members' Vaultwarden memberships (`users_organizations`, `groups`,
+//!   `groups_users` of its own org);
+//! - SCIM: a stub account and invitation for a new address on one of its verified domains, when no account has it;
+//! - deprovisioning (`deprovision::q_deprovision`, reached only for an account whose state row is in this org): the
+//!   account's devices, sessions, roster and connections, and, for a directory delete, the account itself.
 
 #![allow(dead_code)] // O1 wiring in progress: the routes and console use these.
 
@@ -33,11 +45,7 @@ use crate::{
     CONFIG,
     db::{
         DbConnInner,
-        models::{
-            Membership,
-            reins_org::{self, ACTIVE_STATUS},
-            reins_org_event,
-        },
+        models::{Membership, reins_org, reins_org_event},
     },
 };
 
@@ -83,22 +91,16 @@ impl From<diesel::result::Error> for OrgError {
     }
 }
 
-/// `user`'s active membership in `org`.
+/// `user`'s membership in `org`, when they are an active member there (the org's own state, `reins_org_members`).
 pub fn member_of(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<Membership>, OrgError> {
-    Ok(reins_org::q_membership(c, org, user)?.filter(|m| m.status >= ACTIVE_STATUS))
+    if !reins_org::q_member_state(c, org, user)?.is_some_and(|m| m.is_active()) {
+        return Ok(None);
+    }
+    Ok(reins_org::q_membership(c, org, user)?)
 }
 
-/// The roles `user` holds in `org`: none unless an active member with an enabled account.
+/// The roles `user` holds in `org` (none unless an active member there).
 pub fn roles_of_user(c: &mut DbConnInner, org: &str, user: &str) -> Result<Vec<Role>, OrgError> {
-    use diesel::prelude::*;
-    let enabled: Option<bool> = crate::db::schema::users::table
-        .filter(crate::db::schema::users::uuid.eq(user))
-        .select(crate::db::schema::users::enabled)
-        .first(c)
-        .optional()?;
-    if enabled != Some(true) {
-        return Ok(Vec::new());
-    }
     match member_of(c, org, user)? {
         Some(m) => Ok(reins_org::q_roles_of(c, org, m.uuid.as_ref())?),
         None => Ok(Vec::new()),
@@ -140,10 +142,9 @@ pub fn random_token() -> String {
 
 #[cfg(all(test, sqlite))]
 pub(crate) mod testing {
+    use crate::db::DbConnInner;
     #[allow(unused_imports)]
     pub use crate::db::models::reins_org::tests::{add_group, add_member, add_org, grant};
-    use crate::db::{DbConnInner, schema::users};
-    use diesel::prelude::*;
 
     pub fn db() -> DbConnInner {
         crate::db::models::reins_device_test_db()
@@ -154,8 +155,8 @@ pub(crate) mod testing {
         crate::db::models::reins_org::tests::ensure_user(c, uuid, email);
     }
 
-    /// Disables (or enables) an account.
-    pub fn set_enabled(c: &mut DbConnInner, uuid: &str, enabled: bool) {
-        diesel::update(users::table.filter(users::uuid.eq(uuid))).set(users::enabled.eq(enabled)).execute(c).unwrap();
+    /// Sets a member's state in `org`.
+    pub fn set_state(c: &mut DbConnInner, org: &str, user: &str, state: &str) {
+        crate::db::models::reins_org::q_set_state(c, org, user, state, None, 1).unwrap();
     }
 }

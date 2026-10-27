@@ -723,7 +723,7 @@ mod tests {
     fn owner_recovery_takes_two_security_admins() {
         let mut c = org(true);
         // The directory removed the last owner: kept as owner, account disabled, flag shown.
-        set_enabled(&mut c, "u1", false);
+        set_state(&mut c, "o1", "u1", reins_org::state::SUSPENDED_BY_DIRECTORY);
         invariants::show_owner_recovery(&mut c, "o1", 1).unwrap();
         assert!(invariants::recovery_mode(&mut c, "o1").unwrap());
         // One Security admin alone can't make an owner.
@@ -752,10 +752,10 @@ mod tests {
     #[test]
     fn a_stale_recovery_flag_grants_nothing() {
         let mut c = org(true);
-        set_enabled(&mut c, "u1", false);
+        set_state(&mut c, "o1", "u1", reins_org::state::SUSPENDED_BY_DIRECTORY);
         invariants::show_owner_recovery(&mut c, "o1", 1).unwrap();
-        // The owner comes back; the flag is still shown.
-        set_enabled(&mut c, "u1", true);
+        // The owner comes back (by any path that doesn't clear the flag); the flag is still shown.
+        set_state(&mut c, "o1", "u1", reins_org::state::ACTIVE);
         assert!(invariants::owner_recovery_shown(&mut c, "o1").unwrap());
         assert!(!invariants::recovery_mode(&mut c, "o1").unwrap());
         add_member(&mut c, "o1", "m5", "u5", ACTIVE_STATUS);
@@ -772,9 +772,9 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_second_owner_does_not_count() {
+    fn a_suspended_second_owner_does_not_count() {
         let mut c = org(false);
-        set_enabled(&mut c, "u2", false);
+        set_state(&mut c, "o1", "u2", reins_org::state::SUSPENDED_BY_DIRECTORY);
         let demote = AdminAction::RevokeRole {
             subject: Subject::Member("m1".to_owned()),
             role: Role::OrgOwner,

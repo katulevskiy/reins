@@ -522,6 +522,17 @@ table! {
 }
 
 table! {
+    reins_org_members (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        membership_uuid -> Text,
+        state -> Text,
+        changed_at -> BigInt,
+        changed_by -> Nullable<Text>,
+    }
+}
+
+table! {
     reins_org_roles (org_uuid, subject_kind, subject_id, role) {
         org_uuid -> Text,
         subject_kind -> Text,

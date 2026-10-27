@@ -1,24 +1,21 @@
 //! The rules every change to a membership or a role goes through, whoever makes it: a two-person admin change
 //! (`admin`), the directory (`scim`, through `deprovision`), or the API. One place, so the paths can't drift apart.
 //!
-//! - **An org always has an Org owner.** An owner counts when they hold the role directly, their membership is active
-//!   and their account is enabled; everything here recomputes that from the database on every call, and no stored flag
+//! - **An org always has an Org owner.** An owner counts when they hold the role directly and their state in this org is
+//!   active (`reins_org_members`, the org's own rows; never `users.enabled`); everything here recomputes that from the database on every call, and no stored flag
 //!   decides anything. Removing or demoting the last one is refused to admins. When the directory removes the last one
 //!   (a SCIM delete or suspend, which nobody in the org can refuse), the owner role and membership are kept and the
-//!   account is cut off like any removed member's. The tenant then has no owner that counts, which is what
-//!   [`recovery_mode`] answers: only then may two Security admins together make a new owner. `owner_recovery_at`
+//!   account is cut off like any removed member's. The tenant then has no owner that counts because of its own
+//!   directory, which is what [`recovery_mode`] answers: only then may two Security admins together make a new owner. `owner_recovery_at`
 //!   only *shows* this (console, events), and is cleared as soon as an owner counts again.
 //! - **Org owner and Security admin are people's roles**, never a group's (`AdminAction::check_shape`).
 
 use reins_proto::org::{Role, Subject};
 
-use diesel::prelude::*;
-
 use super::OrgError;
 use crate::db::{
     DbConnInner,
-    models::reins_org::{self, ACTIVE_STATUS, SUBJECT_MEMBER},
-    schema::users,
+    models::reins_org::{self, SUBJECT_MEMBER, state},
 };
 
 /// What a path that cannot be refused (the directory) does when it would end the last owner.
@@ -39,32 +36,33 @@ pub enum EndPlan {
     KeepOwner,
 }
 
-/// The owners that count right now: memberships holding Org owner directly, active, of an enabled account.
+/// The owners that count right now: memberships holding Org owner directly whose state in this org is active. Read
+/// from this org's own rows only.
 pub fn owners(c: &mut DbConnInner, org: &str) -> Result<Vec<String>, OrgError> {
+    Ok(owner_states(c, org)?.into_iter().filter(|(_, st)| st == state::ACTIVE).map(|(m, _)| m).collect())
+}
+
+/// Every membership holding Org owner directly, with its state in this org.
+fn owner_states(c: &mut DbConnInner, org: &str) -> Result<Vec<(String, String)>, OrgError> {
     let mut out = Vec::new();
     for row in reins_org::q_role_rows(c, org)? {
         if row.subject_kind != SUBJECT_MEMBER || row.role != Role::OrgOwner.as_str() {
             continue;
         }
-        let Some(m) = reins_org::q_membership_by_uuid(c, org, &row.subject_id)? else {
-            continue;
-        };
-        let enabled: bool = users::table
-            .filter(users::uuid.eq(m.user_uuid.to_string()))
-            .select(users::enabled)
-            .first(c)
-            .optional()?
-            .unwrap_or(false);
-        if m.status >= ACTIVE_STATUS && enabled {
-            out.push(row.subject_id);
+        if let Some(m) = reins_org::q_member_state_by_membership(c, org, &row.subject_id)? {
+            out.push((row.subject_id, m.state));
         }
     }
     Ok(out)
 }
 
-/// Whether the org has no owner that counts: the only time Security admins may (two together) make one.
+/// Owner recovery: no owner counts **and** this org's own directory is why (an owner it suspended or deprovisioned
+/// still holds the role). Nothing outside this org's rows can make it true: not another tenant, not a global account
+/// flag, not an admin's removal (refused for the last owner anyway).
 pub fn recovery_mode(c: &mut DbConnInner, org: &str) -> Result<bool, OrgError> {
-    Ok(owners(c, org)?.is_empty())
+    let owners = owner_states(c, org)?;
+    Ok(!owners.iter().any(|(_, st)| st == state::ACTIVE)
+        && owners.iter().any(|(_, st)| state::BY_DIRECTORY.contains(&st.as_str())))
 }
 
 /// Whether `membership` is the org's only active Org owner.

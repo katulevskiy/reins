@@ -40,6 +40,20 @@ CREATE TABLE reins_org_verified_domains (
     verified_at BIGINT       NOT NULL
 );
 
+-- Each member's state in this org, the authority for everything org-side (sign-in, roles, owners, recovery): one
+-- org's directory or admins change only their own rows here, never `users.enabled` or another tenant's. An account is
+-- a member of one org at most (`user_uuid` unique): a Managed account is its org's alone, and a Personal account is a
+-- different account.
+CREATE TABLE reins_org_members (
+    org_uuid        CHAR(36)    NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    user_uuid       CHAR(36)    NOT NULL UNIQUE REFERENCES users (uuid) ON DELETE CASCADE,
+    membership_uuid CHAR(36)    NOT NULL,
+    state           VARCHAR(32) NOT NULL,
+    changed_at      BIGINT      NOT NULL,
+    changed_by      CHAR(36),
+    PRIMARY KEY (org_uuid, user_uuid)
+);
+
 -- Roles (05 §3) of a member (`subject_id`: the membership uuid) or of a group (the group uuid).
 CREATE TABLE reins_org_roles (
     org_uuid     CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,

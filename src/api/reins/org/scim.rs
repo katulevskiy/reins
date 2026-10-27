@@ -30,7 +30,7 @@ use crate::{
         DbConn, DbConnInner, DbPool,
         models::{
             Group, Invitation, Membership, ReinsSetting, User,
-            reins_org::{self, ACTIVE_STATUS, ReinsOrg, SUBJECT_GROUP},
+            reins_org::{self, ACTIVE_STATUS, ReinsOrg, SUBJECT_GROUP, state},
         },
         schema::{groups, groups_users, invitations, users, users_organizations},
     },
@@ -393,28 +393,22 @@ fn upsert_user(
     active: bool,
     now: i64,
 ) -> Result<Vec<Removal>, OrgError> {
-    let domain_ok =
-        reins_proto::org::email_domain(email).is_some_and(|d| verified_domains(c, org).is_ok_and(|v| v.contains(&d)));
-    if !domain_ok {
-        // The directory's own data, about its own user id: no Reins account is named.
-        event(c, org, "scim.refused", None, Some(user_id), &json!({"why": "email_outside_verified_domains"}), now)?;
-        return Ok(Vec::new());
-    }
+    // A member the directory already linked: its word on suspension always applies, whatever the address now says.
     if let Some(m) = membership_by_external(c, org, user_id)? {
         let user = m.user_uuid.to_string();
+        let Some(member) = reins_org::q_member_state(c, org, &user)? else {
+            return Ok(Vec::new());
+        };
         if !active {
             return Ok(deprovision::q_deprovision(c, org, &user, Reason::DirectorySuspend, None, now)?
                 .into_iter()
                 .collect());
         }
-        let enabled: bool = users::table.filter(users::uuid.eq(&user)).select(users::enabled).first(c)?;
-        if m.status < ACTIVE_STATUS || !enabled {
-            // Back in the directory: the membership and the account return. Roles ended with the membership stay
-            // ended (an admin grants them again); a last owner kept through recovery is an owner again.
-            diesel::update(users_organizations::table.filter(users_organizations::uuid.eq(m.uuid.to_string())))
-                .set(users_organizations::status.eq(m.get_unrevoked_status().max(ACTIVE_STATUS)))
-                .execute(c)?;
-            diesel::update(users::table.filter(users::uuid.eq(&user))).set(users::enabled.eq(true)).execute(c)?;
+        // Back in the directory: only what the directory itself suspended comes back. An admin's removal needs an
+        // admin; a deprovisioned account is gone. Roles ended with the membership stay ended; a last owner kept
+        // through recovery is an owner again.
+        if member.state == state::SUSPENDED_BY_DIRECTORY {
+            reins_org::q_set_state(c, org, &user, state::ACTIVE, None, now)?;
             event(c, org, "member.restored", None, Some(m.uuid.as_ref()), &json!({}), now)?;
             if super::invariants::refresh_owner_recovery(c, org)? {
                 event(c, org, "org.owner_recovered", None, Some(m.uuid.as_ref()), &json!({"by_directory": true}), now)?;
@@ -425,21 +419,30 @@ fn upsert_user(
     if !active {
         return Ok(Vec::new());
     }
+    // Creating or linking a membership: only for an address on one of the tenant's verified domains.
+    let domain_ok =
+        reins_proto::org::email_domain(email).is_some_and(|d| verified_domains(c, org).is_ok_and(|v| v.contains(&d)));
+    if !domain_ok {
+        // The directory's own data, about its own user id: no Reins account is named.
+        event(c, org, "scim.refused", None, Some(user_id), &json!({"why": "email_outside_verified_domains"}), now)?;
+        return Ok(Vec::new());
+    }
     let existing: Option<String> =
         users::table.filter(users::email.eq(email)).select(users::uuid).first(c).optional()?;
     match existing {
-        Some(user) => match reins_org::q_membership(c, org, &user)? {
-            // A member who joined before the directory (the creator, a Team-era member): bind them.
-            Some(m) if m.status >= ACTIVE_STATUS && m.external_id.is_none() => {
+        Some(user) => match (reins_org::q_membership(c, org, &user)?, reins_org::q_member_state(c, org, &user)?) {
+            // A member who joined before the directory (the creator, a Team-era member): link them.
+            (Some(m), Some(st)) if st.is_active() && m.external_id.is_none() => {
                 diesel::update(users_organizations::table.filter(users_organizations::uuid.eq(m.uuid.to_string())))
                     .set(users_organizations::external_id.eq(user_id))
                     .execute(c)?;
                 event(c, org, "member.linked", None, Some(m.uuid.as_ref()), &json!({}), now)?;
             }
-            Some(_) => {}
-            None => {
-                // Someone's own account on this address: never captured, never mentioned to the org.
-                info!("Directory sync: org {org} provisions an address that has a Personal account; left alone");
+            (Some(_), _) => {}
+            (None, _) => {
+                // Someone's own account on this address, or another org's member: never captured, never mentioned
+                // to this org.
+                info!("Directory sync: org {org} provisions an address that has another account; left alone");
             }
         },
         None => {
@@ -452,7 +455,7 @@ fn upsert_user(
             }
             let mut m = Membership::new(stub.uuid.clone(), org.to_owned().into(), None);
             m.external_id = Some(user_id.to_owned());
-            diesel::insert_into(users_organizations::table).values(&m).execute(c)?;
+            reins_org::q_add_member(c, &m, None, now)?;
             event(c, org, "member.provisioned", None, Some(m.uuid.as_ref()), &json!({}), now)?;
         }
     }
@@ -752,7 +755,61 @@ mod tests {
         assert!(m.status >= ACTIVE_STATUS);
         let removed = run(&mut c, &ev("dsync.user.deleted", dir_user("directory_user_1", "lee@acme.com", "inactive")));
         assert_eq!(removed.len(), 1);
-        assert!(member_by_email(&mut c, "lee@acme.com").is_none());
+        let user = m.user_uuid.to_string();
+        assert_eq!(
+            reins_org::q_member_state(&mut c, "o1", &user).unwrap().unwrap().state,
+            state::DEPROVISIONED_BY_DIRECTORY
+        );
+        // Deleted is final: "active" again changes nothing.
+        run(&mut c, &ev("dsync.user.updated", dir_user("directory_user_1", "lee@acme.com", "active")));
+        assert_eq!(
+            reins_org::q_member_state(&mut c, "o1", &user).unwrap().unwrap().state,
+            state::DEPROVISIONED_BY_DIRECTORY
+        );
+    }
+
+    #[test]
+    fn the_directory_cannot_undo_an_admin_removal() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_1", "lee@acme.com", "active")));
+        let user = member_by_email(&mut c, "lee@acme.com").unwrap().user_uuid.to_string();
+        deprovision::q_deprovision(&mut c, "o1", &user, Reason::AdminRemoval, Some("admin"), 11).unwrap().unwrap();
+        run(&mut c, &ev("dsync.user.updated", dir_user("directory_user_1", "lee@acme.com", "active")));
+        assert_eq!(reins_org::q_member_state(&mut c, "o1", &user).unwrap().unwrap().state, state::REMOVED_BY_ADMIN);
+        // The link is gone, and the same address can't be linked again while the removal stands.
+        assert!(membership_by_external(&mut c, "o1", "directory_user_1").unwrap().is_none());
+        assert_eq!(reins_org::q_member_state(&mut c, "o1", &user).unwrap().unwrap().state, state::REMOVED_BY_ADMIN);
+    }
+
+    #[test]
+    fn suspension_applies_even_when_the_address_left_the_domain() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_1", "lee@acme.com", "active")));
+        let user = member_by_email(&mut c, "lee@acme.com").unwrap().user_uuid.to_string();
+        let removed =
+            run(&mut c, &ev("dsync.user.updated", dir_user("directory_user_1", "lee@elsewhere.io", "inactive")));
+        assert_eq!(removed.len(), 1);
+        assert_eq!(
+            reins_org::q_member_state(&mut c, "o1", &user).unwrap().unwrap().state,
+            state::SUSPENDED_BY_DIRECTORY
+        );
+    }
+
+    #[test]
+    fn another_orgs_member_is_never_linked() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        add_org(&mut c, "o2");
+        add_member(&mut c, "o2", "n1", "v1", ACTIVE_STATUS);
+        diesel::update(users::table.filter(users::uuid.eq("v1")))
+            .set(users::email.eq("vee@acme.com"))
+            .execute(&mut c)
+            .unwrap();
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_7", "vee@acme.com", "active")));
+        assert!(reins_org::q_membership(&mut c, "o1", "v1").unwrap().is_none());
+        assert_eq!(reins_org::q_member_state(&mut c, "o2", "v1").unwrap().unwrap().state, state::ACTIVE);
     }
 
     #[test]
@@ -766,9 +823,12 @@ mod tests {
         // Kept as owner, cut off, flagged.
         assert!(super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
         assert!(super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
-        assert!(member_by_email(&mut c, "lee@acme.com").unwrap().status >= ACTIVE_STATUS);
         run(&mut c, &ev("dsync.user.updated", dir_user("directory_user_1", "lee@acme.com", "active")));
         assert!(!super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
         assert!(!super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        // The account's global flag was never touched on the way.
+        let enabled: bool =
+            users::table.filter(users::uuid.eq(m.user_uuid.to_string())).select(users::enabled).first(&mut c).unwrap();
+        assert!(enabled);
     }
 }

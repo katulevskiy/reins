@@ -186,15 +186,24 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     let kinds: Vec<_> = request.attestations.iter().map(|a| a.kind).collect();
     let detail = json!({"device": device, "hardware": request.hardware, "attestations": kinds,
                         "posture": posture_summary(&request.posture)});
-    conn.run(move |c| -> Result<(), super::OrgError> {
-        use diesel::Connection;
-        c.transaction(|c| {
-            reins_org::q_upsert_device(c, &row)?;
-            event(c, &org, "device.enrolled", Some(&user), Some(&device), &detail, now)
+    let enrolled = conn
+        .run(move |c| -> Result<bool, super::OrgError> {
+            use diesel::Connection;
+            c.transaction(|c| {
+                // A device the org revoked stays revoked (a tombstone): it can't enroll itself again.
+                if !reins_org::q_enroll_device(c, &row)? {
+                    event(c, &org, "device.reenroll_refused", Some(&user), Some(&device), &json!({}), now)?;
+                    return Ok(false);
+                }
+                event(c, &org, "device.enrolled", Some(&user), Some(&device), &detail, now)?;
+                Ok(true)
+            })
         })
-    })
-    .await
-    .map_err(|e| internal(&crate::Error::new("Error enrolling the device", format!("{e:?}"))))?;
+        .await
+        .map_err(|e| internal(&crate::Error::new("Error enrolling the device", format!("{e:?}"))))?;
+    if !enrolled {
+        return Err(api_err(Status::Forbidden, "device_revoked", "This device was removed by your organization"));
+    }
     Ok(Status::Created)
 }
 

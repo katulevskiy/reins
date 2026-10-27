@@ -23,9 +23,8 @@ use crate::{
         DbConn,
         models::{
             Membership, OIDCAuthenticatedUser, User, UserId,
-            reins_org::{self, ACTIVE_STATUS, ReinsOrg},
+            reins_org::{self, ReinsOrg},
         },
-        schema::users_organizations,
     },
 };
 
@@ -220,10 +219,10 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
             let name = reins_org::q_org_name(c, &org_uuid)?.unwrap_or_default();
             let existing = match &existing_uuid {
                 None => Existing::NoAccount,
-                Some(u) => match reins_org::q_membership(c, &org_uuid, u)? {
+                Some(u) => match reins_org::q_member_state(c, &org_uuid, u)? {
                     None => Existing::NotMember,
                     Some(m) => Existing::Member {
-                        active: m.status >= ACTIVE_STATUS,
+                        active: m.is_active(),
                     },
                 },
             };
@@ -285,13 +284,13 @@ pub async fn after_sign_in(user: &User, decision: &Decision, conn: &DbConn) -> E
     let now = super::super::now_unix();
     let done = conn
         .run(move |c| {
-            use diesel::{Connection, RunQueryDsl};
+            use diesel::Connection;
             c.transaction(|c| -> Result<(), super::OrgError> {
-                if reins_org::q_membership(c, &org, &user_uuid)?.is_some() {
+                if !reins_org::q_orgs_of_user_any(c, &user_uuid)?.is_empty() {
                     return Ok(());
                 }
                 let m = Membership::new(user_uuid.clone().into(), org.clone().into(), None);
-                diesel::insert_into(users_organizations::table).values(&m).execute(c)?;
+                reins_org::q_add_member(c, &m, Some(&user_uuid), now)?;
                 event(c, &org, "member.joined", Some(&user_uuid), Some(m.uuid.as_ref()), &json!({"jit": true}), now)
             })
         })
@@ -302,13 +301,14 @@ pub async fn after_sign_in(user: &User, decision: &Decision, conn: &DbConn) -> E
     Ok(())
 }
 
-/// Whether `user` is an active member of an org (a Managed account: no password sign-in).
+/// Whether `user` is a work account: a member of an org, in whatever state (removed members included: a work
+/// account never signs in with a password). Fails closed on a database error.
 pub async fn is_managed_member(user: &UserId, conn: &DbConn) -> bool {
     if !enabled() {
         return false;
     }
     let user = user.to_string();
-    conn.run(move |c| reins_org::q_orgs_of_user(c, &user)).await.is_ok_and(|orgs| !orgs.is_empty())
+    !matches!(conn.run(move |c| reins_org::q_orgs_of_user_any(c, &user)).await, Ok(orgs) if orgs.is_empty())
 }
 
 #[cfg(test)]
