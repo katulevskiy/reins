@@ -550,6 +550,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
 
+    /// The demo has no phone roles: every waiting phone asks for the account's keys.
+    func joinIsEnrollment(id: String) async throws -> Bool { false }
+
     func joinView(id: String) async throws -> JoinView {
         try locked { s in
             guard let v = s.joins[id] else { throw CoreError.NotFound }

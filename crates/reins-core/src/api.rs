@@ -405,6 +405,18 @@ impl ReinsCore {
         .await
     }
 
+    /// On the approval device: whether the phone asking (`PendingKind::Join`) asks to view the account as a second
+    /// phone (`enroll_view`, then `enroll_confirm`) or for its keys (`join_view`, then `answer_join`).
+    pub async fn join_is_enrollment(&self, id: String) -> Result<bool, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(async { engine.join_is_enrollment(&id) }).await
+        })
+        .await
+    }
+
     /// On the approval device: the phone asking (`PendingKind::Join`), with the code it should show.
     pub async fn join_view(&self, id: String) -> Result<JoinView, CoreError> {
         let runtime = Arc::clone(&self.runtime);

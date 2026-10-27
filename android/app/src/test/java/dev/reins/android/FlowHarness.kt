@@ -117,6 +117,7 @@ abstract class FlowHarness {
         core.deletedAccounts.clear()
         core.deleteAccountError = null
         core.connectionsError = null
+        core.resetEnroll()
         container.ssoSignIn.clear()
         authResult = AuthResult.Success
         prompts.set(0)

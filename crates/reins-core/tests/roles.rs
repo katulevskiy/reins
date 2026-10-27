@@ -1113,6 +1113,56 @@ async fn a_roster_account_takes_no_join_over_one_key() {
     assert!(a.pending().await.unwrap().is_empty());
 }
 
+/// The approving phone tells a phone asking to view the account from one asking for its keys, keeps the request
+/// for the user whatever Bypass says, approves only after both phones showed the code, and a denial ends it.
+#[tokio::test]
+async fn an_enrollment_waits_for_the_user_compares_codes_and_can_be_denied() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let old = w.phone().await;
+    old.join_begin("Old phone".to_owned()).await.unwrap();
+    a.sync(0).await.unwrap();
+    let legacy = a.pending().await.unwrap().remove(0);
+    assert!(!a.join_is_enrollment(legacy.id.clone()).await.unwrap(), "a join over one key asks for the keys");
+    assert_eq!(legacy.title, "Add Old phone to your account?");
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    a.start_bypass(None, Some(60)).await.unwrap();
+
+    let b = w.phone().await;
+    let start = b.enroll_begin("Pixel".to_owned()).await.unwrap();
+    a.sync(0).await.unwrap();
+    let item = a.pending().await.unwrap().into_iter().find(|i| i.id == start.id).expect("it waits, Bypass or not");
+    assert_eq!(item.title, "Add Pixel as a second phone?");
+    assert_eq!(item.subtitle, "Another phone asks to view this account");
+    assert!(a.join_is_enrollment(start.id.clone()).await.unwrap());
+    assert!(a.join_view(start.id.clone()).await.is_err(), "never shown as a request for the keys");
+    // Nothing to compare yet: not approvable.
+    assert_eq!(a.enroll_view(start.id.clone()).await.unwrap().code, None);
+    assert!(a.enroll_confirm(start.id.clone(), true).await.is_err(), "not before the other phone shows its code");
+    let EnrollProgress::Compare {
+        code,
+    } = b.enroll_poll().await.unwrap()
+    else {
+        panic!("the asking phone shows its code once challenged")
+    };
+    assert_eq!(a.enroll_view(start.id.clone()).await.unwrap().code.as_deref(), Some(code.as_str()));
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Legacy, "nothing changes before the approval");
+    a.enroll_confirm(start.id.clone(), true).await.unwrap();
+    assert_eq!(b.enroll_poll().await.unwrap(), EnrollProgress::Enrolled);
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
+    assert!(a.pending().await.unwrap().iter().all(|i| i.id != start.id), "answered");
+
+    // Another phone, denied: it hears so, and is not listed.
+    let c = w.phone().await;
+    let start = c.enroll_begin("Tablet".to_owned()).await.unwrap();
+    a.sync(0).await.unwrap();
+    a.enroll_confirm(start.id.clone(), false).await.unwrap();
+    assert_eq!(c.enroll_poll().await.unwrap(), EnrollProgress::Denied);
+    let names: Vec<String> =
+        a.roster_summary(true).await.unwrap().unwrap().members.into_iter().map(|m| m.name).collect();
+    assert_eq!(names, ["iPhone", "Pixel"]);
+}
+
 #[tokio::test]
 async fn a_declined_handover_request_replayed_is_not_shown_again() {
     let mut w = world().await;

@@ -13,6 +13,9 @@ struct ConnectionsScreen: View {
     @State private var chosen: ConnectChoice?
     @State private var chosenService: String?
     @State private var showAllApps = false
+    /// "Join as a second phone", when the server keeps the list from this phone.
+    @State private var joining = false
+    @State private var viewerJoin = ViewerJoinModel()
 
     /// AI apps: connections that did not pin a computer's key.
     private var apps: [ConnectionView] { model.connections.filter { $0.keyFingerprint == nil } }
@@ -30,7 +33,7 @@ struct ConnectionsScreen: View {
             RaisedGroup {
                 // Not this phone's to read (it neither approves nor views): where they are, never "None yet".
                 if model.connectionsHidden {
-                    HiddenRow(id: "aisHidden")
+                    HiddenRow(id: "aisHidden") { joining = true }
                 } else if apps.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noConnections")
                 }
@@ -57,7 +60,7 @@ struct ConnectionsScreen: View {
             }
             RaisedGroup {
                 if model.connectionsHidden {
-                    HiddenRow(id: "computersHidden")
+                    HiddenRow(id: "computersHidden") { joining = true }
                 } else if computers.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noComputers")
                 }
@@ -120,6 +123,12 @@ struct ConnectionsScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(addingService)
+        .sheet(isPresented: $joining, onDismiss: { viewerJoin.cancel(model) }) {
+            ViewerJoinSheet(vm: viewerJoin) { joining = false }
+                .environment(model)
+                .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(joining)
     }
 
     private func openChosen() {
@@ -189,10 +198,11 @@ struct RowPressStyle: ButtonStyle {
     }
 }
 
-/// In place of a group's connections when the server keeps them from this phone: they are on the approving phone (a
-/// phone sees them once that phone enrolls it as a viewer). The (?) says why.
+/// In place of a group's connections when the server keeps them from this phone: they are on the approving phone, and
+/// Join asks it to add this one as a second phone (a viewer), which then sees them.
 private struct HiddenRow: View {
     var id: String
+    var onJoin: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -201,11 +211,11 @@ private struct HiddenRow: View {
                 .foregroundStyle(Palette.ink2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier(id)
-            HelpDot(
-                id: id,
-                text: "Only the phone that approves, and phones it adds as viewers, can see what is connected. This phone is signed in but is not one of them.",
-                size: 28
-            )
+            Button("Join", action: onJoin)
+                .buttonStyle(SignalButtonLook(kind: .soft, size: .small))
+                .fixedSize()
+                .accessibilityLabel("Join as a second phone")
+                .accessibilityIdentifier("join:\(id)")
         }
         .frame(minHeight: 56)
         .padding(.leading, 14)

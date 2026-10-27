@@ -99,6 +99,8 @@ fun ConnectionsScreen(
     onShown: () -> Unit = {},
     /** A sheet covers the page: the tab bar steps aside for it. */
     onCovered: (Boolean) -> Unit = {},
+    /** "Join as a second phone", when the server keeps the list from this phone. */
+    viewerJoin: dev.reins.android.ui.enroll.ViewerJoinViewModel? = null,
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -121,9 +123,10 @@ fun ConnectionsScreen(
     val (connected, quiet) = remember(services) { services.partition { it.accounts.isNotEmpty() || it.service == "vault" } }
     var servicesOpen by remember { mutableStateOf(false) }
     var allAis by remember { mutableStateOf(false) }
-    var aisHelp by remember { mutableStateOf(false) }
-    var computersHelp by remember { mutableStateOf(false) }
-    LaunchedEffect(servicesOpen) { onCovered(connectOpen || servicesOpen) }
+    var joinOpen by remember { mutableStateOf(false) }
+    val joinStep by (viewerJoin?.step ?: kotlinx.coroutines.flow.MutableStateFlow(dev.reins.android.ui.enroll.ViewerJoinStep.Idle)).collectAsStateWithLifecycle()
+    LaunchedEffect(servicesOpen, joinOpen) { onCovered(connectOpen || servicesOpen || joinOpen) }
+    val openJoin: (() -> Unit)? = viewerJoin?.let { { joinOpen = true } }
 
     Box(Modifier.fillMaxSize().background(c.paper).testTag("connections")) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -137,22 +140,20 @@ fun ConnectionsScreen(
                     PaneRow("Show all", value = ais.size.toString(), chevron = true, tag = "showAllAis") { allAis = true }
                 }
                 if (hidden) {
-                    HiddenRow("aisHidden", aisHelp) { aisHelp = it }
+                    HiddenRow("aisHidden", openJoin)
                 } else if (ais.isEmpty()) {
                     QuietRow("Connect an AI app", "connectEmpty", first = true) { connectOpen = true }
                 }
             }
-            HiddenHelp(hidden && aisHelp)
             SectionHeader("Computers", glyph = Glyph.Laptop, count = if (hidden) null else computers.size.toString(), onAdd = { connectOpen = true }, addLabel = "Connect a computer", addTag = "connectComputer")
             PaneGroup {
                 computers.forEachIndexed { i, connection -> AskerRow(connection, autopilot, first = i == 0) { onConnection(connection.id) } }
                 if (hidden) {
-                    HiddenRow("computersHidden", computersHelp) { computersHelp = it }
+                    HiddenRow("computersHidden", openJoin)
                 } else if (computers.isEmpty()) {
                     QuietRow("Connect a computer", "connectComputerEmpty", first = true) { connectOpen = true }
                 }
             }
-            HiddenHelp(hidden && computersHelp)
             SectionHeader("Services", glyph = Glyph.Link, count = (connected.size + mcp.size).toString(), onAdd = { servicesOpen = true }, addLabel = "Add a service", addTag = "addService")
             PaneGroup {
                 connected.forEachIndexed { i, service -> ServiceRow(service, first = i == 0) { onService(service.service) } }
@@ -163,6 +164,21 @@ fun ConnectionsScreen(
                 }
             }
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
+        }
+
+        // Join as a second phone: the approving phone adds this one as a viewer; closing before the end withdraws it.
+        if (viewerJoin != null) {
+            BottomSheet(
+                joinOpen,
+                "Join as a second phone",
+                onClose = {
+                    joinOpen = false
+                    viewerJoin.cancel()
+                },
+                tag = "viewerJoinSheet",
+            ) {
+                dev.reins.android.ui.enroll.ViewerJoinContent(joinStep, onStart = viewerJoin::start, onDone = { joinOpen = false })
+            }
         }
 
         // The services not connected yet, and an MCP server, behind the Services header's +.
@@ -294,14 +310,14 @@ private fun McpRow(server: McpServerView, first: Boolean = false, onClick: () ->
 }
 
 /**
- * In place of a group's connections when the server keeps them from this phone: they are on the approving phone (a
- * phone sees them once that phone enrolls it as a viewer). The (?) says why.
+ * In place of a group's connections when the server keeps them from this phone: they are on the approving phone, and
+ * [onJoin] asks it to add this one as a second phone (a viewer), which then sees them.
  */
 @Composable
-private fun HiddenRow(tag: String, help: Boolean, onHelp: (Boolean) -> Unit) {
+private fun HiddenRow(tag: String, onJoin: (() -> Unit)?) {
     val c = LocalColors.current
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag(tag).padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag(tag).padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -309,21 +325,14 @@ private fun HiddenRow(tag: String, help: Boolean, onHelp: (Boolean) -> Unit) {
             GlyphIcon(Glyph.Phone, c.ink2, size = 18.dp)
         }
         RText(NOT_A_VIEWER, RType.row, c.ink2, Modifier.weight(1f), maxLines = 2)
-        dev.reins.android.ui.settings.HelpIcon(help, tag) { onHelp(it) }
+        if (onJoin != null) {
+            SignalButton("Join", Modifier.testTag("join:$tag"), style = ButtonStyle.Soft, size = ButtonSize.Compact, onClick = onJoin)
+        }
     }
-}
-
-@Composable
-private fun HiddenHelp(open: Boolean) {
-    dev.reins.android.design.HelpText(NOT_A_VIEWER_HELP, open, Modifier.padding(horizontal = 24.dp).padding(top = 6.dp))
 }
 
 /** Where a phone that neither approves nor views finds the AI apps and computers. */
 internal const val NOT_A_VIEWER = "Visible on the approving phone"
-
-/** Why ([NOT_A_VIEWER]'s (?)). */
-internal const val NOT_A_VIEWER_HELP =
-    "Only the phone that approves, and phones it adds as viewers, can see what is connected. This phone is signed in but is not one of them."
 
 /** A quiet row that offers to add something, in violet. */
 @Composable

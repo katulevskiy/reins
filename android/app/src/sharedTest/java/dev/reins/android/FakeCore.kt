@@ -903,15 +903,50 @@ class FakeCore : ReinsCoreInterface {
         } finally { setupFinished.incrementAndGet() }
     }
 
-    override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
+    // Viewer enrollment. The joining phone follows [enrollScript] (one step per poll, the last one repeats); the
+    // approving phone shows [enrollViews] (an id there is an enrollment) and records its answers.
+    val enrollBegins = CopyOnWriteArrayList<String>()
+    @Volatile var enrollBeginError: CoreException? = null
+    val enrollScript = java.util.concurrent.ConcurrentLinkedQueue<dev.reins.core.EnrollProgress>()
+    @Volatile var enrollLast: dev.reins.core.EnrollProgress = dev.reins.core.EnrollProgress.Waiting
+    val enrollCancels = java.util.concurrent.atomic.AtomicInteger()
+    val enrollViews = java.util.concurrent.ConcurrentHashMap<String, dev.reins.core.EnrollView>()
+    val enrollAnswers = CopyOnWriteArrayList<Pair<String, Boolean>>()
+    val removedMembers = CopyOnWriteArrayList<String>()
+    fun resetEnroll() {
+        enrollBegins.clear(); enrollBeginError = null; enrollScript.clear(); enrollLast = dev.reins.core.EnrollProgress.Waiting
+        enrollCancels.set(0); enrollViews.clear(); enrollAnswers.clear(); removedMembers.clear()
+    }
 
-    override suspend fun enrollPoll(): dev.reins.core.EnrollProgress = throw CoreException.NotFound()
+    override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart {
+        enrollBeginError?.let { throw it }
+        enrollBegins += deviceName
+        enrollLast = dev.reins.core.EnrollProgress.Waiting
+        return dev.reins.core.EnrollStart("enroll-1", 0)
+    }
 
-    override suspend fun enrollCancel() {}
+    override suspend fun enrollPoll(): dev.reins.core.EnrollProgress {
+        enrollScript.poll()?.let { enrollLast = it }
+        // Enrolled: the server shows this phone the connections from now on.
+        if (enrollLast == dev.reins.core.EnrollProgress.Enrolled) connectionsError = null
+        return enrollLast
+    }
 
-    override suspend fun enrollView(id: String): dev.reins.core.EnrollView = throw CoreException.NotFound()
+    override suspend fun enrollCancel() {
+        enrollCancels.incrementAndGet()
+    }
 
-    override suspend fun enrollConfirm(id: String, approve: Boolean) = throw CoreException.NotFound()
+    override suspend fun enrollView(id: String): dev.reins.core.EnrollView = enrollViews[id] ?: throw CoreException.NotFound()
+
+    override suspend fun enrollConfirm(id: String, approve: Boolean) {
+        val view = enrollViews[id] ?: throw CoreException.NotFound()
+        if (approve && view.code == null) throw CoreException.Invalid("The other phone has not shown its code yet.")
+        enrollAnswers += id to approve
+        enrollViews.remove(id)
+        pending = pending.filterNot { it.id == id }
+    }
+
+    override suspend fun joinIsEnrollment(id: String): Boolean = enrollViews.containsKey(id)
 
     override suspend fun handoverRequest(): String = throw CoreException.NotFound()
 
@@ -933,7 +968,10 @@ class FakeCore : ReinsCoreInterface {
         confirmation: String?,
     ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
 
-    override suspend fun rosterRemoveMember(deviceId: String) = throw CoreException.NotFound()
+    override suspend fun rosterRemoveMember(deviceId: String) {
+        removedMembers += deviceId
+        setupRoster = setupRoster?.let { r -> r.copy(members = r.members.filterNot { it.deviceId == deviceId }) }
+    }
 
     override suspend fun rosterRewrap(newPassword: String) = throw CoreException.NotFound()
 
