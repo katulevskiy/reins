@@ -127,6 +127,8 @@ fun ActivityDetailScreen(
     // "Ask me next time" on what Auto decided (Decisions v2): it needs the request's id, which the recorded approval has.
     var askedNext by remember(entryId) { mutableStateOf(false) }
     var askingNext by remember(entryId) { mutableStateOf(false) }
+    // What "Ask me next time" would have changed on this phone's last 30 days (02 §4), worked out on the phone.
+    var nextPreview by remember(entryId) { mutableStateOf<String?>(null) }
     // The approval as it was shown: read once; until it is known nothing is drawn (no flash of the older page).
     var recorded by remember(entryId) { mutableStateOf<ApprovalView?>(null) }
     var looked by remember(entryId) { mutableStateOf(container == null) }
@@ -183,7 +185,19 @@ fun ActivityDetailScreen(
                     if (entry.grantId != null || entry.autopilot != null) {
                         val requestId = entry.autopilot?.requestId?.takeIf { it.isNotBlank() }
                             ?: shown.requestId.takeIf { it.isNotBlank() }
-                        val askNext: (() -> Unit)? = if (requestId != null && entry.decidedBy == "autopilot" && entry.autopilot?.matrix != null) {
+                        val offered = requestId != null && entry.decidedBy == "autopilot" && entry.autopilot?.matrix != null
+                        LaunchedEffect(requestId, offered) {
+                            if (offered && requestId != null) {
+                                nextPreview = try {
+                                    container.core.previewPolicyChange(dev.reins.core.PolicyChange.AskMeNextTime(requestId)).line
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                        }
+                        val askNext: (() -> Unit)? = if (offered && requestId != null) {
                             {
                                 askingNext = true
                                 scope.launch {
@@ -204,7 +218,7 @@ fun ActivityDetailScreen(
                         } else {
                             null
                         }
-                        SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant, askNext, askedNext, askingNext) }
+                        SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant, askNext, askedNext, askingNext, nextPreview) }
                     }
                     shown.envRelease?.let { release ->
                         dev.reins.android.ui.grants.RevokeEverywhere(
@@ -551,6 +565,8 @@ private fun DecisionDetails(
     onAskNext: (() -> Unit)? = null,
     askedNext: Boolean = false,
     askingNext: Boolean = false,
+    /** What "Ask me next time" would have changed on this phone's own history. */
+    nextPreview: String? = null,
 ) {
     val c = LocalColors.current
     var whyOpen by rememberSaveable(entry.id) { mutableStateOf(false) }
@@ -585,6 +601,7 @@ private fun DecisionDetails(
     }
     note?.matrix?.let { dev.reins.android.ui.autopilot.MatrixLine(it) }
     if (onAskNext != null || askedNext) dev.reins.android.ui.autopilot.AskMeNextTime(askedNext, askingNext) { onAskNext?.invoke() }
+    if (onAskNext != null && !askedNext) nextPreview?.let { dev.reins.android.ui.autopilot.PreviewLine(it) }
 }
 
 /** What was shared (or held back): one line per email or item; an email opens from Gmail again. */

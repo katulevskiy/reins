@@ -54,6 +54,8 @@ class AutoSetupFlowTest : FlowHarness() {
         awaitTag("matrix")
         assertTrue(showsText("dkat"))
         tap("cell:WORK:1")
+        // Looser: its preview first (PreviewLineFlowTest), then the owner's check.
+        tap("loosenConfirm")
         awaitCore { core.matrixCellCalls.isNotEmpty() }
         assertEquals(Triple(ZoneChoice.WORK, 1.toUByte(), CellChoice.AUTO), core.matrixCellCalls.single())
         assertEquals("looser asks the owner", 1, prompts.get())
