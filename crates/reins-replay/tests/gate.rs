@@ -19,10 +19,9 @@ fn replay_gate() {
     let fails = report::gate(&r, Some(&baseline));
     assert!(fails.is_empty(), "{fails:?}\n{}", report::text(&r, false));
     assert_eq!(r.real_risk_auto, 0, "no labelled risk Auto (P2)");
-    // P2's line (07 §1) is a developer ask rate ≤ 5%. With the hardened engine and the review's stricter zones the
-    // matrix asks 48 of 738 (6.5%): 44 hard obligations (L3, unreadable, the floor; 18 are L3 deletes in Mine that
-    // P3's nets make recoverable) and 4 pushes after more than one `cd`, whose `origin` can't be read. The baseline's
-    // ratchet holds it from rising meanwhile.
+    // P2's line (07 §1) is a developer ask rate ≤ 5%. Without nets the matrix asks 42 of 738 (5.7%): hard obligations
+    // (L3, unreadable, the floor; 15 are L3 deletes in Mine that P3's nets make recoverable) and a push from a command
+    // in two worktrees, whose `origin` is not one repository's. The baseline's ratchet holds it from rising meanwhile.
     let rate = baseline.developer_ask_rate.expect("the baseline records the developer ask rate");
     assert!(r.developer_ask_rate <= rate + 1e-9, "developer ask rate {:.4} > {rate:.4}", r.developer_ask_rate);
 }
@@ -84,11 +83,29 @@ fn nets_keep_recall_and_lower_the_ask_rate() {
     assert!((nets.recall - 1.0).abs() < f64::EPSILON, "{}", report::text(&nets, false));
     assert_eq!(nets.known_fp_asked, 0);
     assert!(nets.asks < plain.asks, "nets lower the asks: {} vs {}", nets.asks, plain.asks);
-    // Nets net only plain scripts (an allowlist of commands, every word plain): of the recorded history that is a few
-    // deletes, since most real ones share a line with builds and tools (P3 measured 44 → 41 developer asks).
+    // Nets net the leading commands of a script that pass the allowlist (plain words, one-letter variables the script
+    // set, loops over plain words). The ask-rate work measured 42 → 27 developer asks
+    // (`docs/superpowers/plans/2026-10-27-dv2-ask-rate.md`): a ratchet, so nets never cover less.
     assert!(nets.developer_asks < plain.developer_asks, "{}", report::text(&nets, false));
+    assert!(nets.developer_asks <= 27, "{}", report::text(&nets, false));
     for case in corpus.cases.iter().filter(|c| c.tagged("nets")) {
         let d = reins_replay::engine::decide(&corpus.context, case, &nets_policy, EngineKind::Effects);
+        let human = case.tagged("real_risk");
+        assert_eq!(d.ask, human, "{}: {} ({})", case.id, d.why, case.command.as_deref().unwrap_or_default());
+    }
+}
+
+/// The ask-rate work (`docs/superpowers/plans/2026-10-27-dv2-ask-rate.md`): each fix has a routine case that is now
+/// decided automatically and a risky variant that is still asked (`corpus/ask-rate.jsonl`), with safety nets on.
+#[test]
+fn ask_rate_cases() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let path = reins_replay::default_policy().with_file_name("nets.json");
+    let policy: Policy = serde_json::from_slice(&std::fs::read(path).expect("the policy file")).expect("a policy");
+    let cases: Vec<_> = corpus.cases.iter().filter(|c| c.tagged("ask_rate")).collect();
+    assert!(cases.len() >= 4, "the ask-rate cases are there");
+    for case in cases {
+        let d = reins_replay::engine::decide(&corpus.context, case, &policy, EngineKind::Effects);
         let human = case.tagged("real_risk");
         assert_eq!(d.ask, human, "{}: {} ({})", case.id, d.why, case.command.as_deref().unwrap_or_default());
     }

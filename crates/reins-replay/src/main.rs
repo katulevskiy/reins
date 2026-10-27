@@ -121,12 +121,17 @@ fn import(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `reins-replay explain ID…`: a case's request, effects and decision, for reviewing labels and the engine.
+/// `reins-replay explain [--policy FILE] ID…`: a case's request, effects and decision, for reviewing labels and the engine.
 fn explain(args: &[String]) -> Result<ExitCode, String> {
     let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
     let corpus = Corpus::load(&corpus_dir)?;
-    let policy = Policy::default();
-    for id in args.iter().filter(|a| !a.starts_with("--")) {
+    let policy_file = value(args, "--policy");
+    let policy: Policy = match &policy_file {
+        Some(p) => read_json(&PathBuf::from(p))?,
+        None => Policy::default(),
+    };
+    let flag_values = [value(args, "--corpus"), policy_file];
+    for id in args.iter().filter(|a| !a.starts_with("--") && !flag_values.iter().flatten().any(|v| v == *a)) {
         let Some(case) = corpus.cases.iter().find(|c| &c.id == id) else {
             eprintln!("{id}: no such case");
             continue;
