@@ -17,7 +17,7 @@ CREATE TABLE reins_orgs (
 );
 
 -- Domains the tenant claims; one counts once `verified_at` is set (a DNS TXT record), and one org at most verifies a
--- domain (checked in the transaction that verifies it).
+-- domain (`reins_org_verified_domains`).
 CREATE TABLE reins_org_domains (
     org_uuid    TEXT   NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
     domain      TEXT   NOT NULL,
@@ -29,6 +29,14 @@ CREATE TABLE reins_org_domains (
 );
 
 CREATE INDEX idx_reins_org_domains_domain ON reins_org_domains (domain);
+
+-- The verified domains, one row each: the primary key is what makes one org at most verify a domain, even when two
+-- verify it at the same moment (a check-then-write in the transaction would not).
+CREATE TABLE reins_org_verified_domains (
+    domain      TEXT         NOT NULL PRIMARY KEY,
+    org_uuid    TEXT         NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    verified_at BIGINT       NOT NULL
+);
 
 -- Roles (05 §3) of a member (`subject_id`: the membership uuid) or of a group (the group uuid).
 CREATE TABLE reins_org_roles (

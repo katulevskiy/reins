@@ -45,6 +45,8 @@ pub use self::organization::{
 pub use self::reins_client::{ReinsClient, ReinsJwtClient};
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
+#[cfg(all(test, sqlite))]
+pub(crate) use self::reins_device::test_db as reins_device_test_db;
 pub use self::reins_roster::{
     Listed, LogLimits, OpsQuota, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
     ReinsRosterRow, WriteError,

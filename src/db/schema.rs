@@ -513,6 +513,14 @@ table! {
 }
 
 table! {
+    reins_org_verified_domains (domain) {
+        domain -> Text,
+        org_uuid -> Text,
+        verified_at -> BigInt,
+    }
+}
+
+table! {
     reins_org_roles (org_uuid, subject_kind, subject_id, role) {
         org_uuid -> Text,
         subject_kind -> Text,

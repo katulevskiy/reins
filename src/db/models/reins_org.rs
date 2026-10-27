@@ -13,8 +13,8 @@ use reins_proto::org::{Capability, IdentityKind, Role, Tier, role_grants};
 use crate::db::{
     DbConnInner,
     schema::{
-        groups, groups_users, reins_org_changes, reins_org_devices, reins_org_domains, reins_org_roles, reins_orgs,
-        users_organizations,
+        groups, groups_users, reins_org_changes, reins_org_devices, reins_org_domains, reins_org_roles,
+        reins_org_verified_domains, reins_orgs, users_organizations,
     },
 };
 
@@ -166,40 +166,66 @@ pub fn q_insert_domain(c: &mut DbConnInner, row: &ReinsOrgDomain) -> QueryResult
 }
 
 pub fn q_delete_domain(c: &mut DbConnInner, org: &str, domain: &str) -> QueryResult<()> {
-    diesel::delete(
-        reins_org_domains::table
-            .filter(reins_org_domains::org_uuid.eq(org))
-            .filter(reins_org_domains::domain.eq(domain)),
-    )
-    .execute(c)
-    .map(|_| ())
+    c.transaction(|c| {
+        diesel::delete(
+            reins_org_verified_domains::table
+                .filter(reins_org_verified_domains::org_uuid.eq(org))
+                .filter(reins_org_verified_domains::domain.eq(domain)),
+        )
+        .execute(c)?;
+        diesel::delete(
+            reins_org_domains::table
+                .filter(reins_org_domains::org_uuid.eq(org))
+                .filter(reins_org_domains::domain.eq(domain)),
+        )
+        .execute(c)
+        .map(|_| ())
+    })
 }
 
 /// The org that verified `domain`, if one did.
 pub fn q_verified_owner(c: &mut DbConnInner, domain: &str) -> QueryResult<Option<String>> {
-    reins_org_domains::table
-        .filter(reins_org_domains::domain.eq(domain))
-        .filter(reins_org_domains::verified_at.is_not_null())
-        .select(reins_org_domains::org_uuid)
+    reins_org_verified_domains::table
+        .filter(reins_org_verified_domains::domain.eq(domain))
+        .select(reins_org_verified_domains::org_uuid)
         .first(c)
         .optional()
 }
 
-/// Marks `domain` verified for `org`; `false`, writing nothing, when another org has it verified already.
+/// Marks `org`'s pending `domain` verified; `false`, writing nothing, when another org has it verified. The
+/// `reins_org_verified_domains` primary key decides between two orgs verifying at the same moment: the second insert
+/// fails on it, whatever both read before.
 pub fn q_mark_verified(c: &mut DbConnInner, org: &str, domain: &str, now: i64) -> QueryResult<bool> {
-    c.transaction(|c| {
-        if q_verified_owner(c, domain)?.is_some_and(|owner| owner != org) {
+    let claimed = c.transaction(|c| {
+        if q_domain(c, org, domain)?.is_none() {
             return Ok(false);
         }
-        let n = diesel::update(
+        match q_verified_owner(c, domain)? {
+            Some(owner) if owner == org => {}
+            Some(_) => return Ok(false),
+            None => {
+                diesel::insert_into(reins_org_verified_domains::table)
+                    .values((
+                        reins_org_verified_domains::domain.eq(domain),
+                        reins_org_verified_domains::org_uuid.eq(org),
+                        reins_org_verified_domains::verified_at.eq(now),
+                    ))
+                    .execute(c)?;
+            }
+        }
+        diesel::update(
             reins_org_domains::table
                 .filter(reins_org_domains::org_uuid.eq(org))
                 .filter(reins_org_domains::domain.eq(domain)),
         )
         .set((reins_org_domains::verified_at.eq(now), reins_org_domains::checked_at.eq(now)))
         .execute(c)?;
-        Ok(n == 1)
-    })
+        Ok(true)
+    });
+    match claimed {
+        Err(diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _)) => Ok(false),
+        other => other,
+    }
 }
 
 pub fn q_mark_checked(c: &mut DbConnInner, org: &str, domain: &str, now: i64) -> QueryResult<()> {
@@ -582,8 +608,72 @@ pub(crate) mod tests {
         assert!(!q_mark_verified(&mut c, "o1", "acme.com", 6).unwrap());
         assert_eq!(q_verified_owner(&mut c, "acme.com").unwrap().as_deref(), Some("o2"));
         assert_eq!(q_domain(&mut c, "o1", "acme.com").unwrap().unwrap().verified_at, None);
-        // Verifying again is harmless.
+        // Verifying again is harmless; an org that never added the domain verifies nothing.
         assert!(q_mark_verified(&mut c, "o2", "acme.com", 7).unwrap());
+        assert!(!q_mark_verified(&mut c, "o3", "other.com", 7).unwrap());
+        // Removing it frees it for another org.
+        q_delete_domain(&mut c, "o2", "acme.com").unwrap();
+        assert!(q_mark_verified(&mut c, "o1", "acme.com", 8).unwrap());
+    }
+
+    /// Two orgs verify the same domain at the same moment, on two connections to one database file: exactly one wins,
+    /// and the loser's row stays pending.
+    #[test]
+    fn concurrent_verifications_of_one_domain_have_one_winner() {
+        use diesel::Connection;
+        let dir = std::env::temp_dir().join(format!("reins-org-race-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = dir.join("db.sqlite3").to_string_lossy().into_owned();
+        let open = || {
+            let mut c = SqliteConnection::establish(&url).unwrap();
+            diesel::sql_query("PRAGMA foreign_keys = OFF").execute(&mut c).unwrap();
+            diesel::sql_query("PRAGMA busy_timeout = 5000").execute(&mut c).unwrap();
+            DbConnInner::Sqlite(c)
+        };
+        {
+            use diesel_migrations::MigrationHarness;
+            let mut c = open();
+            let DbConnInner::Sqlite(s) = &mut c;
+            s.run_pending_migrations(crate::db::sqlite_migrations::MIGRATIONS).unwrap();
+            for org in ["o1", "o2"] {
+                add_org(&mut c, org);
+                q_insert_domain(&mut c, &domain(org, "acme.com")).unwrap();
+            }
+        }
+        for _ in 0..10 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let wins: Vec<bool> = ["o1", "o2"]
+                .map(|org| {
+                    let barrier = std::sync::Arc::clone(&barrier);
+                    let mut c = open();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        loop {
+                            match q_mark_verified(&mut c, org, "acme.com", 5) {
+                                Ok(won) => return won,
+                                // SQLite's writer lock, not the claim: try again.
+                                Err(e) if e.to_string().contains("locked") || e.to_string().contains("busy") => {}
+                                Err(e) => panic!("{e}"),
+                            }
+                        }
+                    })
+                })
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect();
+            assert_eq!(wins.iter().filter(|w| **w).count(), 1, "{wins:?}");
+            let mut c = open();
+            let owner = q_verified_owner(&mut c, "acme.com").unwrap().unwrap();
+            let loser = if owner == "o1" {
+                "o2"
+            } else {
+                "o1"
+            };
+            assert_eq!(q_domain(&mut c, loser, "acme.com").unwrap().unwrap().verified_at, None);
+            q_delete_domain(&mut c, &owner, "acme.com").unwrap();
+            q_insert_domain(&mut c, &domain(&owner, "acme.com")).unwrap();
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
