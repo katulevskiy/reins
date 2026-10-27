@@ -52,6 +52,8 @@ pub mod policy_state {
     pub const DRAFT: &str = "draft";
     pub const ACTIVE: &str = "active";
     pub const RETIRED: &str = "retired";
+    /// Signed and being rolled out in stages (O4); it becomes active when the last stage completes.
+    pub const CANDIDATE: &str = "candidate";
 }
 
 /// One revision of an org's policy. `envelope`: the issuer-signed snapshot, once activated.
@@ -68,6 +70,10 @@ pub struct ReinsOrgPolicy {
     pub created_by: String,
     pub created_at: i64,
     pub activated_at: Option<i64>,
+    /// Where the draft came from (`pr#12@<sha>`, `main@<sha>`, `console`, `template:<name>`).
+    pub source_ref: Option<String>,
+    /// `reins_policy::source::RolloutPlanSource` as JSON, when it ships with one.
+    pub rollout_plan: Option<String>,
 }
 
 pub fn q_policy(c: &mut DbConnInner, org: &str, revision: i64) -> QueryResult<Option<ReinsOrgPolicy>> {
@@ -210,6 +216,8 @@ mod tests {
             created_by: "u1".to_owned(),
             created_at: 1,
             activated_at: None,
+            source_ref: None,
+            rollout_plan: None,
         }
     }
 

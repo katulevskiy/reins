@@ -34,7 +34,7 @@ impl Area {
 }
 
 /// A local (or remote) path and what is known about it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PathRef {
     /// Normalized and absolute when it could be (`/home/me/Documents/dev/app/target`), as written otherwise.
     pub path: String,
@@ -44,7 +44,7 @@ pub struct PathRef {
 }
 
 /// What kind of secret a file holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SecretKind {
     PrivateKey,
     CloudCredential,
@@ -55,7 +55,7 @@ pub enum SecretKind {
 }
 
 /// What kind of file a read touches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileKind {
     Secret(SecretKind),
     /// A `.env` file: judged by zone and level, not the floor (08 R4).
@@ -64,7 +64,7 @@ pub enum FileKind {
 }
 
 /// How a message is sent.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Channel {
     Email,
     Telegram,
@@ -78,7 +78,7 @@ pub enum Channel {
 }
 
 /// What a network request does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NetMethod {
     /// Fetches something (a GET, a clone).
     Read,
@@ -91,7 +91,7 @@ pub enum NetMethod {
 }
 
 /// What an infrastructure change does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum InfraChange {
     /// Applies a plan or manifests (`terraform apply`, `kubectl apply`, DDL that creates or alters).
     Apply,
@@ -100,7 +100,7 @@ pub enum InfraChange {
 }
 
 /// Where a program that runs comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CodeSource {
     /// Fetched from the network and run (`curl … | sh`).
     Downloaded,
@@ -117,7 +117,7 @@ pub enum CodeSource {
 }
 
 /// One consequence of a request.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Effect {
     FileRead {
         path: PathRef,

@@ -17,7 +17,7 @@ use rocket::{
 };
 use serde_json::{Value, json};
 
-use super::{OrgError, audit, decisions, enabled, kms, policy, roster};
+use super::{OrgError, audit, decisions, enabled, kms, policy, rollout, roster};
 use crate::{
     api::reins::{device_api::read_body_limited, now_unix},
     db::{
@@ -37,7 +37,7 @@ pub const SKEW_SECS: i64 = 120;
 const CLAIM: i64 = 10;
 
 pub fn routes() -> Vec<Route> {
-    routes![claim, keys, policy_by_hash, get_roster, receipt, revocations, revoked]
+    routes![claim, keys, policy_by_hash, get_roster, get_rollouts, receipt, revocations, revoked]
 }
 
 /// The signature headers and the path as the executor signed it.
@@ -174,14 +174,18 @@ fn job_of(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, current: &str) 
     })
 }
 
-/// Claims up to [`CLAIM`] approved requests of `org` for `executor`.
+/// Claims up to [`CLAIM`] approved requests of `org` for `executor`. Each job's current policy is its member's
+/// effective version now (a rollout's candidate for its cohort, else the active policy).
 pub fn q_claim_jobs(c: &mut DbConnInner, org: &str, executor: &str, now: i64) -> Result<Vec<Job>, OrgError> {
-    let current = policy::active(c, org)?.map(|(p, _)| p.hash()).unwrap_or_default();
+    let active = policy::active(c, org)?.map(|(p, _)| p.hash()).unwrap_or_default();
+    let steps: Vec<reins_proto::rollout::Rollout> =
+        rollout::published_for_org(c, org, now)?.iter().filter_map(|e| e.parse().ok()).collect();
     let mut jobs = Vec::new();
     for row in reins_org_request::q_claimable(c, org, now, CLAIM)? {
         if !reins_org_request::q_claim(c, org, &row.uuid, executor, now)? {
             continue;
         }
+        let current = reins_proto::rollout::effective(&steps, &row.user_uuid, &active, now);
         match job_of(c, org, &row, &current) {
             Ok(job) => jobs.push(job),
             Err(e) => {
@@ -218,6 +222,15 @@ async fn policy_by_hash(hash: &str, h: ExecHeaders, conn: DbConn) -> Result<Json
         .map_err(|e| internal(&e))?
         .map(Json)
         .ok_or(Status::NotFound)
+}
+
+/// The issuer-signed steps of the org's open and recently finished rollouts (O4): what an executor checks a decision's
+/// policy version against.
+#[get("/reins/org-exec/rollouts")]
+async fn get_rollouts(h: ExecHeaders, conn: DbConn) -> Result<Json<Vec<Envelope>>, Status> {
+    let ex = authenticate(&h, "GET", b"", &conn).await?;
+    let now = now_unix();
+    conn.run(move |c| rollout::published_for_org(c, &ex.org, now)).await.map(Json).map_err(|e| internal(&e))
 }
 
 #[get("/reins/org-exec/roster")]

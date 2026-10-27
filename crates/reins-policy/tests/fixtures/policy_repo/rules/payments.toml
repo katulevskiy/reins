@@ -1,0 +1,5 @@
+[[rule]]
+id = "payments-review"
+explain = "Finance approves payments"
+when = { effects = ["Money"] }
+review = { reviewers = "any of Finance", class = "deferred", window = "1d" }

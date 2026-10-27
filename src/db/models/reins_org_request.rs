@@ -69,6 +69,11 @@ pub struct ReinsOrgRequest {
     pub receipt: Option<String>,
     /// O3: obligation id → the members its relationships and escalations resolved to (`ResolvedSets` as JSON).
     pub resolved: Option<String>,
+    /// `reins_policy::org::SimInput` as JSON: what simulation replays (decision metadata, no body).
+    pub analysis: Option<String>,
+    /// The rollout step it was decided under, if any (effective-version pinning).
+    pub rollout_id: Option<String>,
+    pub rollout_seq: Option<i32>,
 }
 
 pub fn q_insert_request(c: &mut DbConnInner, row: &ReinsOrgRequest) -> QueryResult<()> {
@@ -748,6 +753,9 @@ pub(crate) mod tests {
             finished_at: None,
             receipt: None,
             resolved: None,
+            analysis: None,
+            rollout_id: None,
+            rollout_seq: None,
         }
     }
 

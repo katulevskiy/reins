@@ -1809,6 +1809,9 @@ class FakeCore : ReinsCoreInterface {
     val answeredQuestions = CopyOnWriteArrayList<Pair<String, ZoneChoice>>()
     val dismissedQuestions = CopyOnWriteArrayList<String>()
     val askedNextTime = CopyOnWriteArrayList<String>()
+    /** What a preview says (Decisions v2 O4), and the changes previewed. */
+    @Volatile var previewLine: String = "Last 30 days: 0 Auto → Ask, 4 Ask → Auto"
+    val previewCalls = CopyOnWriteArrayList<dev.reins.core.PolicyChange>()
     /** Every owner check the setup and the questions asked with, refused or not (their reasons). */
     val autoOwnerReasons = CopyOnWriteArrayList<String>()
 
@@ -1819,6 +1822,7 @@ class FakeCore : ReinsCoreInterface {
         matrix = defaultMatrix()
         autoQuestionList = emptyList()
         listOf(worldZoneCalls, matrixCellCalls, answeredQuestions, dismissedQuestions, askedNextTime, autoOwnerReasons).forEach { it.clear() }
+        previewCalls.clear()
         finishSetupCalls.set(0)
     }
 
@@ -1902,6 +1906,11 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun askMeNextTime(requestId: String) {
         askedNextTime += requestId
+    }
+
+    override suspend fun previewPolicyChange(change: dev.reins.core.PolicyChange): dev.reins.core.PreviewView {
+        previewCalls += change
+        return dev.reins.core.PreviewView(previewLine, 4u, 30u)
     }
 
     override suspend fun modelStatus(): ModelStatus = model

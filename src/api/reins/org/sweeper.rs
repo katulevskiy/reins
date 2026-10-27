@@ -1,10 +1,11 @@
 //! The org decision service's housekeeping, every [`EVERY_SECS`] while organizations are on: expiring reviews and
 //! approvals nobody acted on, marking executions that never reported back, expiring leases (so the executor revokes
-//! them upstream) and settling revocations whose token died upstream on its own, purging bodies past retention, and checkpointing the audit chains.
+//! them upstream) and settling revocations whose token died upstream on its own, purging bodies past retention,
+//! checkpointing the audit chains, and moving staged policy rollouts ([`rollout::tick_all`]).
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{OrgError, audit, decisions, enabled, routing};
+use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing};
 use crate::{
     api::reins::now_unix,
     db::{DbConnInner, DbPool, models::reins_org_request},
@@ -109,6 +110,12 @@ pub fn spawn(pool: DbPool) {
                 Ok(conn) => {
                     let swept = conn.run(move |c| sweep_routed(c, now, &dynamic)).await;
                     routing::after_sweep(&pool, swept).await;
+                    // O4: staged policy rollouts advance or roll back; a rollback tells its Security admins.
+                    match conn.run(move |c| rollout::tick_all(c, now)).await {
+                        Ok(notify) if !notify.is_empty() => reviews::notify(&pool, &notify, "rollout"),
+                        Ok(_) => {}
+                        Err(e) => warn!("Org sweeper: rollouts: {e:?}"),
+                    }
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }

@@ -546,6 +546,9 @@ class MainSafeCore(
 
     override suspend fun askMeNextTime(requestId: String) = io { askMeNextTime(requestId) }
 
+    override suspend fun previewPolicyChange(change: dev.reins.core.PolicyChange): dev.reins.core.PreviewView =
+        io { previewPolicyChange(change) }
+
     override suspend fun modelStatus(): ModelStatus = io { modelStatus() }
 
     override suspend fun downloadModel(progress: DownloadProgress): ModelStatus = io { downloadModel(progress) }

@@ -222,6 +222,10 @@ pub struct MatrixNote {
     /// whatever the name it was written with resolves to later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<String>,
+    /// What the matrix judged it by (analysis, zone, connection), so a change can be previewed on the phone's own
+    /// history (02 §4). Kept only on the sealed suggestion (30 days), never copied into Activity or sent anywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Box<super::preview::PreviewInput>>,
 }
 
 /// A stored profile with its id.

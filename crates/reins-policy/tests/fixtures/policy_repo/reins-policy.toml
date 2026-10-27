@@ -1,0 +1,12 @@
+# Acme's Reins policy. Changes go through a PR: Reins compiles and simulates every PR, and two Security admins
+# activate a merged change on their phones.
+version = 1
+org = "acme"
+explain = "Acme policy"
+cell_review = { reviewers = "requester", class = "instant", window = "2m" }
+
+[rollout]
+pilot_group = "Platform"
+stages = ["pilot", "25%", "100%"]
+dwell = "24h"
+guards = { max_ask_rate_delta_pp = 2.0, max_median_ttd = "30m", min_decisions = 50 }

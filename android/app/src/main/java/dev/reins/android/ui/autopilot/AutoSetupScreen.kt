@@ -133,6 +133,7 @@ fun AutoSetupScreen(viewModel: AutopilotViewModel, authenticator: Authenticator,
             }
             step.help?.let { HelpText(it, help, Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp)) }
             ui.error?.let { Banner(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), BannerKind.Error, tag = "autoSetupError") }
+            ui.loosen?.let { LoosenDialog(it, { viewModel.confirmLoosen(authenticator) }, viewModel::cancelLoosen) }
             when {
                 setup == null -> Unit
                 step == SetupStep.World -> WorldStep(setup) { item, zone -> viewModel.setWorldZone(item, zone, authenticator) }

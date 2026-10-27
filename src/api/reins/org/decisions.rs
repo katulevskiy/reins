@@ -19,7 +19,7 @@ use std::{
 
 use diesel::Connection;
 use reins_policy::org::{
-    ManagedOutcome, ManagedRequest, ManagedVerdict, MemberPolicy, Obligation, ReviewClass, evaluate_managed,
+    ManagedOutcome, ManagedRequest, ManagedVerdict, MemberPolicy, Obligation, ReviewClass, SimInput, evaluate_analyzed,
 };
 use reins_proto::managed::{
     DecisionRecord, EnvelopeKind, LeaseBinding, LeaseJob, ReviewSignature, Verdict, canonical_json, request_digest,
@@ -111,7 +111,8 @@ fn request_detail(row: &ReinsOrgRequest, member_email: &str, agent: &str, trace:
 
 fn policy_detail(row: &ReinsOrgRequest, trace: &Value, obligations: &[Obligation]) -> Value {
     json!({"snapshot": row.snapshot, "matched": trace["why"],
-           "obligations": obligations.iter().map(|o| &o.id).collect::<Vec<_>>()})
+           "obligations": obligations.iter().map(|o| &o.id).collect::<Vec<_>>(),
+           "rollout": row.rollout_id.as_ref().map(|id| json!([id, row.rollout_seq]))})
 }
 
 fn retention_secs(c: &mut DbConnInner, org: &str) -> Result<i64, OrgError> {
@@ -214,8 +215,8 @@ pub fn submit_with(
         None => {}
     }
     c.transaction(|c| {
-        let (policy, _) = super::policy::active(c, org)?
-            .ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
+        // The member's effective version: a rollout's candidate for its cohort, else the active policy (O4).
+        let (policy, _, pin) = super::rollout::effective_policy(c, org, user, now)?;
         // Request flooding (03 §8): beyond its open requests, a connection is told to wait, and nothing is recorded.
         if reins_org_request::q_open_of_connection(c, org, connection)? >= MAX_OPEN_PER_CONNECTION {
             return Err(OrgError::Invalid(TOO_MANY_OPEN));
@@ -230,7 +231,9 @@ pub fn submit_with(
             now,
             reason,
         };
-        let verdict = evaluate_managed(&managed, &policy, member.as_ref());
+        // What it is judged by, kept with it (decision metadata, never the body): what simulation replays.
+        let input = SimInput::from_request(&managed);
+        let verdict = evaluate_analyzed(&input, &policy, member.as_ref());
         let id = format!("or_{}", crate::util::get_uuid());
         let trace = trace_of(&verdict);
         let window = verdict.obligations.iter().map(|o| i64::try_from(o.spec.window()).unwrap_or(0)).max().unwrap_or(0);
@@ -263,6 +266,10 @@ pub fn submit_with(
             finished_at: None,
             receipt: None,
             resolved: None,
+            // Decision metadata (effects, zones, levels), never the body: what simulation replays.
+            analysis: Some(serde_json::to_string(&input).map_err(|e| OrgError::Internal(e.to_string()))?),
+            rollout_id: pin.as_ref().map(|(id, _)| id.clone()),
+            rollout_seq: pin.as_ref().and_then(|(_, seq)| i32::try_from(*seq).ok()),
         };
         reins_org_request::q_insert_request(c, &row)?;
         let mut body = json!({"tool": tool, "args": args});
@@ -466,6 +473,7 @@ pub fn finalize(
         resolved,
         reason,
         evaluated_at: row.created_at,
+        rollout: row.rollout_id.clone().zip(row.rollout_seq.and_then(|s| u32::try_from(s).ok())),
         decided_at: now,
         valid_until: now + valid,
     };
@@ -501,7 +509,7 @@ pub fn finalize(
         None,
         Some(&row.uuid),
         &json!({"request": {"id": row.uuid, "digest": row.digest, "tool": row.tool},
-                "policy": {"snapshot": row.snapshot, "obligations": record.obligations},
+                "policy": {"snapshot": row.snapshot, "obligations": record.obligations, "rollout": record.rollout},
                 "decided_by": decided_by, "countersig": env.sig, "key": env.key_id,
                 "valid_until": record.valid_until}),
         now,
@@ -780,6 +788,7 @@ pub(crate) mod tests {
         let action = reins_proto::org::AdminAction::ActivatePolicy {
             revision,
             hash: hash.clone(),
+            report: None,
         };
         let (admin::Proposed::Pending(ch), _) = admin::propose(c, "o1", "dana", &action, None, 11).unwrap() else {
             panic!("pending")

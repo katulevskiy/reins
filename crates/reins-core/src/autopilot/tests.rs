@@ -4771,6 +4771,149 @@ mod decisions_v2 {
     }
 }
 
+// ---- Decisions v2 O4: a matrix or rule change previewed on the phone's own history (02 §4) -------------------------
+
+mod decisions_v2_o4_preview {
+    use super::*;
+    use crate::autopilot::preview::{PolicyChange, PreviewInput};
+    use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
+
+    async fn with_friend() -> Env {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env
+    }
+
+    #[tokio::test]
+    async fn preview_counts_changes_on_local_history_only() {
+        let env = with_friend().await;
+        for i in 0..3 {
+            env.relay(&format!("p{i}"), OLD, email("friend@x.com", "hi")).await;
+        }
+        // Let the relays' own traffic (answers, acks) settle first.
+        let mut before = env.server.received_requests().await.unwrap_or_default().len();
+        loop {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let now = env.server.received_requests().await.unwrap_or_default().len();
+            if now == before {
+                break;
+            }
+            before = now;
+        }
+        // Friends L2 (mail to a friend) is Auto by default: asking there would have asked all three.
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!((v.line.as_str(), v.changed, v.days), ("Last 30 days: 3 Auto → Ask, 0 Ask → Auto", 3, 30));
+        // "Ask me next time" on one of them: the same three.
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::AskMeNextTime {
+                request_id: "p0".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.changed, 3, "{v:?}");
+        // Nothing was asked of the server, and nothing changed.
+        let all = env.server.received_requests().await.unwrap_or_default();
+        // Only the account's own sealed state, which every call to the core schedules, may go: nothing of the preview.
+        let new: Vec<String> = all[before..]
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.url.path()))
+            .filter(|r| r != "PUT /reins/api/account-state")
+            .collect();
+        assert!(new.is_empty(), "{new:?}");
+        assert!(env.core.engine().ap_snapshot().unwrap().rules.is_empty());
+        assert!(
+            env.core
+                .preview_policy_change(PolicyChange::SetCell {
+                    zone: ZoneChoice::Friends,
+                    level: 9,
+                    cell: CellChoice::Ask
+                })
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn notes_without_input_are_skipped() {
+        let env = with_friend().await;
+        let empty = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(empty.line, "No history yet");
+        env.relay("q1", OLD, email("friend@x.com", "hi")).await;
+        // A note kept before O4 has no input: it is skipped, so there is no history again.
+        let store = env.store();
+        let mut s = store.ap_suggestion("q1").unwrap().unwrap();
+        s.matrix.as_mut().unwrap().input = None;
+        store.ap_put_suggestion(&s).unwrap();
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.line, "No history yet");
+        // And Activity never carries the input.
+        let rec = env.store().activity(10).unwrap();
+        assert!(
+            rec.iter().all(|r| r
+                .info
+                .autopilot
+                .as_ref()
+                .and_then(|a| a.matrix.as_ref())
+                .is_none_or(|m| m.input.is_none()))
+        );
+    }
+
+    #[tokio::test]
+    async fn inputs_are_dropped_after_30_days() {
+        let env = with_friend().await;
+        env.relay("old", OLD, email("friend@x.com", "hi")).await;
+        let store = env.store();
+        let s = store.ap_suggestion("old").unwrap().unwrap();
+        let input: &PreviewInput = s.matrix.as_ref().unwrap().input.as_ref().unwrap();
+        let text = serde_json::to_string(input).unwrap();
+        assert!(!text.contains("\"hi\""), "no body: {text}");
+        // The sweep drops the suggestion, and its input, 30 days on.
+        store.ap_prune(s.at + crate::autopilot::store::SUGGESTION_RETENTION_SECS + 1).unwrap();
+        assert!(store.ap_suggestion("old").unwrap().is_none());
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.line, "No history yet");
+    }
+}
+
 // ---- Decisions v2 P5: Overnight parks for the morning, never denies; tasks widen Auto inside their envelope -----------
 
 mod decisions_v2_p5 {

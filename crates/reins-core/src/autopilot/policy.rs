@@ -576,6 +576,12 @@ impl Engine {
             &snap,
         );
         let by_rule = e.why.iter().any(|w| matches!(w, matrix::Why::Rule(_)));
+        let input = super::preview::PreviewInput {
+            analysis: analysis.clone(),
+            resolved: resolved.clone(),
+            connection: request.connection_id.0.clone(),
+            seen_resource: seen,
+        };
         let mut kinds: Vec<EffectKind> = analysis.effects.iter().map(effects::Effect::kind).collect();
         kinds.sort();
         kinds.dedup();
@@ -595,6 +601,7 @@ impl Engine {
                     _ => None,
                 }),
                 chat: None,
+                input: Some(Box::new(input)),
             },
             resolved.unknown,
         )))
@@ -1032,40 +1039,47 @@ impl Engine {
         let note = s.matrix.ok_or_else(|| CoreError::invalid("Auto has nothing to change for this entry"))?;
         let now = unix_now();
         let mut snap = self.ap_snapshot()?;
-        let kinds: BTreeSet<EffectKind> = note.kinds.iter().copied().collect();
-        let kinds: Vec<EffectKind> = kinds.into_iter().collect();
-        let explain = "You asked to be asked".to_owned();
-        if let Some(resource) = &note.resource {
-            snap.rules.push(Rule {
-                id: format!("exception-{request_id}"),
-                issuer: Issuer::Owner,
-                when: When {
-                    zones: vec![note.zone],
-                    effects: kinds.clone(),
-                    resource: Some(resource.clone()),
-                    ..When::default()
-                },
-                then: Then::Review,
-                not_after: None,
-                accepted: true,
-                explain: explain.clone(),
-            });
-        }
-        snap.rules.push(Rule {
-            id: format!("pause-{request_id}"),
-            issuer: Issuer::Owner,
-            when: When {
-                zones: vec![note.zone],
-                effects: kinds,
-                ..When::default()
-            },
-            then: Then::Review,
-            not_after: Some(now + EXCEPTION_PAUSE_SECS),
-            accepted: true,
-            explain,
-        });
+        snap.rules.extend(exception_rules(request_id, &note, now));
         // Expired pauses go.
         snap.rules.retain(|r| r.not_after.is_none_or(|t| t > now));
         self.ap_put_snapshot(&snap)
     }
+}
+
+/// The rules "Ask me next time" on `request_id` writes (its preview applies the same).
+pub(crate) fn exception_rules(request_id: &str, note: &MatrixNote, now: i64) -> Vec<Rule> {
+    let mut out = Vec::new();
+    let kinds: BTreeSet<EffectKind> = note.kinds.iter().copied().collect();
+    let kinds: Vec<EffectKind> = kinds.into_iter().collect();
+    let explain = "You asked to be asked".to_owned();
+    if let Some(resource) = &note.resource {
+        out.push(Rule {
+            id: format!("exception-{request_id}"),
+            issuer: Issuer::Owner,
+            when: When {
+                zones: vec![note.zone],
+                effects: kinds.clone(),
+                resource: Some(resource.clone()),
+                ..When::default()
+            },
+            then: Then::Review,
+            not_after: None,
+            accepted: true,
+            explain: explain.clone(),
+        });
+    }
+    out.push(Rule {
+        id: format!("pause-{request_id}"),
+        issuer: Issuer::Owner,
+        when: When {
+            zones: vec![note.zone],
+            effects: kinds,
+            ..When::default()
+        },
+        then: Then::Review,
+        not_after: Some(now + EXCEPTION_PAUSE_SECS),
+        accepted: true,
+        explain,
+    });
+    out
 }

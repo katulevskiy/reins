@@ -391,6 +391,7 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
         AdminAction::ActivatePolicy {
             revision,
             hash,
+            ..
         } => (
             format!("Activate policy revision {revision}"),
             field("Policy", "current", &e(&format!("revision {revision} · {}", hash.get(..12).unwrap_or(hash)))),
@@ -410,6 +411,17 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => (format!("Remove executor {}", e(executor_id)), field("Executor", "registered", "removed")),
+        AdminAction::BindPolicyRepo {
+            repo,
+            ..
+        } if repo.is_empty() => ("Unbind the policy repo".to_owned(), field("Policy repo", "bound", "none")),
+        AdminAction::BindPolicyRepo {
+            repo,
+            default_branch,
+        } => (
+            "Bind the policy repo".to_owned(),
+            field("Policy repo", "current", &e(&format!("{repo} · {default_branch}"))),
+        ),
         other => (e(&action_title(other)), String::new()),
     };
     format!("<div>{title}</div>{fields}")
@@ -468,6 +480,14 @@ pub fn action_title(action: &AdminAction) -> String {
         AdminAction::RemoveExecutor {
             executor_id,
         } => format!("Remove executor {executor_id}"),
+        AdminAction::BindPolicyRepo {
+            repo,
+            ..
+        } if repo.is_empty() => "Unbind the policy repo".to_owned(),
+        AdminAction::BindPolicyRepo {
+            repo,
+            ..
+        } => format!("Policy repo: {repo}"),
         AdminAction::SetManager {
             manager,
             ..
