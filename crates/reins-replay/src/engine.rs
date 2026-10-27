@@ -236,6 +236,7 @@ pub fn evaluate_with(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis, 
             seen_resource: false,
             now: case.at,
             overnight,
+            netted: false,
         },
         &snap,
     )

@@ -266,6 +266,8 @@ impl Engine {
                 seen_resource: seen,
                 now,
                 overnight,
+                // The phone plans no safety nets for its own requests (P3's are the computer's).
+                netted: false,
             },
             &snap,
         );

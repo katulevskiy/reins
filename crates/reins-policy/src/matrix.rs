@@ -408,6 +408,9 @@ pub struct Input<'a> {
     pub now: i64,
     /// Overnight (01 §11): what would ask is parked, people are stricter, the owner's own L1 work is looser.
     pub overnight: bool,
+    /// `analysis` is a planned safety net's `after` (`effects::nets::NetPlan`), and the net runs before the effect.
+    /// Overnight's looser L1 needs it (01 §11: "L1 in Mine and Friends with nets").
+    pub netted: bool,
 }
 
 /// What the evaluation says.
@@ -594,8 +597,9 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
         Cell::AskFirst if input.seen_resource => return done(Outcome::Auto, vec![Why::FirstTime], String::new()),
         Cell::Ask | Cell::AskFirst => {}
     }
-    // Overnight's own permit: the owner's own L1 work (recoverable: a net or the provider's own way back).
-    if input.overnight && a.level == Level::L1 && matches!(zone, Zone::Mine | Zone::Friends) {
+    // Overnight's own permit: the owner's own L1 work, made recoverable by a net Reins runs first (a backup ref, the
+    // trash). Without a planned net it follows the cell (a Friends L1 asks the first time, so it parks).
+    if input.overnight && input.netted && a.level == Level::L1 && matches!(zone, Zone::Mine | Zone::Friends) {
         return done(Outcome::Auto, vec![Why::Overnight], String::new());
     }
     let permit = live.iter().find(|r| {
@@ -666,6 +670,7 @@ mod tests {
                 seen_resource: seen,
                 now,
                 overnight,
+                netted: overnight,
             },
             s,
         )
@@ -793,7 +798,7 @@ mod tests {
             a.level = levels[level];
             let resolved = Resolved { zone: Zone::ALL[zone], unknown: Vec::new(), resource: None, parts: Vec::new() };
             let s = snap();
-            let e = evaluate(&Input { analysis: &a, resolved: &resolved, connection: "c", seen_resource: seen, now: 0, overnight }, &s);
+            let e = evaluate(&Input { analysis: &a, resolved: &resolved, connection: "c", seen_resource: seen, now: 0, overnight, netted: overnight }, &s);
             prop_assert_ne!(e.outcome, Outcome::Deny);
             if a.level == Level::L3 || certainty == Certainty::None {
                 prop_assert!(e.outcome.hard() && e.outcome.reviews());
@@ -1142,6 +1147,29 @@ mod tests {
                 hard: false
             }
         );
+        // Without a planned net (the phone's own requests): it follows the cell, so a Friends L1 parks.
+        let a = branch_delete("pal/lib");
+        let r = request_zone(
+            &a,
+            &s.facts,
+            &Base {
+                bare_host: Some(GITHUB),
+                ..Base::default()
+            },
+        );
+        let bare = evaluate(
+            &Input {
+                analysis: &a,
+                resolved: &r,
+                connection: "c1",
+                seen_resource: false,
+                now: 1_000,
+                overnight: true,
+                netted: false,
+            },
+            &s,
+        );
+        assert_eq!(bare.outcome, park(false), "the looser L1 needs a net");
     }
 
     #[test]
@@ -1292,6 +1320,7 @@ mod tests {
                     seen_resource: false,
                     now: 0,
                     overnight: false,
+                    netted: false,
                 },
                 &[EffectKind::FileDelete],
             )
@@ -1350,6 +1379,7 @@ mod tests {
             seen_resource: false,
             now: 0,
             overnight: false,
+            netted: false,
         };
         assert!(!task.holds(&input, &[EffectKind::DataWrite]));
         let wide = Task {
