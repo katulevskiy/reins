@@ -208,6 +208,7 @@ pub fn submit(
             claimed_at: None,
             finished_at: None,
             receipt: None,
+            resolved: None,
         };
         reins_org_request::q_insert_request(c, &row)?;
         let body = canonical_json(&json!({"tool": tool, "args": args}));
