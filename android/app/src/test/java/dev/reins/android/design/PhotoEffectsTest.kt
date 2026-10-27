@@ -1,11 +1,9 @@
-package dev.reins.android.ui
+package dev.reins.android.design
 
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.reins.android.ui.settings.PhotoEffect
-import dev.reins.android.ui.settings.PhotoEffects
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -47,7 +45,7 @@ class PhotoEffectsTest {
     @Test
     fun theFadeEndsInThePaper() {
         val src = PhotoEffects.small(gradient(400, 500), 200)
-        val out = PhotoEffects.apply(src, PhotoEffect.Photo, 1f, paper, ink)
+        val out = PhotoEffects.apply(src, PhotoEffect.Original, 1f, paper, ink)
         // The last row is the paper; the first is untouched.
         assertEquals(paper.toArgb(), out.getPixel(out.width - 1, out.height - 1))
         assertEquals(src.getPixel(out.width - 1, 0), out.getPixel(out.width - 1, 0))

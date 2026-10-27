@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -47,11 +48,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * The art behind Activity (Reins Next, "Activity with a wallpaper"): dithered images that fade into the paper at their
- * foot. Halo is the dark default, Torii dither the light one; any of them (or the owner's own photo, made on the
- * Wallpaper page) can be picked for either theme.
+ * The images behind Activity (Reins Next, "Activity with a wallpaper"): dithered art that fades into the paper at its
+ * foot. Halo is the dark default, Torii dither the light one; any of them (or the owner's own photo) can be picked for
+ * either theme, and any of them takes any effect and fade ([WallpaperChoice]).
  */
 enum class Wallpaper(val label: String, private val asset: String?) {
     Halo("Halo", "halo.jpg"),
@@ -63,12 +66,12 @@ enum class Wallpaper(val label: String, private val asset: String?) {
     Torii("Torii", "torii.jpg"),
     ToriiDither("Torii dither", "torii-dither.jpg"),
 
-    /** The owner's own photo, with its effect and fade baked in (one file per theme). */
+    /** The owner's own photo, one per theme: fitted and kept as it is, so its effect and fade can change later. */
     Photo("Your photo", null),
     ;
 
-    /** The image, decoded once per process (the owner's photo is read again after it changes). */
-    fun bitmap(context: Context, dark: Boolean): Bitmap? = Wallpapers.bitmap(context, this, dark)
+    /** The image as it is (no effect), decoded once per process (the owner's photo is read again after it changes). */
+    fun bitmap(context: Context, dark: Boolean): Bitmap? = Wallpapers.base(context, this, dark)
 
     internal fun assetPath(): String? = asset?.let { "wallpapers/$it" }
 
@@ -80,51 +83,123 @@ enum class Wallpaper(val label: String, private val asset: String?) {
     }
 }
 
-/** Decoding and the frosted copies, cached per process. */
+/**
+ * The pictures behind Activity, made on this phone and cached per process. A shipped image as it is is the asset
+ * itself; any other choice is [PhotoEffects.apply] on the image (or the owner's photo), made off the main thread and
+ * kept in a file keyed by image, effect, fade and theme ([key]). The frosted copies are made from the same picture.
+ */
 object Wallpapers {
-    private val cache = HashMap<String, Bitmap>()
-    private val frosted = HashMap<String, Bitmap>()
+    private const val KEPT = 4
+    private val bases = HashMap<String, Bitmap>()
+    private val made = object : LinkedHashMap<String, Bitmap>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?) = size > KEPT
+    }
+    private val frosted = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?) = size > 16
+    }
 
     /** Bumped when the owner's photo changes, so screens read it again. */
     var photoVersion by mutableStateOf(0)
 
-    /** Where the owner's photo for a theme lives (already processed, JPEG). */
-    fun photoFile(context: Context, dark: Boolean): File = File(context.filesDir, if (dark) "wallpaper-dark.jpg" else "wallpaper-light.jpg")
+    /** The owner's photo for a theme as picked: fitted to 780 × 1000, no effect (JPEG). */
+    fun sourceFile(context: Context, dark: Boolean): File = File(context.filesDir, if (dark) "wallpaper-source-dark.jpg" else "wallpaper-source-light.jpg")
 
-    fun photoChanged() {
+    /** Before effects were separate: the owner's photo with its effect and fade baked in. Shown as it is. */
+    fun bakedFile(context: Context, dark: Boolean): File = File(context.filesDir, if (dark) "wallpaper-dark.jpg" else "wallpaper-light.jpg")
+
+    fun hasPhoto(context: Context, dark: Boolean): Boolean = sourceFile(context, dark).isFile || bakedFile(context, dark).isFile
+
+    /** Where made pictures are kept. */
+    fun madeDir(context: Context): File = File(context.cacheDir, "wallpapers")
+
+    /** The name a made picture is kept under: one per image, effect, fade step and theme. */
+    fun key(choice: WallpaperChoice, dark: Boolean): String =
+        "${choice.image.name}-${choice.effect.name}-${choice.fadeStep}-${if (dark) "dark" else "light"}"
+
+    fun madeFile(context: Context, choice: WallpaperChoice, dark: Boolean): File = File(madeDir(context), key(choice, dark) + ".png")
+
+    /** Keeps the owner's new photo for a theme ([PhotoEffects.fit] already), in place of the old one. */
+    fun savePhoto(context: Context, dark: Boolean, fitted: Bitmap) {
+        sourceFile(context, dark).outputStream().use { fitted.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+        bakedFile(context, dark).delete()
+        photoChanged(context)
+    }
+
+    fun photoChanged(context: Context) {
+        val photo = Wallpaper.Photo.name + "-"
         synchronized(this) {
-            cache.keys.filter { it.startsWith("photo:") }.forEach { cache.remove(it) }
-            frosted.keys.filter { it.startsWith("photo:") }.forEach { frosted.remove(it) }
+            bases.keys.filter { it.startsWith("photo:") }.forEach { bases.remove(it) }
+            made.keys.filter { it.startsWith(photo) }.forEach { made.remove(it) }
+            frosted.keys.filter { it.startsWith(photo) }.forEach { frosted.remove(it) }
         }
+        madeDir(context).listFiles()?.filter { it.name.startsWith(photo) }?.forEach { it.delete() }
         photoVersion++
     }
 
-    private fun key(w: Wallpaper, dark: Boolean) = if (w == Wallpaper.Photo) "photo:$dark" else w.name
+    /** Drops every picture held in memory (tests). */
+    internal fun forget() = synchronized(this) {
+        bases.clear()
+        made.clear()
+        frosted.clear()
+    }
 
-    fun bitmap(context: Context, w: Wallpaper, dark: Boolean): Bitmap? = synchronized(this) {
-        val k = key(w, dark)
-        cache[k] ?: run {
-            val decoded = runCatching {
-                val path = w.assetPath()
-                if (path != null) {
-                    context.assets.open(path).use { BitmapFactory.decodeStream(it) }
-                } else {
-                    photoFile(context, dark).takeIf { it.isFile }?.let { BitmapFactory.decodeFile(it.absolutePath) }
-                }
-            }.getOrNull()
-            decoded?.also { cache[k] = it }
+    /** The image as it is: the asset, or the owner's photo (its source, else the old baked file). */
+    fun base(context: Context, image: Wallpaper, dark: Boolean): Bitmap? = synchronized(this) {
+        val k = if (image == Wallpaper.Photo) "photo:$dark" else image.name
+        bases[k] ?: runCatching {
+            val path = image.assetPath()
+            if (path != null) {
+                context.assets.open(path).use { BitmapFactory.decodeStream(it) }
+            } else {
+                listOf(sourceFile(context, dark), bakedFile(context, dark)).firstOrNull { it.isFile }?.let { BitmapFactory.decodeFile(it.absolutePath) }
+            }
+        }.getOrNull()?.also { bases[k] = it }
+    }
+
+    /** The picture if it can be had at once: the image as it is, or one already made. Null: [bitmap] makes it. */
+    fun ready(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? =
+        if (choice.plain) base(context, choice.image, dark) else synchronized(this) { made[key(choice, dark)] }
+
+    /** The picture for [choice]: made (or read back from its file) when it is not the image as it is. Off the main thread. */
+    fun bitmap(context: Context, choice: WallpaperChoice, dark: Boolean): Bitmap? {
+        ready(context, choice, dark)?.let { return it }
+        if (choice.plain) return null
+        val k = key(choice, dark)
+        val file = madeFile(context, choice, dark)
+        val version = photoVersion
+        val out = file.takeIf { it.isFile }?.let { f ->
+            runCatching { BitmapFactory.decodeFile(f.absolutePath) }.getOrNull()?.also { f.setLastModified(System.currentTimeMillis()) }
+        } ?: run {
+            val src = base(context, choice.image, dark) ?: return null
+            PhotoEffects.apply(src, choice.effect, choice.fadeStep / 100f, dark).also {
+                // A photo replaced while this was made: shown this once, not kept as the new photo's.
+                if (choice.image != Wallpaper.Photo || version == photoVersion) keep(context, file, it, dark)
+            }
+        }
+        if (choice.image != Wallpaper.Photo || version == photoVersion) synchronized(this) { made[k] = out }
+        return out
+    }
+
+    /** Writes a made picture and drops the theme's oldest beyond the last few. */
+    private fun keep(context: Context, file: File, bmp: Bitmap, dark: Boolean) {
+        runCatching {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            tmp.renameTo(file)
+            val theme = if (dark) "-dark.png" else "-light.png"
+            madeDir(context).listFiles()?.filter { it.name.endsWith(theme) }?.sortedByDescending { it.lastModified() }?.drop(KEPT)?.forEach { it.delete() }
         }
     }
 
     /**
-     * The image as a pane sees it through the glass: a small copy, box-blurred, saturated 1.9× and brightened 1.06
+     * The picture as a pane sees it through the glass: a small copy, box-blurred, saturated 1.9× and brightened 1.06
      * (light) or darkened to 0.82 (dark): the boards' `backdrop-filter: blur(40px) saturate(1.9) brightness(…)`.
-     * Drawn back at full size it is soft; the fine detail that fights text is gone.
+     * Drawn back at full size it is soft; the fine detail that fights text is gone. [src] is the picture for [choice].
      */
-    fun frosted(context: Context, w: Wallpaper, dark: Boolean): Bitmap? {
-        val k = key(w, dark) + ":" + dark
+    fun frosted(choice: WallpaperChoice, dark: Boolean, src: Bitmap): Bitmap {
+        val k = key(choice, dark)
         synchronized(this) { frosted[k]?.let { return it } }
-        val src = bitmap(context, w, dark) ?: return null
         val small = Bitmap.createScaledBitmap(src, (src.width / 12).coerceAtLeast(4), (src.height / 12).coerceAtLeast(4), true)
         val out = Bitmap.createBitmap(small.width, small.height, Bitmap.Config.ARGB_8888)
         val matrix = ColorMatrix().apply {
@@ -174,6 +249,32 @@ object Wallpapers {
     }
 }
 
+/** A wallpaper's picture and the choice it was made for. */
+class WallpaperArt(val choice: WallpaperChoice, val dark: Boolean, val bitmap: Bitmap)
+
+/**
+ * The picture for [choice] in a theme: at once when it is the image as it is (or was made before), else made off the
+ * main thread. Until it is ready the last picture stays, or with none the image as it is shows, so there is always art.
+ */
+@Composable
+fun rememberWallpaper(choice: WallpaperChoice?, dark: Boolean): WallpaperArt? {
+    val context = LocalContext.current
+    val version = Wallpapers.photoVersion
+    val now = remember(choice, dark, version) { choice?.let { ch -> Wallpapers.ready(context, ch, dark)?.let { WallpaperArt(ch, dark, it) } } }
+    val plain = remember(choice?.image, dark, version) {
+        choice?.let { WallpaperChoice(it.image) }?.let { p -> Wallpapers.ready(context, p, dark)?.let { WallpaperArt(p, dark, it) } }
+    }
+    var last by remember { mutableStateOf(now) }
+    LaunchedEffect(choice, dark, version) {
+        last = when {
+            choice == null -> null
+            now != null -> now
+            else -> withContext(Dispatchers.Default) { Wallpapers.bitmap(context, choice, dark) }?.let { WallpaperArt(choice, dark, it) }
+        }
+    }
+    return if (choice == null) null else now ?: last ?: plain
+}
+
 /** Where the art is drawn on screen, for panes to look through. Null when the page has no art. */
 @Stable
 class Backdrop(val image: ImageBitmap, val frosted: ImageBitmap?) {
@@ -192,14 +293,10 @@ val WALLPAPER_HEIGHT: Dp = 500.dp
  * 150 dp). Panes inside ([Modifier.pane]) frost the art. The art stays when panes turn solid.
  */
 @Composable
-fun WallpaperPage(wallpaper: Wallpaper?, modifier: Modifier = Modifier, artHeight: Dp? = WALLPAPER_HEIGHT, content: @Composable () -> Unit) {
+fun WallpaperPage(wallpaper: WallpaperChoice?, modifier: Modifier = Modifier, artHeight: Dp? = WALLPAPER_HEIGHT, content: @Composable () -> Unit) {
     val c = LocalColors.current
-    val context = LocalContext.current
-    val version = Wallpapers.photoVersion
-    val backdrop = remember(wallpaper, c.dark, version) {
-        val bmp = wallpaper?.bitmap(context, c.dark) ?: return@remember null
-        Backdrop(bmp.asImageBitmap(), Wallpapers.frosted(context, wallpaper, c.dark)?.asImageBitmap())
-    }
+    val art = rememberWallpaper(wallpaper, c.dark)
+    val backdrop = remember(art) { art?.let { Backdrop(it.bitmap.asImageBitmap(), Wallpapers.frosted(it.choice, it.dark, it.bitmap).asImageBitmap()) } }
     Box(modifier.background(c.paper)) {
         if (backdrop != null) {
             // [artHeight] null: the art fills the page (the welcome).

@@ -639,12 +639,22 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         tap("tabSettings")
         tap("openWallpaper")
-        await("wallpaper:Halo")
+        await("wallpaperPreview")
         frames()
         shoot("next-wallpaper-picker")
         tap("wallpaperFor:light")
         frames()
         shoot("next-wallpaper-picker-light")
+        // Any image takes any effect: a shipped one in halftone.
+        tap("wallpaperFor:dark")
+        tap("effect:Halftone")
+        // The picture is made off the main thread, which the test clock does not wait for.
+        repeat(10) {
+            Thread.sleep(500)
+            frames()
+        }
+        shoot("next-wallpaper-effect")
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice())
     }
 
     /** Activity with only history: the art stays open; then the same with transparency reduced (solid panes). */
@@ -668,7 +678,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun nextActivityRuins() {
         history()
         core.pending = listOf(TestData.pending("req1", "write", 1u, waitUntil = now + 40, label = "M2A", conn = "c1", service = "github", account = "octo-cat", op = "push", opTitle = "Push to a branch"))
-        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = dev.reins.android.design.Wallpaper.Ruins, wallpaperLight = dev.reins.android.design.Wallpaper.Torii))
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Ruins), wallpaperLight = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Torii)))
         launch()
         await("pending:req1")
         frames()
