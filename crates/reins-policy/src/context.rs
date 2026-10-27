@@ -300,7 +300,7 @@ pub fn host_zone(facts: &Facts, host: &str) -> (Zone, Option<Unknown>) {
         Some(z) => (*z, None),
         None => (
             Zone::Outside,
-            login(&k).then(|| Unknown {
+            login(&k).then_some(Unknown {
                 kind: FactKind::Host,
                 key: k,
             }),

@@ -10,6 +10,7 @@ pub mod effects;
 mod evaluate;
 mod grant;
 pub mod guard;
+pub mod matrix;
 mod pattern;
 mod scope;
 pub mod shell;
