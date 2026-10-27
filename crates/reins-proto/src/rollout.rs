@@ -3,7 +3,9 @@
 //!
 //! - At activation the org issuer key pre-signs every stage of a rollout, and its rollback, as [`Rollout`] bodies in
 //!   [`crate::managed::EnvelopeKind::Rollout`] envelopes. The decision service publishes them in order: the next stage
-//!   when the dwell passes cleanly, the rollback when a guard trips.
+//!   when the dwell passes cleanly, the rollback when a guard trips. Each stage carries `not_before` (activation plus
+//!   the dwell of the stages before it) and counts for nobody earlier, by each party's own clock: holding the later
+//!   steps doesn't let the decision service jump ahead of the approved schedule.
 //! - [`effective`] names the policy snapshot a member is decided under: the newest rollout's candidate when the member
 //!   is in its cohort, its stable snapshot otherwise, and the active snapshot when there is no rollout. The decision
 //!   service and every executor compute it with this same function from the same signed bodies, so a decision service
@@ -162,6 +164,10 @@ pub struct Rollout {
     pub stage: Option<Stage>,
     /// A rollback: final, and it wins over every stage of the same rollout.
     pub terminal: bool,
+    /// Unix seconds before which this step counts for nobody: activation plus the dwell of every stage before it (the
+    /// rollback: activation). Every step is pre-signed at activation, so this is what stops a holder of the later
+    /// steps (the decision service) from jumping straight to "everyone": each party judges it by its own clock.
+    pub not_before: i64,
 }
 
 impl Rollout {
@@ -193,7 +199,8 @@ impl Rollout {
         }
     }
 
-    /// Every step of a rollout for `plan`, pre-signed at activation: the stages as `1..=n` and the rollback as `n + 1`.
+    /// Every step of a rollout for `plan`, pre-signed at `activated_at`: the stages as `1..=n`, stage `k` valid from
+    /// `activated_at + (k - 1) × dwell`, and the rollback as `n + 1`, valid at once.
     #[must_use]
     pub fn steps(
         org: &str,
@@ -202,11 +209,19 @@ impl Rollout {
         stable: &str,
         candidate: &str,
         plan: &RolloutPlan,
+        activated_at: i64,
     ) -> Vec<Self> {
+        let dwell = i64::try_from(plan.dwell_secs).unwrap_or(i64::MAX);
         let mut pilot = plan.pilot();
         pilot.sort();
         pilot.dedup();
         let step = |seq: usize, stage: Option<Stage>| Self {
+            not_before: if stage.is_some() {
+                activated_at
+                    .saturating_add(dwell.saturating_mul(i64::try_from(seq.saturating_sub(1)).unwrap_or(i64::MAX)))
+            } else {
+                activated_at
+            },
             org: org.to_owned(),
             rollout_id: rollout_id.to_owned(),
             epoch,
@@ -246,11 +261,12 @@ pub fn in_cohort(rollout_id: &str, member: &str, stage: &Stage) -> bool {
     }
 }
 
-/// Each rollout's current step: its rollback when it has one (whatever the seqs), else its highest seq.
+/// Each rollout's current step as of `now`: its rollback when it has one (whatever the seqs), else its highest seq.
+/// A step whose `not_before` is still ahead is ignored, however it arrived.
 #[must_use]
-pub fn current_steps(rollouts: &[Rollout]) -> Vec<&Rollout> {
+pub fn current_steps(rollouts: &[Rollout], now: i64) -> Vec<&Rollout> {
     let mut by_id: BTreeMap<&str, &Rollout> = BTreeMap::new();
-    for r in rollouts {
+    for r in rollouts.iter().filter(|r| r.not_before <= now) {
         let keep = match by_id.get(r.rollout_id.as_str()) {
             None => true,
             Some(cur) => match (cur.terminal, r.terminal) {
@@ -268,22 +284,27 @@ pub fn current_steps(rollouts: &[Rollout]) -> Vec<&Rollout> {
 
 /// The newest rollout's current step (highest epoch, then rollout id for a deterministic tie).
 #[must_use]
-pub fn newest(rollouts: &[Rollout]) -> Option<&Rollout> {
-    current_steps(rollouts)
+pub fn newest(rollouts: &[Rollout], now: i64) -> Option<&Rollout> {
+    current_steps(rollouts, now)
         .into_iter()
         .max_by(|a, b| a.epoch.cmp(&b.epoch).then_with(|| a.rollout_id.cmp(&b.rollout_id)))
 }
 
 /// The policy hash `member` is decided under: the newest rollout's candidate when the member is in its cohort, its
-/// stable hash otherwise (and after a rollback), and `active` when there is no rollout.
+/// stable hash otherwise (and after a rollback), and `active` when there is no rollout. `now` is the caller's own clock:
+/// steps not yet valid ([`Rollout::not_before`]) don't count.
 #[must_use]
-pub fn effective(rollouts: &[Rollout], member: &str, active: &str) -> String {
-    newest(rollouts).map_or_else(|| active.to_owned(), |r| r.hash_for(member).to_owned())
+pub fn effective(rollouts: &[Rollout], member: &str, active: &str, now: i64) -> String {
+    newest(rollouts, now).map_or_else(|| active.to_owned(), |r| r.hash_for(member).to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Activation time, and a time after every stage's dwell.
+    const T0: i64 = 1_000_000;
+    const LATER: i64 = T0 + 10 * 86_400;
 
     fn plan(stages: Vec<Stage>) -> RolloutPlan {
         RolloutPlan {
@@ -300,7 +321,7 @@ mod tests {
             Stage::Percent(25),
             Stage::All,
         ]);
-        Rollout::steps("o1", "ro_1", 1, "S", "C", &p)
+        Rollout::steps("o1", "ro_1", 1, "S", "C", &p, T0)
     }
 
     fn members(n: usize) -> Vec<String> {
@@ -346,8 +367,8 @@ mod tests {
         assert!(!in_cohort("ro_1", "u-ab", &pilot));
         assert!(!in_cohort("ro_1", "U-A", &pilot));
         let steps = standard();
-        assert_eq!(effective(&steps[..1], "u-pilot", "S"), "C");
-        assert!(members(300).iter().all(|m| effective(&steps[..1], m, "S") == "S"));
+        assert_eq!(effective(&steps[..1], "u-pilot", "S", LATER), "C");
+        assert!(members(300).iter().all(|m| effective(&steps[..1], m, "S", LATER) == "S"));
     }
 
     #[test]
@@ -356,15 +377,15 @@ mod tests {
         assert_eq!(steps.len(), 4);
         assert_eq!((steps[3].seq, steps[3].terminal, steps[3].stage.as_ref()), (4, true, None));
         // Everyone at 100%, until the rollback is published: then everyone is back on stable.
-        assert!(members(50).iter().all(|m| effective(&steps[..3], m, "S") == "C"));
-        assert!(members(50).iter().all(|m| effective(&steps, m, "S") == "S"));
-        assert_eq!(effective(&steps, "u-pilot", "S"), "S");
+        assert!(members(50).iter().all(|m| effective(&steps[..3], m, "S", LATER) == "C"));
+        assert!(members(50).iter().all(|m| effective(&steps, m, "S", LATER) == "S"));
+        assert_eq!(effective(&steps, "u-pilot", "S", LATER), "S");
         // Whatever order they arrive in.
         let mut shuffled = steps;
         shuffled.reverse();
-        assert_eq!(effective(&shuffled, "u-pilot", "S"), "S");
+        assert_eq!(effective(&shuffled, "u-pilot", "S", LATER), "S");
         // No rollout: the active policy.
-        assert_eq!(effective(&[], "u-pilot", "A"), "A");
+        assert_eq!(effective(&[], "u-pilot", "A", LATER), "A");
     }
 
     #[test]
@@ -373,13 +394,31 @@ mod tests {
         let mut later = steps[2].clone();
         later.seq = 9;
         let set = vec![steps[0].clone(), steps[3].clone(), later];
-        assert!(members(50).iter().all(|m| effective(&set, m, "S") == "S"));
+        assert!(members(50).iter().all(|m| effective(&set, m, "S", LATER) == "S"));
         // A newer rollout (higher epoch) decides; an older one is ignored.
         let p = plan(vec![Stage::All]);
-        let next = Rollout::steps("o1", "ro_2", 2, "S", "D", &p);
+        let next = Rollout::steps("o1", "ro_2", 2, "S", "D", &p, T0);
         let mut all = steps;
         all.push(next[0].clone());
-        assert_eq!(effective(&all, "u-x", "S"), "D");
+        assert_eq!(effective(&all, "u-x", "S", LATER), "D");
+    }
+
+    #[test]
+    fn a_later_stage_is_refused_before_its_time() {
+        let steps = standard();
+        let day = 86_400;
+        assert_eq!(steps.iter().map(|s| s.not_before).collect::<Vec<_>>(), [T0, T0 + day, T0 + 2 * day, T0]);
+        // Stage 3 ("everyone") applied at activation time: it doesn't count, stage 1 (the pilot) does.
+        let early = vec![steps[0].clone(), steps[2].clone()];
+        assert!(current_steps(&early, T0).iter().all(|s| s.seq == 1));
+        assert!(members(50).iter().all(|m| effective(&early, m, "S", T0) == "S"));
+        assert_eq!(effective(&early, "u-pilot", "S", T0), "C");
+        // Stage 3 alone, early: as if no rollout had started.
+        assert_eq!(effective(&steps[2..3], "u-x", "A", T0 + 2 * day - 1), "A");
+        // Once its dwell has passed it counts.
+        assert!(members(50).iter().all(|m| effective(&early, m, "S", T0 + 2 * day) == "C"));
+        // The rollback is valid at once.
+        assert_eq!(effective(&steps, "u-pilot", "S", T0), "S");
     }
 
     #[test]
@@ -388,7 +427,7 @@ mod tests {
         let body = r.body();
         assert!(
             body.starts_with(
-                r#"{"candidate":"C","epoch":1,"org":"o1","pilot":["u-pilot"],"rollout_id":"ro_1","seq":2,"#
+                r#"{"candidate":"C","epoch":1,"not_before":1086400,"org":"o1","pilot":["u-pilot"],"rollout_id":"ro_1","seq":2,"#
             )
         );
         assert_eq!(serde_json::from_str::<Rollout>(&body).unwrap(), *r);
