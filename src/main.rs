@@ -607,6 +607,8 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
     // WorkOS user lifecycle (emails, deleted users, revoked sessions), when WorkOS is the SSO provider.
     if let Some(pool) = instance.state::<db::DbPool>() {
         api::reins::workos_sync::spawn(pool.clone());
+        // Organizations: members and groups from WorkOS Directory Sync.
+        api::reins::org::scim::spawn(pool.clone());
     }
 
     // The first push of the day should not wait for Google's token endpoint.

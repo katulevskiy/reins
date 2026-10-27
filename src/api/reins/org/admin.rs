@@ -79,7 +79,7 @@ fn is_owner_recovery(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Re
             subject: Subject::Member(_),
             role: Role::OrgOwner
         }
-    ) && invariants::owner_recovery(c, org)?)
+    ) && invariants::recovery_mode(c, org)?)
 }
 
 fn other_holders(c: &mut DbConnInner, org: &str, cap: Capability, user: &str) -> Result<usize, OrgError> {
@@ -376,9 +376,16 @@ fn apply(
                     granted_by: actor.to_owned(),
                 },
             )?;
-            if recovery {
-                invariants::set_owner_recovery(c, org, None)?;
-                event(c, org, "org.owner_recovered", Some(actor), None, &serde_json::json!({}), now)?;
+            if invariants::refresh_owner_recovery(c, org)? || recovery {
+                event(
+                    c,
+                    org,
+                    "org.owner_recovered",
+                    Some(actor),
+                    None,
+                    &serde_json::json!({"by_security_admins": recovery}),
+                    now,
+                )?;
             }
         }
         AdminAction::RevokeRole {
@@ -715,19 +722,10 @@ mod tests {
     #[test]
     fn owner_recovery_takes_two_security_admins() {
         let mut c = org(true);
-        // The directory removed the last owner: kept, flagged.
-        invariants::set_owner_recovery(&mut c, "o1", Some(1)).unwrap();
-        add_user(&mut c, "u1", "owner@acme.com");
-        diesel::update(crate::db::schema::users::table)
-            .filter(crate::db::schema::users::uuid.eq("u1"))
-            .set(crate::db::schema::users::enabled.eq(false))
-            .execute(&mut c)
-            .unwrap();
-        diesel::update(crate::db::schema::users_organizations::table)
-            .filter(crate::db::schema::users_organizations::uuid.eq("m1"))
-            .set(crate::db::schema::users_organizations::status.eq(ACTIVE_STATUS))
-            .execute(&mut c)
-            .unwrap();
+        // The directory removed the last owner: kept as owner, account disabled, flag shown.
+        set_enabled(&mut c, "u1", false);
+        invariants::show_owner_recovery(&mut c, "o1", 1).unwrap();
+        assert!(invariants::recovery_mode(&mut c, "o1").unwrap());
         // One Security admin alone can't make an owner.
         assert!(matches!(
             propose(&mut c, "o1", "u3", &grant_role("m4", Role::OrgOwner), None, 2),
@@ -742,11 +740,49 @@ mod tests {
         );
         approve(&mut c, "o1", &id, "u5", None, 4).unwrap();
         assert!(reins_org::q_roles_of(&mut c, "o1", "m4").unwrap().contains(&Role::OrgOwner));
-        assert!(!invariants::owner_recovery(&mut c, "o1").unwrap());
-        // Without the flag, Security admins can't make owners.
+        assert!(!invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        assert!(!invariants::recovery_mode(&mut c, "o1").unwrap());
+        // With an owner again, Security admins can't make owners.
         assert_eq!(
             propose(&mut c, "o1", "u3", &grant_role("m5", Role::OrgOwner), None, 5).unwrap_err(),
             OrgError::Forbidden
         );
+    }
+
+    #[test]
+    fn a_stale_recovery_flag_grants_nothing() {
+        let mut c = org(true);
+        set_enabled(&mut c, "u1", false);
+        invariants::show_owner_recovery(&mut c, "o1", 1).unwrap();
+        // The owner comes back; the flag is still shown.
+        set_enabled(&mut c, "u1", true);
+        assert!(invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        assert!(!invariants::recovery_mode(&mut c, "o1").unwrap());
+        add_member(&mut c, "o1", "m5", "u5", ACTIVE_STATUS);
+        grant(&mut c, "o1", SUBJECT_MEMBER, "m5", Role::SecurityAdmin);
+        // Granting Org owner needs an owner again: Security admins can't, even two of them.
+        assert_eq!(
+            propose(&mut c, "o1", "u3", &grant_role("m4", Role::OrgOwner), None, 2).unwrap_err(),
+            OrgError::Forbidden
+        );
+        // The owner's own grant clears the shown flag.
+        propose(&mut c, "o1", "u1", &grant_role("m4", Role::Auditor), None, 3).unwrap();
+        propose(&mut c, "o1", "u1", &grant_role("m4", Role::OrgOwner), None, 4).unwrap();
+        assert!(!invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+    }
+
+    #[test]
+    fn a_disabled_second_owner_does_not_count() {
+        let mut c = org(false);
+        set_enabled(&mut c, "u2", false);
+        let demote = AdminAction::RevokeRole {
+            subject: Subject::Member("m1".to_owned()),
+            role: Role::OrgOwner,
+        };
+        assert!(matches!(propose(&mut c, "o1", "u1", &demote, None, 1), Err(OrgError::Invalid(_))));
+        assert!(matches!(propose(&mut c, "o1", "u1", &remove("m1"), None, 1), Err(OrgError::Invalid(_))));
+        // And the disabled owner can't approve anything.
+        let id = pending(propose(&mut c, "o1", "u1", &grant_role("m4", Role::Auditor), None, 2).unwrap());
+        assert_eq!(approve(&mut c, "o1", &id, "u2", None, 3).unwrap_err(), OrgError::Forbidden);
     }
 }

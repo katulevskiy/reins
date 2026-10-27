@@ -116,7 +116,7 @@ pub fn q_deprovision(
     let cut = reins_org::q_cut_off_user(c, user)?;
     let enrolled_devices = reins_org::q_revoke_devices(c, org, user, now)?;
     if keep_owner {
-        super::invariants::set_owner_recovery(c, org, Some(now))?;
+        super::invariants::show_owner_recovery(c, org, now)?;
         event(
             c,
             org,
@@ -326,7 +326,8 @@ mod tests {
         assert!(!enabled);
         // …but still the owner, the account kept, and the tenant flagged.
         assert_eq!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap(), [reins_proto::org::Role::OrgOwner]);
-        assert!(super::super::invariants::owner_recovery(&mut c, "o1").unwrap());
+        assert!(super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
+        assert!(super::super::invariants::recovery_mode(&mut c, "o1").unwrap());
         let pending = super::super::super::workos_sync::pending_deletion(&UserId::from("u1".to_owned()));
         assert!(crate::db::models::reins_workos::q_get_setting(&mut c, &pending).unwrap().is_none());
         let kinds: Vec<String> = crate::db::models::reins_org_event::q_events(&mut c, "o1", None, 2)
@@ -341,7 +342,7 @@ mod tests {
         grant(&mut c, "o1", reins_org::SUBJECT_MEMBER, "m2", reins_proto::org::Role::OrgOwner);
         q_deprovision(&mut c, "o1", "u1", Reason::DirectorySuspend, None, 5).unwrap().unwrap();
         assert!(reins_org::q_roles_of(&mut c, "o1", "m1").unwrap().is_empty());
-        assert!(!super::super::invariants::owner_recovery(&mut c, "o1").unwrap());
+        assert!(!super::super::invariants::owner_recovery_shown(&mut c, "o1").unwrap());
     }
 
     struct Counting(AtomicU32);

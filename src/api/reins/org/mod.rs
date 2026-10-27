@@ -21,6 +21,7 @@ pub mod dns;
 pub mod gate;
 pub mod github;
 pub mod invariants;
+pub mod scim;
 pub mod tenant;
 pub mod workos_api;
 
@@ -86,8 +87,17 @@ pub fn member_of(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<Me
     Ok(reins_org::q_membership(c, org, user)?.filter(|m| m.status >= ACTIVE_STATUS))
 }
 
-/// The roles `user` holds in `org` (none when not an active member).
+/// The roles `user` holds in `org`: none unless an active member with an enabled account.
 pub fn roles_of_user(c: &mut DbConnInner, org: &str, user: &str) -> Result<Vec<Role>, OrgError> {
+    use diesel::prelude::*;
+    let enabled: Option<bool> = crate::db::schema::users::table
+        .filter(crate::db::schema::users::uuid.eq(user))
+        .select(crate::db::schema::users::enabled)
+        .first(c)
+        .optional()?;
+    if enabled != Some(true) {
+        return Ok(Vec::new());
+    }
     match member_of(c, org, user)? {
         Some(m) => Ok(reins_org::q_roles_of(c, org, m.uuid.as_ref())?),
         None => Ok(Vec::new()),
@@ -138,10 +148,13 @@ pub(crate) mod testing {
         crate::db::models::reins_device_test_db()
     }
 
-    /// A user row with `email` (the tests that create memberships through the services need one).
+    /// An enabled account with `email` (if `uuid` has none yet).
     pub fn add_user(c: &mut DbConnInner, uuid: &str, email: &str) {
-        let mut u = crate::db::models::User::new(email, None);
-        u.uuid = uuid.to_owned().into();
-        diesel::insert_into(users::table).values(&u).execute(c).unwrap();
+        crate::db::models::reins_org::tests::ensure_user(c, uuid, email);
+    }
+
+    /// Disables (or enables) an account.
+    pub fn set_enabled(c: &mut DbConnInner, uuid: &str, enabled: bool) {
+        diesel::update(users::table.filter(users::uuid.eq(uuid))).set(users::enabled.eq(enabled)).execute(c).unwrap();
     }
 }

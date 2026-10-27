@@ -348,6 +348,8 @@ async fn webhook(signature: Signature, body: rocket::Data<'_>) -> Status {
         return Status::Unauthorized;
     }
     NUDGE.notify_one();
+    // Directory (SCIM) events come through the same webhook.
+    super::org::scim::nudge();
     Status::Ok
 }
 

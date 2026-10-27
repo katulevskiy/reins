@@ -641,8 +641,20 @@ pub(crate) mod tests {
         q_insert_org(c, &org_row(org)).unwrap();
     }
 
-    /// A membership `m` of `user` in `org` with `status`.
+    /// An enabled account `uuid` (if there is none yet).
+    pub fn ensure_user(c: &mut DbConnInner, uuid: &str, email: &str) {
+        use crate::db::schema::users;
+        let n: i64 = users::table.filter(users::uuid.eq(uuid)).count().get_result(c).unwrap();
+        if n == 0 {
+            let mut u = crate::db::models::User::new(email, None);
+            u.uuid = uuid.to_owned().into();
+            diesel::insert_into(users::table).values(&u).execute(c).unwrap();
+        }
+    }
+
+    /// A membership `m` of `user` (an enabled account, made if missing) in `org` with `status`.
     pub fn add_member(c: &mut DbConnInner, org: &str, m: &str, user: &str, status: i32) {
+        ensure_user(c, user, &format!("{user}@member.example"));
         diesel::insert_into(users_organizations::table)
             .values((
                 users_organizations::uuid.eq(m),
