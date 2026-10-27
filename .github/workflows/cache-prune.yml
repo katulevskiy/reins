@@ -1,0 +1,64 @@
+name: Cache prune
+
+# The repository's Actions caches have GitHub's 10 GB. Past it GitHub evicts the least recently used first, and those
+# are the caches a release restores once per run: release 40476007982's macOS build saved its Rust cache and lost it
+# within minutes, so the next release built cold again. Two things keep main's caches inside the budget:
+#   - fewer keys: one Rust cache per CI job, the release's macOS build's alone (the other release builds are done long
+#     before the macOS build and CI that publication waits for), the TestFlight core a release asset of ios-core.yml
+#     (no Actions cache), ios-core.yml's simulator build on ios.yml's key and its device builds on none; every cache
+#     written from main only.
+#   - this prune (scripts/prune-caches.py): a family's superseded entries (a key whose Cargo.lock, Package.resolved or
+#     sources hash changed) and other refs' idle caches, deleted once nothing restores them, rather than left to push
+#     out a live one. It runs when a CI or iOS run on main ends (workflow_run: a run of its own, so neither CI's result,
+#     which publication waits for, nor iOS's depends on it), and every hour.
+#
+# Budget (decimal GB, sizes of 10-27): CI's Rust caches (server and core 0.73, desktop UI 0.84, desktop macOS 0.73 and
+# Windows 0.91, Android natives 0.48 x 2, iOS simulator core 0.82), Gradle 0.96, the Swift cache about 1.3, Robolectric
+# 0.19, the release's macOS build 0.98, and exact-source outputs under 0.1: about 8.4 GB, against 13.8 GB before (plus
+# the superseded copies nothing deleted). Each run's summary lists what it kept, and warns past 9 GB.
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted, delete nothing
+        type: boolean
+        default: false
+  # Main's own workflow file, with main checked out: nothing of the run that ended is read but its name and event.
+  workflow_run: # zizmor: ignore[dangerous-triggers] reads no artifact, ref or text of the triggering run
+    workflows: [CI, iOS]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  prune:
+    name: Prune Actions caches
+    # Main only; a pull request's run (also one from a fork's branch named main) never starts it. Two at once are
+    # harmless (a cache already deleted is skipped), so no concurrency group: none of these runs is ever cancelled.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write # list and delete the repository's caches
+      contents: read # the script
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Delete caches nothing restores
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ "$DRY_RUN" == true ]]; then
+            python3 scripts/prune-caches.py --dry-run
+          else
+            python3 scripts/prune-caches.py
+          fi

@@ -113,6 +113,8 @@ pub enum Setting {
         phone: bool,
         sound: bool,
     },
+    /// How long a request waits before "Check your phone" shows, in milliseconds.
+    NotifyDelay(u64),
     Ssh(bool),
     /// git for this host goes through Reins.
     Host(String, bool),
@@ -548,6 +550,7 @@ impl Backend {
                 phone,
                 sound,
             } => settings::set_notify(&self.paths, *phone, *sound),
+            Setting::NotifyDelay(ms) => settings::set_notify_delay(&self.paths, *ms),
             Setting::Ssh(on) => settings::set_ssh_enabled(&self.paths, *on),
             Setting::Host(h, on) => settings::set_host_enabled(&self.paths, h, *on),
         }?;
@@ -908,8 +911,10 @@ mod tests {
             .unwrap();
         // A change for after a restart, without restarting (as in the demo).
         backend.change(Setting::Host("gitlab.com".to_owned(), true), true, false).await.unwrap();
+        backend.change(Setting::NotifyDelay(5_000), false, true).await.unwrap();
         let config = backend.config().unwrap();
         assert!(!config.notify.phone && config.guard.group_off("publishing"));
+        assert_eq!(config.notify.delay_ms, 5_000);
         assert_eq!(config.guard.allow_commands, vec!["make test"]);
         assert!(config.git_hosts().unwrap().iter().any(|h| h.host == "gitlab.com" && h.enabled));
         assert!(backend.change(Setting::GuardTimeout(1), false, true).await.is_err(), "out of range");

@@ -2,9 +2,14 @@ name: iOS core cache
 
 # Builds the Rust core for iOS once per content hash of its sources (ios/scripts/core-cache.sh hash). On main it
 # publishes it as an asset of the rolling `ios-core-cache` prerelease, with a build provenance attestation, where the
-# iOS job (ios-job.yml), CI (ios.yml) and the Mac (core-cache.sh ensure) download it instead of building. A hash
-# already published costs one Linux job of a few seconds. Debug's release-low profile only; the TestFlight archive
-# (release.yml) builds its own.
+# iOS job (ios-job.yml), CI (ios.yml), the Mac (core-cache.sh ensure) and the TestFlight upload (release.yml) download
+# it instead of building. A hash already published costs one Linux job of a few seconds. Three variants: Debug's
+# release-low profile for the simulator and for devices, and the release profile for devices (iphoneos-release), which
+# the TestFlight archive links. A push builds all three, so the release that follows finds its core published.
+#
+# Rust cache: the simulator build shares ios.yml's (macos-ios-sim-core: the same build-core.sh, profile and target).
+# The device builds keep none: they run once per core change on main, off any path a person waits on, and each would
+# hold about 800 MB of the repository's 10 GB, pushing out the caches CI and the release restore.
 #
 # Trust (docs/ios-dev.md, "Trust"): only a build of main's own commit is published, by a job that runs no repository
 # code (an inline upload of the archive the macOS job built) and attests it. An asset is never replaced. Every other
@@ -28,8 +33,8 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Platforms to make sure of (space-separated): iphonesimulator iphoneos"
-        default: iphonesimulator iphoneos
+        description: "Variants to make sure of (space-separated): iphonesimulator iphoneos iphoneos-release"
+        default: iphonesimulator iphoneos iphoneos-release
         type: string
   workflow_call:
     inputs:
@@ -38,7 +43,7 @@ on:
         default: ""
         type: string
       platforms:
-        description: "Platforms to make sure of (space-separated): iphonesimulator iphoneos"
+        description: "Variants to make sure of (space-separated): iphonesimulator iphoneos iphoneos-release"
         default: iphonesimulator
         type: string
     outputs:
@@ -71,7 +76,7 @@ jobs:
       - name: Which cores are missing
         id: check
         env:
-          PLATFORMS: ${{ inputs.platforms || 'iphonesimulator iphoneos' }}
+          PLATFORMS: ${{ inputs.platforms || 'iphonesimulator iphoneos iphoneos-release' }}
           REPO: ${{ github.repository }}
           REF: ${{ github.ref }}
           RUN_SHA: ${{ github.sha }}
@@ -109,6 +114,12 @@ jobs:
     if: needs.plan.outputs.missing != '[]'
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
+    # A newer push to main cancels an older push's build of the same variant (its core's sources changed again; the
+    # newer run builds the newer hash). The release of the older commit then builds its own core in the TestFlight job,
+    # after publication, so publishing never waits for this. Calls and hand runs are never cancelled.
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('ios-core-main-{0}', matrix.platform) || format('ios-core-{0}-{1}', github.run_id, matrix.platform) }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     strategy:
       fail-fast: false
       matrix:
@@ -131,11 +142,13 @@ jobs:
         run: |
           set -euo pipefail
           target=aarch64-apple-ios-sim
-          [[ "$PLATFORM" == iphoneos ]] && target=aarch64-apple-ios
+          [[ "$PLATFORM" == iphoneos* ]] && target=aarch64-apple-ios
           rustup toolchain install && rustup target add "$target" && rustc -vV
+      # The simulator only, under ios.yml's key (see the top).
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: matrix.platform == 'iphonesimulator'
         with:
-          shared-key: macos-ios-core-${{ matrix.platform }}
+          shared-key: macos-ios-sim-core
           # Main's own commit only: a dispatched ref never writes a cache main's runs restore.
           save-if: ${{ needs.plan.outputs.trusted == 'true' }}
       - name: Build the core
@@ -145,7 +158,7 @@ jobs:
           set -euo pipefail
           start=$(date +%s)
           # Built here, never fetched: this is the build that may be published.
-          rm -rf "target/ios-core/$PLATFORM"
+          rm -rf "target/ios-core/${PLATFORM%-release}"
           REINS_CORE_BUILD_ONLY=1 ios/scripts/core-cache.sh ensure "$PLATFORM"
           echo "core for $PLATFORM built in $(( $(date +%s) - start )) s"
           ios/scripts/core-cache.sh pack "$PLATFORM" "$RUNNER_TEMP/$(ios/scripts/core-cache.sh asset "$PLATFORM")"
@@ -187,7 +200,7 @@ jobs:
           [[ ${#files[@]} -gt 0 ]] || { echo "::warning::no core was built"; echo "any=false" >> "$GITHUB_OUTPUT"; exit 0; }
           for file in "${files[@]}"; do
             name="$(basename "$file")"
-            [[ "$name" =~ ^core-${HASH}-(iphonesimulator|iphoneos)\.tar\.gz$ ]] || { echo "::error::unexpected file $name"; exit 1; }
+            [[ "$name" =~ ^core-${HASH}-(iphonesimulator|iphoneos|iphoneos-release)\.tar\.gz$ ]] || { echo "::error::unexpected file $name"; exit 1; }
             sha256sum "$file"
           done
           echo "any=true" >> "$GITHUB_OUTPUT"
@@ -207,7 +220,7 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             # A prerelease whose tag matches no vX.Y.Z: scripts/next-version.sh and releases/latest never see it.
             gh release create "$tag" --prerelease --latest=false --target main --title "iOS core cache (not a release)" \
-              --notes "Prebuilt Rust cores for iOS Debug builds, one per content hash of the core's sources, each with a build provenance attestation from .github/workflows/ios-core.yml on main. Read by ios/scripts/core-cache.sh. Not a release." ||
+              --notes "Prebuilt Rust cores for iOS (Debug builds, and the TestFlight archive's Release core), one per content hash of the core's sources, each with a build provenance attestation from .github/workflows/ios-core.yml on main. Read by ios/scripts/core-cache.sh. Not a release." ||
               gh release view "$tag" >/dev/null
           fi
           existing="$(gh release view "$tag" --json assets --jq '.assets[].name')"
@@ -219,9 +232,10 @@ jobs:
             fi
             gh release upload "$tag" "$file"
             echo "published $name"
+            # The variant: what follows core-<hash>-.
             platform="${name%.tar.gz}"
-            platform="${platform##*-}"
-            # Keep the newest $KEEP of this platform.
+            platform="${platform#core-*-}"
+            # Keep the newest $KEEP of this variant.
             gh api "repos/$GH_REPO/releases/tags/$tag" --jq \
               ".assets | map(select(.name | endswith(\"-$platform.tar.gz\"))) | sort_by(.created_at) | reverse | .[$KEEP:] | .[].id" |
               while IFS= read -r id; do

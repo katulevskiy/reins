@@ -571,6 +571,7 @@ impl Config {
         self.run.validate()?;
         crate::api_proxy::validate(&self.api)?;
         self.ssh.validate()?;
+        self.notify.validate()?;
         self.git_hosts().map(drop)
     }
 

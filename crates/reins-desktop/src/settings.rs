@@ -165,6 +165,14 @@ pub fn set_notify(paths: &Paths, phone: bool, sound: bool) -> Result<Change, Str
     })
 }
 
+/// How long a request waits for the phone before "Check your phone" shows, in milliseconds.
+pub fn set_notify_delay(paths: &Paths, ms: u64) -> Result<Change, String> {
+    edit(paths, |doc| {
+        table(doc, "notify")?["delay_ms"] = value(i64::try_from(ms).map_err(|e| e.to_string())?);
+        Ok(())
+    })
+}
+
 /// Whether the daemon runs the SSH agent.
 pub fn set_ssh_enabled(paths: &Paths, on: bool) -> Result<Change, String> {
     edit(paths, |doc| {
@@ -220,6 +228,10 @@ mod tests {
         let c = Config::load(&paths).unwrap();
         assert_eq!(c.guard.disabled_groups, vec!["publishing"]);
         assert!(c.notify.phone && !c.notify.sound);
+        assert_eq!(c.notify.delay_ms, crate::notify::DEFAULT_DELAY_MS);
+        set_notify_delay(&paths, 5_000).unwrap();
+        assert_eq!(Config::load(&paths).unwrap().notify.delay_ms, 5_000);
+        assert!(set_notify_delay(&paths, 60_000).is_err(), "at most 15 s");
         set_guard_group(&paths, "publishing", true).unwrap();
         assert!(Config::load(&paths).unwrap().guard.disabled_groups.is_empty());
         assert!(set_guard_group(&paths, "nothing", false).is_err());

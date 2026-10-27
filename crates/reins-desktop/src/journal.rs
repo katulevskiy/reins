@@ -314,6 +314,43 @@ impl Entry {
 pub struct Journal {
     /// `None`: writes nothing (tests, and code that has no state directory).
     paths: Option<Paths>,
+    /// Where "Check your phone" goes.
+    desk: Desk,
+}
+
+/// Where "Check your phone" goes: this computer's notifications, or (tests) a list of what would show.
+#[derive(Clone, Debug, Default)]
+enum Desk {
+    #[default]
+    System,
+    #[cfg(test)]
+    Record {
+        delay: std::time::Duration,
+        events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    },
+}
+
+/// A "Check your phone" shown for a request; [`Notice::withdraw`] takes it down once the request is answered, where
+/// the platform allows.
+#[derive(Debug)]
+pub struct Notice(NoticeKind);
+
+#[derive(Debug)]
+enum NoticeKind {
+    System(crate::notify::Shown),
+    #[cfg(test)]
+    Record(std::sync::Arc<std::sync::Mutex<Vec<String>>>, String),
+}
+
+impl Notice {
+    /// Takes it down (the request was answered); returns at once.
+    pub fn withdraw(self) {
+        match self.0 {
+            NoticeKind::System(shown) => shown.withdraw(),
+            #[cfg(test)]
+            NoticeKind::Record(events, what) => events.lock().unwrap().push(format!("withdrawn: {what}")),
+        }
+    }
 }
 
 impl Journal {
@@ -321,6 +358,7 @@ impl Journal {
     pub fn new(paths: &Paths) -> Self {
         Self {
             paths: Some(paths.clone()),
+            desk: Desk::System,
         }
     }
 
@@ -329,7 +367,23 @@ impl Journal {
     pub fn off() -> Self {
         Self {
             paths: None,
+            desk: Desk::System,
         }
+    }
+
+    /// A journal that writes nothing and lists the notifications it would show (`shown: …`, `withdrawn: …`), after
+    /// `delay`.
+    #[cfg(test)]
+    pub(crate) fn recording(delay: std::time::Duration) -> (Self, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let events = std::sync::Arc::default();
+        let journal = Self {
+            paths: None,
+            desk: Desk::Record {
+                delay,
+                events: std::sync::Arc::clone(&events),
+            },
+        };
+        (journal, events)
     }
 
     #[must_use]
@@ -365,13 +419,44 @@ impl Journal {
         }
     }
 
-    /// "Check your phone" on the desktop, as `[notify]` says.
-    pub fn notify_waiting(&self, what: &str) {
-        let Some(paths) = &self.paths else {
-            return;
-        };
-        let config = crate::config::Config::load(paths).map(|c| c.notify).unwrap_or_default();
-        crate::notify::phone_waiting(&config, &paths.state_dir, what);
+    /// "Check your phone" on the desktop, as `[notify]` says, now. `None` when nothing showed.
+    #[must_use]
+    pub fn notify_waiting(&self, what: &str) -> Option<Notice> {
+        match &self.desk {
+            Desk::System => {
+                let paths = self.paths.as_ref()?;
+                let config = crate::config::Config::load(paths).map(|c| c.notify).unwrap_or_default();
+                crate::notify::phone_waiting(&config, &paths.state_dir, what).map(|s| Notice(NoticeKind::System(s)))
+            }
+            #[cfg(test)]
+            Desk::Record {
+                events,
+                ..
+            } => {
+                events.lock().unwrap().push(format!("shown: {what}"));
+                Some(Notice(NoticeKind::Record(std::sync::Arc::clone(events), what.to_owned())))
+            }
+        }
+    }
+
+    /// How long a request waits for the phone before [`Journal::notify_waiting`] (`[notify] delay_ms`): one the
+    /// phone's mode or a standing permission decides meanwhile needs nobody.
+    #[must_use]
+    pub fn notify_delay(&self) -> std::time::Duration {
+        match &self.desk {
+            Desk::System => self
+                .paths
+                .as_ref()
+                .and_then(|paths| crate::config::Config::load(paths).ok())
+                .map(|c| c.notify)
+                .unwrap_or_default()
+                .delay(),
+            #[cfg(test)]
+            Desk::Record {
+                delay,
+                ..
+            } => *delay,
+        }
     }
 }
 
@@ -562,6 +647,6 @@ mod tests {
     #[test]
     fn the_off_journal_writes_nothing() {
         Journal::off().record(&Entry::new(Kind::Ask, "x"));
-        Journal::off().notify_waiting("x");
+        assert!(Journal::off().notify_waiting("x").is_none());
     }
 }
