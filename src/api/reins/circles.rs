@@ -653,7 +653,14 @@ pub fn guardian_next(from: LinkState, change: &circle::LinkChange, now: i64) -> 
         return None;
     }
     match (&change.guardian, change.by, change.state) {
-        (None, Side::Helper, LinkState::Ended) => Some((LinkState::Ended, None)),
+        // The guardian leaves, or consents to a minor's end: at once.
+        (None, Side::Helper, LinkState::Ended)
+        | (
+            Some(GuardianChange::EndConsented {
+                ..
+            }),
+            ..,
+        ) => Some((LinkState::Ended, None)),
         (None, Side::Owner, LinkState::Active) if from == LinkState::Paused => Some((LinkState::Active, None)),
         (None, ..) => None,
         (
@@ -672,12 +679,6 @@ pub fn guardian_next(from: LinkState, change: &circle::LinkChange, now: i64) -> 
                 Some((from, Some(*effective_at)))
             }
         }
-        (
-            Some(GuardianChange::EndConsented {
-                ..
-            }),
-            ..,
-        ) => Some((LinkState::Ended, None)),
         (Some(_), ..) => Some((from, None)),
     }
 }

@@ -408,9 +408,9 @@ pub(crate) fn q_update_with_change(
         }
     })
     .or_else(|e| match e {
-        diesel::result::Error::RollbackTransaction => Ok(false),
-        // Two changes with one `seq` at once: the second finds the first's row.
-        diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _) => Ok(false),
+        // Moved meanwhile, or two changes with one `seq` at once (the second finds the first's row).
+        diesel::result::Error::RollbackTransaction
+        | diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _) => Ok(false),
         e => Err(e),
     })
 }
