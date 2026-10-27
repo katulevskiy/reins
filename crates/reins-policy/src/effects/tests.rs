@@ -672,6 +672,15 @@ fn git_options_fail_closed() {
     assert_eq!(level("git submodule foreach --recursive 'rm -rf ~/Documents'"), Level::L3);
     assert_eq!(level("git submodule --quiet foreach rm -rf ~/Documents"), Level::L3);
     assert_eq!(run("git submodule foreach \"$CMD\"").certainty, Certainty::None);
+    // Git runs a first word with shell characters through `sh -c`, the other words as its arguments.
+    assert_eq!(level("git bisect run 'true; rm -rf ~/Documents'"), Level::L3);
+    assert_eq!(level("git submodule foreach 'rm -rf ~/Documents;' x"), Level::L3);
+    assert_eq!(
+        level("git submodule foreach 'rm -rf' ~/Documents"),
+        Level::L3,
+        "the words after a script are its \"$@\""
+    );
+    assert_eq!(run("git bisect run 'f() { rm -rf \"$1\"; }; f' \"$X\"").certainty, Certainty::None);
     // 3. Configuration from the environment or `--config-env`: not read.
     for cmd in [
         "git --config-env=core.sshCommand=EVIL fetch",

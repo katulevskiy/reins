@@ -277,11 +277,7 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
         // `git bisect run cmd args…`: the command's own words, as they are.
         "bisect" => {
             if rest.first().is_some_and(|a| a.text == "run") {
-                if rest.len() > 1 {
-                    let _out: Input = super::programs::run(w, &rest[1..], Input::None, false);
-                } else {
-                    w.lower(Certainty::None, "git bisect run without a command");
-                }
+                git_command(w, &rest[1..], "git bisect run");
             }
         }
         // `git submodule [--quiet] foreach [--recursive] cmd…`: one word is a shell script, more are a command.
@@ -290,20 +286,7 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
             while rest.get(at).is_some_and(|a| matches!(a.text.as_str(), "--recursive" | "--quiet" | "-q")) {
                 at += 1;
             }
-            let words = &rest[at..];
-            if words.iter().any(|a| !a.known()) {
-                w.lower(
-                    Certainty::None,
-                    "a command git submodule foreach runs, with values that are not in the command",
-                );
-            }
-            match words {
-                [] => w.lower(Certainty::None, "git submodule foreach without a command"),
-                [one] => w.run_script(&one.text, Vec::new()),
-                many => {
-                    let _out: Input = super::programs::run(w, many, Input::None, false);
-                }
-            }
+            git_command(w, &rest[at..], "git submodule foreach");
         }
         "rebase" => {
             rebase(w, rest);
@@ -413,6 +396,34 @@ pub(super) fn shell_git(w: &mut Walk<'_>, args: &[Exp]) -> Input {
     }
     w.cwd = saved_cwd;
     Input::Opaque("git".to_owned())
+}
+
+/// A command git runs from words (`bisect run`, `submodule foreach`), the way git runs it: when the first word holds
+/// a shell character or a space, git runs `sh -c '<first> "$@"'` with the other words as arguments; otherwise the words
+/// are the program and its arguments.
+fn git_command(w: &mut Walk<'_>, words: &[Exp], what: &str) {
+    const SHELL: &[char] = &[
+        '|', '&', ';', '<', '>', '(', ')', '$', '`', '\\', '"', '\'', ' ', '\t', '\n', '*', '?', '[', '#', '~', '=',
+        '%',
+    ];
+    let Some((first, rest)) = words.split_first() else {
+        w.lower(Certainty::None, format!("{what} without a command"));
+        return;
+    };
+    if !first.known() {
+        w.note(first);
+        w.lower(Certainty::None, format!("the command {what} runs, with values that are not in the command"));
+        return;
+    }
+    if first.text.contains(SHELL) {
+        if rest.iter().any(|a| !a.known()) {
+            w.lower(Certainty::None, format!("the arguments {what} passes, with values that are not in the command"));
+        }
+        // Git appends `"$@"`: the other words are the script's arguments, and its last command's too.
+        w.run_script(&format!("{} \"$@\"", first.text), rest.to_vec());
+    } else {
+        let _out: Input = super::programs::run(w, words, Input::None, false);
+    }
 }
 
 /// `git rebase`'s options. `-x`/`--exec` in every form (`-x cmd`, `-xcmd`, `-ix cmd`, `--exec=cmd`, `--exe cmd`)
