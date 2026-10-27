@@ -11391,6 +11391,8 @@ dependencies = [
  "psl",
  "rand 0.10.2",
  "regex",
+ "reins-audit",
+ "reins-policy",
  "reins-proto",
  "reqsign-aws-v4",
  "reqsign-core",
@@ -11418,7 +11420,9 @@ dependencies = [
  "webauthn-rs-core",
  "webauthn-rs-proto",
  "which 8.0.6",
+ "x509-parser",
  "yubico_ng",
+ "zeroize",
 ]
 
 [[package]]
