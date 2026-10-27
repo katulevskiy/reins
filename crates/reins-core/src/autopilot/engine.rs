@@ -1038,17 +1038,12 @@ impl Engine {
                         return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Rule)).await;
                     }
                     // The owner's Review rules are hard in any automatic mode; the matrix's cells only where it decides.
-                    reins_policy::matrix::Outcome::Ask {
-                        ..
-                    } if m.by_rule || deciding => {
+                    o if o.reviews() && (m.by_rule || deciding) => {
                         s.reason = format!("Asks: {}", m.line);
                         return self.ap_wait(&subject, &s);
                     }
                     // Permitted: the model is the sanity check below, and can only make it an ask.
-                    reins_policy::matrix::Outcome::Ask {
-                        ..
-                    }
-                    | reins_policy::matrix::Outcome::Auto => {}
+                    _ => {}
                 }
             }
         }

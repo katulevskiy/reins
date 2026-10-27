@@ -896,7 +896,7 @@ pub async fn run(
             let (out, code) = render(&call, &Verdict::Deny(reason));
             return (out, code, None);
         }
-        let asks = matches!(shadow.outcome, reins_policy::matrix::Outcome::Ask { .. });
+        let asks = shadow.outcome.reviews();
         let question = guarded.or_else(|| asks.then(|| matrix_question(&call, &shadow.line)).flatten());
         let Some((m, q)) = question else {
             let (out, code) = render_with(&call, &Verdict::Unmatched, &news);

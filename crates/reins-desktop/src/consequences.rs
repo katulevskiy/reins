@@ -179,6 +179,7 @@ pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>,
             connection,
             seen_resource: false,
             now,
+            overnight: false,
         },
         &snap,
     );

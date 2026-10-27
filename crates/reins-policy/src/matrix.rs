@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::context::{Facts, Resolved, Zone};
-use crate::effects::{Analysis, Certainty, EffectKind, Level};
+use crate::effects::{Analysis, Certainty, Effect, EffectKind, Level};
 
 /// One cell of the matrix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -212,32 +212,130 @@ impl Rule {
     }
 }
 
-/// An approved task's envelope: its permits hold only inside it (01 §12, 08 R3).
+/// The highest level a task may make Auto (01 §12: L1 by default, L2 for Mine repositories; never L3).
+pub const MAX_CEILING: Level = Level::L2;
+
+/// An approved task's envelope: its permits hold only inside it (01 §12, 08 R3). Every list that isn't empty bounds
+/// the request: all of the request's parts must be inside it (an AND bound, never an OR).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     pub connection: String,
+    /// Clamped to [`MAX_CEILING`].
     pub ceiling: Level,
     #[serde(default)]
     pub zones: Vec<Zone>,
     #[serde(default)]
     pub effects: Vec<EffectKind>,
-    /// Prefix globs; the request's resource must match one when not empty.
+    /// Repositories (fact keys, `*` suffix globs); with `people`, every resource part must match one of the two.
     #[serde(default)]
     pub resources: Vec<String>,
+    /// Branch globs (`fix/*`, case-sensitive) every pushed or deleted branch must match, when not empty.
+    #[serde(default)]
+    pub branches: Vec<String>,
+    /// Absolute roots every written or deleted path must be under, when not empty.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// People the task may reach: exact addresses or ids, or `@domain`. Empty: none (no message is covered).
+    #[serde(default)]
+    pub people: Vec<String>,
+    /// Uses left of the task's budget; `Some(0)`: spent.
+    #[serde(default)]
+    pub uses_left: Option<u32>,
     pub not_after: i64,
 }
 
+impl Default for Task {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            connection: String::new(),
+            ceiling: Level::L1,
+            zones: Vec::new(),
+            effects: Vec::new(),
+            resources: Vec::new(),
+            branches: Vec::new(),
+            paths: Vec::new(),
+            people: Vec::new(),
+            uses_left: None,
+            not_after: 0,
+        }
+    }
+}
+
+/// `value` matches `pattern` exactly (case-sensitive), or `pattern` ends in `*` and `value` starts with the rest.
+fn glob_exact(pattern: &str, value: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => value.starts_with(prefix),
+        None => pattern == value,
+    }
+}
+
+/// `path` is `root` or below it, component by component; a `..` or a relative path is never inside anything.
+fn under(root: &str, path: &str) -> bool {
+    let root = root.trim_end_matches('/');
+    let clean = |p: &str| p.starts_with('/') && !p.split('/').any(|c| c == ".." || c == ".");
+    clean(path) && clean(root) && !root.is_empty() && (path == root || path.starts_with(&format!("{root}/")))
+}
+
+/// A person the task lists: the exact address or id, or a `@domain` entry for an address at that domain.
+fn person_in(people: &[String], who: &str) -> bool {
+    let who = who.trim().to_ascii_lowercase();
+    people.iter().any(|p| {
+        let p = p.to_ascii_lowercase();
+        if p.starts_with('@') {
+            who.contains('@') && who.ends_with(&p)
+        } else {
+            p == who
+        }
+    })
+}
+
 impl Task {
-    fn holds(&self, input: &Input<'_>, kinds: &[EffectKind]) -> bool {
+    /// Whether this task's permit covers `input` (whose effect kinds are `kinds`).
+    #[must_use]
+    pub fn holds(&self, input: &Input<'_>, kinds: &[EffectKind]) -> bool {
+        let a = input.analysis;
+        let parts = &input.resolved.parts;
+        let in_envelope = |v: &String| self.resources.iter().any(|r| glob(r, v)) || person_in(&self.people, v);
+        let resources_ok = (self.resources.is_empty() && self.people.is_empty())
+            || (!parts.is_empty() && parts.iter().all(in_envelope));
+        // Unknown never widens: an Outside request is covered only by what the envelope names.
+        let outside_ok = input.resolved.zone != Zone::Outside || !(self.resources.is_empty() && self.people.is_empty());
+        let effects_ok = a.effects.iter().all(|e| match e {
+            Effect::GitPush {
+                refname,
+                ..
+            }
+            | Effect::GitRefDelete {
+                refname,
+                ..
+            } => {
+                let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                self.branches.is_empty() || self.branches.iter().any(|b| glob_exact(b, branch))
+            }
+            Effect::FileWrite {
+                path,
+            } => self.paths.is_empty() || self.paths.iter().any(|r| under(r, &path.path)),
+            Effect::FileDelete {
+                paths,
+                ..
+            } => self.paths.is_empty() || paths.iter().all(|p| self.paths.iter().any(|r| under(r, &p.path))),
+            Effect::Message {
+                to,
+                ..
+            } => !to.is_empty() && to.iter().all(|t| person_in(&self.people, t)),
+            _ => true,
+        });
         input.now < self.not_after
             && input.connection == self.connection
-            && input.analysis.level <= self.ceiling
+            && self.uses_left != Some(0)
+            && a.level <= self.ceiling.min(MAX_CEILING)
             && (self.zones.is_empty() || self.zones.contains(&input.resolved.zone))
             && (self.effects.is_empty() || kinds.iter().all(|k| self.effects.contains(k)))
-            && (self.resources.is_empty()
-                || (!input.resolved.parts.is_empty()
-                    && input.resolved.parts.iter().all(|v| self.resources.iter().any(|r| glob(r, v)))))
+            && resources_ok
+            && outside_ok
+            && effects_ok
     }
 }
 
@@ -283,6 +381,8 @@ pub struct Input<'a> {
     /// The owner approved this resource before (for [`Cell::AskFirst`]).
     pub seen_resource: bool,
     pub now: i64,
+    /// Overnight (01 §11): what would ask is parked, people are stricter, the owner's own L1 work is looser.
+    pub overnight: bool,
 }
 
 /// What the evaluation says.
@@ -297,6 +397,10 @@ pub enum Outcome {
     },
     /// An explicit rule denies it.
     Deny,
+    /// Overnight: the owner reviews it in the morning (a Deferred ticket); `hard` as for [`Outcome::Ask`].
+    Park {
+        hard: bool,
+    },
 }
 
 impl Outcome {
@@ -308,7 +412,29 @@ impl Outcome {
                 ..
             } => "ask",
             Self::Deny => "deny",
+            Self::Park {
+                ..
+            } => "park",
         }
+    }
+
+    /// Whether the owner reviews it (now or in the morning).
+    #[must_use]
+    pub fn reviews(self) -> bool {
+        matches!(self, Self::Ask { .. } | Self::Park { .. })
+    }
+
+    /// Whether no permit could satisfy it.
+    #[must_use]
+    pub fn hard(self) -> bool {
+        matches!(
+            self,
+            Self::Ask {
+                hard: true
+            } | Self::Park {
+                hard: true
+            }
+        )
     }
 }
 
@@ -330,6 +456,10 @@ pub enum Why {
     FirstTime,
     /// A permit that satisfied the cell (its id).
     Permit(String),
+    /// Overnight: its looser L1 for the owner's own work, or (hard) its stricter rule for Work and Outside people.
+    Overnight,
+    /// An approved task's envelope covered it (its id).
+    Task(String),
 }
 
 /// A decision and its trace.
@@ -359,6 +489,9 @@ impl Evaluation {
                         ..
                     } => "Ask",
                     Outcome::Deny => "Deny",
+                    Outcome::Park {
+                        ..
+                    } => "Park",
                 };
                 format!("{word} · {} · {}", self.zone.label(), self.level.label())
             }
@@ -366,11 +499,13 @@ impl Evaluation {
     }
 }
 
-/// Evaluates `input` against `snap` (R3): deny rules, then hard obligations, then the cell and the permits.
+/// Evaluates `input` against `snap` (R3): deny rules, then hard obligations, then the cell and the permits. In
+/// Overnight (01 §11) every review becomes a park.
 #[must_use]
 pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
     let a = input.analysis;
-    let mut kinds: Vec<EffectKind> = a.effects.iter().map(crate::effects::Effect::kind).collect();
+    let zone = input.resolved.zone;
+    let mut kinds: Vec<EffectKind> = a.effects.iter().map(Effect::kind).collect();
     kinds.sort();
     kinds.dedup();
     let cover = |r: &Rule| match r.then {
@@ -382,12 +517,24 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
     live.sort_by(|x, y| x.issuer.rank().cmp(&y.issuer.rank()).then_with(|| x.id.cmp(&y.id)));
     let done = |outcome: Outcome, why: Vec<Why>, explain: String| Evaluation {
         outcome,
-        zone: input.resolved.zone,
+        zone,
         level: a.level,
         certainty: a.certainty,
         why,
         explain,
         snapshot: snap.hash(),
+    };
+    // What the owner reviews: now (Ask), or in the morning in Overnight (Park).
+    let review = |hard: bool| {
+        if input.overnight {
+            Outcome::Park {
+                hard,
+            }
+        } else {
+            Outcome::Ask {
+                hard,
+            }
+        }
     };
 
     // 1. An explicit deny wins.
@@ -404,24 +551,27 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
     if a.level == Level::L3 {
         hard.push(Why::Level3);
     }
+    // Overnight: what reaches Work or Outside people always waits for the morning.
+    if input.overnight && a.level == Level::L2 && matches!(zone, Zone::Work | Zone::Outside) {
+        hard.push(Why::Overnight);
+    }
     let reviews: Vec<&&Rule> = live.iter().filter(|r| r.then == Then::Review).collect();
     hard.extend(reviews.iter().map(|r| Why::Rule(r.id.clone())));
     if !hard.is_empty() {
         let explain = reviews.first().map(|r| r.explain.clone()).unwrap_or_default();
-        return done(
-            Outcome::Ask {
-                hard: true,
-            },
-            hard,
-            explain,
-        );
+        return done(review(true), hard, explain);
     }
 
     // 3. The cell, which any one qualifying permit satisfies.
-    match snap.matrix.cell(input.resolved.zone, a.level) {
+    let cell = snap.matrix.cell(zone, a.level);
+    match cell {
         Cell::Auto => return done(Outcome::Auto, vec![Why::Cell], String::new()),
         Cell::AskFirst if input.seen_resource => return done(Outcome::Auto, vec![Why::FirstTime], String::new()),
         Cell::Ask | Cell::AskFirst => {}
+    }
+    // Overnight's own permit: the owner's own L1 work (recoverable: a net or the provider's own way back).
+    if input.overnight && a.level == Level::L1 && matches!(zone, Zone::Mine | Zone::Friends) {
+        return done(Outcome::Auto, vec![Why::Overnight], String::new());
     }
     let permit = live.iter().find(|r| {
         r.then == Then::Permit
@@ -434,18 +584,16 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
     if let Some(p) = permit {
         return done(Outcome::Auto, vec![Why::Permit(p.id.clone())], String::new());
     }
-    let why = if snap.matrix.cell(input.resolved.zone, a.level) == Cell::AskFirst {
+    // A task is a permit by itself, inside its envelope only.
+    if let Some(t) = snap.tasks.iter().find(|t| t.holds(input, &kinds)) {
+        return done(Outcome::Auto, vec![Why::Task(t.id.clone())], String::new());
+    }
+    let why = if cell == Cell::AskFirst {
         Why::FirstTime
     } else {
         Why::Cell
     };
-    done(
-        Outcome::Ask {
-            hard: false,
-        },
-        vec![why],
-        String::new(),
-    )
+    done(review(false), vec![why], String::new())
 }
 
 #[cfg(test)]
@@ -469,6 +617,14 @@ mod tests {
     }
 
     fn eval(a: &Analysis, s: &Snapshot, seen: bool) -> Evaluation {
+        eval_with(a, s, seen, false, "c1", 1_000)
+    }
+
+    fn night(a: &Analysis, s: &Snapshot) -> Evaluation {
+        eval_with(a, s, false, true, "c1", 1_000)
+    }
+
+    fn eval_with(a: &Analysis, s: &Snapshot, seen: bool, overnight: bool, connection: &str, now: i64) -> Evaluation {
         let r = request_zone(
             a,
             &s.facts,
@@ -481,9 +637,10 @@ mod tests {
             &Input {
                 analysis: a,
                 resolved: &r,
-                connection: "c1",
+                connection,
                 seen_resource: seen,
-                now: 1_000,
+                now,
+                overnight,
             },
             s,
         )
@@ -604,18 +761,20 @@ mod tests {
 
     proptest! {
         #[test]
-        fn nothing_denies_without_a_rule(level in 0usize..4, zone in 0usize..4, cert in 0usize..3, seen: bool) {
+        fn nothing_denies_without_a_rule(level in 0usize..4, zone in 0usize..4, cert in 0usize..3, seen: bool, overnight: bool) {
             let levels = [Level::L0, Level::L1, Level::L2, Level::L3];
             let certainty = [Certainty::Full, Certainty::Partial, Certainty::None][cert];
             let mut a = analysis(Effect::Unknown { reason: "x".to_owned() }, certainty);
             a.level = levels[level];
             let resolved = Resolved { zone: Zone::ALL[zone], unknown: Vec::new(), resource: None, parts: Vec::new() };
             let s = snap();
-            let e = evaluate(&Input { analysis: &a, resolved: &resolved, connection: "c", seen_resource: seen, now: 0 }, &s);
+            let e = evaluate(&Input { analysis: &a, resolved: &resolved, connection: "c", seen_resource: seen, now: 0, overnight }, &s);
             prop_assert_ne!(e.outcome, Outcome::Deny);
             if a.level == Level::L3 || certainty == Certainty::None {
-                prop_assert_eq!(e.outcome, Outcome::Ask { hard: true });
+                prop_assert!(e.outcome.hard() && e.outcome.reviews());
             }
+            // Overnight never asks now: it parks; outside it, nothing parks.
+            prop_assert_eq!(overnight, matches!(e.outcome, Outcome::Park { .. }) || (overnight && e.outcome == Outcome::Auto));
         }
     }
 
@@ -634,8 +793,8 @@ mod tests {
             ceiling: Level::L3,
             zones: Vec::new(),
             effects: Vec::new(),
-            resources: Vec::new(),
             not_after: i64::MAX,
+            ..Task::default()
         });
         let delete_home = analyze_command("rm -rf ~/Music", &ctx());
         assert_eq!(
@@ -798,6 +957,7 @@ mod tests {
             effects: vec![EffectKind::GitRefDelete],
             resources: vec!["acme/*".to_owned()],
             not_after: 2_000,
+            ..Task::default()
         };
         let with = |t: Task| {
             let mut s = base.clone();
@@ -886,5 +1046,233 @@ mod tests {
         assert_ne!(a.hash(), b.hash());
         let json = serde_json::to_string(&a).unwrap();
         assert_eq!(serde_json::from_str::<Snapshot>(&json).unwrap(), a);
+    }
+
+    fn push(repo: &str, branch: &str) -> Analysis {
+        analysis(
+            Effect::GitPush {
+                repo: repo.to_owned(),
+                refname: format!("refs/heads/{branch}"),
+                default_branch: Some(false),
+                rewrites: Some(true),
+                commits: 1,
+            },
+            Certainty::Full,
+        )
+    }
+
+    fn park(hard: bool) -> Outcome {
+        Outcome::Park {
+            hard,
+        }
+    }
+
+    #[test]
+    fn overnight_parks_instead_of_asking() {
+        let s = snap();
+        let outside = branch_delete("octo/x");
+        assert_eq!(
+            eval(&outside, &s, false).outcome,
+            Outcome::Ask {
+                hard: false
+            }
+        );
+        let e = night(&outside, &s);
+        assert_eq!(e.outcome, park(false));
+        assert_eq!(e.line(), "Park · Outside · Recoverable");
+        assert_eq!(e.outcome.word(), "park");
+        let delete_home = analyze_command("rm -rf ~/Music", &ctx());
+        assert_eq!(night(&delete_home, &s).outcome, park(true));
+        let key = analyze_command("cat ~/.ssh/id_rsa", &ctx());
+        assert_eq!(night(&key, &s).outcome, park(true), "the floor parks, still hard");
+        assert_eq!(night(&analyze_command("ls", &ctx()), &s).outcome, Outcome::Auto);
+    }
+
+    #[test]
+    fn overnight_people_are_stricter() {
+        let mut s = snap();
+        s.facts.set(FactKind::Person, "ann@acme.io", Zone::Work);
+        s.facts.set(FactKind::Person, "pal@pal.dev", Zone::Friends);
+        s.matrix.set(Zone::Work, Level::L2, Cell::Auto);
+        s.rules.push(rule("mail", Issuer::Owner, When::default(), Then::Permit));
+        let to = |who: &str| analyze_tool("gmail_send", &json!({ "to": [who] }));
+        assert_eq!(eval(&to("ann@acme.io"), &s, false).outcome, Outcome::Auto, "by day the owner's cell holds");
+        let e = night(&to("ann@acme.io"), &s);
+        assert_eq!(e.outcome, park(true));
+        assert!(e.why.contains(&Why::Overnight));
+        assert_eq!(night(&to("x@stranger.io"), &s).outcome, park(true));
+        assert_eq!(night(&to("pal@pal.dev"), &s).outcome, Outcome::Auto, "Friends L2 follows the cell");
+    }
+
+    #[test]
+    fn overnight_own_l1_is_auto() {
+        let s = snap();
+        let e = night(&branch_delete("pal/lib"), &s);
+        assert_eq!(e.outcome, Outcome::Auto);
+        assert_eq!(e.why, vec![Why::Overnight]);
+        assert_eq!(night(&branch_delete("acme/api"), &s).outcome, park(false), "Work L1 still waits");
+        assert_eq!(
+            eval(&branch_delete("pal/lib"), &s, false).outcome,
+            Outcome::Ask {
+                hard: false
+            }
+        );
+    }
+
+    #[test]
+    fn overnight_and_tasks_never_satisfy_hard() {
+        let mut s = snap();
+        s.facts.set(FactKind::Person, "ann@acme.io", Zone::Work);
+        s.rules.push(rule("owner-permit", Issuer::Owner, When::default(), Then::Permit));
+        s.tasks.push(Task {
+            id: "t".to_owned(),
+            connection: "c1".to_owned(),
+            ceiling: Level::L3,
+            people: vec!["@acme.io".to_owned()],
+            not_after: i64::MAX,
+            ..Task::default()
+        });
+        for (what, a) in [
+            ("secret", analyze_command("cat ~/.ssh/id_rsa", &ctx())),
+            ("L3", analyze_command("rm -rf ~/Music", &ctx())),
+            ("work person", analyze_tool("gmail_send", &json!({ "to": ["ann@acme.io"] }))),
+        ] {
+            assert!(night(&a, &s).outcome.hard(), "{what}");
+        }
+        s.rules.push(rule(
+            "exception",
+            Issuer::Owner,
+            When {
+                effects: vec![EffectKind::GitRefDelete],
+                ..When::default()
+            },
+            Then::Review,
+        ));
+        assert_eq!(night(&branch_delete("pal/lib"), &s).outcome, park(true), "an owner review beats Overnight's L1");
+    }
+
+    #[test]
+    fn task_envelope_is_an_and_bound() {
+        let base = snap();
+        let task = Task {
+            id: "fix-ci".to_owned(),
+            connection: "c1".to_owned(),
+            ceiling: Level::L1,
+            resources: vec!["acme/*".to_owned()],
+            branches: vec!["fix/*".to_owned()],
+            not_after: 2_000,
+            ..Task::default()
+        };
+        let with = |t: &Task| {
+            let mut s = base.clone();
+            s.tasks.push(t.clone());
+            s
+        };
+        let fix = push("acme/api", "fix/ci");
+        assert_eq!(fix.level, Level::L1);
+        let e = eval(&fix, &with(&task), false);
+        assert_eq!(e.outcome, Outcome::Auto);
+        assert_eq!(e.why, vec![Why::Task("fix-ci".to_owned())]);
+        let ask = Outcome::Ask {
+            hard: false,
+        };
+        assert_eq!(eval_with(&fix, &with(&task), false, false, "c2", 1_000).outcome, ask, "another connection");
+        assert_eq!(eval_with(&fix, &with(&task), false, false, "c1", 2_000).outcome, ask, "after its end");
+        assert_eq!(eval(&push("acme/api", "main"), &with(&task), false).outcome, ask, "a branch not listed");
+        assert_eq!(eval(&push("acme/api", "Fix/ci"), &with(&task), false).outcome, ask, "branches are exact");
+        assert_eq!(eval(&push("octo/x", "fix/ci"), &with(&task), false).outcome, ask, "a repo not listed");
+        let spent = Task {
+            uses_left: Some(0),
+            ..task.clone()
+        };
+        assert_eq!(eval(&fix, &with(&spent), false).outcome, ask, "no uses left");
+        let one = Task {
+            uses_left: Some(1),
+            ..task.clone()
+        };
+        assert_eq!(eval(&fix, &with(&one), false).outcome, Outcome::Auto);
+        // People: none by default; a listed person (or domain) is covered, an unlisted one isn't.
+        let mut s = base.clone();
+        s.facts.set(FactKind::Person, "ann@acme.io", Zone::Work);
+        let wide = Task {
+            ceiling: Level::L2,
+            resources: Vec::new(),
+            branches: Vec::new(),
+            ..task.clone()
+        };
+        let to = |list: &[&str]| analyze_tool("gmail_send", &json!({ "to": list }));
+        s.tasks = vec![wide.clone()];
+        assert_eq!(eval(&to(&["ann@acme.io"]), &s, false).outcome, ask, "no people listed");
+        s.tasks = vec![Task {
+            people: vec!["ann@acme.io".to_owned()],
+            ..wide
+        }];
+        assert_eq!(eval(&to(&["ann@acme.io"]), &s, false).outcome, Outcome::Auto);
+        assert_eq!(eval(&to(&["ann@acme.io", "x@stranger.io"]), &s, false).outcome, ask, "one unlisted person");
+        // The ceiling: an L3 ceiling is read as L2, so nothing L3 is ever covered (it's hard anyway).
+        assert_eq!(MAX_CEILING, Level::L2);
+        // An Outside request is covered only by what the envelope names.
+        let anything = Task {
+            resources: Vec::new(),
+            branches: Vec::new(),
+            ..task
+        };
+        assert_eq!(eval(&branch_delete("octo/x"), &with(&anything), false).outcome, ask, "unknown never widens");
+        assert_eq!(eval(&branch_delete("acme/x"), &with(&anything), false).outcome, Outcome::Auto);
+    }
+
+    #[test]
+    fn task_paths_are_component_wise() {
+        assert!(under("/home/u/src/a", "/home/u/src/a"));
+        assert!(under("/home/u/src/a/", "/home/u/src/a/b/c"));
+        assert!(!under("/home/u/src/a", "/home/u/src/ab"));
+        assert!(!under("/home/u/src/a", "/home/u/src/a/../b"));
+        assert!(!under("/home/u/src/a", "src/a/b"));
+        assert!(!under("", "/x"));
+        assert!(!under("/", "/etc/passwd"), "the root is not a root a task may name");
+        let delete = |p: &str| {
+            let mut a = analysis(
+                Effect::FileDelete {
+                    paths: vec![crate::effects::PathRef {
+                        path: p.to_owned(),
+                        area: crate::effects::Area::Source,
+                        recoverable: true,
+                    }],
+                    recursive: true,
+                },
+                Certainty::Full,
+            );
+            a.level = Level::L1;
+            a
+        };
+        let task = Task {
+            id: "t".to_owned(),
+            connection: "c1".to_owned(),
+            paths: vec!["/home/u/src/a".to_owned()],
+            not_after: i64::MAX,
+            ..Task::default()
+        };
+        let resolved = Resolved {
+            zone: Zone::Work,
+            unknown: Vec::new(),
+            resource: None,
+            parts: Vec::new(),
+        };
+        let holds = |a: &Analysis| {
+            task.holds(
+                &Input {
+                    analysis: a,
+                    resolved: &resolved,
+                    connection: "c1",
+                    seen_resource: false,
+                    now: 0,
+                    overnight: false,
+                },
+                &[EffectKind::FileDelete],
+            )
+        };
+        assert!(holds(&delete("/home/u/src/a/build")));
+        assert!(!holds(&delete("/home/u/src/ab")));
+        assert!(!holds(&delete("/home/u/src/a/../../x")));
     }
 }

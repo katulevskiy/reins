@@ -216,15 +216,13 @@ pub fn matrix_view(n: &MatrixNote) -> MatrixView {
             Outcome::Auto => Verdict::Approve,
             Outcome::Ask {
                 ..
+            }
+            | Outcome::Park {
+                ..
             } => Verdict::Ask,
             Outcome::Deny => Verdict::Deny,
         },
-        hard: matches!(
-            n.outcome,
-            Outcome::Ask {
-                hard: true
-            }
-        ),
+        hard: n.outcome.hard(),
         zone: n.zone.into(),
         level: n.level as u8,
         line: n.line.clone(),
@@ -263,6 +261,7 @@ impl Engine {
                 connection: &request.connection_id.0,
                 seen_resource: seen,
                 now,
+                overnight: false,
             },
             &snap,
         );

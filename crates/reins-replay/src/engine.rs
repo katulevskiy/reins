@@ -193,6 +193,7 @@ pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Ev
             connection: case.agent.as_deref().unwrap_or_default(),
             seen_resource: false,
             now: case.at,
+            overnight: false,
         },
         &snap,
     )
