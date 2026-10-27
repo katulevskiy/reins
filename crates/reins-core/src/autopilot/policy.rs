@@ -322,8 +322,11 @@ impl Engine {
         let mut sent: BTreeMap<String, u32> = BTreeMap::new();
         for r in self.store.activity(HISTORY)? {
             let recent = r.at > now - COUNT_WINDOW_SECS;
+            // Only mail the owner approved themselves: what a mode sent on its own (Bypass, Auto) can't make
+            // someone a proposed Friend.
             if let Some(email) = &r.info.email
                 && r.outcome == "sent"
+                && r.info.decided_by.is_empty()
                 && r.at > now - SENT_WINDOW_SECS
             {
                 for to in email.to.iter().chain(&email.cc) {
