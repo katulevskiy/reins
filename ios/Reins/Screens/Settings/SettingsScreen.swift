@@ -15,6 +15,9 @@ struct SettingsScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 AccountCardSection()
+                if case let .signedIn(info) = model.session {
+                    ProfilesSection(model: model, server: info.serverUrl)
+                }
                 PagesGroup()
                 SecurityGroup()
                 AboutGroup()

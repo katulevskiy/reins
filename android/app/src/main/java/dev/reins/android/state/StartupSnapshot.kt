@@ -11,7 +11,13 @@ import dev.reins.core.SessionInfo
  * starts as before, from the core.
  */
 class StartupSnapshot(private val prefs: SharedPreferences) {
-    constructor(context: Context) : this(context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+    /** Each profile starts from its own: a work profile never shows the Personal account's first frame. */
+    constructor(context: Context, profile: dev.reins.android.profiles.WorkProfiles.Active) : this(
+        context.applicationContext.getSharedPreferences(
+            dev.reins.android.profiles.WorkProfiles.prefsName(PREFS, profile),
+            Context.MODE_PRIVATE,
+        ),
+    )
 
     /** The state to start from, or null to wait for the core. */
     fun read(): SessionState? = when (prefs.getString(KEY_STATE, null)) {

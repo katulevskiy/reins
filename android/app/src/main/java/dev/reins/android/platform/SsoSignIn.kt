@@ -14,6 +14,9 @@ enum class SsoPurpose {
 
     /** "Reset the vault" on the Unlock screen, confirmed by signing in again: `resetAccount`. */
     Reset,
+
+    /** "Add work account" in Settings: the work profile's own core finishes it. */
+    AddWork,
 }
 
 /** A sign-in through the server's SSO that waits for its browser page to come back: what `ssoFinish` needs. */

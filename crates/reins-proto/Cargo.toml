@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 data-encoding = "2.11.1"
+idna = "1.1.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"

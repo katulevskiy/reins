@@ -17,6 +17,10 @@ class PushTest {
         assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "../etc")))
         assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "a".repeat(129))))
         assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "")))
+        // The account's tag, when the server names it: exactly 16 hex digits.
+        assertEquals(PushPayload("req", "x", "0123456789abcdef"), PushPayload.parse(mapOf("t" to "req", "id" to "x", "p" to "0123456789abcdef")))
+        assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "x", "p" to "0123")))
+        assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "x", "p" to "0123456789ABCDEF")))
     }
 
     @Test

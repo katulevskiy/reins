@@ -487,6 +487,49 @@ Its guards:
 
 Details: [autopilot.md](autopilot.md).
 
+## Organizations (Managed work profiles)
+
+Reins for organizations (Decisions v2 O1, `REINS_ORGS_ENABLED`) adds a second kind of account: a **work account**,
+an organization's member, which the phone and the desktop keep as a separate profile next to the Personal account.
+
+- **Separate accounts, separate profiles.** WorkOS keeps one identity per email, so a work account (`dana@acme.com`)
+  and a Personal account (`dana@gmail.com`) never share one. Each profile runs its own core on its own data
+  directory with its own data key (`reins_core::profiles`), and pairs its own agents. The org never receives
+  anything from the Personal profile: no endpoint, console page or event names an account that isn't its member.
+- **Who an org's member is** comes from verified sources only: a domain counts after its DNS TXT record; the
+  tenant's WorkOS organization and directory are bound only when WorkOS says that organization holds one of the
+  tenant's verified domains (and the directory is that organization's), each to one tenant; a sign-in counts as the
+  org's when WorkOS names the tenant's organization on it and the method is the tenant's (SSO; Google; GitHub with an
+  active membership of the tenant's GitHub organization). Email domains alone grant nothing. An existing account
+  that isn't the org's member is never captured, by sign-in or by the directory.
+- **Directory events** are read from the WorkOS API with the server's key; a webhook only wakes the sync. An event
+  applies only to the tenant bound to both its directory and its WorkOS organization, and creates or links members
+  only on the tenant's verified domains. A periodic listing fills in what events missed, but never reads a broken
+  listing as an empty company: a page without its data is an error, an empty listing removes nobody, and more than a
+  few members absent at once wait for an admin to confirm exactly those (a two-person change). Moving a tenant to
+  another directory unlinks the old one's members instead of removing them. Only an account that was provisioned
+  as a placeholder (an invitation, no keys) can be taken over by a first sign-in.
+- **Work accounts sign in only through the org**: password and API-key sign-in are refused (after a correct
+  credential, so a guess can't tell work accounts apart), and the passkey rule is waived only for a sign-in the gate
+  verified through the org's identity.
+- **Roles and two people.** Admin actions (roles, sign-in, plan, domains, removing members) need a second admin's
+  approval whenever another admin could approve; the proposer can never approve their own change, and approvals
+  re-check everything as of then. Removing someone who holds a privileged role takes what making them one takes. Org
+  owner and Security admin go to people, never groups. An org always keeps an Org owner; when the directory removes
+  the last one, two Security admins together may make a new one. All of it is recorded in an append-only,
+  hash-linked event log.
+- **Removal** (directory suspend or delete, or an admin's two-person removal) signs the account out everywhere,
+  removes its AI and desktop connections and refresh tokens, revokes its enrolled devices (a revoked device can't
+  enroll itself again), in one transaction, typically in milliseconds after the webhook. Each member's state is the
+  org's own (`reins_org_members`); one org per account; the directory restores only what it suspended.
+- **On the phone, each profile is its own**: a notification, its actions and a push name the profile they belong to
+  (pushes carry `p`, a tag of the account); the app never acts on another profile's with the running profile's core,
+  and only opens the app on that profile. A work profile's core gets no access to the phone's own data (contacts,
+  calendar, texts), and on iOS keeps its own Google sign-ins.
+- **Device enrollment** records a P-256 key the phone proves it holds, the platform's attestations and posture.
+  Verifying attestations and gating decisions on posture come with O2.
+- **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there.
+
 ## Known gaps
 
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone

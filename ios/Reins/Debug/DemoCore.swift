@@ -304,6 +304,22 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     /// "Continue": the browser part is skipped (`ssoBegin`'s URL is a data page the app never opens in the demo); the
     /// account is `Created`, or `Locked` with `-demoLocked` (another phone has its keys).
+    func ssoBeginWork(serverUrl: String, domain: String) async throws -> SsoStart {
+        SsoStart(url: "\(serverUrl)/identity/connect/authorize?demo=1&domain_hint=\(domain)", callbackScheme: "com.reins2fa.app",
+                 state: "demo-state", verifier: "demo-verifier")
+    }
+
+    func orgsOffered(serverUrl: String) async throws -> Bool { false }
+    func pushTag() async throws -> String? { nil }
+
+    func orgMembership() async throws -> OrgView? { nil }
+
+    func orgChallenge() async throws -> String { throw CoreError.NotFound }
+
+    func orgEnroll(challenge: String, input: EnrollInput) async throws {}
+
+    func orgReportPosture(posture: PostureInput) async throws {}
+
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
         guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
         return SsoStart(url: "\(serverUrl)/identity/connect/authorize?demo=1", callbackScheme: "com.reins2fa.app", state: "demo-state", verifier: "demo-verifier")

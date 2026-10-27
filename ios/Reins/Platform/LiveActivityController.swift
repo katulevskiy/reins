@@ -19,6 +19,19 @@ final class LiveActivityController {
     /// While the app runs: the next moment something runs out (an answer window, a bypass).
     private var timer: Task<Void, Never>?
 
+    /// Before a profile switch: this account's activities end at once and nothing more is scheduled for it.
+    func uninstall() {
+        model = nil
+        timer?.cancel()
+        timer = nil
+        let previous = queue
+        queue = Task { @MainActor in
+            await previous?.value
+            for activity in Activity<ApprovalActivityAttributes>.activities { await activity.end(nil, dismissalPolicy: .immediate) }
+            for activity in Activity<BypassActivityAttributes>.activities { await activity.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
     func install(model: AppModel) {
         self.model = model
         let pending = model.onPendingChanged

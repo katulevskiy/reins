@@ -993,6 +993,22 @@ final class AppModel {
         publish()
     }
 
+    // MARK: Switching profiles
+
+    /// Before the app moves to another profile: the long poll stops, and nothing outside the model (the Live
+    /// Activities, the notification sweep, grant reminders, the sign-in prompt) follows this account any more. Work
+    /// already under way finishes on its own; the core closes once the last task holding it ends.
+    func shutDownForSwitch() {
+        syncTask?.cancel()
+        syncTask = nil
+        isActive = false
+        onPendingChanged = nil
+        onAutopilotChanged = nil
+        onGrantsChanged = nil
+        onModelDownloadFinished = nil
+        onSignedIn = nil
+    }
+
     // MARK: Foreground
 
     func setActive(_ active: Bool) {

@@ -28,6 +28,9 @@ sealed interface Route {
     /** Settings > Account > Devices: the account's phones (sign out a lost one) and computers. */
     data object Devices : Route
 
+    /** Settings > Profiles > Add work account: sign in a work account and enroll this phone to its org. */
+    data object AddWorkAccount : Route
+
     /** Trust > Ended: the grants that ran out, to resume or delete. */
     data object EndedGrants : Route
 

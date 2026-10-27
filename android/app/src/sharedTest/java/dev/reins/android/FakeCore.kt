@@ -666,6 +666,12 @@ class FakeCore : ReinsCoreInterface {
         sessionError = null
         sessionThrows = 0
         ssoBegins.clear()
+        org = null
+        orgsOffered = false
+        pushTag = null
+        ssoBeginWorks.clear()
+        enrollments.clear()
+        postures.clear()
         serverInfos.clear()
         ssoFinishes.clear()
         resetError = null
@@ -694,6 +700,40 @@ class FakeCore : ReinsCoreInterface {
     val serverInfos = java.util.concurrent.ConcurrentHashMap<String, dev.reins.core.ServerInfo>()
 
     override suspend fun serverInfo(serverUrl: String) = serverInfos[serverUrl] ?: dev.reins.core.ServerInfo(null, null, null)
+
+    /** The work account's org (`orgMembership`); null: a Personal account. */
+    @Volatile var org: dev.reins.core.OrgView? = null
+    val ssoBeginWorks = CopyOnWriteArrayList<List<String>>()
+    val enrollments = CopyOnWriteArrayList<Pair<String, dev.reins.core.EnrollInput>>()
+    val postures = CopyOnWriteArrayList<dev.reins.core.PostureInput>()
+
+    override suspend fun ssoBeginWork(serverUrl: String, domain: String): SsoStart {
+        ssoBeginWorks += listOf(serverUrl, domain)
+        ssoBeginError?.let { throw it }
+        return SsoStart("$serverUrl/identity/connect/authorize?domain_hint=$domain&state=$SSO_STATE", "com.reins2fa.app", SSO_STATE, SSO_VERIFIER)
+    }
+
+    override suspend fun orgMembership(): dev.reins.core.OrgView? = org
+
+    /** Whether the server offers organizations ("Add work account"). */
+    @Volatile var orgsOffered = false
+
+    override suspend fun orgsOffered(serverUrl: String): Boolean = orgsOffered
+
+    /** The tag this account's pushes carry. */
+    @Volatile var pushTag: String? = null
+
+    override suspend fun pushTag(): String? = pushTag
+
+    override suspend fun orgChallenge(): String = org?.let { "challenge-1" } ?: throw CoreException.NotFound()
+
+    override suspend fun orgEnroll(challenge: String, input: dev.reins.core.EnrollInput) {
+        enrollments += challenge to input
+    }
+
+    override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) {
+        postures += posture
+    }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {
         ssoBegins += serverUrl

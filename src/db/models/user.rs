@@ -309,12 +309,18 @@ impl User {
         })
     }
 
-    pub async fn save(&mut self, conn: &DbConn) -> EmptyResult {
+    /// Checks an account and stamps it before any write of it: [`Self::save`], and the inserts that write a new
+    /// account inside a larger transaction (a work account and its membership, a directory-provisioned stub).
+    pub fn ready_to_write(&mut self) -> EmptyResult {
         if !crate::util::is_valid_email(&self.email) {
             err!(format!("User email {} is not a valid email address", self.email))
         }
-
         self.updated_at = Utc::now().naive_utc();
+        Ok(())
+    }
+
+    pub async fn save(&mut self, conn: &DbConn) -> EmptyResult {
+        self.ready_to_write()?;
 
         db_run! { conn:
             mysql {

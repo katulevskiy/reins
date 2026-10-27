@@ -20,13 +20,21 @@ pub struct User {
     pub email: String,
 }
 
+/// What a code stands for: the user, the PKCE challenge, and how they signed in (method, organization id).
+type Issued = (User, Option<String>, (Option<String>, Option<String>));
+
 #[derive(Default)]
 struct State {
     /// The user the next authorize signs in (the person at the browser).
     signing_in: Option<User>,
     authentication_method: Option<String>,
-    /// code -> (user, code_challenge)
-    codes: HashMap<String, (User, Option<String>)>,
+    codes: HashMap<String, Issued>,
+    /// WorkOS organizations: id -> their verified domains.
+    organizations: HashMap<String, Vec<String>>,
+    /// Directories: id -> their organization.
+    directories: HashMap<String, String>,
+    /// Directory users as `GET /directory_users` lists them (kept from the `dsync.user.*` events emitted).
+    directory_users: Vec<Value>,
     /// Session ids handed out, in order.
     sessions: Vec<String>,
     events: Vec<Value>,
@@ -60,9 +68,11 @@ struct Authorize(Arc<Mutex<State>>);
 impl Respond for Authorize {
     fn respond(&self, req: &Request) -> ResponseTemplate {
         let q = query(req);
+        let provider = q.get("provider").map(String::as_str);
+        let organization = q.get("organization_id").cloned();
         if q.get("client_id").map(String::as_str) != Some(CLIENT_ID)
             || q.get("response_type").map(String::as_str) != Some("code")
-            || q.get("provider").map(String::as_str) != Some("authkit")
+            || !(matches!(provider, Some("authkit" | "GoogleOAuth" | "GitHubOAuth")) || organization.is_some())
         {
             return ResponseTemplate::new(400).set_body_json(json!({"error": "invalid_request"}));
         }
@@ -72,7 +82,13 @@ impl Respond for Authorize {
         };
         st.serial += 1;
         let code = format!("code-{}", st.serial);
-        st.codes.insert(code.clone(), (user, q.get("code_challenge").cloned()));
+        // A sign-in through an organization: its SSO, or its Team provider; AuthKit names the organization.
+        let method = match (provider, &organization) {
+            (Some(p @ ("GoogleOAuth" | "GitHubOAuth")), _) => Some(p.to_owned()),
+            (_, Some(_)) => Some("SSO".to_owned()),
+            _ => None,
+        };
+        st.codes.insert(code.clone(), (user, q.get("code_challenge").cloned(), (method, organization)));
         let mut back = url::Url::parse(&q["redirect_uri"]).expect("redirect_uri");
         back.query_pairs_mut().append_pair("code", &code).append_pair("state", &q["state"]);
         ResponseTemplate::new(302).insert_header("Location", back.as_str())
@@ -94,7 +110,8 @@ impl Respond for Authenticate {
             return refuse("unsupported grant");
         }
         let mut st = self.0.lock().expect("state");
-        let Some((user, challenge)) = body["code"].as_str().and_then(|c| st.codes.remove(c)) else {
+        let Some((user, challenge, (method, organization))) = body["code"].as_str().and_then(|c| st.codes.remove(c))
+        else {
             return refuse("unknown code");
         };
         if let Some(challenge) = challenge {
@@ -111,10 +128,10 @@ impl Respond for Authenticate {
         ResponseTemplate::new(200).set_body_json(json!({
             "user": {"object": "user", "id": user.id, "email": user.email, "email_verified": true,
                      "first_name": "E2E", "last_name": "User"},
-            "organization_id": null,
+            "organization_id": organization,
             "access_token": unsigned_jwt(&json!({"sub": user.id, "sid": sid, "exp": exp})),
             "refresh_token": format!("refresh-{sid}"),
-            "authentication_method": st.authentication_method.as_deref().unwrap_or("Passkey"),
+            "authentication_method": method.as_deref().or(st.authentication_method.as_deref()).unwrap_or("Passkey"),
         }))
     }
 }
@@ -191,6 +208,46 @@ impl Respond for RevokeSession {
     }
 }
 
+/// `GET /organizations/<id>` and `GET /directories/<id>`.
+struct Lookup(Arc<Mutex<State>>);
+
+impl Respond for Lookup {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        let auth = req.headers.get("authorization").and_then(|v| v.to_str().ok());
+        if auth != Some(&format!("Bearer {API_KEY}")) {
+            return ResponseTemplate::new(401).set_body_json(json!({"message": "Unauthorized"}));
+        }
+        let st = self.0.lock().expect("state");
+        let path = req.url.path();
+        if let Some(id) = path.strip_prefix("/organizations/")
+            && let Some(domains) = st.organizations.get(id)
+        {
+            let domains: Vec<Value> = domains
+                .iter()
+                .map(|d| json!({"object": "organization_domain", "domain": d, "state": "verified"}))
+                .collect();
+            return ResponseTemplate::new(200)
+                .set_body_json(json!({"object": "organization", "id": id, "domains": domains}));
+        }
+        if path == "/directory_users" || path == "/directory_groups" {
+            let directory = query(req).get("directory").cloned().unwrap_or_default();
+            let data: Vec<Value> = if path == "/directory_users" {
+                st.directory_users.iter().filter(|u| u["directory_id"] == directory.as_str()).cloned().collect()
+            } else {
+                Vec::new()
+            };
+            return ResponseTemplate::new(200).set_body_json(json!({"data": data, "list_metadata": {"after": null}}));
+        }
+        if let Some(id) = path.strip_prefix("/directories/")
+            && let Some(org) = st.directories.get(id)
+        {
+            return ResponseTemplate::new(200)
+                .set_body_json(json!({"object": "directory", "id": id, "organization_id": org, "state": "active"}));
+        }
+        ResponseTemplate::new(404).set_body_json(json!({"code": "entity_not_found"}))
+    }
+}
+
 impl FakeWorkos {
     pub async fn start() -> Self {
         let server = MockServer::start().await;
@@ -209,6 +266,11 @@ impl FakeWorkos {
         Mock::given(method("DELETE"))
             .and(path_regex("^/user_management/users/[A-Za-z0-9_-]+$"))
             .respond_with(DeleteUser(Arc::clone(&state)))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex("^/((organizations|directories)/[A-Za-z0-9_]+|directory_users|directory_groups)$"))
+            .respond_with(Lookup(Arc::clone(&state)))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -280,9 +342,30 @@ impl FakeWorkos {
         self.state.lock().expect("state").deletes_fail = fail;
     }
 
+    /// A WorkOS organization with these verified domains.
+    pub fn add_organization(&self, id: &str, domains: &[&str]) {
+        let domains = domains.iter().map(|d| (*d).to_owned()).collect();
+        self.state.lock().expect("state").organizations.insert(id.to_owned(), domains);
+    }
+
+    /// A directory of `organization`.
+    pub fn add_directory(&self, id: &str, organization: &str) {
+        self.state.lock().expect("state").directories.insert(id.to_owned(), organization.to_owned());
+    }
+
     /// Adds an event to the Events API (`kind` such as `user.updated`).
     pub fn emit(&self, kind: &str, data: Value) {
         let mut st = self.state.lock().expect("state");
+        // The directory as WorkOS would list it afterwards.
+        let user_id = data["id"].clone();
+        match kind {
+            "dsync.user.created" | "dsync.user.updated" => {
+                st.directory_users.retain(|u| u["id"] != user_id);
+                st.directory_users.push(data.clone());
+            }
+            "dsync.user.deleted" => st.directory_users.retain(|u| u["id"] != user_id),
+            _ => {}
+        }
         st.serial += 1;
         let id = format!("event_{:04}", st.serial);
         let mut event = json!({"object": "event", "id": id, "event": kind, "created_at": "2026-10-02T10:00:00.000Z"});

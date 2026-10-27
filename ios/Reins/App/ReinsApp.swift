@@ -12,7 +12,9 @@ struct ReinsApp: App {
             let _ = LaunchTiming.mark("first body")
             #endif
             Group {
-                if let model = delegate.host.model {
+                if delegate.host.switching {
+                    SwitchingProfileView()
+                } else if let model = delegate.host.model {
                     #if DEBUG
                     if WidgetGallery.requested {
                         WidgetGallery().environment(model)
@@ -29,6 +31,8 @@ struct ReinsApp: App {
                     LoadingView()
                 }
             }
+            // A profile switch starts the UI afresh on the other account: nothing of the old one's views stays.
+            .id(delegate.host.profileId)
             .preferredColorScheme(Appearance.Theme(rawValue: theme)?.scheme)
             .animation(.easeInOut(duration: 0.2), value: theme)
             #if DEBUG

@@ -38,13 +38,15 @@ enum NotificationCategory: String, CaseIterable {
         }
     }
 
+    /// The thread notifications of this category join: the active profile's own (`WorkProfiles.thread`).
     var thread: String {
-        switch self {
+        let base = switch self {
         case .request, .quickRequest, .pairing, .blob, .join, .arriving, .deciding: "requests"
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
         }
+        return WorkProfiles.thread(base)
     }
 
     init(_ kind: Snapshot.Item.Kind) {

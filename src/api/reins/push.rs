@@ -85,6 +85,9 @@ fn spawn_push_for(
     owner: Owner,
     failed: impl FnOnce() + Send + 'static,
 ) -> bool {
+    // Which account it is for: a phone with a work profile next to the Personal one routes it by this.
+    let mut push = push;
+    push.p = Some(reins_proto::pairing::push_profile_tag(user_uuid.as_ref()));
     if let Some(url) = TEST_PUSH_URL.as_ref() {
         let url = url.clone();
         tokio::spawn(async move {

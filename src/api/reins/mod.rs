@@ -21,6 +21,7 @@ pub mod mcp_tools;
 pub mod oauth;
 pub mod oauth_routes;
 pub mod oauth_state;
+pub mod org;
 pub mod outbound;
 pub mod pages;
 pub mod pairing;
@@ -486,6 +487,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(vault_passkeys::routes());
     routes.extend(roles::routes());
     routes.extend(live::routes());
+    routes.extend(org::routes());
     routes
 }
 

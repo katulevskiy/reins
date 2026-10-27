@@ -261,6 +261,7 @@ fun RiverRow(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             RText(compactTime(entry.at, nowSeconds), RType.sans(12.5f, FontWeight.Medium, tracking = 0.01f).copy(fontFeatureSettings = "tnum"), c.inkMeta, maxLines = 1)
+            dev.reins.android.design.ProfileBadge()
             OutcomeEnd(outcomeOf(entry), Modifier.testTag("outcome:${entry.id}"), share = if (showShare) share(entry) else null)
         }
     }

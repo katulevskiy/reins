@@ -80,7 +80,9 @@ flowchart TB
 | `GET /reins/api/sync`, `POST /reins/api/ops`, `POST /reins/api/ack`, `GET /reins/api/checkpoint`, `PUT /reins/api/member`, `POST /reins/api/handovers`, `GET /reins/api/connections` | roster members (the primary and viewers) | Vaultwarden login token and the device key the member enrolled with; ops are checked against the roster and their author's signature |
 | `PUT`/`POST`/`GET /reins/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
 | `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
-| `POST /reins/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS sync |
+| `POST /reins/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS syncs (users, directories) |
+| `GET /reins/api/org`, `POST /reins/api/org/enroll/challenge`, `POST /reins/api/org/devices`, `PUT /reins/api/org/posture` | a work profile's phone | Vaultwarden login token of an org's active member (404 for anyone else); enrollment proves the device key with a signature over a single-use challenge |
+| `/reins/org`, `/reins/org/<org>/…` | org admins, in a browser | the admin console: SSO through `/identity/connect/authorize` (`client_id=reins-console`), an in-memory session and a CSRF token per form; every page re-reads the admin's roles |
 
 Persistent tables: `reins_devices` (the approval device and its push token), `reins_clients` (registered OAuth
 clients), `reins_connections` (authorized AIs and desktop apps), `reins_refresh_tokens` (SHA-256 hashed),
@@ -88,7 +90,11 @@ clients), `reins_connections` (authorized AIs and desktop apps), `reins_refresh_
 cursor), and for phone roles `reins_rosters` (the owner-signed roster chain, the recovery wrap and a handover's sealed
 bundle), `reins_members` (each listed phone's role, signing key, enrolled device key, push token, op counter,
 acknowledged `seq` and, for the primary, its latest heartbeat), `reins_ops` (signed, sealed ops) and
-`reins_checkpoints` (the primary's latest two sealed snapshots). Everything else is in memory with a time limit, so
+`reins_checkpoints` (the primary's latest two sealed snapshots). Organizations (`REINS_ORGS_ENABLED`) build on
+Vaultwarden's `organizations`, `users_organizations` and `groups` and add `reins_orgs` (tier, sign-in binding),
+`reins_org_domains` and `reins_org_verified_domains`, `reins_org_members` (each member's state in its org: the
+org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin changes), `reins_org_devices`
+(enrolled devices, attestations, posture) and `reins_org_events` (the hash-linked admin events). Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows

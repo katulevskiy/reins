@@ -121,6 +121,16 @@ impl Paths {
         })
     }
 
+    /// A work profile's directories: the same config, its own state (identity, session) under
+    /// `<state>/profiles/<name>` ([`crate::profiles`]).
+    #[must_use]
+    pub fn for_profile(&self, name: &str) -> Self {
+        Self {
+            config_dir: self.config_dir.clone(),
+            state_dir: self.state_dir.join("profiles").join(name),
+        }
+    }
+
     /// Both directories under one root (tests).
     #[must_use]
     pub fn under(root: &Path) -> Self {
@@ -455,6 +465,8 @@ pub struct Config {
     pub notify: crate::notify::NotifyConfig,
     /// Reins Secrets (`[secrets]`).
     pub secrets: crate::secrets_scan::SecretsConfig,
+    /// Work profiles (`[[profiles]]`, [`crate::profiles`]).
+    pub profiles: Vec<crate::profiles::ProfileConfig>,
     /// Where agents' work is expected (`[workspace]`), for the consequence engine (Decisions v2).
     /// Left out when it is the default, so a config this writes still loads in a build that predates it.
     #[serde(skip_serializing_if = "WorkspaceConfig::is_default")]
@@ -506,6 +518,7 @@ impl Default for Config {
             ssh: crate::ssh_agent::SshConfig::default(),
             notify: crate::notify::NotifyConfig::default(),
             secrets: crate::secrets_scan::SecretsConfig::default(),
+            profiles: Vec::new(),
             workspace: WorkspaceConfig::default(),
         }
     }
@@ -550,6 +563,7 @@ impl Config {
         ] {
             check_url(name, url)?;
         }
+        crate::profiles::validate(&self.profiles)?;
         if !valid_host(&self.github.host) {
             return Err("`github.host` must be a host name".to_owned());
         }

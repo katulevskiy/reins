@@ -16,7 +16,8 @@ import dev.reins.android.ReinsApp
 class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val payload = PushPayload.parse(
-            mapOf("t" to (inputData.getString(KEY_KIND) ?: ""), "id" to (inputData.getString(KEY_ID) ?: "")),
+            mapOf("t" to (inputData.getString(KEY_KIND) ?: ""), "id" to (inputData.getString(KEY_ID) ?: "")) +
+                listOfNotNull(inputData.getString(KEY_PROFILE)?.let { "p" to it }),
         ) ?: return Result.failure()
         val container = (applicationContext as ReinsApp).container
         val outcome = PushHandler.of(container).handle(payload)
@@ -30,18 +31,19 @@ class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         private const val KEY_KIND = "kind"
         private const val KEY_ID = "id"
+        private const val KEY_PROFILE = "p"
         private const val MAX_ATTEMPTS = 4
 
         fun enqueue(context: Context, payload: PushPayload, highPriority: Boolean) {
             val request = OneTimeWorkRequestBuilder<PushWorker>()
-                .setInputData(Data.Builder().putString(KEY_KIND, payload.kind).putString(KEY_ID, payload.id).build())
+                .setInputData(Data.Builder().putString(KEY_KIND, payload.kind).putString(KEY_ID, payload.id).putString(KEY_PROFILE, payload.profileTag).build())
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .apply {
                     if (highPriority) setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 }
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork("push-${payload.kind}-${payload.id}", ExistingWorkPolicy.KEEP, request)
+                .enqueueUniqueWork("push-${payload.kind}-${payload.id}-${payload.profileTag.orEmpty()}", ExistingWorkPolicy.KEEP, request)
         }
     }
 }

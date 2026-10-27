@@ -29,6 +29,7 @@ pub mod notice;
 pub mod notify;
 pub mod phone;
 pub mod port;
+pub mod profiles;
 pub mod project;
 pub mod proxy;
 pub mod pushes;

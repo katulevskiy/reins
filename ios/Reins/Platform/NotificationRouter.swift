@@ -27,7 +27,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let grants = model.onGrantsChanged
         model.onGrantsChanged = { list in
             grants?(list)
-            GrantReminders.sync(list)
+            GrantReminders.sync(list, profile: WorkProfiles.active)
         }
         let pending = model.onPendingChanged
         model.onPendingChanged = { [weak self] list in
@@ -143,6 +143,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             MainActor.assumeIsolated {
                 switch category {
                 case .request, .quickRequest, .pairing, .blob, .join, .arriving:
+                    // Another profile's push: shown as it came (its generic text), never fetched by this core.
+                    if payload != nil, !WorkProfiles.belongsHere(notification.request.content.userInfo, remote: true) {
+                        completionHandler([.banner, .list])
+                        return
+                    }
                     if let payload, payload.itemKind != nil, let host = self.host {
                         Task {
                             guard let model = await host.ready() else { return }
@@ -171,7 +176,18 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let remote = request.trigger is UNPushNotificationTrigger
         let link = (info[NotificationKey.link] as? String).flatMap(URL.init(string:)).flatMap(DeepLink.init(url:))
         let payload = PushPayload(userInfo: info)
+        let owner = WorkProfiles.owner(of: info, remote: remote)
         Task { @MainActor in
+            // Another profile's notification is never acted on by this core: a tap opens the app on its profile, an
+            // action does nothing (the notification stays).
+            if owner != WorkProfiles.active.id {
+                if action == UNNotificationDefaultActionIdentifier, let owner,
+                   (try? WorkProfiles.registry().list().contains { $0.id == owner }) == true {
+                    ProfileSwitch.switchTo(owner)
+                }
+                completionHandler()
+                return
+            }
             await self.respond(action: action, link: link ?? payload?.link, payload: payload, remote: remote)
             completionHandler()
         }

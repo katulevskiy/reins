@@ -631,6 +631,10 @@ make_config! {
         reins_workos_api_key:        Pass,   false,  option;
         /// WorkOS webhook secret |> The signing secret of a WorkOS webhook pointed at {DOMAIN}/reins/workos/webhook. A signed delivery makes the sync run at once; without it, the endpoint is off and the sync only polls.
         reins_workos_webhook_secret: Pass,   false,  option;
+        /// Organizations |> Reins for companies (Managed profiles): org tenants with verified domains, org sign-in, SCIM through WorkOS Directory Sync, roles, device enrollment and the admin console at {DOMAIN}/reins/org. Off by default.
+        reins_orgs_enabled:          bool,   false,  def,    false;
+        /// WorkOS directory sync interval (seconds) |> With organizations on and WorkOS as the SSO provider: how often the server reads the WorkOS Directory Sync events (SCIM users and groups) when no webhook wakes it. Keep it under 60 so that a removed member loses access within a minute even without webhooks. 0 disables the directory sync.
+        reins_workos_dsync_secs:     u64,    false,  def,    20;
     },
     jobs {
         /// Job scheduler poll interval |> How often the job scheduler thread checks for jobs to run.

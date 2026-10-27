@@ -194,6 +194,7 @@ pub async fn authorize_url(
     client_id: &str,
     raw_redirect_uri: &str,
     binding_hash: Option<String>,
+    org_hint: Option<crate::api::reins::org::gate::OrgHint>,
     conn: DbConn,
 ) -> ApiResult<Url> {
     let redirect_uri = match client_id {
@@ -201,6 +202,10 @@ pub async fn authorize_url(
         // The Reins phone apps open the sign-in in ASWebAuthenticationSession / a Custom Tab and catch their own scheme.
         "mobile" if REINS_APP_REDIRECTS.contains(&raw_redirect_uri) => raw_redirect_uri.to_owned(),
         "desktop" | "mobile" => "bitwarden://sso-callback".to_owned(),
+        // The organizations admin console (`api::reins::org::console`): its own fixed callback.
+        crate::api::reins::org::console::CONSOLE_CLIENT if crate::api::reins::org::enabled() => {
+            crate::api::reins::org::console::callback_url()
+        }
         "cli" => {
             let port_regex = Regex::new(r"^http://localhost:([0-9]{4})$").unwrap();
             if let Some(port) =
@@ -215,7 +220,7 @@ pub async fn authorize_url(
     };
 
     let (auth_url, sso_auth) = if crate::sso_workos::enabled() {
-        crate::sso_workos::authorize_url(state, client_challenge, redirect_uri, binding_hash)?
+        crate::sso_workos::authorize_url(state, client_challenge, redirect_uri, binding_hash, org_hint.as_ref())?
     } else {
         Client::authorize_url(state, client_challenge, redirect_uri, binding_hash).await?
     };
@@ -337,6 +342,7 @@ pub async fn exchange_code(
         email_verified,
         user_name: user_name.clone(),
         session_id: None,
+        workos: None,
     };
 
     debug!("Authenticated user {authenticated_user:?}");

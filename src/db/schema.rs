@@ -486,6 +486,107 @@ table! {
     }
 }
 
+table! {
+    reins_orgs (org_uuid) {
+        org_uuid -> Text,
+        tier -> Text,
+        identity -> Text,
+        workos_org_id -> Nullable<Text>,
+        directory_id -> Nullable<Text>,
+        github_org -> Nullable<Text>,
+        two_person -> Bool,
+        owner_recovery_at -> Nullable<BigInt>,
+        created_by -> Text,
+        created_at -> BigInt,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_domains (org_uuid, domain) {
+        org_uuid -> Text,
+        domain -> Text,
+        token -> Text,
+        verified_at -> Nullable<BigInt>,
+        checked_at -> Nullable<BigInt>,
+        created_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_verified_domains (domain) {
+        domain -> Text,
+        org_uuid -> Text,
+        verified_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_members (org_uuid, user_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        membership_uuid -> Text,
+        state -> Text,
+        changed_at -> BigInt,
+        changed_by -> Nullable<Text>,
+    }
+}
+
+table! {
+    reins_org_roles (org_uuid, subject_kind, subject_id, role) {
+        org_uuid -> Text,
+        subject_kind -> Text,
+        subject_id -> Text,
+        role -> Text,
+        granted_at -> BigInt,
+        granted_by -> Text,
+    }
+}
+
+table! {
+    reins_org_changes (uuid) {
+        uuid -> Text,
+        org_uuid -> Text,
+        action -> Text,
+        proposed_by -> Text,
+        proposed_at -> BigInt,
+        expires_at -> BigInt,
+        state -> Text,
+        decided_by -> Nullable<Text>,
+        decided_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_devices (org_uuid, user_uuid, device_uuid) {
+        org_uuid -> Text,
+        user_uuid -> Text,
+        device_uuid -> Text,
+        key_algorithm -> Text,
+        public_key -> Text,
+        hardware -> Bool,
+        attestations -> Text,
+        posture -> Text,
+        posture_at -> BigInt,
+        enrolled_at -> BigInt,
+        revoked_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_org_events (org_uuid, seq) {
+        org_uuid -> Text,
+        seq -> BigInt,
+        at -> BigInt,
+        kind -> Text,
+        actor -> Nullable<Text>,
+        subject -> Nullable<Text>,
+        detail -> Text,
+        prev_hash -> Text,
+        hash -> Text,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

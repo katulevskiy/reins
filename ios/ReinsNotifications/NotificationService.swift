@@ -33,7 +33,11 @@ final class NotificationService: UNNotificationServiceExtension {
             deliver = contentHandler
             fallback = generic
         }
-        guard let payload, payload.itemKind != nil, !AppPresence.inFront(), CoreFactory.storeExists else {
+        // The active profile (it names the store opened below), and whether the push is its own: a push for another
+        // profile on this phone keeps its generic text and never reaches this profile's core.
+        _ = CoreFactory.activeProfile()
+        let ours = WorkProfiles.belongsHere(request.content.userInfo, remote: true)
+        guard ours, let payload, payload.itemKind != nil, !AppPresence.inFront(), CoreFactory.storeExists else {
             finish(generic)
             return
         }
@@ -95,7 +99,7 @@ final class NotificationService: UNNotificationServiceExtension {
         // `mayReset: false`: whatever goes wrong with the keychain here, the core never starts over from this process.
         let core: ReinsCore
         do {
-            core = try CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false))
+            core = try CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false, account: CoreFactory.keyAccount))
         } catch CoreError.Storage {
             return .busy
         } catch {
@@ -135,7 +139,7 @@ final class NotificationService: UNNotificationServiceExtension {
         )
         // Widgets show the new item too; this process may be suspended as soon as the content is handed over.
         if !Task.isCancelled { await SnapshotWriter.update(from: core) }
-        return .done(content)
+        return .done(WorkProfiles.stamp(content, profile: WorkProfiles.active))
     }
 }
 

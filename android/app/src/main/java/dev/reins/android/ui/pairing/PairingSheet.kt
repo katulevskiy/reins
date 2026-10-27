@@ -100,9 +100,27 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
             FactGroup(
                 Modifier.padding(top = 14.dp),
                 tag = "pairWho",
-                rows = listOf(
+                rows = listOfNotNull(
                     { FactRow("Calls itself", name, valueTag = "pairName") },
                     { FactRow("From", untrustedName(view.clientHost), mono = true, valueTag = "pairHost") },
+                    // Agents pair with one profile: the one this sign-in reached (switch in Settings for the other).
+                    if (dev.reins.android.profiles.WorkProfiles.hasWork) {
+                        {
+                            // A work profile's name never stands without the briefcase (an org can name itself anything).
+                            FactRow(
+                                "Profile",
+                                dev.reins.android.profiles.WorkProfiles.active.label,
+                                valueTag = "pairProfile",
+                                trailing = if (dev.reins.android.profiles.WorkProfiles.active.managed) {
+                                    { dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.Briefcase, LocalColors.current.inkMeta, size = 16.dp) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    } else {
+                        null
+                    },
                 ),
             )
 

@@ -19,6 +19,16 @@ final class AppHost {
     /// Launched with `-demo`: an in-memory core with sample data, no server.
     static var isDemo: Bool { ProcessInfo.processInfo.arguments.contains("-demo") }
 
+    /// The host of this process, for switching profiles in place (`ProfileSwitch`).
+    static weak var current: AppHost?
+
+    /// The profile the window shows: the root view is keyed on it, so a switch starts the UI afresh.
+    private(set) var profileId = ""
+    /// A profile switch is under way: the window says so until the other profile's core is open.
+    private(set) var switching = false
+    @ObservationIgnored private let feedback: Feedback
+    @ObservationIgnored private var keepAwake: AppKeepAwake?
+
     init() {
         #if DEBUG
         // UI tests: start from the default sounds and haptics, whatever an earlier (interrupted) run left saved.
@@ -26,36 +36,75 @@ final class AppHost {
         #endif
         // The wallpaper's earlier keys, read once: what they kept becomes the theme's choice, looking as it did.
         WallpaperChoice.migrate()
-        let feedback: Feedback = AppFeedback.make()
-        if Self.isDemo, let demo = DemoCore.make() {
-            // In memory: nothing to wait for.
-            let model = AppModel(core: demo, feedback: feedback, authenticator: TrustingAuthenticator(), demo: true)
-            if ProcessInfo.processInfo.arguments.contains("-noPopup") { model.autoPopup = false }
-            settle(model)
-        } else {
-            let notifier = notifier
-            // Before the core opens the store: the app holds a background task while it holds the store's lock.
-            let keepAwake = AppKeepAwake()
-            Task {
-                let opened = await Task.detached(priority: .userInitiated) {
-                    Result {
-                        StoreLocking.install(keepAwake, waitMillis: CoreFactory.appLockWaitMillis)
-                        return try CoreFactory.make(notifier: notifier)
-                    }
-                }.value
-                switch opened {
-                case let .success(core):
-                    // Autopilot's forward pass; the core loads the model on first need.
-                    let runtime = OnnxModelRuntime.forApp()
-                    core.setModelRuntime(runtime: runtime)
-                    modelRuntime = runtime
-                    settle(AppModel(core: core, feedback: feedback, authenticator: Authenticator()))
-                case let .failure(error):
-                    startupError = error.userMessage
-                    settle(nil)
-                }
+        feedback = AppFeedback.make()
+        Self.current = self
+        // The demo is in memory: the first frame already has its model.
+        if !openDemo() { Task { await openActiveProfile() } }
+    }
+
+    /// `-demo`: settles the in-memory core's model at once; false when this is not the demo.
+    private func openDemo() -> Bool {
+        guard Self.isDemo, let demo = DemoCore.make() else { return false }
+        let model = AppModel(core: demo, feedback: feedback, authenticator: TrustingAuthenticator(), demo: true)
+        if ProcessInfo.processInfo.arguments.contains("-noPopup") { model.autoPopup = false }
+        settle(model)
+        return true
+    }
+
+    /// Opens the active profile's core off the main thread (the demo's at once) and settles the model on it.
+    private func openActiveProfile() async {
+        profileId = CoreFactory.activeProfile()?.id ?? ""
+        if openDemo() { return }
+        let notifier = notifier
+        // Everything this notifier posts from now on names this profile.
+        notifier.profile = WorkProfiles.active
+        // Before the core opens the store: the app holds a background task while it holds the store's lock.
+        let keepAwake = keepAwake ?? AppKeepAwake()
+        self.keepAwake = keepAwake
+        let opened = await Task.detached(priority: .userInitiated) {
+            Result {
+                StoreLocking.install(keepAwake, waitMillis: CoreFactory.appLockWaitMillis)
+                return try CoreFactory.make(notifier: notifier)
             }
+        }.value
+        switch opened {
+        case let .success(core):
+            // Autopilot's forward pass; the core loads the model on first need.
+            let runtime = modelRuntime ?? OnnxModelRuntime.forApp()
+            core.setModelRuntime(runtime: runtime)
+            modelRuntime = runtime
+            settle(AppModel(core: core, feedback: feedback, authenticator: Authenticator()))
+            // This profile's push tag, so a push for another profile on this phone never reaches this core.
+            let profile = WorkProfiles.active.id
+            Task.detached { if let tag = try? await core.pushTag() { WorkProfiles.rememberPushTag(tag, profileId: profile) } }
+        case let .failure(error):
+            startupError = error.userMessage
+            settle(nil)
         }
+    }
+
+    /// Moves the whole app to the newly active profile without quitting (iOS never relaunches an app that exits, and
+    /// App Review treats a quit as a crash): the current account stops (its long poll, Live Activities, notification
+    /// sweep), the window shows "Switching…", the active profile's core opens and the UI starts again on it.
+    func switchProfile() async {
+        guard !switching else { return }
+        switching = true
+        defer { switching = false }
+        if let old = model {
+            old.shutDownForSwitch()
+            LiveActivityController.shared.uninstall()
+        }
+        for observer in backgroundObservers { NotificationCenter.default.removeObserver(observer) }
+        backgroundObservers = []
+        IntentBridge.model = nil
+        notifier.model = nil
+        model = nil
+        startupError = nil
+        arrival.reopen()
+        // The old model (and its core, which holds the old profile's store) goes once nothing holds it: let the
+        // main actor run what was queued for it before the new one opens.
+        await Task.yield()
+        await openActiveProfile()
     }
 
     /// The model once the core is open; nil when it could not open.

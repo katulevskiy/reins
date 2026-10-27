@@ -67,7 +67,7 @@ fn q_clear_fcm_token(c: &mut DbConnInner, user_uuid: &UserId, fcm_token: &str) -
 }
 
 #[cfg(all(test, sqlite))]
-pub(super) fn test_db() -> DbConnInner {
+pub(crate) fn test_db() -> DbConnInner {
     use diesel::Connection;
     use diesel_migrations::MigrationHarness;
     let mut c = SqliteConnection::establish(":memory:").unwrap();

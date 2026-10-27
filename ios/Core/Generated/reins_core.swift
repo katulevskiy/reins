@@ -2707,6 +2707,262 @@ public func FfiConverterTypeOwnerCheck_lower(_ value: OwnerCheck) -> UInt64 {
 
 
 
+/**
+ * The device's profiles (`<base>/profiles.json`).
+ */
+public protocol ProfileRegistryProtocol: AnyObject, Sendable {
+    
+    /**
+     * The profile the app shows now (Personal unless another was chosen).
+     */
+    func active()  -> AccountProfile
+    
+    /**
+     * Reserves a new work profile for "Add work account": its data directory and key alias, before anyone signs in.
+     * Sign in on a core at that directory, then [`Self::confirm_managed`] with the account's org, or
+     * [`Self::remove`] it. An earlier unfinished one is dropped.
+     */
+    func beginManaged(serverUrl: String) throws  -> AccountProfile
+    
+    /**
+     * Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
+     * the Personal account, or when this phone already has that org's work profile.
+     */
+    func confirmManaged(id: String, orgId: String, orgName: String, email: String) throws  -> AccountProfile
+    
+    /**
+     * Every profile, Personal first (not the ones still signing in).
+     */
+    func list()  -> [AccountProfile]
+    
+    /**
+     * Remembers the Personal account's email (so a work profile can't be the same account).
+     */
+    func notePersonal(email: String?) throws 
+    
+    /**
+     * Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
+     * profile can't be removed here.
+     */
+    func remove(id: String) throws 
+    
+    /**
+     * Shows `id` from now on.
+     */
+    func setActive(id: String) throws 
+    
+}
+/**
+ * The device's profiles (`<base>/profiles.json`).
+ */
+open class ProfileRegistry: ProfileRegistryProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_reins_core_fn_clone_profileregistry(self.handle, $0) }
+    }
+    /**
+     * The registry of the profiles kept under `base_dir` (the folder that holds today's `core` directory).
+     */
+public convenience init(baseDir: String) {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_constructor_profileregistry_new(
+        FfiConverterString.lower(baseDir),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_reins_core_fn_free_profileregistry(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The profile the app shows now (Personal unless another was chosen).
+     */
+open func active() -> AccountProfile  {
+    return try!  FfiConverterTypeAccountProfile_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_active(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Reserves a new work profile for "Add work account": its data directory and key alias, before anyone signs in.
+     * Sign in on a core at that directory, then [`Self::confirm_managed`] with the account's org, or
+     * [`Self::remove`] it. An earlier unfinished one is dropped.
+     */
+open func beginManaged(serverUrl: String)throws  -> AccountProfile  {
+    return try  FfiConverterTypeAccountProfile_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_begin_managed(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(serverUrl),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
+     * the Personal account, or when this phone already has that org's work profile.
+     */
+open func confirmManaged(id: String, orgId: String, orgName: String, email: String)throws  -> AccountProfile  {
+    return try  FfiConverterTypeAccountProfile_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_confirm_managed(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(orgName),
+        FfiConverterString.lower(email),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every profile, Personal first (not the ones still signing in).
+     */
+open func list() -> [AccountProfile]  {
+    return try!  FfiConverterSequenceTypeAccountProfile.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_list(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Remembers the Personal account's email (so a work profile can't be the same account).
+     */
+open func notePersonal(email: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_note_personal(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(email),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Removes a work profile and deletes everything it kept on this device (its data directory). The Personal
+     * profile can't be removed here.
+     */
+open func remove(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_remove(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Shows `id` from now on.
+     */
+open func setActive(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_set_active(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProfileRegistry: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ProfileRegistry
+
+    public static func lift(_ handle: UInt64) throws -> ProfileRegistry {
+        return ProfileRegistry(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ProfileRegistry) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProfileRegistry {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ProfileRegistry, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProfileRegistry_lift(_ handle: UInt64) throws -> ProfileRegistry {
+    return try FfiConverterTypeProfileRegistry.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProfileRegistry_lower(_ value: ProfileRegistry) -> UInt64 {
+    return FfiConverterTypeProfileRegistry.lower(value)
+}
+
+
+
+
+
+
 public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
@@ -3072,6 +3328,33 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func modelUpdatePending() async  -> Bool
     
     /**
+     * A fresh challenge for enrolling this device to the work account's org: sign
+     * `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
+     */
+    func orgChallenge() async throws  -> String
+    
+    /**
+     * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
+     * over the challenge, the platform's attestations and the posture.
+     */
+    func orgEnroll(challenge: String, input: EnrollInput) async throws 
+    
+    /**
+     * The signed-in account's organization (a work profile's); `None` for a Personal account.
+     */
+    func orgMembership() async throws  -> OrgView?
+    
+    /**
+     * Reports the enrolled device's posture now (at start-up and when it changes).
+     */
+    func orgReportPosture(posture: PostureInput) async throws 
+    
+    /**
+     * Whether `server_url` offers organizations ("Add work account" is shown only then).
+     */
+    func orgsOffered(serverUrl: String) async throws  -> Bool
+    
+    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -3136,6 +3419,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The proposals waiting for the primary (on every phone of the roster).
      */
     func proposals() async throws  -> [ProposalView]
+    
+    /**
+     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
+     */
+    func pushTag() async throws  -> String?
     
     func registerDevice(fcmToken: String?) async throws 
     
@@ -3362,6 +3650,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
      */
     func ssoBegin(serverUrl: String) async throws  -> SsoStart
+    
+    /**
+     * "Add work account": like `sso_begin`, sent straight to the organization that verified `domain` (`acme.com`)
+     * through its SSO or Team provider. Run it on the work profile's own core (`ProfileRegistry`), then `sso_finish`.
+     */
+    func ssoBeginWork(serverUrl: String, domain: String) async throws  -> SsoStart
     
     /**
      * Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
@@ -5039,6 +5333,103 @@ open func modelUpdatePending()async  -> Bool  {
 }
     
     /**
+     * A fresh challenge for enrolling this device to the work account's org: sign
+     * `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
+     */
+open func orgChallenge()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_challenge(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
+     * over the challenge, the platform's attestations and the posture.
+     */
+open func orgEnroll(challenge: String, input: EnrollInput)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_enroll(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(challenge),FfiConverterTypeEnrollInput_lower(input)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The signed-in account's organization (a work profile's); `None` for a Personal account.
+     */
+open func orgMembership()async throws  -> OrgView?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_membership(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeOrgView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Reports the enrolled device's posture now (at start-up and when it changes).
+     */
+open func orgReportPosture(posture: PostureInput)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_report_posture(
+                        self.uniffiCloneHandle(),FfiConverterTypePostureInput_lower(posture)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Whether `server_url` offers organizations ("Add work account" is shown only then).
+     */
+open func orgsOffered(serverUrl: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_orgs_offered(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -5269,6 +5660,25 @@ open func proposals()async throws  -> [ProposalView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeProposalView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
+     */
+open func pushTag()async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_push_tag(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6064,6 +6474,26 @@ open func ssoBegin(serverUrl: String)async throws  -> SsoStart  {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_sso_begin(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSsoStart_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Add work account": like `sso_begin`, sent straight to the organization that verified `domain` (`acme.com`)
+     * through its SSO or Team provider. Run it on the work profile's own core (`ProfileRegistry`), then `sso_finish`.
+     */
+open func ssoBeginWork(serverUrl: String, domain: String)async throws  -> SsoStart  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_sso_begin_work(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(domain)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
@@ -7493,6 +7923,115 @@ public func FfiConverterTypeAccountPermissionsView_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeAccountPermissionsView_lower(_ value: AccountPermissionsView) -> RustBuffer {
     return FfiConverterTypeAccountPermissionsView.lower(value)
+}
+
+
+/**
+ * One profile, with everything a platform needs to run its core.
+ */
+public struct AccountProfile: Equatable, Hashable {
+    public var id: String
+    public var kind: ProfileKind
+    /**
+     * `Personal`, or the org's name (the badge on cards and rows).
+     */
+    public var label: String
+    public var orgId: String?
+    public var email: String?
+    public var serverUrl: String?
+    /**
+     * The core's data directory.
+     */
+    public var dataDir: String
+    /**
+     * Appended to the platform's data-key alias / Keychain account (`""` for Personal: the existing one).
+     */
+    public var keyAlias: String
+    /**
+     * Put in front of notification channel ids and thread identifiers (`""` for Personal).
+     */
+    public var channelPrefix: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: ProfileKind, 
+        /**
+         * `Personal`, or the org's name (the badge on cards and rows).
+         */label: String, orgId: String?, email: String?, serverUrl: String?, 
+        /**
+         * The core's data directory.
+         */dataDir: String, 
+        /**
+         * Appended to the platform's data-key alias / Keychain account (`""` for Personal: the existing one).
+         */keyAlias: String, 
+        /**
+         * Put in front of notification channel ids and thread identifiers (`""` for Personal).
+         */channelPrefix: String) {
+        self.id = id
+        self.kind = kind
+        self.label = label
+        self.orgId = orgId
+        self.email = email
+        self.serverUrl = serverUrl
+        self.dataDir = dataDir
+        self.keyAlias = keyAlias
+        self.channelPrefix = channelPrefix
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AccountProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccountProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountProfile {
+        return
+            try AccountProfile(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeProfileKind.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                orgId: FfiConverterOptionString.read(from: &buf), 
+                email: FfiConverterOptionString.read(from: &buf), 
+                serverUrl: FfiConverterOptionString.read(from: &buf), 
+                dataDir: FfiConverterString.read(from: &buf), 
+                keyAlias: FfiConverterString.read(from: &buf), 
+                channelPrefix: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AccountProfile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeProfileKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.orgId, into: &buf)
+        FfiConverterOptionString.write(value.email, into: &buf)
+        FfiConverterOptionString.write(value.serverUrl, into: &buf)
+        FfiConverterString.write(value.dataDir, into: &buf)
+        FfiConverterString.write(value.keyAlias, into: &buf)
+        FfiConverterString.write(value.channelPrefix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountProfile_lift(_ buf: RustBuffer) throws -> AccountProfile {
+    return try FfiConverterTypeAccountProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountProfile_lower(_ value: AccountProfile) -> RustBuffer {
+    return FfiConverterTypeAccountProfile.lower(value)
 }
 
 
@@ -9619,6 +10158,66 @@ public func FfiConverterTypeAttentionReason_lift(_ buf: RustBuffer) throws -> At
 #endif
 public func FfiConverterTypeAttentionReason_lower(_ value: AttentionReason) -> RustBuffer {
     return FfiConverterTypeAttentionReason.lower(value)
+}
+
+
+public struct AttestationInput: Equatable, Hashable {
+    public var kind: AttestationKindInput
+    /**
+     * As the platform gave it, base64.
+     */
+    public var data: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: AttestationKindInput, 
+        /**
+         * As the platform gave it, base64.
+         */data: String) {
+        self.kind = kind
+        self.data = data
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AttestationInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttestationInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttestationInput {
+        return
+            try AttestationInput(
+                kind: FfiConverterTypeAttestationKindInput.read(from: &buf), 
+                data: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AttestationInput, into buf: inout [UInt8]) {
+        FfiConverterTypeAttestationKindInput.write(value.kind, into: &buf)
+        FfiConverterString.write(value.data, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttestationInput_lift(_ buf: RustBuffer) throws -> AttestationInput {
+    return try FfiConverterTypeAttestationInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttestationInput_lower(_ value: AttestationInput) -> RustBuffer {
+    return FfiConverterTypeAttestationInput.lower(value)
 }
 
 
@@ -11922,6 +12521,88 @@ public func FfiConverterTypeEmailView_lift(_ buf: RustBuffer) throws -> EmailVie
 #endif
 public func FfiConverterTypeEmailView_lower(_ value: EmailView) -> RustBuffer {
     return FfiConverterTypeEmailView.lower(value)
+}
+
+
+/**
+ * The device key the app made in secure hardware for this org, its signature over
+ * [`crate::profiles::org_enrollment_message`] of the challenge, and what vouches for it.
+ */
+public struct EnrollInput: Equatable, Hashable {
+    /**
+     * SubjectPublicKeyInfo DER, base64 (P-256).
+     */
+    public var deviceKey: String
+    /**
+     * ECDSA P-256 SHA-256, DER, base64.
+     */
+    public var signature: String
+    public var hardware: Bool
+    public var attestations: [AttestationInput]
+    public var posture: PostureInput
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * SubjectPublicKeyInfo DER, base64 (P-256).
+         */deviceKey: String, 
+        /**
+         * ECDSA P-256 SHA-256, DER, base64.
+         */signature: String, hardware: Bool, attestations: [AttestationInput], posture: PostureInput) {
+        self.deviceKey = deviceKey
+        self.signature = signature
+        self.hardware = hardware
+        self.attestations = attestations
+        self.posture = posture
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension EnrollInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnrollInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnrollInput {
+        return
+            try EnrollInput(
+                deviceKey: FfiConverterString.read(from: &buf), 
+                signature: FfiConverterString.read(from: &buf), 
+                hardware: FfiConverterBool.read(from: &buf), 
+                attestations: FfiConverterSequenceTypeAttestationInput.read(from: &buf), 
+                posture: FfiConverterTypePostureInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EnrollInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceKey, into: &buf)
+        FfiConverterString.write(value.signature, into: &buf)
+        FfiConverterBool.write(value.hardware, into: &buf)
+        FfiConverterSequenceTypeAttestationInput.write(value.attestations, into: &buf)
+        FfiConverterTypePostureInput.write(value.posture, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollInput_lift(_ buf: RustBuffer) throws -> EnrollInput {
+    return try FfiConverterTypeEnrollInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollInput_lower(_ value: EnrollInput) -> RustBuffer {
+    return FfiConverterTypeEnrollInput.lower(value)
 }
 
 
@@ -14532,6 +15213,97 @@ public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> Rus
 }
 
 
+/**
+ * The work account's organization, as the app shows it.
+ */
+public struct OrgView: Equatable, Hashable {
+    public var orgId: String
+    public var name: String
+    /**
+     * `team`, `business`, `enterprise`.
+     */
+    public var tier: String
+    /**
+     * The roles' labels (`Security admin`, …).
+     */
+    public var roles: [String]
+    /**
+     * This device is enrolled (and not removed).
+     */
+    public var enrolled: Bool
+    public var githubOrgs: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(orgId: String, name: String, 
+        /**
+         * `team`, `business`, `enterprise`.
+         */tier: String, 
+        /**
+         * The roles' labels (`Security admin`, …).
+         */roles: [String], 
+        /**
+         * This device is enrolled (and not removed).
+         */enrolled: Bool, githubOrgs: [String]) {
+        self.orgId = orgId
+        self.name = name
+        self.tier = tier
+        self.roles = roles
+        self.enrolled = enrolled
+        self.githubOrgs = githubOrgs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrgView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgView {
+        return
+            try OrgView(
+                orgId: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                tier: FfiConverterString.read(from: &buf), 
+                roles: FfiConverterSequenceString.read(from: &buf), 
+                enrolled: FfiConverterBool.read(from: &buf), 
+                githubOrgs: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrgView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.orgId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.tier, into: &buf)
+        FfiConverterSequenceString.write(value.roles, into: &buf)
+        FfiConverterBool.write(value.enrolled, into: &buf)
+        FfiConverterSequenceString.write(value.githubOrgs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgView_lift(_ buf: RustBuffer) throws -> OrgView {
+    return try FfiConverterTypeOrgView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgView_lower(_ value: OrgView) -> RustBuffer {
+    return FfiConverterTypeOrgView.lower(value)
+}
+
+
 public struct PairingView: Equatable, Hashable {
     public var id: String
     public var clientName: String
@@ -15535,6 +16307,81 @@ public func FfiConverterTypePermissionScopeSelection_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypePermissionScopeSelection_lower(_ value: PermissionScopeSelection) -> RustBuffer {
     return FfiConverterTypePermissionScopeSelection.lower(value)
+}
+
+
+/**
+ * What the platform measured about the device (06 §6).
+ */
+public struct PostureInput: Equatable, Hashable {
+    public var screenLock: Bool
+    public var osName: String
+    public var osVersion: String
+    /**
+     * `None`: the check could not run.
+     */
+    public var rooted: Bool?
+    public var appVersion: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(screenLock: Bool, osName: String, osVersion: String, 
+        /**
+         * `None`: the check could not run.
+         */rooted: Bool?, appVersion: String) {
+        self.screenLock = screenLock
+        self.osName = osName
+        self.osVersion = osVersion
+        self.rooted = rooted
+        self.appVersion = appVersion
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PostureInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePostureInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PostureInput {
+        return
+            try PostureInput(
+                screenLock: FfiConverterBool.read(from: &buf), 
+                osName: FfiConverterString.read(from: &buf), 
+                osVersion: FfiConverterString.read(from: &buf), 
+                rooted: FfiConverterOptionBool.read(from: &buf), 
+                appVersion: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PostureInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.screenLock, into: &buf)
+        FfiConverterString.write(value.osName, into: &buf)
+        FfiConverterString.write(value.osVersion, into: &buf)
+        FfiConverterOptionBool.write(value.rooted, into: &buf)
+        FfiConverterString.write(value.appVersion, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePostureInput_lift(_ buf: RustBuffer) throws -> PostureInput {
+    return try FfiConverterTypePostureInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePostureInput_lower(_ value: PostureInput) -> RustBuffer {
+    return FfiConverterTypePostureInput.lower(value)
 }
 
 
@@ -20211,6 +21058,86 @@ public func FfiConverterTypeAttentionLevel_lower(_ value: AttentionLevel) -> Rus
 
 
 
+
+public enum AttestationKindInput: Equatable, Hashable {
+    
+    case appAttest
+    case androidKeyAttestation
+    case playIntegrity
+    case none
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AttestationKindInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttestationKindInput: FfiConverterRustBuffer {
+    typealias SwiftType = AttestationKindInput
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttestationKindInput {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .appAttest
+        
+        case 2: return .androidKeyAttestation
+        
+        case 3: return .playIntegrity
+        
+        case 4: return .none
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AttestationKindInput, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .appAttest:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .androidKeyAttestation:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .playIntegrity:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .none:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttestationKindInput_lift(_ buf: RustBuffer) throws -> AttestationKindInput {
+    return try FfiConverterTypeAttestationKindInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttestationKindInput_lower(_ value: AttestationKindInput) -> RustBuffer {
+    return FfiConverterTypeAttestationKindInput.lower(value)
+}
+
+
+
 /**
  * Something about Autopilot changed that the app shows (the bypass notification, the mode pill).
  */
@@ -22533,6 +23460,72 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 
 
 
+
+public enum ProfileKind: Equatable, Hashable {
+    
+    case personal
+    case managed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ProfileKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProfileKind: FfiConverterRustBuffer {
+    typealias SwiftType = ProfileKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProfileKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .personal
+        
+        case 2: return .managed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ProfileKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .personal:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .managed:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProfileKind_lift(_ buf: RustBuffer) throws -> ProfileKind {
+    return try FfiConverterTypeProfileKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProfileKind_lower(_ value: ProfileKind) -> RustBuffer {
+    return FfiConverterTypeProfileKind.lower(value)
+}
+
+
+
 /**
  * Why an item deserves a closer look. Declaration order breaks ties between equal weights.
  */
@@ -23774,6 +24767,30 @@ fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeOrgView: FfiConverterRustBuffer {
+    typealias SwiftType = OrgView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeOrgView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeOrgView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypePurchaseView: FfiConverterRustBuffer {
     typealias SwiftType = PurchaseView?
 
@@ -24282,6 +25299,31 @@ fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAccountProfile: FfiConverterRustBuffer {
+    typealias SwiftType = [AccountProfile]
+
+    public static func write(_ value: [AccountProfile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAccountProfile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AccountProfile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AccountProfile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAccountProfile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAccountView: FfiConverterRustBuffer {
     typealias SwiftType = [AccountView]
 
@@ -24499,6 +25541,31 @@ fileprivate struct FfiConverterSequenceTypeAttentionReason: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAttentionReason.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAttestationInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AttestationInput]
+
+    public static func write(_ value: [AttestationInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAttestationInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AttestationInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AttestationInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAttestationInput.read(from: &buf))
         }
         return seq
     }
@@ -26003,6 +27070,17 @@ public func paymentsParseAmount(text: String, currency: String)throws  -> Int64 
     )
 })
 }
+/**
+ * The bytes a work profile's device key signs to enroll the device ([`reins_proto::org::enrollment_message`]).
+ */
+public func orgEnrollmentMessage(challenge: String) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_enrollment_message(
+        FfiConverterString.lower(challenge),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -26026,6 +27104,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_payments_parse_amount() != 22380) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
@@ -26250,6 +27331,21 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_model_update_pending() != 36444) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_enroll() != 20244) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_membership() != 16935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_by_code() != 29957) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -26284,6 +27380,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_proposals() != 10001) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_push_tag() != 15550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
@@ -26410,6 +27509,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_sso_begin_work() != 61458) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
@@ -26601,6 +27703,27 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_devicebridge_sms_send() != 18382) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_profileregistry_active() != 10535) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_begin_managed() != 29294) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_confirm_managed() != 21692) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_list() != 15158) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_note_personal() != 43240) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_remove() != 19697) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_set_active() != 40978) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_googletokenprovider_access_token() != 46941) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -26632,6 +27755,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_constructor_profileregistry_new() != 63460) {
         return InitializationResult.apiChecksumMismatch
     }
 

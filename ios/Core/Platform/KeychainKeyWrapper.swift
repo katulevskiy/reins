@@ -12,15 +12,17 @@ import Security
 /// interaction not allowed) is `NeedsUserInteraction`, which makes opening the store fail without changing anything.
 final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {
     private let service = "com.reins2fa.app.key-wrap"
-    private let account = "core-dek-wrap-v1"
+    /// The profile's Keychain account: `core-dek-wrap-v1` for Personal, its own for each work profile.
+    private let account: String
     private let lock = NSLock()
     private var cached: SymmetricKey?
     /// False in the notification extension: it never creates a key or a data key and never lets the core start over
     /// (a keychain group it cannot see would otherwise wipe the app's store); the app is the only one that may.
     private let mayReset: Bool
 
-    init(mayReset: Bool = true) {
+    init(mayReset: Bool = true, account: String = WorkProfiles.dekAccount) {
         self.mayReset = mayReset
+        self.account = account
     }
 
     func wrap(plaintext: Data) throws -> Data {

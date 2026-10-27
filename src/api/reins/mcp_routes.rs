@@ -326,6 +326,7 @@ pub async fn submit_to_phone_waiting(
                 PushMessage {
                     t: PushKind::Req,
                     id: request.id.0.clone(),
+                    p: None,
                 },
                 move || {
                     if !HUB.presence.status(&user, now_unix()).recent() {

@@ -12,6 +12,8 @@ import dev.reins.android.R
 import dev.reins.android.design.compactDuration
 import dev.reins.android.design.reminderAt
 import dev.reins.android.feedback.FeedbackStore
+import dev.reins.android.profiles.WorkProfiles
+import dev.reins.android.profiles.WorkProfiles.Active
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.GrantView
 import org.json.JSONArray
@@ -26,6 +28,7 @@ import org.json.JSONObject
  */
 object GrantReminders {
     private const val PREFS = "grant_reminders"
+    private const val PROFILES = "grant_reminder_profiles"
     private const val PLAN = "plan"
     private const val DONE = "done"
     private const val ACTION_DUE = "dev.reins.android.GRANT_REMINDER_DUE"
@@ -44,27 +47,53 @@ object GrantReminders {
         Reminder(g.id, fireAt, g.expiresAt!!, g.connectionLabel, g.summary)
     }
 
-    /** Aligns the alarms with [grants]. */
-    fun sync(context: Context, grants: List<GrantView>, nowSeconds: Long = System.currentTimeMillis() / 1000) {
+    /** Each profile keeps its own plan, alarms and notifications. */
+    private fun prefs(context: Context, profile: Active) = SealedPreferences(context, WorkProfiles.prefsName(PREFS, profile))
+
+    /** Aligns [profile]'s alarms with its [grants]. */
+    fun sync(context: Context, grants: List<GrantView>, profile: Active, nowSeconds: Long = System.currentTimeMillis() / 1000) {
+        remember(context, profile)
         val wanted = plan(grants).filter { it.expiresAt > nowSeconds }
-        val prefs = SealedPreferences(context, PREFS)
+        val prefs = prefs(context, profile)
         val before = read(prefs.getString(PLAN, null))
-        before.filter { old -> wanted.none { it.key == old.key } }.forEach { cancel(context, it.id) }
+        before.filter { old -> wanted.none { it.key == old.key } }.forEach { cancel(context, it.id, profile) }
         val done = prefs.getStringSet(DONE, emptySet()).orEmpty().filter { key -> wanted.any { it.key == key } }.toSet()
         prefs.edit().putString(PLAN, write(wanted)).putStringSet(DONE, done).apply()
-        wanted.filter { it.key !in done }.forEach { schedule(context, it, nowSeconds) }
+        wanted.filter { it.key !in done }.forEach { schedule(context, it, profile, nowSeconds) }
     }
 
-    /** After a reboot: puts the alarms back from the saved plan. */
+    /** After a reboot: puts every profile's alarms back from its saved plan. */
     fun rearm(context: Context, nowSeconds: Long = System.currentTimeMillis() / 1000) {
-        val prefs = SealedPreferences(context, PREFS)
-        val done = prefs.getStringSet(DONE, emptySet()).orEmpty()
-        read(prefs.getString(PLAN, null)).filter { it.expiresAt > nowSeconds && it.key !in done }.forEach { schedule(context, it, nowSeconds) }
+        for (profile in profiles(context)) {
+            val prefs = prefs(context, profile)
+            val done = prefs.getStringSet(DONE, emptySet()).orEmpty()
+            read(prefs.getString(PLAN, null)).filter { it.expiresAt > nowSeconds && it.key !in done }
+                .forEach { schedule(context, it, profile, nowSeconds) }
+        }
     }
 
-    /** The alarm for [id] went off. */
-    fun due(context: Context, id: String, nowSeconds: Long = System.currentTimeMillis() / 1000) {
-        val prefs = SealedPreferences(context, PREFS)
+    /** The profiles that planned reminders (an alarm names one by id; its label names the channel group). */
+    private fun remember(context: Context, profile: Active) {
+        if (!profile.managed) return
+        val index = context.getSharedPreferences(PROFILES, Context.MODE_PRIVATE)
+        val json = JSONObject().put("label", profile.label).put("prefix", profile.channelPrefix).put("key", profile.keyAlias).toString()
+        if (index.getString(profile.id, null) != json) index.edit().putString(profile.id, json).apply()
+    }
+
+    private fun profiles(context: Context): List<Active> = listOf(WorkProfiles.PERSONAL) +
+        context.getSharedPreferences(PROFILES, Context.MODE_PRIVATE).all.mapNotNull { (id, v) ->
+            runCatching {
+                val o = JSONObject(v as String)
+                Active(id, o.getString("label"), managed = true, channelPrefix = o.getString("prefix"), keyAlias = o.getString("key"))
+            }.getOrNull()
+        }
+
+    private fun profileNamed(context: Context, id: String?): Active? =
+        if (id == null) WorkProfiles.PERSONAL else profiles(context).firstOrNull { it.id == id }
+
+    /** The alarm for [id] of [profile] went off. */
+    fun due(context: Context, id: String, profile: Active, nowSeconds: Long = System.currentTimeMillis() / 1000) {
+        val prefs = prefs(context, profile)
         val reminder = read(prefs.getString(PLAN, null)).firstOrNull { it.id == id } ?: return
         val done = prefs.getStringSet(DONE, emptySet()).orEmpty()
         if (reminder.key in done || reminder.expiresAt <= nowSeconds) return
@@ -73,12 +102,12 @@ object GrantReminders {
         if (Foreground.focused) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (!manager.areNotificationsEnabled()) return
-        notify(context, manager, reminder, nowSeconds)
+        notify(context, manager, reminder, profile, nowSeconds)
     }
 
-    private fun notify(context: Context, manager: NotificationManager, r: Reminder, nowSeconds: Long) {
+    private fun notify(context: Context, manager: NotificationManager, r: Reminder, profile: Active, nowSeconds: Long) {
         val left = compactDuration(r.expiresAt - nowSeconds)
-        val channel = AppNotifier.channel(context, AppNotifier.Kind.Grants, FeedbackStore(context).current)
+        val channel = AppNotifier.channel(context, AppNotifier.Kind.Grants, FeedbackStore(context).current, profile = profile)
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Reins")
@@ -93,36 +122,44 @@ object GrantReminders {
             .setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setTimeoutAfter(((r.expiresAt - nowSeconds) * 1000).coerceAtLeast(1))
-            .setContentIntent(open(context, r.id))
+            .setContentIntent(open(context, r.id, profile))
             .build()
-        manager.notify(notificationId(r.id), notification)
+        manager.notify(profile.id.takeIf { profile.managed }, notificationId(r.id), notification)
     }
 
-    private fun open(context: Context, id: String): PendingIntent = PendingIntent.getActivity(
+    private fun open(context: Context, id: String, profile: Active): PendingIntent = PendingIntent.getActivity(
         context,
         notificationId(id),
-        Intent(context, MainActivity::class.java)
-            .setAction(ACTION_OPEN_GRANT)
-            .putExtra(EXTRA_GRANT_ID, id)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        WorkProfiles.stamp(
+            context,
+            Intent(context, MainActivity::class.java)
+                .setAction(ACTION_OPEN_GRANT)
+                .putExtra(EXTRA_GRANT_ID, id)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            profile.id,
+        ),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    private fun schedule(context: Context, r: Reminder, nowSeconds: Long) {
+    private fun schedule(context: Context, r: Reminder, profile: Active, nowSeconds: Long) {
         val alarms = context.getSystemService(AlarmManager::class.java)
         // A grant already inside its last stretch reminds at once.
         val at = maxOf(r.fireAt, nowSeconds + 1) * 1000
-        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, broadcast(context, r.id))
+        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, broadcast(context, r.id, profile))
     }
 
-    private fun cancel(context: Context, id: String) {
-        context.getSystemService(AlarmManager::class.java).cancel(broadcast(context, id))
+    private fun cancel(context: Context, id: String, profile: Active) {
+        context.getSystemService(AlarmManager::class.java).cancel(broadcast(context, id, profile))
     }
 
-    private fun broadcast(context: Context, id: String): PendingIntent = PendingIntent.getBroadcast(
+    private fun broadcast(context: Context, id: String, profile: Active): PendingIntent = PendingIntent.getBroadcast(
         context,
         notificationId(id),
-        Intent(context, Receiver::class.java).setAction(ACTION_DUE).putExtra(EXTRA_GRANT_ID, id),
+        Intent(context, Receiver::class.java)
+            .setAction(ACTION_DUE)
+            .putExtra(EXTRA_GRANT_ID, id)
+            // The personal profile's alarms stay as they were; a work profile's are its own.
+            .apply { if (profile.managed) putExtra(WorkProfiles.EXTRA_PROFILE, profile.id).setIdentifier(profile.id) },
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -146,7 +183,11 @@ object GrantReminders {
     class Receiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                ACTION_DUE -> intent.getStringExtra(EXTRA_GRANT_ID)?.let { due(context, it) }
+                ACTION_DUE -> {
+                    val id = intent.getStringExtra(EXTRA_GRANT_ID) ?: return
+                    val profile = profileNamed(context, intent.getStringExtra(WorkProfiles.EXTRA_PROFILE)) ?: return
+                    due(context, id, profile)
+                }
                 Intent.ACTION_BOOT_COMPLETED -> rearm(context)
             }
         }

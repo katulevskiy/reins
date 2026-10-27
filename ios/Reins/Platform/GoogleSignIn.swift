@@ -18,13 +18,16 @@ import Foundation
 final class GoogleSignIn {
     static let shared = GoogleSignIn()
 
-    private let tokens: GoogleTokens
+    /// Where a sign-in is kept: the running profile's own Google store (`GoogleTokens.of`).
+    private let store: @MainActor () -> GoogleTokens
     private let http: GoogleHTTP
 
-    init(tokens: GoogleTokens = .shared, http: GoogleHTTP = GoogleHTTP()) {
-        self.tokens = tokens
+    init(tokens: GoogleTokens? = nil, http: GoogleHTTP = GoogleHTTP()) {
+        self.store = { tokens ?? GoogleTokens.of(WorkProfiles.active) }
         self.http = http
     }
+
+    private var tokens: GoogleTokens { store() }
 
     var isConfigured: Bool { GoogleConfig.current.isConfigured }
 

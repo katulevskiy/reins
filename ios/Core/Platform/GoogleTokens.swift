@@ -100,6 +100,21 @@ enum GoogleAuthError: LocalizedError, Equatable {
 final class GoogleTokens: GoogleTokenProvider, @unchecked Sendable {
     static let shared = GoogleTokens()
 
+    nonisolated(unsafe) private static var work: [String: GoogleTokens] = [:]
+    private static let workLock = NSLock()
+
+    /// A profile's own Google sign-ins: today's for Personal, a keychain service of its own for each work profile, so a
+    /// work profile's core never gets a token of the Personal one's accounts (and the other way round).
+    static func of(_ profile: WorkProfiles.Active) -> GoogleTokens {
+        guard profile.managed else { return shared }
+        return workLock.withLock {
+            if let tokens = work[profile.id] { return tokens }
+            let tokens = GoogleTokens(keychain: GoogleKeychain(service: "com.reins2fa.app.google.\(profile.id)"))
+            work[profile.id] = tokens
+            return tokens
+        }
+    }
+
     let keychain: GoogleKeychain
     private let cache = GoogleTokenCache()
     private let http: GoogleHTTP

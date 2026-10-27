@@ -468,6 +468,7 @@ async fn post_join(
         PushMessage {
             t: PushKind::Join,
             id: created.id.clone(),
+            p: None,
         },
     );
     Ok(Json(created))

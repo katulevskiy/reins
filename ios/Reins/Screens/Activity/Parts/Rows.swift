@@ -279,6 +279,7 @@ struct HistoryRow: View {
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
         } extra: {
+            ProfileBadge()
             if let snippet {
                 HStack(spacing: 6) {
                     GlyphIcon(ActivitySearchText.glyph(snippet.field), size: 13).foregroundStyle(Palette.inkMeta)

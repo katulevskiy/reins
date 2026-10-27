@@ -555,6 +555,7 @@ async fn wake_phone(pool: &DbPool, user: String, blob_id: &str) {
             PushMessage {
                 t: PushKind::Blob,
                 id: blob_id.to_owned(),
+                p: None,
             },
         );
     }

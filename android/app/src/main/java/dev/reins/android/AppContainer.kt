@@ -66,8 +66,28 @@ class AppContainer(private val context: Context) {
 
     val state = AppState()
 
+    /** The application context (a work profile's core is made with it). */
+    val appContext: Context get() = context
+
+    /** The profiles on this phone (Personal, and a work profile per organization). */
+    val profiles: dev.reins.core.ProfileRegistryInterface
+        get() = dev.reins.android.profiles.ProfilesProvider.registryFor(context)
+
+    /** The profile this process shows: its core, Keystore alias and notification channels (Personal by default, and
+     *  when the registry can't be read). */
+    val activeProfile: dev.reins.core.AccountProfile? = runCatching { profiles.active() }.getOrNull()?.also {
+        dev.reins.android.profiles.WorkProfiles.active = dev.reins.android.profiles.WorkProfiles.of(it)
+        dev.reins.android.profiles.WorkProfiles.hasWork =
+            runCatching { profiles.list().any { p -> p.kind == dev.reins.core.ProfileKind.MANAGED } }.getOrDefault(false)
+    }
+
+    /** The profile everything this container makes is bound to: its notifications, stores and channels. */
+    val profile: dev.reins.android.profiles.WorkProfiles.Active =
+        activeProfile?.let(dev.reins.android.profiles.WorkProfiles::of) ?: dev.reins.android.profiles.WorkProfiles.PERSONAL
+
+
     /** The last settled session: the first frame shows it while the core opens ([StartupSnapshot]). */
-    private val startup = StartupSnapshot(context).also { snapshot -> snapshot.read()?.let { state.setSession(it) } }
+    private val startup = StartupSnapshot(context, profile).also { snapshot -> snapshot.read()?.let { state.setSession(it) } }
     val google = GoogleAuthorizer(context)
 
     /** The Sounds & haptics switches; the notification channels follow them too. */
@@ -78,6 +98,7 @@ class AppContainer(private val context: Context) {
 
     val notifier = AppNotifier(
         context,
+        profile = profile,
         settings = { feedbackStore.current },
         feedback = { feedback },
         onAutopilot = { event ->
@@ -99,7 +120,7 @@ class AppContainer(private val context: Context) {
 
     /** Whether the phone is online, on Wi-Fi, saving battery or data (what a model update waits for). */
     fun networkConditions(): ModelUpdateGate.Conditions = NetworkConditions.read(context)
-    val deviceStatus = DeviceStatusStore(context)
+    val deviceStatus = DeviceStatusStore(context, profile)
 
     /** Whether the setup after a fresh sign-in is still to be shown, per account. */
     val onboarding = OnboardingStore(context)
@@ -160,13 +181,17 @@ class AppContainer(private val context: Context) {
     val ssoSignIn = SsoSignIn(context)
 
     private fun createRealCore(): ReinsCoreInterface {
-        val dataDir = java.io.File(context.noBackupFilesDir, "core").apply { mkdirs() }
+        // The active profile's own directory and data-key alias; the Personal profile keeps today's.
+        val stored = activeProfile
+        val dataDir = (stored?.dataDir?.let { java.io.File(it) } ?: java.io.File(context.noBackupFilesDir, "core")).apply { mkdirs() }
         return ReinsCore(
             dataDir.absolutePath,
-            KeystoreKeyWrapper(),
+            KeystoreKeyWrapper(dev.reins.android.profiles.WorkProfiles.dekAlias(stored?.keyAlias.orEmpty())),
             google,
             notifier,
-            phone,
+            // The phone's own data (contacts, calendar, texts) is the Personal profile's: a work profile's core never
+            // reaches it.
+            phone.takeIf { !profile.managed },
             BuildConfig.TELEGRAM_API_ID,
             BuildConfig.TELEGRAM_API_HASH,
         ).also { it.setModelRuntime(modelRuntime) }
@@ -423,7 +448,7 @@ class AppContainer(private val context: Context) {
                 state.setStartingPolicy(starting.await())
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
-                    if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded)
+                    if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded, profile)
                 }
             }
         } catch (e: CoreException) {
@@ -506,7 +531,11 @@ class AppContainer(private val context: Context) {
      * [AppState.registrationError] (Settings offers it again); the sign-in itself stands.
      */
     suspend fun finishSignIn(info: SessionInfo) {
-        withContext(Dispatchers.IO) { deviceStatus.selectAccount(info) }
+        withContext(Dispatchers.IO) {
+            deviceStatus.selectAccount(info)
+            // The Personal account's email, so a work profile can never be the same account.
+            if (!dev.reins.android.profiles.WorkProfiles.active.managed) runCatching { profiles.notePersonal(info.email) }
+        }
         setKeysLocked(false)
         beginOnboarding(info)
         state.setRegistrationError(null)
@@ -672,12 +701,13 @@ class AppContainer(private val context: Context) {
     suspend fun forgetAccount() {
         withContext(Dispatchers.IO) {
             deviceStatus.clear()
-            GrantReminders.sync(context, emptyList())
+            GrantReminders.sync(context, emptyList(), profile)
             BypassEndWorker.schedule(context, null)
             notifier.showBypass(null)
             notifier.showOvernight(null)
             overnightReturns.clear()
-            context.getSystemService(android.app.NotificationManager::class.java).cancelAll()
+            notifier.cancelOwn()
+            dev.reins.android.push.PushRouting.forget(context, profile.id)
             mcpSignIn.clear()
         }
         state.setApprovalDevice(false)

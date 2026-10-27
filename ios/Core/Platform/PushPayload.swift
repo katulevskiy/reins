@@ -25,6 +25,15 @@ struct PushPayload: Equatable {
         self.init(kind: userInfo["t"] as? String, id: userInfo["id"] as? String)
     }
 
+    /// The tag of the account a push is for (`p`, 16 hex digits; `reins_proto::pairing::push_profile_tag`): which
+    /// profile on this phone it belongs to. nil when absent or malformed.
+    static func tag(_ userInfo: [AnyHashable: Any]) -> String? {
+        guard let p = userInfo["p"] as? String, p.count == 16, p.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) else {
+            return nil
+        }
+        return p
+    }
+
     /// The kind of item a `req` / `pair` / `blob` push announces; nil for `replaced`.
     var itemKind: Snapshot.Item.Kind? {
         switch kind {
