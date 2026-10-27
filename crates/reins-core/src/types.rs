@@ -609,6 +609,11 @@ pub struct AskView {
     /// The repository's default branch (its remote's), as the desktop app reported it.
     #[uniffi(default)]
     pub default_branch: Option<String>,
+    /// The safety net the desktop app applies if this is approved (Decisions v2 P3), one line per net ("Keeps 2
+    /// deleted paths in the Reins trash for 7 days"), as it reported it. Shown, read-only; it never makes a question
+    /// looser. `None`: no net.
+    #[uniffi(default)]
+    pub net: Option<String>,
 }
 
 /// The guard rule a desktop question matches.

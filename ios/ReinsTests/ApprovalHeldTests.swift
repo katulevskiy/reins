@@ -22,9 +22,9 @@ final class ApprovalHeldTests: XCTestCase {
         return v
     }
 
-    private func ask(rule: AskRuleView? = nil, uncertain: Bool = false, destructive: Bool = false) -> ApprovalView {
+    private func ask(rule: AskRuleView? = nil, uncertain: Bool = false, destructive: Bool = false, net: String? = nil) -> ApprovalView {
         var v = T.view("q1", kind: .write, service: "", op: "", action: "write")
-        v.ask = AskView(question: "Run it?", detail: "rm -rf build", topic: nil, rule: rule, uncertain: uncertain, destructive: destructive)
+        v.ask = AskView(question: "Run it?", detail: "rm -rf build", topic: nil, rule: rule, uncertain: uncertain, destructive: destructive, net: net)
         return v
     }
 
@@ -84,6 +84,17 @@ final class ApprovalHeldTests: XCTestCase {
     func testADestructiveGuardRuleIsHeldAndAnOrdinaryOneIsNot() {
         assertHeld(ask(rule: rule(destructive: true)), tag: "guardRule")
         assertNotHeld(ask(rule: rule(destructive: false)), tag: "guardRule")
+    }
+
+    func testASafetyNetShowsAndNeverLoosens() {
+        let netted = ask(rule: rule(destructive: true), destructive: true, net: "Keeps 1 deleted path in the Reins trash for 7 days")
+        let tag = ApprovalWords.dangerTags(netted).first { $0.id == "netted" }
+        XCTAssertEqual(tag?.label, "Netted")
+        XCTAssertEqual(tag?.destructive, false)
+        XCTAssertTrue(tag?.help.contains("Reins trash") ?? false)
+        // Still held: the phone never trusts the net to make a delete undoable.
+        assertHeld(netted, tag: "guardRule")
+        XCTAssertFalse(ApprovalWords.dangerTags(ask(rule: rule(destructive: true))).contains { $0.id == "netted" })
     }
 
     func testARuleOnlyTheComputerKnowsSaysSo() {

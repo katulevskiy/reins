@@ -150,6 +150,7 @@ fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> A
         kind: None,
         branch: None,
         default_branch: None,
+        net: None,
     }
 }
 
@@ -175,6 +176,7 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
         let topic = topic(call).ok().flatten().map(|t| text::one_line(&t));
         let reading = read_ask(topic.as_deref(), &question, raw);
         let (branch, default_branch) = reported_rule(raw).map_or((None, None), |_| reported_head(raw));
+        let net = reported_net(raw);
         let detail = reported_rule(raw).map_or(raw, |(_, rest)| rest);
         AskView {
             question,
@@ -186,6 +188,7 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
             kind: reading.kind.map(str::to_owned),
             branch,
             default_branch,
+            net,
         }
     })
 }
@@ -483,6 +486,8 @@ pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
     // what the desktop app reports of the repository (`reins_desktop::hooks::head_lines`), after the rule's own lines
     take_line(&mut rest, "Branch: ");
     take_line(&mut rest, "Default branch: ");
+    // and the safety net it applies (`reins_desktop::nets::hook::question_lines`)
+    while take_line(&mut rest, "Net: ").is_some() {}
     let clean = |s: &str, max: usize| text::truncate_chars(&text::one_line(s), max);
     let rule = AskRuleView {
         label: clean(label, 60),
@@ -493,6 +498,30 @@ pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
         reported: true,
     };
     Some((rule, rest.strip_prefix('\n').unwrap_or(rest)))
+}
+
+/// The most lines of a reported safety net the phone keeps, and their length.
+const MAX_NET_LINES: usize = 3;
+const MAX_NET_LINE: usize = 120;
+
+/// The safety net the desktop app reports with a hook's question, in the lines it writes after the repository's
+/// (`Net: …`, one per net), before the command: a command cannot write them. Only with a reported rule. Shown as
+/// reported, read-only: the phone never decides on it.
+pub(crate) fn reported_net(detail: &str) -> Option<String> {
+    let mut rest = detail;
+    take_line(&mut rest, "Rule: ")?;
+    take_line(&mut rest, "Matched: ");
+    take_line(&mut rest, "Group: ");
+    take_line(&mut rest, "Branch: ");
+    take_line(&mut rest, "Default branch: ");
+    let mut lines = Vec::new();
+    while let Some(l) = take_line(&mut rest, "Net: ") {
+        let l = text::truncate_chars(&text::one_line(l), MAX_NET_LINE);
+        if !l.is_empty() && lines.len() < MAX_NET_LINES {
+            lines.push(l);
+        }
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// A branch name as git allows one (`git check-ref-format --branch`, the gist: no space, control or special
@@ -710,6 +739,43 @@ mod tests {
             op: "ask".to_owned(),
             args: args.as_object().unwrap().clone(),
         }
+    }
+
+    /// The safety net the desktop app reports (`Net: …` after the rule's and the repository's lines): read only there,
+    /// kept out of the shown detail, and never makes the question looser.
+    #[test]
+    fn a_net_line_is_read_and_never_loosens() {
+        let rule = "Rule: Recursive deletes · rm -r\nMatched: rm -rf notes\nGroup: deletes (destructive)\n";
+        let command = "\nCommand:\nrm -rf notes\n\nNetted command:\n'/usr/bin/reins' net run --plan n1 -- rm -rf notes";
+        let with = format!("{rule}Net: Keeps 1 deleted path in the Reins trash for 7 days\n{command}");
+        let without = format!("{rule}{command}");
+        let ask = |detail: &str| {
+            ask_view(
+                &call(&json!({"question": "Claude Code wants to run: rm -rf notes", "detail": detail,
+                "topic": "command:rm -r*"})),
+                "x",
+            )
+            .unwrap()
+        };
+        let (netted, plain) = (ask(&with), ask(&without));
+        assert_eq!(netted.net.as_deref(), Some("Keeps 1 deleted path in the Reins trash for 7 days"));
+        assert_eq!(plain.net, None);
+        assert!(netted.detail.as_deref().is_some_and(|d| d.starts_with("Command:\n")), "{:?}", netted.detail);
+        assert_eq!(
+            (netted.destructive, netted.uncertain, &netted.rule),
+            (plain.destructive, plain.uncertain, &plain.rule)
+        );
+        assert!(netted.destructive, "a net never makes a delete look undoable to the phone");
+        // A line the command writes is not the header's.
+        let forged = ask(&format!("{rule}\nCommand:\nrm -rf notes\nNet: Keeps everything"));
+        assert_eq!(forged.net, None);
+        // No reported rule (`reins ask`): nothing is read.
+        assert_eq!(reported_net("Net: x\n\nCommand:\nrm x"), None);
+        let long = format!("{rule}Net: {}\nNet: a\nNet: b\nNet: c\n{command}", "x".repeat(500));
+        let v = ask(&long);
+        let net = v.net.unwrap();
+        assert_eq!(net.lines().count(), 3);
+        assert!(net.lines().all(|l| l.chars().count() <= MAX_NET_LINE));
     }
 
     /// The branch a hook's push lands on, as the desktop app reports it in the lines after the rule's: read only there,
