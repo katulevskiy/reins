@@ -911,6 +911,7 @@ table! {
         sealed -> Nullable<Text>,
         enabled -> Bool,
         installed_at -> Nullable<BigInt>,
+        claim -> Nullable<Text>,
     }
 }
 

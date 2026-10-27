@@ -115,6 +115,8 @@ pub struct ReinsOrgChannel {
     pub sealed: Option<String>,
     pub enabled: bool,
     pub installed_at: Option<i64>,
+    /// The app this install proved it holds (`teams:<bot id>`, lowercase); unique across orgs.
+    pub claim: Option<String>,
 }
 
 /// A channel as listings show it: never its secrets.
@@ -357,19 +359,22 @@ pub fn q_set_channel_enabled(c: &mut DbConnInner, org: &str, kind: &str, enabled
                 sealed: None,
                 enabled,
                 installed_at: None,
+                claim: None,
             })
             .execute(c)?;
     }
     Ok(())
 }
 
-/// Stores a channel's sealed configuration (an install).
+/// Stores a channel's sealed configuration (an install) and the app it proved it holds. A claim another org holds
+/// fails on the unique index (no check-then-insert race).
 pub fn q_set_channel_secret(
     c: &mut DbConnInner,
     org: &str,
     kind: &str,
     key_id: &str,
     sealed: &str,
+    claim: Option<&str>,
     now: i64,
 ) -> QueryResult<bool> {
     let n = diesel::update(
@@ -381,6 +386,7 @@ pub fn q_set_channel_secret(
         reins_org_channels::key_id.eq(Some(key_id)),
         reins_org_channels::sealed.eq(Some(sealed)),
         reins_org_channels::installed_at.eq(Some(now)),
+        reins_org_channels::claim.eq(claim),
     ))
     .execute(c)?;
     Ok(n == 1)
@@ -717,7 +723,7 @@ mod tests {
         assert_eq!((list[0].schedule_id.as_str(), list[0].has_key), ("P2", true));
         assert!(!format!("{list:?}").contains("SEALED"));
         q_set_channel_enabled(&mut c, "o1", "slack", false).unwrap();
-        assert!(q_set_channel_secret(&mut c, "o1", "slack", "k1", "SEALED-TOKEN", 5).unwrap());
+        assert!(q_set_channel_secret(&mut c, "o1", "slack", "k1", "SEALED-TOKEN", None, 5).unwrap());
         let channels = q_channels(&mut c, "o1").unwrap();
         assert!(!format!("{channels:?}").contains("SEALED") && channels[0].installed && !channels[0].enabled);
         assert!(q_channels_of_kind(&mut c, "slack").unwrap().is_empty(), "disabled");

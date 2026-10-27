@@ -35,28 +35,50 @@ fn aad(org: &str, kind: ChannelKind) -> String {
 
 /// Seals and stores a channel's configuration (JSON) as posted by a Connection admin. It stays off until a two-person
 /// change turns it on.
-#[cfg_attr(not(test), allow(dead_code, reason = "the console's channels page installs them"))]
-pub fn install(c: &mut DbConnInner, org: &str, kind: ChannelKind, config: &Value, now: i64) -> Result<(), OrgError> {
-    let ok = match kind {
-        ChannelKind::Slack => slack::SlackConfig::from_value(config).is_some(),
-        ChannelKind::Teams => teams::TeamsConfig::from_value(config).is_some(),
+///
+/// A Teams bot is one org's (its tokens and its inbound activities find their org by its app id), and only an install
+/// that proved it holds the bot's secret claims it ([`teams::Proof`], or this org's own earlier claim); the claim is
+/// unique across orgs in the database.
+pub fn install(
+    c: &mut DbConnInner,
+    org: &str,
+    kind: ChannelKind,
+    config: &Value,
+    proof: Option<&teams::Proof>,
+    now: i64,
+) -> Result<(), OrgError> {
+    let claim = match kind {
+        ChannelKind::Slack => {
+            if slack::SlackConfig::from_value(config).is_none() {
+                return Err(OrgError::Invalid("Fill in every field."));
+            }
+            None
+        }
+        ChannelKind::Teams => {
+            let Some(cfg) = teams::TeamsConfig::from_value(config) else {
+                return Err(OrgError::Invalid("Fill in every field."));
+            };
+            let claim = format!("teams:{}", cfg.app_id);
+            let held =
+                store::q_channel_for_use(c, org, kind.as_str())?.and_then(|r| r.claim).as_deref() == Some(&claim);
+            if !held && !proof.is_some_and(|p| p.proves(&cfg)) {
+                return Err(OrgError::Invalid("Microsoft didn't accept that bot's id and secret."));
+            }
+            Some(claim)
+        }
     };
-    if !ok {
-        return Err(OrgError::Invalid("Fill in every field."));
-    }
-    // A Teams bot is one org's: its tokens and its inbound activities find their org by its app id.
-    if kind == ChannelKind::Teams
-        && let Some(app) = config.get("app_id").and_then(Value::as_str)
-        && teams::bots(c)?.iter().any(|(o, b)| o != org && b.app_id == app.trim())
-    {
-        return Err(OrgError::Taken("That bot belongs to another organization."));
-    }
     let text = Zeroizing::new(config.to_string());
     let (key_id, sealed) = kms::seal_data(c, org, &aad(org, kind), text.as_bytes(), now)?;
     if store::q_channel_for_use(c, org, kind.as_str())?.is_none() {
         store::q_set_channel_enabled(c, org, kind.as_str(), false)?;
     }
-    store::q_set_channel_secret(c, org, kind.as_str(), &key_id, &sealed, now)?;
+    match store::q_set_channel_secret(c, org, kind.as_str(), &key_id, &sealed, claim.as_deref(), now) {
+        Ok(_) => {}
+        Err(diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _)) => {
+            return Err(OrgError::Taken("That bot belongs to another organization."));
+        }
+        Err(e) => return Err(e.into()),
+    }
     super::audit::record(
         c,
         org,
@@ -457,8 +479,9 @@ mod tests {
         };
         // Not installed: refused.
         assert!(crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 300).is_err());
-        install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "xoxb-1", "signing_secret": "s"}), 300).unwrap();
-        assert!(install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "not-a-bot"}), 300).is_err());
+        install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "xoxb-1", "signing_secret": "s"}), None, 300)
+            .unwrap();
+        assert!(install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "not-a-bot"}), None, 300).is_err());
         assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_none(), "installed, still off");
         let (crate::api::reins::org::admin::Proposed::Pending(id), _) =
             crate::api::reins::org::admin::propose(&mut c, "o1", "dana", &on, None, 301).unwrap()
@@ -479,14 +502,28 @@ mod tests {
         let mut c = db();
         routed_org(&mut c);
         crate::api::reins::org::testing::add_org(&mut c, "o2");
-        let bot = json!({"app_id": "bot-1", "app_secret": "s", "tenant_id": "t", "teams_app_id": "a"});
-        install(&mut c, "o1", ChannelKind::Teams, &bot, 300).unwrap();
-        // Off in o1, still o1's: another org can't register it.
+        let bot = json!({"app_id": "BOT-1", "app_secret": "s", "tenant_id": "t", "teams_app_id": "a"});
+        // Without proof of the secret, nobody claims it.
+        assert!(install(&mut c, "o1", ChannelKind::Teams, &bot, None, 300).is_err());
+        let cfg = teams::TeamsConfig::from_value(&bot).unwrap();
+        assert_eq!(cfg.app_id, "bot-1", "normalized");
+        let proof = teams::Proof::for_tests(&cfg);
+        install(&mut c, "o1", ChannelKind::Teams, &bot, Some(&proof), 300).unwrap();
+        // Another org, even with a proof of its own and another spelling: the unique claim refuses it.
+        let squat = json!({"app_id": "bot-1", "app_secret": "s2", "tenant_id": "t", "teams_app_id": "a"});
+        let theirs = teams::Proof::for_tests(&teams::TeamsConfig::from_value(&squat).unwrap());
         assert_eq!(
-            install(&mut c, "o2", ChannelKind::Teams, &bot, 301),
+            install(&mut c, "o2", ChannelKind::Teams, &squat, Some(&theirs), 301),
             Err(OrgError::Taken("That bot belongs to another organization."))
         );
-        // o1 may re-install its own (a new secret, a service URL).
-        install(&mut c, "o1", ChannelKind::Teams, &bot, 302).unwrap();
+        // o1 re-installs its own (a service URL learned later) on its earlier claim.
+        install(&mut c, "o1", ChannelKind::Teams, &bot, None, 302).unwrap();
+        // A proof for another bot proves nothing here.
+        let other = teams::Proof::for_tests(
+            &teams::TeamsConfig::from_value(&json!({"app_id": "bot-9", "app_secret": "s",
+            "tenant_id": "t", "teams_app_id": "a"}))
+            .unwrap(),
+        );
+        assert!(install(&mut c, "o2", ChannelKind::Teams, &squat, Some(&other), 303).is_err());
     }
 }

@@ -79,11 +79,23 @@ pub fn service_url_ok(url: &str) -> bool {
     })
 }
 
-/// Text for an Adaptive Card `TextBlock`, its markdown made literal (no links, no emphasis, no lists).
+/// Text for an Adaptive Card `TextBlock`, made literal: one line (no breaks), its markdown escaped (no emphasis, no
+/// links, no lists), and nothing Teams would auto-link (`://`, `www.`).
 #[must_use]
 pub fn plain(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for (i, ch) in text.chars().enumerate() {
+    let one_line: String = text
+        .chars()
+        .map(|c| {
+            if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let unlinked = one_line.replace("://", ": //").replace("www.", "www .").replace("WWW.", "WWW .");
+    let mut out = String::with_capacity(unlinked.len() + 8);
+    for (i, ch) in unlinked.chars().enumerate() {
         if matches!(ch, '\\' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '`' | '~' | '>' | '<' | '|' | '!')
             || (i == 0 && matches!(ch, '-' | '+'))
         {
@@ -93,8 +105,8 @@ pub fn plain(text: &str) -> String {
     }
     // A number then a dot at the start would be a list.
     if let Some(dot) = out.find('.')
-        && out[..dot].chars().all(|c| c.is_ascii_digit())
         && dot > 0
+        && out[..dot].chars().all(|c| c.is_ascii_digit())
     {
         out.insert(dot, '\\');
     }
@@ -110,13 +122,55 @@ impl TeamsConfig {
             return None;
         }
         Some(Self {
-            app_id: s("app_id").filter(|x| id_ok(x))?.to_owned(),
+            // Bot ids compare lowercase everywhere (stored, claimed, and against a token's audience).
+            app_id: s("app_id").filter(|x| id_ok(x))?.to_ascii_lowercase(),
             app_secret: Zeroizing::new(s("app_secret").filter(|x| x.len() <= 512)?.to_owned()),
             tenant_id: s("tenant_id").filter(|x| id_ok(x))?.to_owned(),
             teams_app_id: s("teams_app_id").filter(|x| id_ok(x))?.to_owned(),
             service_url,
         })
     }
+}
+
+/// Proof that an install holds a bot's secret: Microsoft issued a client-credentials token for its app id, tenant
+/// and secret. Only [`verify`] (or tests) makes one.
+pub struct Proof {
+    app_id: String,
+    tenant_id: String,
+    secret_hash: String,
+}
+
+fn secret_hash(cfg: &TeamsConfig) -> String {
+    reins_proto::canon::hex32(&reins_proto::canon::sha256(cfg.app_secret.as_bytes()))
+}
+
+impl Proof {
+    /// Whether this proves `cfg` (the same bot, tenant and secret).
+    #[must_use]
+    pub fn proves(&self, cfg: &TeamsConfig) -> bool {
+        self.app_id == cfg.app_id && self.tenant_id == cfg.tenant_id && self.secret_hash == secret_hash(cfg)
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn for_tests(cfg: &TeamsConfig) -> Self {
+        Self {
+            app_id: cfg.app_id.clone(),
+            tenant_id: cfg.tenant_id.clone(),
+            secret_hash: secret_hash(cfg),
+        }
+    }
+}
+
+/// Asks Microsoft for a token with the posted id, tenant and secret: a proof the installer holds the bot.
+pub async fn verify(cfg: TeamsConfig) -> Result<Proof, String> {
+    let teams = Teams::new(cfg.clone());
+    teams.token(BOT_SCOPE).await?;
+    Ok(Proof {
+        app_id: cfg.app_id.clone(),
+        tenant_id: cfg.tenant_id.clone(),
+        secret_hash: secret_hash(&cfg),
+    })
 }
 
 /// The API bases (tests: loopback mocks).
@@ -306,14 +360,19 @@ pub fn validate_token(token: &str, jwks: &Value, app_ids: &[String], activity: &
     let dk = DecodingKey::from_rsa_components(n, e).map_err(|e| e.to_string())?;
     let mut v = Validation::new(Algorithm::RS256);
     v.set_issuer(&[ISSUER]);
-    v.set_audience(app_ids);
+    // The audience is checked below, case-insensitively, against the (lowercase) bot ids.
+    v.validate_aud = false;
     v.leeway = 300;
     let data = decode::<Value>(token, &dk, &v).map_err(|e| e.to_string())?;
+    let aud = data.claims["aud"].as_str().map(str::to_ascii_lowercase).ok_or("no audience")?;
+    if !app_ids.iter().any(|a| a.eq_ignore_ascii_case(&aud)) {
+        return Err("another bot".to_owned());
+    }
     let claimed = data.claims["serviceUrl"].as_str().map(|u| u.trim_end_matches('/'));
     if claimed != activity["serviceUrl"].as_str().map(|u| u.trim_end_matches('/')) {
         return Err("serviceUrl doesn't match the token".to_owned());
     }
-    data.claims["aud"].as_str().map(str::to_owned).ok_or_else(|| "no audience".to_owned())
+    Ok(aud)
 }
 
 /// The Bot Framework's signing keys (cached a day).
@@ -412,7 +471,7 @@ async fn messages(bearer: Bearer, data: Data<'_>, conn: DbConn) -> Status {
         let v = json!({"app_id": cfg.app_id, "app_secret": cfg.app_secret.as_str(), "tenant_id": cfg.tenant_id,
                        "teams_app_id": cfg.teams_app_id, "service_url": url});
         let now = now_unix();
-        drop(conn.run(move |c| super::install(c, &org, reins_proto::org::ChannelKind::Teams, &v, now)).await);
+        drop(conn.run(move |c| super::install(c, &org, reins_proto::org::ChannelKind::Teams, &v, None, now)).await);
     }
     Status::Ok
 }
@@ -634,5 +693,48 @@ mod tests {
         assert_eq!(teams.token(BOT_SCOPE).await.unwrap().as_str(), "tok");
         assert_eq!(other.token(BOT_SCOPE).await.unwrap().as_str(), "tok-2");
         assert_eq!(teams.token(BOT_SCOPE).await.unwrap().as_str(), "tok", "cached for its own install");
+    }
+
+    #[test]
+    fn card_text_is_one_line_without_links() {
+        let p = plain("ok\n- item\r\n2. two\nsee https://evil.example or www.evil.example");
+        assert!(!p.contains('\n') && !p.contains('\r'), "{p}");
+        assert!(!p.contains("://") && !p.contains("www."), "{p}");
+        // Line starts are gone with the breaks, so nothing after them becomes a list.
+        assert!(p.contains("ok - item  2. two"), "{p}");
+        assert_eq!(plain("+ x"), "\\+ x");
+    }
+
+    #[tokio::test]
+    async fn an_install_proves_it_holds_the_bot() {
+        rustls::crypto::ring::default_provider().install_default().ok();
+        let ms = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/t-7/oauth2/v2.0/token"))
+            .and(body_string_contains("client_secret=right"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "tok", "expires_in": 3600})))
+            .mount(&ms)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/t-7/oauth2/v2.0/token"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&ms)
+            .await;
+        let cfg = |secret: &str| {
+            TeamsConfig::from_value(
+                &json!({"app_id": "bot-7", "app_secret": secret, "tenant_id": "t-7", "teams_app_id": "a"}),
+            )
+            .unwrap()
+        };
+        let bases = || Bases {
+            login: ms.uri(),
+            graph: ms.uri(),
+            connector: ms.uri(),
+        };
+        assert!(Teams::with_bases(cfg("wrong"), bases()).token(BOT_SCOPE).await.is_err());
+        assert!(Teams::with_bases(cfg("right"), bases()).token(BOT_SCOPE).await.is_ok());
+        // A proof is for its own bot, tenant and secret only.
+        let p = Proof::for_tests(&cfg("right"));
+        assert!(p.proves(&cfg("right")) && !p.proves(&cfg("wrong")));
     }
 }

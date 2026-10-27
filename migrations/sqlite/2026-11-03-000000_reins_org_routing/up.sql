@@ -42,6 +42,7 @@ CREATE TABLE reins_org_channels (
     sealed       TEXT,
     enabled      BOOLEAN NOT NULL,
     installed_at BIGINT,
+    claim        TEXT,
     PRIMARY KEY (org_uuid, kind)
 );
 
@@ -89,5 +90,8 @@ CREATE TABLE reins_org_posted (
     posted_at    BIGINT NOT NULL,
     PRIMARY KEY (request_uuid, user_uuid, channel)
 );
+
+-- A channel app is one org's (a Teams bot id, lowercase): proven at install, unique across orgs.
+CREATE UNIQUE INDEX idx_reins_org_channels_claim ON reins_org_channels (claim);
 
 ALTER TABLE reins_org_requests ADD COLUMN resolved TEXT;
