@@ -1323,24 +1323,31 @@ impl ReinsCore {
     }
 
     /// As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
-    pub async fn guardian_accept_minor(&self, link_id: String, signal: AgeSignalInput) -> Result<(), CoreError> {
+    /// The owner confirms first (`owner`, biometric), in the core.
+    pub async fn guardian_accept_minor(
+        &self,
+        link_id: String,
+        signal: AgeSignalInput,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let result = engine.run_account(engine.guardian_accept_minor(&link_id, signal)).await;
+            let result = engine.run_account(engine.guardian_accept_minor(&link_id, signal, owner.as_ref())).await;
             runtime.finish(&engine, result)
         })
         .await
     }
 
     /// As a guardian: consents to a minor's request to leave (it ends now).
-    pub async fn guardian_consent_end(&self, link_id: String) -> Result<(), CoreError> {
+    /// The owner confirms first (`owner`, biometric), in the core.
+    pub async fn guardian_consent_end(&self, link_id: String, owner: Arc<dyn OwnerCheck>) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let result = engine.run_account(engine.guardian_consent_end(&link_id)).await;
+            let result = engine.run_account(engine.guardian_consent_end(&link_id, owner.as_ref())).await;
             runtime.finish(&engine, result)
         })
         .await

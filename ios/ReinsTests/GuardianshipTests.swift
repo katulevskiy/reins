@@ -7,6 +7,13 @@ import XCTest
 /// weekly summary is the ward's switch alone, and a missing age signal never blocks anything.
 @MainActor
 final class GuardianshipTests: XCTestCase {
+    /// The owner check the core asks (Face ID in the app): `true` confirms, `false` is a cancel.
+    private final class Owner: OwnerCheck, @unchecked Sendable {
+        let answer: Bool
+        init(_ answer: Bool) { self.answer = answer }
+        func confirm(reason: String) async throws -> Bool { answer }
+    }
+
     private let now: Int64 = 1_700_000_000
 
     private func person(
@@ -113,7 +120,14 @@ final class GuardianshipTests: XCTestCase {
 
         // The demo: accept the mark, ask to leave, and it waits; the guardian's Allow ends it.
         let core = DemoReinsCore(signedIn: true, syncCap: 0.1, quiet: true, circles: true)
-        try await core.guardianAcceptMinor(linkId: "l6", signal: AgeSignal.unavailable.input)
+        // The core asks the owner first: a cancel marks nothing.
+        do {
+            try await core.guardianAcceptMinor(linkId: "l6", signal: AgeSignal.unavailable.input, owner: Owner(false))
+            XCTFail("a cancelled owner check marks nothing")
+        } catch {}
+        let unmarked = try await core.guardianWardView(linkId: "l6")
+        XCTAssertFalse(unmarked.minor)
+        try await core.guardianAcceptMinor(linkId: "l6", signal: AgeSignal.unavailable.input, owner: Owner(true))
         try await core.circleEnd(linkId: "l6")
         let view = try await core.guardianWardView(linkId: "l6")
         XCTAssertEqual(GuardianLogic.leave(view), .waitingForConsent)

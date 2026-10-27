@@ -3405,13 +3405,15 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
+     * The owner confirms first (`owner`, biometric), in the core.
      */
-    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput) async throws 
+    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) async throws 
     
     /**
      * As a guardian: consents to a minor's request to leave (it ends now).
+     * The owner confirms first (`owner`, biometric), in the core.
      */
-    func guardianConsentEnd(linkId: String) async throws 
+    func guardianConsentEnd(linkId: String, owner: OwnerCheck) async throws 
     
     /**
      * As a guardian: what this account was told about its wards, newest first (checked, or "Reported by the
@@ -5702,13 +5704,14 @@ open func grants()async throws  -> [GrantView]  {
     
     /**
      * As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
+     * The owner confirms first (`owner`, biometric), in the core.
      */
-open func guardianAcceptMinor(linkId: String, signal: AgeSignalInput)async throws   {
+open func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_guardian_accept_minor(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterTypeAgeSignalInput_lower(signal)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterTypeAgeSignalInput_lower(signal),FfiConverterTypeOwnerCheck_lower(owner)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -5721,13 +5724,14 @@ open func guardianAcceptMinor(linkId: String, signal: AgeSignalInput)async throw
     
     /**
      * As a guardian: consents to a minor's request to leave (it ends now).
+     * The owner confirms first (`owner`, biometric), in the core.
      */
-open func guardianConsentEnd(linkId: String)async throws   {
+open func guardianConsentEnd(linkId: String, owner: OwnerCheck)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_guardian_consent_end(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterTypeOwnerCheck_lower(owner)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -32274,10 +32278,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_grants() != 31182) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_guardian_accept_minor() != 30140) {
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_accept_minor() != 27822) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_guardian_consent_end() != 13826) {
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_consent_end() != 60090) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_guardian_notices() != 3972) {

@@ -6,7 +6,7 @@
 //! `reins_proto::circle` and `reins_core::circles::guardian`; here a 3-day notice is shown still binding, and a 0-day
 //! one ending at once.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use reins_core::{
     AgeSignalInput, ApprovalChoice, CircleDraft, CircleInviteProgress, CircleJoinStage, CircleLinkState,
@@ -14,6 +14,19 @@ use reins_core::{
 };
 use reins_e2e::{AiClient, PASSWORD, Phone, Server};
 use serde_json::{Value, json};
+
+/// The owner check the apps run (biometric): `true` confirms, `false` is a cancel.
+struct Owner(bool);
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for Owner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        Ok(self.0)
+    }
+}
+
+fn owner(yes: bool) -> Arc<dyn reins_core::OwnerCheck> {
+    Arc::new(Owner(yes))
+}
 
 const WARD: &str = "sam@example.com";
 const GUARDIAN: &str = "mom@example.com";
@@ -231,8 +244,11 @@ async fn a_minors_end_waits_for_consent() {
     })
     .await;
     assert!(!view.minor, "a guardian alone marks nothing");
-    assert!(w.sam.core.guardian_accept_minor(link.clone(), AgeSignalInput::Adult).await.is_err());
-    w.sam.core.guardian_accept_minor(link.clone(), AgeSignalInput::Unavailable).await.unwrap();
+    assert!(w.sam.core.guardian_accept_minor(link.clone(), AgeSignalInput::Adult, owner(true)).await.is_err());
+    // Without the owner's confirmation nothing is marked.
+    assert!(w.sam.core.guardian_accept_minor(link.clone(), AgeSignalInput::Unavailable, owner(false)).await.is_err());
+    assert!(!w.sam.core.guardian_ward_view(link.clone()).await.unwrap().minor);
+    w.sam.core.guardian_accept_minor(link.clone(), AgeSignalInput::Unavailable, owner(true)).await.unwrap();
     assert!(w.sam.core.guardian_ward_view(link.clone()).await.unwrap().minor);
     // A minor's end waits; the guardian is asked.
     w.sam.core.circle_end(link.clone()).await.unwrap();
@@ -252,7 +268,10 @@ async fn a_minors_end_waits_for_consent() {
         assert!(item.circle.is_some(), "a minor's request changes nothing until consent");
         w.sam.core.deny(item.id.clone()).await.unwrap();
     });
-    w.mom.core.guardian_consent_end(link.clone()).await.unwrap();
+    // The guardian's consent needs the owner check, in the core: a cancel consents to nothing.
+    assert!(w.mom.core.guardian_consent_end(link.clone(), owner(false)).await.is_err());
+    assert!(w.sam.core.guardian_ward_view(link.clone()).await.unwrap().needs_consent);
+    w.mom.core.guardian_consent_end(link.clone(), owner(true)).await.unwrap();
     poll(async || {
         w.sam.core.sync(1).await.unwrap();
         w.sam

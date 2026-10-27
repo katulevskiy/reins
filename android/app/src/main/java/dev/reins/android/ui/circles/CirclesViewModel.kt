@@ -509,9 +509,11 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
      * The ward accepts the guardian's minor mark, with the phone's age signal. No signal never blocks it: the ward's own
      * acceptance counts. An adult's signal is refused by the core.
      */
-    fun acceptMinor() = wardAct { open ->
+    fun acceptMinor(authenticator: Authenticator) = wardAct { open ->
         val signal = container.ageSignals().check()
-        container.core.guardianAcceptMinor(open.person.linkId, signal.toInput())
+        // The core asks the owner (biometrics or the screen lock) before it signs: a cancel marks nothing.
+        val owner = OwnerPrompt(authenticator, "Mark as a minor's")
+        container.core.guardianAcceptMinor(open.person.linkId, signal.toInput(), owner)
         container.feedback.play(Event.Approved)
     }
 
@@ -573,9 +575,13 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** The guardian allows a minor's request to leave: it ends now. */
-    fun consentEnd(notice: GuardianNoticeView) = guardAct(notice.id) {
-        container.core.guardianConsentEnd(notice.linkId)
+    /**
+     * The guardian allows a minor's request to leave: it ends now. The core asks the owner (biometrics or the screen
+     * lock) before it signs; a cancel or a phone without a screen lock consents to nothing.
+     */
+    fun consentEnd(notice: GuardianNoticeView, authenticator: Authenticator) = guardAct(notice.id) {
+        val owner = OwnerPrompt(authenticator, "Let ${shortName(untrusted(notice.ward))} leave")
+        container.core.guardianConsentEnd(notice.linkId, owner)
         container.feedback.play(Event.Approved)
     }
 

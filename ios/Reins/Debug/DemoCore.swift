@@ -2529,13 +2529,17 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         try circles.proposeMinor(linkId)
     }
 
-    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput) async throws {
+    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) async throws {
         try await latency()
+        // As the core: the owner confirms first, or nothing is marked.
+        guard try await owner.confirm(reason: "Mark this account a minor's") else { throw CoreError.Invalid(reason: "Not confirmed.") }
         try circles.acceptMinor(linkId, signal: signal)
     }
 
-    func guardianConsentEnd(linkId: String) async throws {
+    func guardianConsentEnd(linkId: String, owner: OwnerCheck) async throws {
         try await latency()
+        // As the core: the owner confirms first, or nothing is consented.
+        guard try await owner.confirm(reason: "Let them leave") else { throw CoreError.Invalid(reason: "Not confirmed.") }
         try circles.consentEnd(linkId)
     }
 

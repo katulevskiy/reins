@@ -241,9 +241,10 @@ class MainSafeCore(
 
     override suspend fun guardianProposeMinor(linkId: String) = io { guardianProposeMinor(linkId) }
 
-    override suspend fun guardianAcceptMinor(linkId: String, signal: dev.reins.core.AgeSignalInput) = io { guardianAcceptMinor(linkId, signal) }
+    override suspend fun guardianAcceptMinor(linkId: String, signal: dev.reins.core.AgeSignalInput, owner: OwnerCheck) =
+        io { guardianAcceptMinor(linkId, signal, owner) }
 
-    override suspend fun guardianConsentEnd(linkId: String) = io { guardianConsentEnd(linkId) }
+    override suspend fun guardianConsentEnd(linkId: String, owner: OwnerCheck) = io { guardianConsentEnd(linkId, owner) }
 
     override suspend fun guardianSetDigest(linkId: String, on: Boolean) = io { guardianSetDigest(linkId, on) }
 

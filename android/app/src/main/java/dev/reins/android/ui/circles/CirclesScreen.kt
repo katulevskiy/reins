@@ -92,7 +92,7 @@ fun CirclesScreen(
         GuardianWardScreen(
             openWard,
             onLeave = viewModel::leaveWard,
-            onAcceptMinor = viewModel::acceptMinor,
+            onAcceptMinor = { viewModel.acceptMinor(authenticator) },
             onIgnoreMinor = viewModel::ignoreMinor,
             onDigest = viewModel::setDigest,
             onBack = viewModel::closeWard,
@@ -102,7 +102,7 @@ fun CirclesScreen(
     if (openGuarding != null) {
         GuardianNoticesScreen(
             openGuarding,
-            onAllow = viewModel::consentEnd,
+            onAllow = { viewModel.consentEnd(it, authenticator) },
             onProposeMinor = viewModel::proposeMinor,
             onBack = viewModel::closeGuarding,
         )

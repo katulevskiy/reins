@@ -25,19 +25,11 @@ final class GuardianNoticesModel {
         }
     }
 
-    /// Lets a minor's request to leave go through: it ends now. Checked with Face ID, Touch ID or the passcode (it is
-    /// signed by this phone).
+    /// Lets a minor's request to leave go through: it ends now. The core asks for Face ID, Touch ID or the passcode
+    /// itself before it signs (`app.ownerCheck`), so no screen can skip it; a cancel consents to nothing.
     func allow(_ ward: CirclePerson, _ app: AppModel) async {
         guard !busy, GuardianLogic.isGuardian(ward), ward.needsConsent else { return }
-        switch await OwnerPrompt.confirm(app, reason: "Let \(CircleLogic.name(ward.peer)) leave") {
-        case .confirmed: break
-        case .cancelled: return
-        case .unavailable:
-            app.feedback.play(.error)
-            error = OwnerPrompt.unavailableMessage
-            return
-        }
-        await run(app, cue: .approved) { try await app.core.guardianConsentEnd(linkId: ward.linkId) }
+        await run(app, cue: .approved) { try await app.core.guardianConsentEnd(linkId: ward.linkId, owner: app.ownerCheck) }
     }
 
     /// Asks the ward to accept marking their account a minor's (nothing changes until they do).

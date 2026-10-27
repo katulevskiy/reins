@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Foreground
 import dev.reins.core.CircleEvent
 import dev.reins.core.CircleInviteView
@@ -159,6 +160,15 @@ class GuardianFlowTest : FlowHarness() {
         tap("circleOpen:g2")
         awaitTag("guardianConsent:gn1")
         assertTrue(showsText("Sam asked to leave. Allow?"))
+        // Allow needs the owner check: a cancel consents to nothing.
+        authResult = AuthResult.Cancelled
+        val asked = prompts.get()
+        tap("guardianAllow:gn1")
+        awaitCore { prompts.get() > asked }
+        rule.waitForIdle()
+        assertTrue(core.guardianConsents.isEmpty())
+        assertEquals("Let Sam leave", promptTexts.last().first)
+        authResult = AuthResult.Success
         tap("guardianAllow:gn1")
         awaitCore { core.guardianConsents.isNotEmpty() }
         assertEquals(listOf("g2"), core.guardianConsents.toList())

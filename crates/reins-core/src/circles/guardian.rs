@@ -24,7 +24,7 @@ use super::{
     AgeSignalInput, AgeSignalPlatform, CircleEvent, GuardianDecisionView, GuardianNoticeView, Held, Me, Standing,
     WardView, not_available, verify,
 };
-use crate::{engine::Engine, error::CoreError, phone_api::ApiFailure, session::Session, store::unix_now};
+use crate::{OwnerCheck, engine::Engine, error::CoreError, phone_api::ApiFailure, session::Session, store::unix_now};
 
 /// How many decisions and notices a phone keeps per account.
 const KEEP_ROWS: usize = 200;
@@ -148,6 +148,15 @@ pub(crate) fn digest_boundary(now: i64) -> i64 {
 
 fn weekday(at: i64) -> &'static str {
     ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][usize::try_from(at.div_euclid(86_400).rem_euclid(7)).unwrap_or(0)]
+}
+
+/// Asks the owner (biometric) and refuses unless confirmed: a cancel, a failure or no check at all is a refusal.
+async fn owner_confirms(owner: &dyn OwnerCheck, reason: String) -> Result<(), CoreError> {
+    match owner.confirm(reason).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CoreError::invalid("Not confirmed.")),
+        Err(_) => Err(CoreError::invalid("The owner check isn't available.")),
+    }
 }
 
 /// One verified step applied to `held` (its status, its last change, its standing).
@@ -275,6 +284,12 @@ impl Engine {
         Ok(())
     }
 
+    /// The other side's label of guardianship `link` (for the owner check's reason).
+    fn circle_state_label(&self, link: &str) -> Result<String, CoreError> {
+        let slot = self.circle_slot_now().ok_or(CoreError::NotFound)?;
+        Ok(self.circle_state(&slot)?.held(link).ok_or(CoreError::NotFound)?.other().label.clone())
+    }
+
     // ---- the ward ---------------------------------------------------------------------------------------------------
 
     /// The ward ends it: after the notice it chose, or (a minor) once the guardian consents. The guardian's review
@@ -294,8 +309,16 @@ impl Engine {
     }
 
     /// The ward accepts the minor mark the guardian proposed, with the phone's age signal. An adult's signal refuses.
-    pub(crate) async fn guardian_accept_minor(&self, link: &str, signal: AgeSignalInput) -> Result<(), CoreError> {
+    /// It takes away the ward's free exit, so the owner confirms first (biometric), here in the core.
+    pub(crate) async fn guardian_accept_minor(
+        &self,
+        link: &str,
+        signal: AgeSignalInput,
+        owner: &dyn OwnerCheck,
+    ) -> Result<(), CoreError> {
         let mark = mark_of(signal, unix_now())?;
+        let guardian = self.circle_state_label(link)?;
+        owner_confirms(owner, format!("Mark this account a minor's for {}", short_name(&guardian))).await?;
         self.guardian_do(link, Side::Owner, LinkState::Active, move |held, _| {
             let status = held.guardian_status().ok_or(CoreError::NotFound)?;
             if !status.minor_proposed {
@@ -377,8 +400,11 @@ impl Engine {
         .await
     }
 
-    /// The guardian consents to a minor's end request: it ends now.
-    pub(crate) async fn guardian_consent_end(&self, link: &str) -> Result<(), CoreError> {
+    /// The guardian consents to a minor's end request: it ends now, once the owner confirms (biometric), here in the
+    /// core, so no app can skip it.
+    pub(crate) async fn guardian_consent_end(&self, link: &str, owner: &dyn OwnerCheck) -> Result<(), CoreError> {
+        let ward = self.circle_state_label(link)?;
+        owner_confirms(owner, format!("Let {} leave", short_name(&ward))).await?;
         self.guardian_do(link, Side::Helper, LinkState::Ended, |held, _| {
             let status = held.guardian_status().ok_or(CoreError::NotFound)?;
             let ending = status

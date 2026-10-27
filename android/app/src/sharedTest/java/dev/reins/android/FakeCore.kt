@@ -749,15 +749,19 @@ class FakeCore : ReinsCoreInterface {
         guardianMinorProposals += linkId
     }
 
-    override suspend fun guardianAcceptMinor(linkId: String, signal: AgeSignalInput) {
+    override suspend fun guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) {
         val ward = guardianWards[linkId] ?: throw CoreException.NotFound()
+        // As the core: the owner confirms first, or nothing is marked.
+        if (!owner.confirm("Mark this account a minor's")) throw CoreException.Invalid("Not confirmed.")
         if (signal == AgeSignalInput.Adult) throw CoreException.Invalid("This account isn't a minor's.")
         if (!ward.minorProposed) throw CoreException.Invalid("Your guardian hasn't asked for this.")
         guardianMinorAccepts += linkId to signal
         guardianWards[linkId] = ward.copy(minor = true, minorProposed = false)
     }
 
-    override suspend fun guardianConsentEnd(linkId: String) {
+    override suspend fun guardianConsentEnd(linkId: String, owner: OwnerCheck) {
+        // As the core: the owner confirms first, or nothing is consented.
+        if (!owner.confirm("Let them leave")) throw CoreException.Invalid("Not confirmed.")
         val notice = guardianNoticeList.firstOrNull { it.linkId == linkId && it.needsConsent }
             ?: throw CoreException.Invalid("Nothing waits for your consent.")
         guardianConsents += linkId

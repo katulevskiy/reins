@@ -55,7 +55,10 @@ final class GuardianWardModel {
         busy = true
         let signal = await signals.check()
         busy = false
-        await run(app, cue: .approved) { try await app.core.guardianAcceptMinor(linkId: self.linkId, signal: signal.input) }
+        // The core asks the owner (Face ID, Touch ID or the passcode) before it signs: a cancel marks nothing.
+        await run(app, cue: .approved) {
+            try await app.core.guardianAcceptMinor(linkId: self.linkId, signal: signal.input, owner: app.ownerCheck)
+        }
     }
 
     private func run(_ app: AppModel, cue: FeedbackEvent, _ body: @escaping () async throws -> Void) async {
