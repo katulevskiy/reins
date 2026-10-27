@@ -15,14 +15,14 @@
 
 use crate::session::api_call;
 use reins_proto::circle::{
-    self, AgePlatform, AgeSource, CircleKind, GuardianChange, GuardianNotice, GuardianNoticeKind, GuardianStatus,
-    LinkChange, LinkState, LinkView, MinorMark, Notice, Side, UNTIL_CONSENT,
+    self, AgeSource, CircleKind, GuardianChange, GuardianNotice, GuardianNoticeKind, GuardianStatus, LinkChange,
+    LinkState, LinkView, MinorMark, Notice, Side, UNTIL_CONSENT,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AgeSignalInput, AgeSignalPlatform, CircleEvent, GuardianDecisionView, GuardianNoticeView, Held, Me, Standing,
-    WardView, not_available, verify,
+    AgeSignalInput, CircleEvent, GuardianDecisionView, GuardianNoticeView, Held, Me, Standing, WardView, not_available,
+    verify,
 };
 use crate::{OwnerCheck, engine::Engine, error::CoreError, phone_api::ApiFailure, session::Session, store::unix_now};
 
@@ -113,24 +113,38 @@ pub(crate) fn kept_line(c: &LinkChange, status: &GuardianStatus) -> Option<Strin
 
 /// The minor mark a ward's acceptance records, from the phone's age signal. An adult's signal refuses it.
 pub(crate) fn mark_of(signal: AgeSignalInput, now: i64) -> Result<MinorMark, CoreError> {
+    // The mark goes to the server in a clear (signed) change: whether a platform backed it, never its range or name.
     let source = match signal {
         AgeSignalInput::Adult => return Err(CoreError::invalid("This account isn't a minor's.")),
         AgeSignalInput::Minor {
-            upper,
-            platform,
-        } => AgeSource::Platform {
-            kind: match platform {
-                AgeSignalPlatform::Apple => AgePlatform::AppleDeclaredAgeRange,
-                AgeSignalPlatform::GooglePlay => AgePlatform::GooglePlayAgeSignals,
-            },
-            upper: upper.filter(|u| *u < 18),
-        },
+            ..
+        } => AgeSource::Platform,
         AgeSignalInput::Unavailable => AgeSource::GuardianAndWard,
     };
     Ok(MinorMark {
         source,
         at: now,
     })
+}
+
+/// The lines that need the guardian's attention (a notification); the rest are listed quietly.
+pub(crate) fn alerts(line: &str) -> bool {
+    matches!(
+        line,
+        "Asked to leave"
+            | "Leaving after the notice"
+            | "Ended early"
+            | "Reset the account"
+            | "Deleted the account"
+            | "Account recovered"
+    ) || line.starts_with("Paused by ")
+}
+
+/// The window a weekly digest covers: the week before the last Monday 09:00, but never before what the last digest
+/// covered (or the opt-in, `last`). `None` when there is nothing new to send.
+pub(crate) fn digest_window(last: i64, now: i64) -> Option<(i64, i64)> {
+    let until = digest_boundary(now);
+    (last < until).then(|| ((until - 7 * 86_400).max(last), until))
 }
 
 /// The Monday 09:00 (UTC) at or before `now`.
@@ -271,12 +285,19 @@ impl Engine {
         let held = self.guardian_held(&session, &me, link, side).await?;
         let change = guardian(&held, unix_now())?;
         let sent = self.guardian_send(&session, &me, &held, state, Some(change)).await?;
-        let ended = self.with_circles(&me.slot, |s| {
+        self.with_circles(&me.slot, |s| {
             let h = s.held_mut(link).ok_or(CoreError::NotFound)?;
             // Our own change: it arrived when we made it.
-            step(h, &sent, Some(sent.at)).map_err(|e| CoreError::invalid(e.to_string()))?;
-            Ok(!h.in_force(unix_now()) || h.standing == Standing::Ended)
+            step(h, &sent, Some(sent.at)).map_err(|e| CoreError::invalid(e.to_string()))
         })?;
+        // What the server made of it (an end with no notice is ended there at once, on its clock).
+        if let Err(e) = self.circle_links_sync(&session, &me).await {
+            log::info!("the guardianship could not be read back: {e}");
+        }
+        let ended = self
+            .circle_state(&me.slot)?
+            .held(link)
+            .is_some_and(|h| !h.in_force(unix_now()) || h.standing == Standing::Ended);
         if ended {
             Box::pin(self.circle_release(&session, &me, link)).await;
         }
@@ -306,6 +327,56 @@ impl Engine {
             })
         })
         .await
+    }
+
+    /// The ward ends a guardianship that can't be reviewed any more (suspended: the guardian's account was reset,
+    /// recovered or deleted, or the link vanished): at once, here first. The server is told where it still holds the
+    /// link; a refusal there changes nothing here.
+    pub(crate) async fn guardian_end_suspended(&self, link: &str) -> Result<(), CoreError> {
+        let session = self.session()?;
+        let me = self.circle_me(&session).await?;
+        let held = self.circle_state(&me.slot)?.held(link).cloned().ok_or(CoreError::NotFound)?;
+        if held.side != Side::Owner || held.standing != Standing::Suspended {
+            return Err(CoreError::invalid("This guardianship isn't suspended."));
+        }
+        self.with_circles(&me.slot, |s| {
+            if let Some(h) = s.held_mut(link) {
+                h.standing = Standing::Ended;
+            }
+            Ok(())
+        })?;
+        if let Err(e) = self.guardian_send(&session, &me, &held, LinkState::Ended, None).await {
+            log::info!("the server kept no guardianship to end: {e}");
+        }
+        Box::pin(self.circle_release(&session, &me, link)).await;
+        self.notifier.circle_changed(CircleEvent::Changed);
+        Ok(())
+    }
+
+    /// The ward's guardianships that ended (after the notice, by consent, the guardian leaving): what they held is
+    /// released, a guardian's part lapsing.
+    pub(crate) async fn guardian_release_ended(&self, session: &Session, me: &Me) {
+        let Ok(state) = self.circle_state(&me.slot) else {
+            return;
+        };
+        let now = unix_now();
+        let ended: Vec<String> = state
+            .held
+            .iter()
+            .filter(|h| {
+                h.side == Side::Owner
+                    && h.arrangement.terms.kind == CircleKind::Guardian
+                    && (h.standing == Standing::Ended || !h.in_force(now))
+                    && state
+                        .holds
+                        .iter()
+                        .any(|hold| hold.parts.iter().any(|p| p.arrangement == h.id() && p.vote.is_none() && !p.lapsed))
+            })
+            .map(|h| h.id().to_owned())
+            .collect();
+        for link in ended {
+            Box::pin(self.circle_release(session, me, &link)).await;
+        }
     }
 
     /// The ward accepts the minor mark the guardian proposed, with the phone's age signal. An adult's signal refuses.
@@ -429,21 +500,41 @@ impl Engine {
         Ok(out)
     }
 
+    /// Keeps a row (once). Only a row that needs the guardian ([`alerts`]) and is newer than this phone's last look
+    /// notifies; the rest are listed quietly.
     fn guardian_tell(&self, slot: &str, row: &GuardianRow) -> Result<(), CoreError> {
         let view = self.with_circles(slot, |s| {
             if s.guardian_notices.iter().any(|r| r.id == row.id) {
                 return Ok(None);
             }
+            // Never looked before (a new phone, a first sync): only what is about a day old or newer.
+            let since = if s.guardian_seen_at == 0 {
+                unix_now() - 86_400
+            } else {
+                s.guardian_seen_at - circle::ANSWER_SKEW_SECS
+            };
             s.guardian_notices.push(row.clone());
             trim_rows(&mut s.guardian_notices);
-            Ok(Some(row_view(s, row)))
+            Ok(Some((row_view(s, row), alerts(&row.line) && row.at >= since)))
         })?;
-        if let Some(notice) = view {
-            self.notifier.circle_changed(CircleEvent::GuardianNotice {
+        match view {
+            Some((notice, true)) => self.notifier.circle_changed(CircleEvent::GuardianNotice {
                 notice,
-            });
+            }),
+            Some((_, false)) => self.notifier.circle_changed(CircleEvent::Changed),
+            None => {}
         }
         Ok(())
+    }
+
+    /// This phone took the guardian's news up to now.
+    pub(crate) fn guardian_seen(&self, slot: &str) {
+        if let Err(e) = self.with_circles(slot, |s| {
+            s.guardian_seen_at = unix_now();
+            Ok(())
+        }) {
+            log::warn!("Circle state: {e}");
+        }
     }
 
     // ---- sync -------------------------------------------------------------------------------------------------------
@@ -459,24 +550,48 @@ impl Engine {
             return Ok(false);
         }
         let hash = circle::arrangement_hash(&held.signed.body);
-        // The history, or (an older server) the last change, without its arrival time: then nothing is accepted.
-        let log: Vec<(circle::SignedChange, Option<i64>)> = if link.changes.is_empty() {
-            link.change.iter().map(|c| (c.clone(), None)).collect()
+        // The history, or (an older server) the last change, without its arrival time: then no ward step is accepted.
+        let mut log: Vec<(u64, circle::SignedChange, Option<i64>)> = if link.changes.is_empty() {
+            link.change
+                .iter()
+                .map(|c| (c.clone(), None))
+                .filter_map(|(c, at)| Some((c.change().ok()?.seq, c, at)))
+                .collect()
         } else {
-            link.changes.iter().map(|l| (l.change.clone(), Some(l.at))).collect()
+            link.changes
+                .iter()
+                .filter_map(|l| Some((l.change.change().ok()?.seq, l.change.clone(), Some(l.at))))
+                .collect()
         };
+        log.sort_by_key(|(seq, ..)| *seq);
         let mut changed = false;
         let mut rows = Vec::new();
         let ward = held.arrangement.owner.label.clone();
         let mut current = held.clone();
-        for (signed, logged_at) in log {
-            let Ok(c) = signed.change() else {
-                continue;
-            };
-            if c.seq <= current.last_seq || current.standing == Standing::Ended {
+        for (seq, signed, logged_at) in log {
+            if seq <= current.last_seq || current.standing == Standing::Ended {
                 continue;
             }
-            let key = match c.by {
+            // Steps count in order only: a server withholding one can't change what a later one means. The rest wait.
+            if seq != current.last_seq + 1 {
+                log::warn!("a guardianship's history skips change {}: later steps wait", current.last_seq + 1);
+                if held.side == Side::Helper {
+                    rows.push(GuardianRow {
+                        id: format!("{}:gap:{}", link.id, current.last_seq + 1),
+                        link: link.id.clone(),
+                        ward: ward.clone(),
+                        line: "Waiting for earlier changes".to_owned(),
+                        at: logged_at.unwrap_or_else(unix_now),
+                        verified: false,
+                        seq: None,
+                    });
+                }
+                break;
+            }
+            let Ok(parsed) = signed.change() else {
+                break;
+            };
+            let key = match parsed.by {
                 Side::Owner => &held.arrangement.owner.owner_pub,
                 Side::Helper => &held.arrangement.helper.owner_pub,
             };
@@ -492,8 +607,13 @@ impl Engine {
                 rows.push(row);
             }
         }
-        // A notice that ran out ends it here too.
-        if current.standing == Standing::Active && !current.in_force(unix_now()) {
+        // A notice that ran out ends it: on the ward's phone only when the server ended the link (on its clock, never
+        // the ward's); on the guardian's, by its own clock too.
+        let asked = current.guardian_status().is_some_and(|g| g.ending.is_some());
+        if current.standing == Standing::Active
+            && ((asked && link.state == LinkState::Ended)
+                || (current.side == Side::Helper && !current.in_force(unix_now())))
+        {
             current.standing = Standing::Ended;
             changed = true;
         }
@@ -507,12 +627,13 @@ impl Engine {
                 }
                 Ok(())
             })?;
-            for row in rows {
-                self.guardian_tell(&me.slot, &row)?;
-            }
             if ended && held.side == Side::Owner {
                 log::info!("a guardianship ended after its notice");
             }
+        }
+        // Rows go even when nothing changed (a gap in the history changes nothing, and is shown).
+        for row in rows {
+            self.guardian_tell(&me.slot, &row)?;
         }
         Ok(changed)
     }
@@ -526,19 +647,22 @@ impl Engine {
             .iter()
             .filter(|h| {
                 h.arrangement.terms.kind == CircleKind::Guardian
-                    && h.side == Side::Helper
                     && matches!(h.standing, Standing::Active | Standing::Paused)
                     && !links.iter().any(|l| l.id == h.id())
             })
             .cloned()
             .collect();
         for h in &gone {
+            // Suspended on both sides: the ward's requests in scope wait for it to end it (it can, at once).
             self.with_circles(&me.slot, |s| {
                 if let Some(h) = s.held_mut(h.id()) {
                     h.standing = Standing::Suspended;
                 }
                 Ok(())
             })?;
+            if h.side == Side::Owner {
+                continue;
+            }
             self.guardian_tell(
                 &me.slot,
                 &GuardianRow {
@@ -555,88 +679,113 @@ impl Engine {
         Ok(!gone.is_empty())
     }
 
-    /// The server's notices for this account as a guardian, each checked where a phone can.
+    /// The server's notices for this account as a guardian, each checked where a phone can, then acknowledged. A
+    /// notice whose link this phone hasn't adopted yet, or whose check failed for the network, is kept on the server
+    /// for the next sync.
     pub(crate) async fn guardian_take_notices(&self, session: &Session, me: &Me) -> Result<(), CoreError> {
         let notices: Vec<GuardianNotice> =
             api_call!(session, |api| api.guardian_notices()).map_err(ApiFailure::into_core)?;
+        let mut kept = Vec::new();
         for notice in notices {
-            let Some(held) = self.circle_state(&me.slot)?.held(&notice.link).cloned() else {
-                continue;
-            };
-            if held.side != Side::Helper || held.arrangement.terms.kind != CircleKind::Guardian {
-                continue;
-            }
-            let ward = held.arrangement.owner.label.clone();
-            let row = |line: &str, verified: bool| GuardianRow {
-                id: notice.id.clone(),
-                link: notice.link.clone(),
-                ward: ward.clone(),
-                line: line.to_owned(),
-                at: notice.at,
-                verified,
-                seq: None,
-            };
-            match &notice.kind {
-                GuardianNoticeKind::LinkChanged {
-                    change,
-                } => {
-                    let hash = circle::arrangement_hash(&held.signed.body);
-                    match change.verify(&held.arrangement.owner.owner_pub, &hash, CircleKind::Guardian, 0, verify) {
-                        // The links' history carries it: its check made the row already.
-                        Ok(c) if c.seq <= held.last_seq => {}
-                        Ok(c) => {
-                            let terms =
-                                held.arrangement.terms.guardian_terms().unwrap_or(circle::GuardianTerms::LEGACY);
-                            let minor = held.guardian_status().is_some_and(|g| g.minor.is_some());
-                            let line = match circle::check_guardian_change(&terms, minor, &c, Some(notice.at)) {
-                                Ok(()) => kept_line(&c, &held.guardian_status().unwrap_or_default())
-                                    .unwrap_or_else(|| "Changed".to_owned()),
-                                Err(_) => refused_line(&c, &ward),
-                            };
-                            self.guardian_tell(&me.slot, &row(&line, true))?;
-                        }
-                        Err(_) => self.guardian_tell(&me.slot, &row("Changed", false))?,
-                    }
-                }
-                GuardianNoticeKind::RosterChanged {
-                    reason,
-                    ..
-                } => {
-                    let line = match self.circle_peer(session, &me.slot, &notice.link).await {
-                        Ok(_) => Some(match reason {
-                            reins_proto::roster::RosterReason::Remove => "Removed a phone",
-                            _ => "New phone",
-                        }),
-                        // Its owner key changed: P6 suspended the guardianship; the chain proved it.
-                        Err(_)
-                            if self
-                                .circle_state(&me.slot)?
-                                .held(&notice.link)
-                                .is_some_and(|h| h.standing == Standing::Suspended) =>
-                        {
-                            Some("Account recovered")
-                        }
-                        Err(_) => None,
-                    };
-                    match line {
-                        Some(line) => self.guardian_tell(&me.slot, &row(line, true))?,
-                        None => self.guardian_tell(&me.slot, &row("Phones changed", false))?,
-                    }
-                }
-                GuardianNoticeKind::AccountReset => self.guardian_tell(&me.slot, &row("Reset the account", false))?,
-                GuardianNoticeKind::AccountDeleted => {
-                    self.guardian_tell(&me.slot, &row("Deleted the account", false))?;
-                }
+            match self.guardian_take_notice(session, me, &notice).await {
+                Ok(true) => kept.push(notice.id.clone()),
+                Ok(false) => {}
+                Err(e) => log::info!("a guardian notice waits: {e}"),
             }
         }
+        if !kept.is_empty() {
+            api_call!(session, |api| api.guardian_notices_seen(kept.clone())).map_err(ApiFailure::into_core)?;
+        }
+        self.guardian_seen(&me.slot);
         Ok(())
+    }
+
+    /// One notice: `true` once it is kept (or is nothing for this phone), `false` to ask again later.
+    async fn guardian_take_notice(
+        &self,
+        session: &Session,
+        me: &Me,
+        notice: &GuardianNotice,
+    ) -> Result<bool, CoreError> {
+        let Some(held) = self.circle_state(&me.slot)?.held(&notice.link).cloned() else {
+            // Not adopted yet (the link's copy comes with a later sync): asked again then.
+            return Ok(false);
+        };
+        if held.side != Side::Helper || held.arrangement.terms.kind != CircleKind::Guardian {
+            return Ok(true);
+        }
+        let ward = held.arrangement.owner.label.clone();
+        let row = |line: &str, verified: bool| GuardianRow {
+            id: notice.id.clone(),
+            link: notice.link.clone(),
+            ward: ward.clone(),
+            line: line.to_owned(),
+            at: notice.at,
+            verified,
+            seq: None,
+        };
+        match &notice.kind {
+            GuardianNoticeKind::LinkChanged {
+                change,
+            } => {
+                let hash = circle::arrangement_hash(&held.signed.body);
+                match change.verify(&held.arrangement.owner.owner_pub, &hash, CircleKind::Guardian, 0, verify) {
+                    // The links' history carries it: its check made the row already.
+                    Ok(c) if c.seq <= held.last_seq => {}
+                    Ok(c) => {
+                        let terms = held.arrangement.terms.guardian_terms().unwrap_or(circle::GuardianTerms::LEGACY);
+                        let minor = held.guardian_status().is_some_and(|g| g.minor.is_some());
+                        let line = match circle::check_guardian_change(&terms, minor, &c, Some(notice.at)) {
+                            Ok(()) => kept_line(&c, &held.guardian_status().unwrap_or_default())
+                                .unwrap_or_else(|| "Changed".to_owned()),
+                            Err(_) => refused_line(&c, &ward),
+                        };
+                        self.guardian_tell(&me.slot, &row(&line, true))?;
+                    }
+                    Err(_) => self.guardian_tell(&me.slot, &row("Changed", false))?,
+                }
+            }
+            GuardianNoticeKind::RosterChanged {
+                reason,
+                ..
+            } => {
+                let line = match self.circle_peer(session, &me.slot, &notice.link).await {
+                    Ok(_) => Some(match reason {
+                        reins_proto::roster::RosterReason::Remove => "Removed a phone",
+                        _ => "New phone",
+                    }),
+                    // The network failed: checked on the next sync, never reported as unchecked.
+                    Err(
+                        e @ CoreError::Network {
+                            ..
+                        },
+                    ) => return Err(e),
+                    // Its owner key changed: P6 suspended the guardianship; the chain proved it.
+                    Err(_)
+                        if self
+                            .circle_state(&me.slot)?
+                            .held(&notice.link)
+                            .is_some_and(|h| h.standing == Standing::Suspended) =>
+                    {
+                        Some("Account recovered")
+                    }
+                    Err(_) => None,
+                };
+                match line {
+                    Some(line) => self.guardian_tell(&me.slot, &row(line, true))?,
+                    None => self.guardian_tell(&me.slot, &row("Phones changed", false))?,
+                }
+            }
+            GuardianNoticeKind::AccountReset => self.guardian_tell(&me.slot, &row("Reset the account", false))?,
+            GuardianNoticeKind::AccountDeleted => self.guardian_tell(&me.slot, &row("Deleted the account", false))?,
+        }
+        Ok(true)
     }
 
     /// The ward's weekly digest (opt-in): one notice per guardianship, on the first sync after Monday 09:00, listing
     /// the automatic decisions in its scope. No bodies, recipients or titles: the day and the matrix line.
     pub(crate) async fn guardian_digest(&self, session: &Session, me: &Me) {
         let now = unix_now();
-        let boundary = digest_boundary(now);
         let Ok(state) = self.circle_state(&me.slot) else {
             return;
         };
@@ -645,12 +794,21 @@ impl Engine {
             .iter()
             .filter(|h| h.side == Side::Owner && h.in_force(now) && h.guardian_status().is_some_and(|g| g.digest))
         {
-            let last = state.digests.iter().find(|(l, _)| l == held.id()).map_or(0, |(_, at)| *at);
-            if last >= boundary {
+            // No opt-in time kept here (it was turned on elsewhere): it starts now, never with what came before.
+            let Some(last) = state.digests.iter().find(|(l, _)| l == held.id()).map(|(_, at)| *at) else {
+                let id = held.id().to_owned();
+                if let Err(e) = self.with_circles(&me.slot, |s| {
+                    s.digests.push((id.clone(), now));
+                    Ok(())
+                }) {
+                    log::warn!("Circle state: {e}");
+                }
                 continue;
-            }
-            let since = boundary - 7 * 86_400;
-            let lines = match self.guardian_digest_lines(held, since, boundary) {
+            };
+            let Some((since, until)) = digest_window(last, now) else {
+                continue;
+            };
+            let lines = match self.guardian_digest_lines(held, since, until) {
                 Ok(lines) => lines,
                 Err(e) => {
                     log::info!("the weekly summary could not be read: {e}");
@@ -674,9 +832,10 @@ impl Engine {
             match self.circle_notice(session, me, held.id(), notice).await {
                 Ok(()) => {
                     let id = held.id().to_owned();
+                    // Covered up to `until` (not the send time): the next one starts exactly there.
                     if let Err(e) = self.with_circles(&me.slot, |s| {
                         s.digests.retain(|(l, _)| *l != id);
-                        s.digests.push((id.clone(), now));
+                        s.digests.push((id.clone(), until));
                         Ok(())
                     }) {
                         log::warn!("Circle state: {e}");
@@ -744,6 +903,7 @@ mod tests {
     use reins_proto::circle::{Arrangement, Party, SignedArrangement, Terms};
 
     use super::*;
+    use crate::circles::AgeSignalPlatform;
 
     const DAY: i64 = 86_400;
 
@@ -821,8 +981,14 @@ mod tests {
         let mut ward = held(Side::Owner, 3);
         assert_eq!(judge(&mut ward, &end(1, t, t + 3 * DAY), Some(t), "l", "sam"), None, "the ward is told nothing");
         assert!(ward.in_force(t + 3 * DAY - 1), "the guardian's review stays until the notice ends");
-        assert!(!ward.in_force(t + 3 * DAY));
+        // The ward's own clock never lapses it: only the server ending the link does (its sweep, on its clock).
+        assert!(ward.in_force(t + 30 * DAY), "a clock set forward ends nothing");
         assert_eq!(ward.standing, Standing::Active, "nothing is ended early");
+        // The guardian's phone lapses it on its own clock.
+        let mut mom = held(Side::Helper, 3);
+        judge(&mut mom, &end(1, t, t + 3 * DAY), Some(t), "l", "sam@example.com");
+        assert!(mom.in_force(t + 3 * DAY - 1));
+        assert!(!mom.in_force(t + 3 * DAY));
     }
 
     #[test]
@@ -951,13 +1117,8 @@ mod tests {
             1,
         )
         .unwrap();
-        assert_eq!(
-            m.source,
-            AgeSource::Platform {
-                kind: AgePlatform::AppleDeclaredAgeRange,
-                upper: Some(15)
-            }
-        );
+        // What goes to the server in clear: a platform backed it, never the range or which platform.
+        assert_eq!(m.source, AgeSource::Platform);
         assert_eq!(mark_of(AgeSignalInput::Unavailable, 1).unwrap().source, AgeSource::GuardianAndWard);
         // A guardian's proposal alone marks nothing.
         let t = circle::GuardianTerms::default();
@@ -973,6 +1134,33 @@ mod tests {
         assert_eq!(refused_line(&paused, "sam@example.com"), "Paused by Sam");
         assert_eq!(refused_line(&change(Side::Owner, LinkState::Ended, None), "sam@example.com"), "Ended early");
         assert_eq!(short_name("sam@example.com"), "Sam");
+    }
+
+    #[test]
+    fn only_what_needs_the_guardian_notifies() {
+        for line in ["Asked to leave", "Leaving after the notice", "Ended early", "Paused by Sam", "Reset the account"]
+        {
+            assert!(alerts(line), "{line}");
+        }
+        for line in ["Deleted the account", "Account recovered"] {
+            assert!(alerts(line), "{line}");
+        }
+        for line in ["Weekly summary on", "New phone", "Removed a phone", "Changed", "Waiting for earlier changes"] {
+            assert!(!alerts(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_first_digest_starts_at_the_opt_in() {
+        let monday_nine = 1_793_005_200;
+        // Opted in on Tuesday: nothing goes until the next Monday, and that one starts at the opt-in.
+        let opted_in = monday_nine + 86_400;
+        assert_eq!(digest_window(opted_in, opted_in + 3600), None);
+        let next = monday_nine + 7 * 86_400;
+        assert_eq!(digest_window(opted_in, next + 60), Some((opted_in, next)));
+        // After that, a whole week each time, from where the last one stopped.
+        assert_eq!(digest_window(next, next + 7 * 86_400 + 60), Some((next, next + 7 * 86_400)));
+        assert_eq!(digest_window(next, next + 7 * 86_400 - 1), None);
     }
 
     #[test]

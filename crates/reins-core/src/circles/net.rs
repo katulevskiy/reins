@@ -82,6 +82,15 @@ impl PhoneApi<'_> {
         Self::json(self.request(Method::GET, "/guardian/notices")).await
     }
 
+    /// This phone kept these guardian notices (the server returns them until then).
+    pub(crate) async fn guardian_notices_seen(&self, ids: Vec<String>) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::POST, "/guardian/notices/seen").json(&Seen {
+            ids,
+        }))
+        .await
+        .map(drop)
+    }
+
     pub(crate) async fn circle_change(&self, id: &str, change: &SignedChange) -> Result<(), ApiFailure> {
         check_id(id)?;
         Self::send(self.request(Method::POST, &format!("/circles/links/{id}/change")).json(change)).await.map(drop)

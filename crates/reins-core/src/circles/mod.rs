@@ -99,10 +99,16 @@ impl Held {
         Some(self.guardian.clone().unwrap_or_else(|| circle::GuardianStatus::of(&terms)))
     }
 
-    /// Whether its obligations bind at `now` (the owner's side): active, and for a guardianship, until its end takes
-    /// effect (a notice running, a minor's request waiting for consent: still in force).
+    /// Whether its obligations bind at `now`: active, and for a guardianship, until its end takes effect (a notice
+    /// running, a minor's request waiting for consent: still in force). On the ward's own phone the ward's clock
+    /// never decides it: a notice lapses there only when the server ended the link (its sweep, on its clock), or a
+    /// consent or the guardian's leave did.
     pub fn in_force(&self, now: i64) -> bool {
-        self.standing == Standing::Active && self.guardian_status().is_none_or(|g| g.in_force(now))
+        self.standing == Standing::Active
+            && self.guardian_status().is_none_or(|g| match self.side {
+                Side::Owner => !g.ended,
+                Side::Helper => g.in_force(now),
+            })
     }
 
     /// The other party.
@@ -157,6 +163,8 @@ pub(crate) struct CircleState {
     pub digests: Vec<(String, i64)>,
     /// Each decision a guardian made on this account's requests (the ward's side), newest last.
     pub guardian_decisions: Vec<guardian::GuardianDecision>,
+    /// When this phone last took a guardian's news: older rows are listed, never notified.
+    pub guardian_seen_at: i64,
 }
 
 impl CircleState {
@@ -520,6 +528,8 @@ impl Engine {
         {
             log::warn!("Guardian notices: {e}");
         }
+        // A guardianship whose end took effect releases what it held (its guardian's part lapses).
+        Box::pin(self.guardian_release_ended(session, &me)).await;
         Box::pin(self.guardian_digest(session, &me)).await;
         Box::pin(self.circle_expire(session, &me)).await;
         Ok(())
@@ -570,6 +580,11 @@ impl Engine {
             && h.arrangement.terms.kind == circle::CircleKind::Guardian
             && h.side == Side::Owner
         {
+            // Suspended (the guardian's account was reset, recovered or deleted, or the link vanished): nobody can
+            // review any more, so it ends now rather than leaving everything in scope waiting to be denied.
+            if h.standing == Standing::Suspended {
+                return self.guardian_end_suspended(link_id).await;
+            }
             return self.guardian_request_end(link_id).await;
         }
         self.circle_change(link_id, LinkState::Ended).await

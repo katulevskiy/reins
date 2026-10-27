@@ -995,25 +995,15 @@ impl GuardianTerms {
     }
 }
 
-/// Where a minor mark's age came from (07 §5 Q5).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgeSource {
-    /// The platform's family features said so: its upper bound, when it gave one.
-    Platform {
-        kind: AgePlatform,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        upper: Option<u8>,
-    },
-    /// No platform signal: the guardian proposed it and the ward accepted it.
-    GuardianAndWard,
-}
-
+/// Where a minor mark's age came from (07 §5 Q5). The mark travels in a signed change the server stores in clear, so it
+/// says only whether a platform backed it: never the age range, never which platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AgePlatform {
-    AppleDeclaredAgeRange,
-    GooglePlayAgeSignals,
+pub enum AgeSource {
+    /// The phone's family features (Apple's Declared Age Range, Google Play Age Signals) said the owner is under 18.
+    Platform,
+    /// No platform signal: the guardian proposed it and the ward accepted it.
+    GuardianAndWard,
 }
 
 /// The ward's account is a minor's: proposed by the guardian, accepted (signed) by the ward.
@@ -1025,14 +1015,6 @@ pub struct MinorMark {
 
 impl MinorMark {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if let AgeSource::Platform {
-            upper: Some(upper),
-            ..
-        } = self.source
-            && upper >= 18
-        {
-            return Err(invalid("minor.source.upper", "an adult's age range is no minor's"));
-        }
         Ok(())
     }
 }
@@ -1115,9 +1097,9 @@ pub fn guardian_effective(terms: &GuardianTerms, minor_now: bool, requested_at: 
 /// - a minor mark is proposed by the guardian and accepted by the ward; the digest is the ward's;
 /// - the guardian may leave at once (an end without a step), or consent to an end.
 ///
-/// `logged_at` is when the server received the change ([`LoggedChange::at`]; a phone's own change: its `at`). A
+/// `logged_at` is when the server received the change ([`LoggedChange::at`]; a phone's own change: its `at`). A ward's
 /// change whose own time is more than [`ANSWER_SKEW_SECS`] from it is refused (a backdated end would skip its notice),
-/// and so is one without it (fail closed).
+/// and so is one without it (fail closed). The guardian's steps aren't dated against it.
 pub fn check_guardian_change(
     terms: &GuardianTerms,
     minor_now: bool,
@@ -1125,9 +1107,13 @@ pub fn check_guardian_change(
     logged_at: Option<i64>,
 ) -> Result<(), CircleError> {
     c.validate_for(CircleKind::Guardian)?;
-    let logged_at = logged_at.ok_or(CircleError::Guardian("a change without its arrival time"))?;
-    if c.at.abs_diff(logged_at) > ANSWER_SKEW_SECS.unsigned_abs() {
-        return Err(CircleError::Guardian("a change dated away from when it arrived"));
+    // The ward's steps are dated against when they arrived (a backdated end would skip its notice). The guardian's
+    // leave and consent end it at once, whatever their time, so a guardian's skewed clock never blocks them.
+    if c.by == Side::Owner {
+        let logged_at = logged_at.ok_or(CircleError::Guardian("a change without its arrival time"))?;
+        if c.at.abs_diff(logged_at) > ANSWER_SKEW_SECS.unsigned_abs() {
+            return Err(CircleError::Guardian("a change dated away from when it arrived"));
+        }
     }
     match (&c.guardian, c.by, c.state) {
         (None, Side::Helper, LinkState::Ended) => Ok(()),
@@ -2444,6 +2430,25 @@ mod tests {
     }
 
     #[test]
+    fn a_guardians_skewed_clock_never_blocks_its_leave_or_consent() {
+        let t = gterms(7);
+        let leave = gchange(Side::Helper, LinkState::Ended, 1, None);
+        assert!(check_guardian_change(&t, false, &leave, Some(10_000)).is_ok());
+        assert!(check_guardian_change(&t, false, &leave, None).is_ok());
+        let consent = gchange(
+            Side::Helper,
+            LinkState::Ended,
+            1,
+            Some(GuardianChange::EndConsented {
+                request_at: 1,
+            }),
+        );
+        assert!(check_guardian_change(&t, true, &consent, Some(99_999)).is_ok());
+        // The ward's steps are still dated.
+        assert!(check_guardian_change(&t, false, &end_request(1, 1 + 7 * 86_400), Some(99_999)).is_err());
+    }
+
+    #[test]
     fn a_helper_still_only_ends_outside_a_guardianship() {
         // A guardianship step from the helper (state Active) on a Cosign link is not a valid change there.
         let mut c = gchange(Side::Helper, LinkState::Active, 1, Some(GuardianChange::MinorProposed));
@@ -2479,16 +2484,13 @@ mod tests {
         let mut t = Terms::default_for(CircleKind::Guardian);
         t.guardian = Some(gterms(14));
         assert!(t.validate().is_err());
-        // An adult's age range is never a minor mark.
-        let mut g = gterms(3);
-        g.minor = Some(MinorMark {
-            source: AgeSource::Platform {
-                kind: AgePlatform::AppleDeclaredAgeRange,
-                upper: Some(18),
-            },
+        // The mark the server stores in clear names no age range and no platform.
+        let mark = serde_json::to_string(&MinorMark {
+            source: AgeSource::Platform,
             at: 1,
-        });
-        assert!(g.validate().is_err());
+        })
+        .unwrap();
+        assert_eq!(mark, r#"{"source":"platform","at":1}"#);
     }
 
     #[test]

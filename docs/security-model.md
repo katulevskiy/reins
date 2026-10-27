@@ -457,8 +457,21 @@ digest of automatic decisions in scope: the day and the matrix line, never a bod
 chat history or vault. **The ward sees** the scope, every decision the guardian made, and each note.
 
 **Minors and age signals:** only the guardian proposes a minor mark, and it counts only once the ward's phone signs its
-acceptance, with Apple's Declared Age Range or Google Play Age Signals where available (an adult's range refuses it),
-else recorded as accepted by guardian and ward. A minor's end waits for the guardian's signed consent.
+acceptance after the owner check (biometric, asked by the core), with Apple's Declared Age Range or Google Play Age
+Signals where available (an adult's range refuses it), else recorded as accepted by guardian and ward. The mark is in
+a signed change the server stores in clear, so it says only whether a platform backed it: never the age range, never
+which platform. The server does learn that a ward accepted a minor mark. A minor's end waits for the guardian's signed
+consent, which the core also gates on the owner check.
+
+**Whose clock:** a ward's end lapses on the ward's phone only when the server ends the link (its sweep, on the server's
+clock), so a ward's clock set forward ends nothing early; the guardian's phone uses its own clock. A guardianship
+whose guardian is gone (the account reset or deleted, or the link vanished) is suspended, and the ward can end it at
+once, so nothing in scope waits to be denied.
+
+**Notices** are returned until the guardian's phone acknowledges them (`POST /reins/api/guardian/notices/seen`), so one
+lost in transit comes again. A guardian's phone counts a guardianship's changes strictly in order: if the server
+withholds one, the later ones wait ("Waiting for earlier changes"). Only what needs the guardian notifies (an ask to
+leave, an end with notice, an early end or pause, a reset, a deletion, a recovery); the rest is listed quietly.
 
 **Abuse pass** (each with a test or a stated limit):
 - **Coercing an adult:** a notice is 0, 3 or 7 days (`circle::tests::notice_days_are_0_3_or_7`); a guardian can't mark
@@ -483,6 +496,9 @@ else recorded as accepted by guardian and ward. A minor's end waits for the guar
 - **Content beyond scope:** guardians get summary cards only (P6's redaction), and the digest carries matrix lines.
 - **R7's limit:** an uncooperative ward can start a new account, or use its credentials directly; the guardian learns
   only of the reset or deletion. Use the Family tenant where that matters.
+- **Recovery drops oversight:** a recovery changes the ward's owner key, so the guardianship suspends (P6) until the two
+  compare a new safety code. The guardian is told ("Account recovered", checked against the chain), but reviews nothing
+  until a new invitation.
 
 ## The desktop app
 

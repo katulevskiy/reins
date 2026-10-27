@@ -259,7 +259,8 @@ settle, `reins-core/src/circles` the phone side and `src/api/reins/circles.rs` t
   the guardian's `EndConsented`. Every change is logged with its arrival time and returned in `GET …/circles/links`
   (`changes`), so the guardian's phone checks each step against its own terms. The server writes guardian notices
   for a reset, a deletion (before the rows go), roster changes and the ward's changes; `GET /reins/api/guardian/notices`
-  returns each once, and one that needs the guardian pushes `alert:<link>`. The ward opts in to a weekly digest (one
+  returns them until `POST …/notices/seen` acknowledges them, and one that needs the guardian pushes `alert:<link>`.
+  A link keeps at most 200 changes. The ward opts in to a weekly digest (one
   Notice packet after Monday 09:00 UTC).
 
 ### Pairing an AI or the desktop app

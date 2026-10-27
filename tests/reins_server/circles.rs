@@ -394,7 +394,14 @@ async fn an_end_request_keeps_the_link_until_effective() {
     assert_eq!(notices.as_array().map(Vec::len), Some(1), "{notices}");
     assert_eq!(notices[0]["kind"]["type"], "link_changed");
     assert_eq!(notices[0]["link"], l.as_str());
-    // Taken once.
+    // It comes again until the guardian's phone acknowledges it; then never again.
+    let (_, again) = mom.phone.get("/guardian/notices").await;
+    assert_eq!(again.as_array().map(Vec::len), Some(1));
+    let id = notices[0]["id"].as_str().expect("id").to_owned();
+    // Another account's acknowledgement changes nothing.
+    assert_eq!(sam.phone.post("/guardian/notices/seen", &json!({"ids": [id]})).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(mom.phone.get("/guardian/notices").await.1.as_array().map(Vec::len), Some(1));
+    assert_eq!(mom.phone.post("/guardian/notices/seen", &json!({"ids": [id]})).await.0, StatusCode::NO_CONTENT);
     assert_eq!(mom.phone.get("/guardian/notices").await.1, json!([]));
 }
 

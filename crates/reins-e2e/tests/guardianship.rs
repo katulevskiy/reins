@@ -327,3 +327,63 @@ fn reins_now() -> i64 {
     i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("time").as_secs())
         .expect("i64")
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_ward_ends_a_guardianship_whose_guardian_is_gone() {
+    let w = world().await;
+    let link = invite(&w, guardian(Some(7), false)).await;
+    // The guardian deletes the account: the link vanishes from the server.
+    w.mom.core.delete_account(GUARDIAN.to_owned()).await.expect("deleted");
+    let mine = poll(async || {
+        w.sam.core.sync(1).await.unwrap();
+        w.sam
+            .core
+            .circle_people(true)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|p| p.link_id == link && p.state == CircleLinkState::Suspended)
+    })
+    .await;
+    assert_eq!(mine.role, CircleRole::Guardian);
+    // Nobody can review any more: the ward ends it at once (no notice to wait out), and its requests are its own.
+    w.sam.core.circle_end(link.clone()).await.expect("ended");
+    let ended = w.sam.core.circle_people(false).await.unwrap().into_iter().find(|p| p.link_id == link).unwrap();
+    assert_eq!(ended.state, CircleLinkState::Ended);
+    let args_six = send_args("Six");
+    let (_, ()) = tokio::join!(w.ai.tool("gmail_send", &args_six), async {
+        let item = next_item(&w.sam).await;
+        assert!(item.circle.is_none(), "no request waits on a guardian who is gone");
+        w.sam.core.approve(item.id.clone(), none()).await.unwrap();
+    });
+    poll(async || {
+        w.sam.core.sync(1).await.unwrap();
+        (sent(&w.sam).await == 1).then_some(())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_withheld_change_holds_the_later_ones() {
+    let w = world().await;
+    let link = invite(&w, guardian(Some(7), false)).await;
+    // Two steps of the ward: the digest on (1), then the end request (2).
+    w.sam.core.guardian_set_digest(link.clone(), true).await.unwrap();
+    w.sam.core.circle_end(link.clone()).await.unwrap();
+    // The server withholds step 1 from the guardian (and its notice).
+    let db = rusqlite::Connection::open(w.server.database_path()).unwrap();
+    db.execute("DELETE FROM reins_circle_changes WHERE link_id = ?1 AND seq = 1", [&link]).unwrap();
+    db.execute("DELETE FROM reins_guardian_notices WHERE link_id = ?1", [&link]).unwrap();
+    let notices = poll(async || {
+        w.mom.core.sync(1).await.unwrap();
+        let n = w.mom.core.guardian_notices(true).await.unwrap();
+        n.iter().any(|n| n.line == "Waiting for earlier changes").then_some(n)
+    })
+    .await;
+    assert!(
+        !notices.iter().any(|n| n.line == "Leaving after the notice"),
+        "step 2 waits until step 1 is shown: {notices:?}"
+    );
+    let theirs = w.mom.core.circle_people(false).await.unwrap().into_iter().find(|p| p.link_id == link).unwrap();
+    assert_eq!(theirs.ending, None, "the end request isn't counted out of order");
+}

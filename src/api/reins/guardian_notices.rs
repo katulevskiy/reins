@@ -18,15 +18,15 @@
 
 use data_encoding::HEXLOWER;
 use reins_proto::{
-    circle::{GuardianChange, GuardianNotice, GuardianNoticeKind},
+    circle::{self, GuardianChange, GuardianNotice, GuardianNoticeKind, Seen},
     roster::RosterReason,
 };
-use rocket::{Route, serde::json::Json};
+use rocket::{Data, Route, http::Status, serde::json::Json};
 
 use super::{
     HUB,
     circles::{Wake, wake},
-    device_api::{DeviceKey, PhoneResult, internal, require_approval_device, user_key},
+    device_api::{DeviceKey, PhoneResult, bad_request, internal, read_body_limited, require_approval_device, user_key},
     now_unix,
 };
 use crate::{
@@ -127,11 +127,12 @@ pub async fn push_pending(conn: &DbConn, pool: &DbPool) {
     }
 }
 
-/// The calling guardian's new notices (its approval phone only); each is returned once.
+/// The calling guardian's notices its phone hasn't acknowledged (its approval phone only): returned until
+/// `POST …/notices/seen` names them, so a notice lost in transit comes again.
 #[get("/reins/api/guardian/notices")]
 async fn get_notices(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Vec<GuardianNotice>>> {
     require_approval_device(&headers, &key, &conn).await?;
-    let rows = ReinsGuardianNotice::take(&user_key(&headers), &conn).await.map_err(|e| internal(&e))?;
+    let rows = ReinsGuardianNotice::pending(&user_key(&headers), &conn).await;
     Ok(Json(
         rows.into_iter()
             .filter_map(|r| {
@@ -146,8 +147,21 @@ async fn get_notices(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneRes
     ))
 }
 
+/// The guardian's phone kept these notices.
+#[post("/reins/api/guardian/notices/seen", data = "<data>")]
+async fn post_seen(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let seen: Seen = serde_json::from_slice(&read_body_limited(data, 64 * 1024).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    if seen.ids.len() > 500 || seen.ids.iter().any(|id| !circle::valid_id(id)) {
+        return Err(bad_request("ids: at most 500 notice ids"));
+    }
+    ReinsGuardianNotice::mark_fetched(&user_key(&headers), seen.ids, &conn).await.map_err(|e| internal(&e))?;
+    Ok(Status::NoContent)
+}
+
 pub fn routes() -> Vec<Route> {
-    routes![get_notices]
+    routes![get_notices, post_seen]
 }
 
 #[cfg(all(test, sqlite))]
@@ -159,8 +173,8 @@ mod tests {
         DbConnInner,
         models::ReinsCircleLink,
         models::reins_circle::{
-            self, ReinsCircleChange, q_changes, q_find_link, q_insert_link, q_notify_guardians, q_take_notices,
-            q_update_link, q_update_with_change,
+            self, ReinsCircleChange, q_changes, q_find_link, q_insert_link, q_mark_notices_fetched, q_notify_guardians,
+            q_pending_notices, q_update_link, q_update_with_change,
         },
     };
 
@@ -181,18 +195,21 @@ mod tests {
     }
 
     fn notify(c: &mut DbConnInner, ward: &str, kind: &GuardianNoticeKind) -> usize {
-        let mut n = 0;
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let detail = serde_json::to_string(kind).unwrap();
         q_notify_guardians(c, ward, kind_name(kind), &detail, 100, &mut || {
-            n += 1;
-            format!("n{n}")
+            format!("{:032x}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
         })
         .unwrap()
         .len()
     }
 
+    /// What the guardian's phone gets, then acknowledges.
     fn taken(c: &mut DbConnInner, guardian: &str) -> Vec<ReinsGuardianNotice> {
-        q_take_notices(c, guardian).unwrap()
+        let rows = q_pending_notices(c, guardian);
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        q_mark_notices_fetched(c, guardian, &ids).unwrap();
+        rows
     }
 
     #[test]
@@ -213,8 +230,14 @@ mod tests {
         assert!(taken(c, "alex").is_empty(), "notices never reach non-guardians");
         assert!(taken(c, "kim").is_empty());
         assert!(taken(c, "sam").is_empty());
-        // Each is taken once.
+        // Each comes until it is acknowledged, then never again; another account's ids change nothing.
         assert!(taken(c, "mom").is_empty());
+        assert_eq!(notify(c, "sam", &GuardianNoticeKind::AccountReset), 2);
+        let first = q_pending_notices(c, "dad");
+        assert_eq!(first.len(), 1);
+        assert_eq!(q_pending_notices(c, "dad").len(), 1, "lost in transit: it comes again");
+        q_mark_notices_fetched(c, "mom", &[first[0].id.clone()]).unwrap();
+        assert_eq!(q_pending_notices(c, "dad").len(), 1, "only its own phone acknowledges it");
         assert!(alerts(&GuardianNoticeKind::AccountReset));
     }
 

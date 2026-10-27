@@ -270,9 +270,14 @@ impl ReinsGuardianNotice {
         conn.run(move |c| q_insert_notice(c, self)).await.map_res("Error saving a guardian notice")
     }
 
-    /// `guardian`'s notices its phone hasn't taken, oldest first; marks them taken.
-    pub async fn take(guardian: &str, conn: &DbConn) -> Result<Vec<Self>, crate::Error> {
-        conn.run(move |c| q_take_notices(c, guardian)).await.map_res("Error reading guardian notices")
+    /// `guardian`'s notices its phone hasn't acknowledged, oldest first (they stay until it does).
+    pub async fn pending(guardian: &str, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |c| q_pending_notices(c, guardian)).await
+    }
+
+    /// The guardian's phone kept these (only its own notices are touched).
+    pub async fn mark_fetched(guardian: &str, ids: Vec<String>, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_mark_notices_fetched(c, guardian, &ids)).await.map_res("Error updating guardian notices")
     }
 
     /// Notices whose push hasn't gone out.
@@ -460,20 +465,25 @@ pub(crate) fn q_notify_guardians(
     })
 }
 
-pub(crate) fn q_take_notices(c: &mut DbConnInner, guardian: &str) -> QueryResult<Vec<ReinsGuardianNotice>> {
-    c.transaction(|c| {
-        let rows: Vec<ReinsGuardianNotice> = reins_guardian_notices::table
+pub(crate) fn q_pending_notices(c: &mut DbConnInner, guardian: &str) -> Vec<ReinsGuardianNotice> {
+    reins_guardian_notices::table
+        .filter(reins_guardian_notices::guardian_uuid.eq(guardian))
+        .filter(reins_guardian_notices::fetched.eq(false))
+        .order(reins_guardian_notices::at.asc())
+        .limit(200)
+        .load(c)
+        .unwrap_or_default()
+}
+
+pub(crate) fn q_mark_notices_fetched(c: &mut DbConnInner, guardian: &str, ids: &[String]) -> QueryResult<()> {
+    diesel::update(
+        reins_guardian_notices::table
             .filter(reins_guardian_notices::guardian_uuid.eq(guardian))
-            .filter(reins_guardian_notices::fetched.eq(false))
-            .order(reins_guardian_notices::at.asc())
-            .limit(200)
-            .load(c)?;
-        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        diesel::update(reins_guardian_notices::table.filter(reins_guardian_notices::id.eq_any(&ids)))
-            .set(reins_guardian_notices::fetched.eq(true))
-            .execute(c)?;
-        Ok(rows)
-    })
+            .filter(reins_guardian_notices::id.eq_any(ids)),
+    )
+    .set(reins_guardian_notices::fetched.eq(true))
+    .execute(c)
+    .map(|_| ())
 }
 
 fn q_unpushed_notices(c: &mut DbConnInner) -> Vec<ReinsGuardianNotice> {

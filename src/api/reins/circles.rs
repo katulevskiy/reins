@@ -68,6 +68,8 @@ const MAX_BODY_BYTES: u64 = 2 * circle::MAX_SEALED_CHARS as u64 + 4096;
 const MAX_OPEN_INVITES: i64 = 5;
 /// Waiting packets per link.
 const MAX_WAITING_PACKETS: i64 = 200;
+/// Logged changes per link (a guardianship's history is returned whole with every link).
+const MAX_CHANGES_PER_LINK: usize = 200;
 
 /// Accounts whose phone has Circle news: ends their long poll with `Pending.circles`.
 pub struct CircleNews {
@@ -728,6 +730,9 @@ async fn post_change(
     if change.seq <= last_seq {
         return Err(conflict("An older change"));
     }
+    if ReinsCircleLink::changes(&link.id, &conn).await.len() >= MAX_CHANGES_PER_LINK {
+        return Err(api_err(Status::TooManyRequests, codes::RATE_LIMITED, "Too many changes of this arrangement"));
+    }
     // Signed by the changer's current owner key (the phones check it against the key they pinned).
     let (owner_pub, _) = roster_head(&user, &conn).await?;
     if !ed25519_ok(&owner_pub, &circle::change_message(&signed.body), &signed.sig) {
@@ -971,7 +976,8 @@ pub async fn sweep(pool: &DbPool, now: i64, purge: bool) {
             if let Err(e) = ReinsCirclePacket::withdraw_for_link(&link.id, now, &conn).await {
                 warn!("Reins: could not withdraw the packets of an ended guardianship: {e:?}");
             }
-            if let Some(change) = link.last_change.as_deref().and_then(|c| serde_json::from_str(c).ok()) {
+            // The ward's own request that started the notice (not whatever change came last).
+            if let Some(change) = ending_request(&link.id, &conn).await {
                 let notice = GuardianNoticeKind::LinkChanged {
                     change,
                 };
@@ -984,6 +990,15 @@ pub async fn sweep(pool: &DbPool, now: i64, purge: bool) {
     if purge && let Err(e) = reins_circle::purge(now, &conn).await {
         warn!("Reins: could not purge Circle rows: {e:?}");
     }
+}
+
+/// The ward's last logged `EndRequested` of `link`: what an end at its notice reports to the guardian.
+async fn ending_request(link: &str, conn: &DbConn) -> Option<SignedChange> {
+    ReinsCircleLink::changes(link, conn).await.into_iter().rev().find_map(|row| {
+        let signed: SignedChange = serde_json::from_str(&row.change_body).ok()?;
+        let c = signed.change().ok()?;
+        (c.by == Side::Owner && matches!(c.guardian, Some(GuardianChange::EndRequested { .. }))).then_some(signed)
+    })
 }
 
 /// Every 15 s; purges hourly.
