@@ -14,6 +14,8 @@ mod organization;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
+pub mod reins_org;
+pub mod reins_org_event;
 mod reins_roster;
 mod reins_vault_passkey;
 pub mod reins_workos;

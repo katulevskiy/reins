@@ -1,0 +1,88 @@
+-- Organizations (Decisions v2 · O1). A Reins org tenant is a Vaultwarden organization: `organizations` is the tenant,
+-- `users_organizations` its members (`external_id`: the WorkOS directory user) and `groups`/`groups_users` its SCIM
+-- groups. These tables add what Reins needs on top, keyed by the organization's uuid.
+
+-- Tier and sign-in of the tenant.
+CREATE TABLE reins_orgs (
+    org_uuid      CHAR(36) NOT NULL PRIMARY KEY REFERENCES organizations (uuid) ON DELETE CASCADE,
+    tier          TEXT    NOT NULL,
+    identity      TEXT    NOT NULL,
+    workos_org_id TEXT    UNIQUE,
+    directory_id  TEXT,
+    github_org    TEXT,
+    two_person    BOOLEAN NOT NULL,
+    created_by    TEXT    NOT NULL,
+    created_at    BIGINT  NOT NULL,
+    updated_at    BIGINT  NOT NULL
+);
+
+-- Domains the tenant claims; one counts once `verified_at` is set (a DNS TXT record), and one org at most verifies a
+-- domain (checked in the transaction that verifies it).
+CREATE TABLE reins_org_domains (
+    org_uuid    CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    domain      TEXT   NOT NULL,
+    token       TEXT   NOT NULL,
+    verified_at BIGINT,
+    checked_at  BIGINT,
+    created_at  BIGINT NOT NULL,
+    PRIMARY KEY (org_uuid, domain)
+);
+
+CREATE INDEX idx_reins_org_domains_domain ON reins_org_domains (domain);
+
+-- Roles (05 §3) of a member (`subject_id`: the membership uuid) or of a group (the group uuid).
+CREATE TABLE reins_org_roles (
+    org_uuid     CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    subject_kind TEXT   NOT NULL,
+    subject_id   TEXT   NOT NULL,
+    role         TEXT   NOT NULL,
+    granted_at   BIGINT NOT NULL,
+    granted_by   TEXT   NOT NULL,
+    PRIMARY KEY (org_uuid, subject_kind, subject_id, role)
+);
+
+-- Admin actions waiting for a second person (`action`: reins_proto::org::AdminAction as JSON).
+CREATE TABLE reins_org_changes (
+    uuid        CHAR(36) NOT NULL PRIMARY KEY,
+    org_uuid    CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    action      TEXT   NOT NULL,
+    proposed_by TEXT   NOT NULL,
+    proposed_at BIGINT NOT NULL,
+    expires_at  BIGINT NOT NULL,
+    state       TEXT   NOT NULL,
+    decided_by  TEXT,
+    decided_at  BIGINT
+);
+
+CREATE INDEX idx_reins_org_changes_org ON reins_org_changes (org_uuid, state);
+
+-- Devices enrolled to the tenant: the key made in secure hardware, what vouched for it, and its latest posture.
+CREATE TABLE reins_org_devices (
+    org_uuid      CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    user_uuid     CHAR(36) NOT NULL REFERENCES users (uuid) ON DELETE CASCADE,
+    device_uuid   TEXT    NOT NULL,
+    key_algorithm TEXT    NOT NULL,
+    public_key    TEXT    NOT NULL,
+    hardware      BOOLEAN NOT NULL,
+    attestations  TEXT    NOT NULL,
+    posture       TEXT    NOT NULL,
+    posture_at    BIGINT  NOT NULL,
+    enrolled_at   BIGINT  NOT NULL,
+    revoked_at    BIGINT,
+    PRIMARY KEY (org_uuid, user_uuid, device_uuid)
+);
+
+-- The tenant's admin events, append-only and hash-linked per org (`hash` = SHA-256 of `prev_hash` and the event), so
+-- O2's audit log can take them over and check that none was changed.
+CREATE TABLE reins_org_events (
+    org_uuid  CHAR(36) NOT NULL REFERENCES organizations (uuid) ON DELETE CASCADE,
+    seq       BIGINT   NOT NULL,
+    at        BIGINT   NOT NULL,
+    kind      TEXT     NOT NULL,
+    actor     TEXT,
+    subject   TEXT,
+    detail    TEXT     NOT NULL,
+    prev_hash CHAR(64) NOT NULL,
+    hash      CHAR(64) NOT NULL,
+    PRIMARY KEY (org_uuid, seq)
+);
