@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// A theme's wallpaper as it is drawn: the chosen image with its effect and fade. A shipped image with no effect and no
-/// added fade is its asset, as it ships; anything else is rendered off the main actor (`WallpaperRender`) from the
-/// asset or your kept photo, and kept in Caches under a name made of everything that changes it (`key`), so each one
-/// is drawn once.
+/// A theme's wallpaper as it is drawn: the chosen image with its effect and fade (no effect on an image that ships
+/// treated). A shipped image with no effect and no added fade is its asset, as it ships; anything else is rendered off
+/// the main actor (`WallpaperRender`) from the asset or your kept photo, and kept in Caches under a name made of
+/// everything that changes it (`key`), so each one is drawn once.
 struct WallpaperArt: Hashable {
     var choice: WallpaperChoice
     var dark: Bool
@@ -13,7 +13,7 @@ struct WallpaperArt: Hashable {
     var photo: Int
 
     init(choice: WallpaperChoice, dark: Bool, photo: Int = 0) {
-        self.choice = choice
+        self.choice = choice.drawn
         self.dark = dark
         self.photo = choice.image == .own ? photo : 0
     }
@@ -40,9 +40,9 @@ struct WallpaperArt: Hashable {
         return parts.joined(separator: "_")
     }
 
-    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (2: an effect's
-    /// foot fades into the paper).
-    static let renderVersion = 2
+    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (3: colour effects
+    /// with a foot; an effect on your photo fades into the paper).
+    static let renderVersion = 3
 
     /// A shipped image as it ships: drawn from its asset, nothing rendered.
     var isAsset: Bool { choice.image != .own && choice.effect == .original && choice.hundredths == 0 }
@@ -101,7 +101,7 @@ struct WallpaperArt: Hashable {
         let file = cache.appendingPathComponent(key + ".jpg")
         if let cached = UIImage(contentsOfFile: file.path)?.preparingForDisplay()?.cgImage { return cached }
         guard let source = Self.source(choice.image, dark: dark),
-              let art = WallpaperRender.render(source, effect: choice.effect, fade: choice.fade, dark: dark) else { return nil }
+              let art = WallpaperRender.render(source, effect: choice.effect, fade: choice.fade, dark: dark, foot: choice.image.foot) else { return nil }
         if let data = UIImage(cgImage: art).jpegData(compressionQuality: 0.9) {
             try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
             if (try? data.write(to: file, options: .atomic)) != nil { Self.prune(cache, dark: dark, keeping: file) }
@@ -109,9 +109,14 @@ struct WallpaperArt: Hashable {
         return art
     }
 
-    static var cacheDirectory: URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
-        return caches.appendingPathComponent("wallpaper", isDirectory: true)
+    /// Where drawn art is kept (a new place since the effects keep colour: what was drawn before is stale).
+    static var cacheDirectory: URL { caches.appendingPathComponent("wallpaper-art", isDirectory: true) }
+
+    /// Where drawn art was kept before; dropped once (`WallpaperChoice.migrate`).
+    static var previousCacheDirectory: URL { caches.appendingPathComponent("wallpaper", isDirectory: true) }
+
+    private static var caches: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
     }
 
     /// The image an effect is drawn on: the shipped asset, or your photo as it was picked (an older baked one as it is).
@@ -131,12 +136,25 @@ struct WallpaperArt: Hashable {
         for (url, _) in others.dropFirst(max(0, count - 1)) { try? files.removeItem(at: url) }
     }
 
+    /// The shipped images as picking them gives them (each with its own effect), small: the Image row's tiles. Off the
+    /// main actor.
+    static func imageThumbs(dark: Bool) -> [Wallpaper: CGImage] {
+        var out: [Wallpaper: CGImage] = [:]
+        for image in Wallpaper.shipped {
+            guard let source = source(image, dark: dark) else { continue }
+            out[image] = image.defaultEffect == .original
+                ? source
+                : WallpaperRender.render(source, effect: image.defaultEffect, fade: 0, dark: dark, size: CGSize(width: 208, height: 267), foot: image.foot)
+        }
+        return out
+    }
+
     /// The image with each effect, small and with no added fade: the Effect row's thumbnails. Off the main actor.
     static func thumbs(_ image: Wallpaper, dark: Bool) -> [WallpaperEffect: CGImage] {
         guard let source = source(image, dark: dark) else { return [:] }
         var out: [WallpaperEffect: CGImage] = [:]
         for effect in WallpaperEffect.allCases {
-            out[effect] = WallpaperRender.render(source, effect: effect, fade: 0, dark: dark, size: CGSize(width: 156, height: 200))
+            out[effect] = WallpaperRender.render(source, effect: effect, fade: 0, dark: dark, size: CGSize(width: 156, height: 200), foot: image.foot)
         }
         return out
     }

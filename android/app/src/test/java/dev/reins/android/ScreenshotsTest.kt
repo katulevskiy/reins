@@ -667,8 +667,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("wallpaperFor:light")
         frames()
         shoot("next-wallpaper-picker-light")
-        // Any image takes any effect: a shipped one in halftone.
-        tap("wallpaperFor:dark")
+        // An image that ships as it was takes any effect: Eyes (picked with its scanlines) in halftone.
+        tap("wallpaper:Eyes")
         tap("effect:Halftone")
         // The picture is made off the main thread, which the test clock does not wait for.
         repeat(10) {

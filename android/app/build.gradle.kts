@@ -172,6 +172,8 @@ android {
         // -Dreins.screenshots=/dir renders the design-review screenshots (see ScreenshotsTest).
         unitTests.all { test ->
             System.getProperty("reins.screenshots")?.let { test.systemProperty("reins.screenshots", it) }
+            // -Dreins.wallpaperSheet=/dir draws every shipped wallpaper with every effect (see WallpaperSheetTest).
+            System.getProperty("reins.wallpaperSheet")?.let { test.systemProperty("reins.wallpaperSheet", it) }
             // Robolectric with Compose fills most of Gradle's default 512 MB test heap. Classes are independent, so
             // they spread over a JVM per core (up to four), and a stuck test fails the task in minutes instead of
             // running into the CI job's limit.

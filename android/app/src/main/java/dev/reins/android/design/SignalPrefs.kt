@@ -48,21 +48,28 @@ enum class ThemeChoice(val label: String) {
 }
 
 /**
- * A theme's wallpaper: three separate choices. Any [image] (shipped or the owner's photo) takes any [effect] and any
- * [fade] into the page. Original with no fade draws the image as it is.
+ * A theme's wallpaper: three separate choices. An [image] (shipped or the owner's photo) takes an [effect] (none for
+ * an image that ships treated, [Wallpaper.takesEffects]) and any [fade] into the page. Original with no fade draws
+ * the image as it is.
  */
 @Immutable
 data class WallpaperChoice(
     val image: Wallpaper,
     val effect: PhotoEffect = PhotoEffect.Original,
-    /** 0 none … 1 from a third of the way down ([PhotoEffects.apply]). */
+    /** 0 none … 1 from 30 % of the way down ([PhotoEffects.fadeStart]). */
     val fade: Float = 0f,
 ) {
     /** The fade in hundredths: the step the slider keeps and the made pictures are keyed by. */
     val fadeStep: Int get() = (fade.coerceIn(0f, 1f) * 100f).roundToInt()
 
+    /** The effect drawn: [effect], or none on an image that ships treated. */
+    val drawnEffect: PhotoEffect get() = if (image.takesEffects) effect else PhotoEffect.Original
+
     /** Whether the image is drawn as it is: no effect and no fade of its own. */
-    val plain: Boolean get() = effect == PhotoEffect.Original && fadeStep == 0
+    val plain: Boolean get() = drawnEffect == PhotoEffect.Original && fadeStep == 0
+
+    /** [image] picked in this choice's place: with its own effect ([Wallpaper.defaultEffect]); the fade stays. */
+    fun withImage(image: Wallpaper): WallpaperChoice = copy(image = image, effect = image.defaultEffect)
 
     /**
      * The owner's new photo in this choice's place: the effect stays; with no fade it takes [PHOTO_FADE], so a photo
@@ -73,19 +80,40 @@ data class WallpaperChoice(
     companion object {
         /** The fade a new photo gets when the theme had none. */
         const val PHOTO_FADE = 0.6f
+
+        /** [image] as picking it gives it: with its own effect, no fade. */
+        fun of(image: Wallpaper): WallpaperChoice = WallpaperChoice(image, image.defaultEffect)
+
+        /**
+         * A choice kept before the shipped images came as originals, drawn as it was: Original on a shipped image
+         * meant the picture as shipped ([Wallpaper.shippedLook]: Eyes with Scanlines), and so did the old Colour (a
+         * saturation lift on the picture). Torii dither is Torii with Mono. An effect on an image that ships treated
+         * is dropped: it drew the art a second time. Null for an image no longer known.
+         */
+        fun fromBefore(image: String?, effect: String?, fade: Float): WallpaperChoice? {
+            val toriiDither = image == "ToriiDither"
+            val picked = if (toriiDither) Wallpaper.Torii else Wallpaper.named(image) ?: return null
+            val asShipped = effect == null || effect == "Original" || effect == "Colour"
+            val e = when {
+                toriiDither && asShipped -> PhotoEffect.Mono
+                asShipped -> picked.shippedLook
+                else -> PhotoEffect.named(effect) ?: picked.shippedLook
+            }
+            return WallpaperChoice(picked, if (picked.takesEffects) e else PhotoEffect.Original, fade.coerceIn(0f, 1f))
+        }
     }
 }
 
 /**
  * The Appearance choices, kept on this phone: paper or graphite, the field grain, and the wallpaper for each theme
- * (Settings › Wallpaper; Halo in the dark and Torii dither in the light by default, both as they are).
+ * (Settings › Wallpaper; Halo in the dark and Torii with Mono in the light by default).
  */
 @Immutable
 data class AppearanceChoice(
     val grain: Boolean = true,
     val theme: ThemeChoice = ThemeChoice.System,
-    val wallpaperDark: WallpaperChoice = WallpaperChoice(Wallpaper.Halo),
-    val wallpaperLight: WallpaperChoice = WallpaperChoice(Wallpaper.ToriiDither),
+    val wallpaperDark: WallpaperChoice = WallpaperChoice.of(Wallpaper.Halo),
+    val wallpaperLight: WallpaperChoice = WallpaperChoice.of(Wallpaper.Torii),
 ) {
     fun wallpaper(dark: Boolean): WallpaperChoice = if (dark) wallpaperDark else wallpaperLight
 
@@ -101,6 +129,13 @@ object Appearance {
     private const val OLD_WALL_LIGHT = "wallpaperLight"
     private const val KEY_GRAIN = "grain"
     private const val KEY_THEME = "theme"
+
+    /**
+     * How the kept wallpaper keys read: 2 since the shipped images came as originals with an effect of their own.
+     * Keys without it are read as before ([WallpaperChoice.fromBefore]) and written back with it.
+     */
+    private const val KEY_LOOKS = "wallpaperLooks"
+    private const val LOOKS = 2
     private var state: MutableState<AppearanceChoice>? = null
 
     private fun imageKey(dark: Boolean) = if (dark) "wallpaperDarkImage" else "wallpaperLightImage"
@@ -121,7 +156,7 @@ object Appearance {
             val w = choice.wallpaper(dark)
             edit.putString(imageKey(dark), w.image.name).putString(effectKey(dark), w.effect.name).putFloat(fadeKey(dark), w.fade)
         }
-        return edit
+        return edit.putInt(KEY_LOOKS, LOOKS)
     }
 
     /** Sets one theme's wallpaper, keeping the rest. */
@@ -129,27 +164,37 @@ object Appearance {
         set(context, state(context).value.withWallpaper(dark, wallpaper))
     }
 
-    /** What is kept on this phone; the old one-key wallpaper is moved to the three keys (as it was: no effect). */
+    /**
+     * What is kept on this phone. Wallpapers kept before the shipped images came as originals (and the old one-key
+     * image, as it was: no effect) are read as they looked ([WallpaperChoice.fromBefore]) and written back once.
+     */
     internal fun load(context: Context): AppearanceChoice {
         val p = prefs(context)
         val old = p.contains(OLD_WALL_DARK) || p.contains(OLD_WALL_LIGHT)
-        fun wallpaper(dark: Boolean, default: Wallpaper): WallpaperChoice {
-            val image = Wallpaper.named(p.getString(imageKey(dark), null))
-                ?: Wallpaper.named(p.getString(if (dark) OLD_WALL_DARK else OLD_WALL_LIGHT, null))
-                ?: return WallpaperChoice(default)
-            return WallpaperChoice(
-                image,
-                PhotoEffect.named(p.getString(effectKey(dark), null)) ?: PhotoEffect.Original,
-                p.getFloat(fadeKey(dark), 0f).coerceIn(0f, 1f),
-            )
+        val before = p.getInt(KEY_LOOKS, 0) < LOOKS && (old || p.contains(imageKey(true)) || p.contains(imageKey(false)))
+        val defaults = AppearanceChoice()
+        fun wallpaper(dark: Boolean): WallpaperChoice {
+            val image = p.getString(imageKey(dark), null) ?: p.getString(if (dark) OLD_WALL_DARK else OLD_WALL_LIGHT, null)
+            val effect = p.getString(effectKey(dark), null)
+            val fade = p.getFloat(fadeKey(dark), 0f).coerceIn(0f, 1f)
+            val kept = if (before) {
+                WallpaperChoice.fromBefore(image, effect, fade)
+            } else {
+                Wallpaper.named(image)?.let { WallpaperChoice(it, PhotoEffect.named(effect) ?: PhotoEffect.Original, fade) }
+            }
+            return kept ?: defaults.wallpaper(dark)
         }
         val choice = AppearanceChoice(
-            wallpaperDark = wallpaper(true, Wallpaper.Halo),
-            wallpaperLight = wallpaper(false, Wallpaper.ToriiDither),
+            wallpaperDark = wallpaper(true),
+            wallpaperLight = wallpaper(false),
             grain = p.getBoolean(KEY_GRAIN, true),
             theme = ThemeChoice.entries.firstOrNull { it.name == p.getString(KEY_THEME, null) } ?: ThemeChoice.System,
         )
-        if (old) putWallpapers(p.edit().remove(OLD_WALL_DARK).remove(OLD_WALL_LIGHT), choice).apply()
+        if (before) {
+            putWallpapers(p.edit().remove(OLD_WALL_DARK).remove(OLD_WALL_LIGHT), choice).apply()
+            // Pictures made with the old effects (and from the old Eyes) are stale.
+            Wallpapers.oldMadeDir(context).deleteRecursively()
+        }
         return choice
     }
 

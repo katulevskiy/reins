@@ -138,17 +138,98 @@ final class OutsideAndSettingsTests: XCTestCase {
         }
     }
 
-    func testDitherUsesOnlyItsTwoInksAboveTheFade() throws {
-        let out = try XCTUnwrap(WallpaperRender.render(try photo(), effect: .dither, fade: 0, dark: true, size: CGSize(width: 260, height: 333)))
-        let px = try XCTUnwrap(Pixels(fill: out, width: out.width, height: out.height))
-        var colours = Set<Int>()
-        for y in stride(from: 0, to: 200, by: 7) {
-            for x in stride(from: 0, to: px.width, by: 5) {
-                let i = px.index(x, y)
-                colours.insert(Int(px.bytes[i]) << 16 | Int(px.bytes[i + 1]) << 8 | Int(px.bytes[i + 2]))
+    /// Hues across, light to dark down: red, yellow, green, cyan, blue, magenta.
+    private func colourful(width: Int = 390, height: Int = 500) throws -> CGImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: {
+            let f = UIGraphicsImageRendererFormat()
+            f.scale = 1
+            return f
+        }())
+        let image = renderer.image { ctx in
+            for x in 0..<width {
+                for y in stride(from: 0, to: height, by: 10) {
+                    UIColor(hue: CGFloat(x) / CGFloat(width), saturation: 0.85, brightness: 1 - 0.7 * CGFloat(y) / CGFloat(height), alpha: 1).setFill()
+                    ctx.fill(CGRect(x: x, y: y, width: 1, height: 10))
+                }
             }
         }
-        XCTAssertEqual(colours, [0x000000, 0xE4E8FF])
+        return try XCTUnwrap(image.cgImage)
+    }
+
+    /// Every pixel's colour, as 0xRRGGBB.
+    /// Every pixel's colour; `aboveFoot`: only the picture above the bottom an effect fades into the paper.
+    private func colours(_ image: CGImage, aboveFoot: Bool = false) throws -> [Int] {
+        let px = try XCTUnwrap(Pixels(fill: image, width: image.width, height: image.height))
+        let rows = aboveFoot ? Int(Double(px.height) * (1 - WallpaperRender.effectFoot)) : px.height
+        return stride(from: 0, to: rows * px.width * 4, by: 4).map { Int(px.bytes[$0]) << 16 | Int(px.bytes[$0 + 1]) << 8 | Int(px.bytes[$0 + 2]) }
+    }
+
+    /// The share of pixels whose channels differ by more than 40: how much of a picture is in colour.
+    private func coloured(_ colours: [Int]) -> Double {
+        let count = colours.filter { c in
+            let r = c >> 16 & 0xFF, g = c >> 8 & 0xFF, b = c & 0xFF
+            return max(r, g, b) - min(r, g, b) > 40
+        }.count
+        return Double(count) / Double(colours.count)
+    }
+
+    func testDitherScanlinesAndHalftoneKeepTheColours() throws {
+        let source = try colourful()
+        XCTAssertGreaterThan(coloured(try colours(source)), 0.9)
+        for dark in [true, false] {
+            for effect in [WallpaperEffect.dither, .scanlines, .halftone] {
+                let out = try XCTUnwrap(WallpaperRender.render(source, effect: effect, fade: 0, dark: dark, size: CGSize(width: 390, height: 500)))
+                // Halftone leaves paper between its dots; the rest is in colour.
+                XCTAssertGreaterThan(coloured(try colours(out)), effect == .halftone ? 0.25 : 0.6, "\(effect) (dark \(dark)) is not greyscale")
+            }
+        }
+    }
+
+    func testTheColoursStayWhereTheyWere() throws {
+        let source = try colourful()
+        for effect in [WallpaperEffect.dither, .scanlines, .halftone] {
+            let out = try XCTUnwrap(WallpaperRender.render(source, effect: effect, fade: 0, dark: true, size: CGSize(width: 390, height: 500)))
+            let px = try XCTUnwrap(Pixels(fill: out, width: out.width, height: out.height))
+            // Halftone's dots, not the paper between them.
+            let paper = WallpaperRender.paper(dark: true)
+            func mean(_ x0: Int, _ x1: Int, _ channel: Int) -> Double {
+                var sum = 0.0, n = 0.0
+                for y in 20..<200 {
+                    for x in x0..<x1 {
+                        let i = px.index(x, y)
+                        guard (px.bytes[i], px.bytes[i + 1], px.bytes[i + 2]) != (paper.r, paper.g, paper.b) else { continue }
+                        sum += Double(px.bytes[i + channel]); n += 1
+                    }
+                }
+                return sum / n
+            }
+            XCTAssertGreaterThan(mean(4, 30, 0), mean(4, 30, 2) + 40, "\(effect): red stays red")
+            // 240° of 360: blue, at about two thirds across.
+            XCTAssertGreaterThan(mean(250, 270, 2), mean(250, 270, 0) + 40, "\(effect): blue stays blue")
+        }
+    }
+
+    func testDitherUsesThreeLevelsAChannel() throws {
+        let out = try XCTUnwrap(WallpaperRender.render(try colourful(), effect: .dither, fade: 0, dark: true, size: CGSize(width: 390, height: 500)))
+        let levels = Set(try colours(out, aboveFoot: true).flatMap { [$0 >> 16 & 0xFF, $0 >> 8 & 0xFF, $0 & 0xFF] })
+        XCTAssertEqual(levels, [0, 128, 255])
+    }
+
+    func testMonoUsesTheThemesTwoTones() throws {
+        for (dark, tones) in [(true, Set([0x000000, 0xE8ECFF])), (false, Set([0xF6F6F8, 0x46464E]))] {
+            let out = try XCTUnwrap(WallpaperRender.render(try photo(), effect: .mono, fade: 0, dark: dark, size: CGSize(width: 260, height: 333)))
+            XCTAssertEqual(Set(try colours(out, aboveFoot: true)), tones, "dark \(dark)")
+        }
+    }
+
+    func testHalftoneDrawsOnThePaper() throws {
+        let black = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 250)).image { ctx in
+            UIColor.black.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 250))
+        }
+        let out = try XCTUnwrap(WallpaperRender.render(try XCTUnwrap(black.cgImage), effect: .halftone, fade: 0, dark: true, size: CGSize(width: 200, height: 250)))
+        let paper = WallpaperRender.paper(dark: true)
+        XCTAssertEqual(Set(try colours(out, aboveFoot: true)), [Int(paper.r) << 16 | Int(paper.g) << 8 | Int(paper.b)], "no dots in the dark, the paper all over")
     }
 
     func testMoreFadeStartsHigher() {
@@ -162,7 +243,7 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertGreaterThan(Int(bottom.0), 0x80, "the photo's light bottom, not the dark paper")
     }
 
-    func testAnEffectAlwaysFadesItsFootIntoThePaper() throws {
+    func testAnEffectOnAnImageWithoutAFootStillEndsOnThePaper() throws {
         for effect in WallpaperEffect.allCases where effect != .original {
             let art = try XCTUnwrap(WallpaperRender.render(try photo(), effect: effect, fade: 0, dark: true, size: CGSize(width: 78, height: 100)))
             let bottom = try pixel(art, 40, 99)
@@ -192,14 +273,68 @@ final class OutsideAndSettingsTests: XCTestCase {
         let choice = WallpaperChoice(image: .crescent, effect: .halftone, fade: 0.404)
         XCTAssertEqual(choice.rawValue, "crescent|halftone|40")
         XCTAssertEqual(WallpaperChoice(rawValue: choice.rawValue), choice)
-        XCTAssertEqual(WallpaperChoice(rawValue: "torii-dither|original|0"), WallpaperChoice(image: .toriiDither))
+        XCTAssertNil(WallpaperChoice(rawValue: "torii-dither|original|0"), "Torii dither is Torii with Mono now")
+        XCTAssertNil(WallpaperChoice(rawValue: "eyes|colour|0"), "Colour is gone")
         XCTAssertNil(WallpaperChoice(rawValue: "halo"), "the old key's bare image is not a choice")
         XCTAssertNil(WallpaperChoice(rawValue: "halo|sepia|0"))
         var faded = choice
         faded.fade = 1.7
         XCTAssertEqual(faded.fade, 1, "the fade stays in 0...1")
         XCTAssertEqual(WallpaperChoice.defaultFor(.dark), WallpaperChoice(image: .halo, effect: .original, fade: 0))
-        XCTAssertEqual(WallpaperChoice.defaultFor(.light).image, .toriiDither)
+        XCTAssertEqual(WallpaperChoice.defaultFor(.light), WallpaperChoice(image: .torii, effect: .mono, fade: 0))
+    }
+
+    func testPickingAnImageGivesItsOwnEffectAndKeepsTheFade() {
+        let current = WallpaperChoice(image: .halo, effect: .original, fade: 0.4)
+        XCTAssertEqual(current.with(image: .eyes), WallpaperChoice(image: .eyes, effect: .scanlines, fade: 0.4))
+        XCTAssertEqual(current.with(image: .torii), WallpaperChoice(image: .torii, effect: .mono, fade: 0.4))
+        XCTAssertEqual(WallpaperChoice(image: .eyes, effect: .dither, fade: 0.4).with(image: .ruins), WallpaperChoice(image: .ruins, effect: .original, fade: 0.4))
+        XCTAssertEqual(current.with(image: .own), WallpaperChoice(image: .own, effect: .original, fade: 0.4))
+        // The shipped images that come as they were take effects; the treated ones take none.
+        XCTAssertEqual(Wallpaper.shipped.filter(\.takesEffects), [.hands, .eyes, .torii])
+        XCTAssertEqual(WallpaperChoice(image: .halo, effect: .dither, fade: 0.2).drawn, WallpaperChoice(image: .halo, effect: .original, fade: 0.2))
+    }
+
+    func testChoicesKeptBeforeTheOriginalsLookAsTheyDid() throws {
+        let cases: [(String, WallpaperChoice?)] = [
+            // Original meant the picture as shipped: Eyes had its scanlines, Torii was the photo.
+            ("eyes|original|30", WallpaperChoice(image: .eyes, effect: .scanlines, fade: 0.3)),
+            ("torii|original|30", WallpaperChoice(image: .torii, effect: .original, fade: 0.3)),
+            ("halo|original|0", WallpaperChoice(image: .halo)),
+            // Torii dither is Torii with Mono; an effect on it now goes on the photo.
+            ("torii-dither|original|30", WallpaperChoice(image: .torii, effect: .mono, fade: 0.3)),
+            ("torii-dither|halftone|30", WallpaperChoice(image: .torii, effect: .halftone, fade: 0.3)),
+            // Colour (a lift of the colour) is gone: the picture as shipped.
+            ("eyes|colour|0", WallpaperChoice(image: .eyes, effect: .scanlines)),
+            ("own|colour|65", WallpaperChoice(image: .own, effect: .original, fade: 0.65)),
+            // An image that ships treated is not treated again.
+            ("halo|dither|0", WallpaperChoice(image: .halo)),
+            // Effects on an image that came as it was stay.
+            ("hands|dither|10", WallpaperChoice(image: .hands, effect: .dither, fade: 0.1)),
+            ("own|scanlines|65", WallpaperChoice(image: .own, effect: .scanlines, fade: 0.65)),
+            // The oldest key's bare image.
+            ("eyes", WallpaperChoice(image: .eyes, effect: .scanlines)),
+            ("torii-dither", WallpaperChoice(image: .torii, effect: .mono)),
+            ("sepia|original|0", nil),
+        ]
+        for (raw, expected) in cases {
+            XCTAssertEqual(WallpaperChoice.fromBefore(raw), expected, raw)
+        }
+        // Moved once, at launch, with the art drawn by the old effects.
+        let defaults = try scratchDefaults()
+        let caches = try scratchDirectory()
+        defaults.set("eyes|original|0", forKey: WallpaperChoice.previousKey(.dark))
+        defaults.set("torii-dither|original|0", forKey: WallpaperChoice.previousKey(.light))
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .eyes, effect: .scanlines), "read before the move: as it was")
+        WallpaperChoice.migrate(defaults: defaults, caches: caches)
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.dark)), "eyes|scanlines|0")
+        XCTAssertEqual(defaults.string(forKey: WallpaperChoice.key(.light)), "torii|mono|0")
+        XCTAssertNil(defaults.object(forKey: WallpaperChoice.previousKey(.dark)), "the earlier key is read once")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: caches.path), "art drawn with the old effects goes")
+        // Eyes as it is, picked since, stays as it is.
+        defaults.set(WallpaperChoice(image: .eyes).rawValue, forKey: WallpaperChoice.key(.dark))
+        WallpaperChoice.migrate(defaults: defaults, caches: caches)
+        XCTAssertEqual(WallpaperChoice.initial(.dark, defaults: defaults), WallpaperChoice(image: .eyes))
     }
 
     func testTheOldKeyBecomesAChoiceOnceWithNoEffectAndNoAddedFade() throws {
@@ -241,14 +376,14 @@ final class OutsideAndSettingsTests: XCTestCase {
     }
 
     func testTheCacheNamesEverythingThatChangesTheArt() {
-        let base = WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.2), dark: true)
-        XCTAssertEqual(base.key, "dark_halo_dither_f20_r2")
+        let base = WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .dither, fade: 0.2), dark: true)
+        XCTAssertEqual(base.key, "dark_eyes_dither_f20_r3")
         let keys: Set<String> = [
             base.key,
-            WallpaperArt(choice: WallpaperChoice(image: .ruins, effect: .dither, fade: 0.2), dark: true).key,
-            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .halftone, fade: 0.2), dark: true).key,
-            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.21), dark: true).key,
-            WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.2), dark: false).key,
+            WallpaperArt(choice: WallpaperChoice(image: .torii, effect: .dither, fade: 0.2), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .halftone, fade: 0.2), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .dither, fade: 0.21), dark: true).key,
+            WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .dither, fade: 0.2), dark: false).key,
         ]
         XCTAssertEqual(keys.count, 5, "image, effect, fade and theme each name another file")
         XCTAssertEqual(WallpaperArt(choice: base.choice, dark: true, photo: 7).key, base.key, "a shipped image has no photo revision")
@@ -258,15 +393,19 @@ final class OutsideAndSettingsTests: XCTestCase {
 
     func testOnlyAShippedImageAsItShipsSkipsTheRender() {
         XCTAssertTrue(WallpaperArt(choice: .defaultFor(.dark), dark: true).isAsset)
-        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .scanlines), dark: true).isAsset)
+        XCTAssertFalse(WallpaperArt(choice: .defaultFor(.light), dark: false).isAsset, "Torii with Mono is drawn")
+        XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .eyes, effect: .scanlines), dark: true).isAsset)
+        XCTAssertTrue(WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .scanlines), dark: true).isAsset, "a treated image is drawn as it is")
         XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .halo, fade: 0.01), dark: true).isAsset)
         XCTAssertFalse(WallpaperArt(choice: WallpaperChoice(image: .own), dark: true).isAsset, "your photo is always drawn to the wallpaper's size")
     }
 
     func testAMissingPhotoFallsBackToTheThemesImageKeepingTheEffect() {
-        let choice = WallpaperChoice(image: .own, effect: .colour, fade: 0.5)
-        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: false).choice, WallpaperChoice(image: .toriiDither, effect: .colour, fade: 0.5))
+        let choice = WallpaperChoice(image: .own, effect: .halftone, fade: 0.5)
+        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: false).choice, WallpaperChoice(image: .torii, effect: .halftone, fade: 0.5))
         XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .light, hasPhoto: true).choice, choice)
+        // Halo ships treated: it takes no effect.
+        XCTAssertEqual(WallpaperArt.shown(choice, photo: 3, scheme: .dark, hasPhoto: false).choice, WallpaperChoice(image: .halo, effect: .original, fade: 0.5))
     }
 
     func testTheCacheKeepsEachThemesNewestFew() throws {

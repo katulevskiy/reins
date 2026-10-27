@@ -3,8 +3,9 @@ import SwiftUI
 import UIKit
 
 /// Settings > Wallpaper (the Settings board, 04b and 04c), quiet: for dark and for light, three separate settings
-/// (`WallpaperChoice`): the image (the eight shipped ones or your photo), the effect over it and the fade. A small
-/// Activity shows the result; every change applies at once. The choice is kept under `WallpaperChoice.key(scheme)` in
+/// (`WallpaperChoice`): the image (the shipped ones or your photo), the effect over it and the fade. Picking an image
+/// gives it its own effect (`Wallpaper.defaultEffect`), which can then change; an image that ships treated has no
+/// Effect row. A small Activity shows the result; every change applies at once. The choice is kept under `WallpaperChoice.key(scheme)` in
 /// the app group, where `WallpaperLayer` reads it; your photo is kept as picked (`OwnWallpaper`), so its effect and fade
 /// can change later.
 struct WallpaperScreen: View {
@@ -25,6 +26,8 @@ struct WallpaperScreen: View {
     @State private var thumbs: (source: ThumbSource, images: [WallpaperEffect: CGImage])?
     /// Your photo, small, for its tile.
     @State private var photoThumb: (source: ThumbSource, image: UIImage)?
+    /// The shipped images as picking them gives them, and for which theme.
+    @State private var imageThumbs: (dark: Bool, images: [Wallpaper: UIImage])?
 
     private var scheme: ColorScheme { picking ?? systemScheme }
     private var choice: WallpaperChoice { scheme == .dark ? dark : light }
@@ -53,7 +56,9 @@ struct WallpaperScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(Wallpaper.shipped) { wallpaper in
-                        ImageChoice(wallpaper: wallpaper, image: wallpaper.image(scheme), selected: art.choice.image == wallpaper) {
+                        let thumb = imageThumbs.flatMap { $0.dark == art.dark ? $0.images[wallpaper] : nil }
+                            ?? (wallpaper.defaultEffect == .original ? wallpaper.image(scheme) : nil)
+                        ImageChoice(wallpaper: wallpaper, image: thumb, selected: art.choice.image == wallpaper) {
                             pick(wallpaper)
                         }
                     }
@@ -72,19 +77,21 @@ struct WallpaperScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 4)
             }
-            SectionHeader("Effect", quiet: true)
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(WallpaperEffect.allCases) { effect in
-                    EffectChoice(effect: effect, thumb: thumbs.flatMap { $0.source == source ? $0.images[effect] : nil }, selected: choice.effect == effect) {
-                        guard choice.effect != effect else { return }
-                        feedback.play(.selection)
-                        update { $0.effect = effect }
+            if art.choice.image.takesEffects {
+                SectionHeader("Effect", quiet: true)
+                HStack(alignment: .top, spacing: 0) {
+                    ForEach(WallpaperEffect.allCases) { effect in
+                        EffectChoice(effect: effect, thumb: thumbs.flatMap { $0.source == source ? $0.images[effect] : nil }, selected: art.choice.effect == effect) {
+                            guard choice.effect != effect else { return }
+                            feedback.play(.selection)
+                            update { $0.effect = effect }
+                        }
+                        if effect != WallpaperEffect.allCases.last { Spacer(minLength: 4) }
                     }
-                    if effect != WallpaperEffect.allCases.last { Spacer(minLength: 4) }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
             HStack(spacing: 12) {
                 GlyphIcon(.appearance, size: 16).foregroundStyle(Palette.inkMeta).accessibilityHidden(true)
                 Slider(value: Binding(get: { choice.fade }, set: { value in update { $0.fade = value } }), in: 0...1) { editing in
@@ -108,6 +115,11 @@ struct WallpaperScreen: View {
         .task(id: art) {
             if let drawn = await art.drawn() { preview = drawn }
         }
+        .task(id: art.dark) {
+            let dark = art.dark
+            let images = await Task.detached(priority: .utility) { WallpaperArt.imageThumbs(dark: dark) }.value
+            if !Task.isCancelled { imageThumbs = (dark, images.mapValues { UIImage(cgImage: $0) }) }
+        }
         .task(id: source) {
             let images = await Task.detached(priority: .utility) { WallpaperArt.thumbs(source.image, dark: source.dark) }.value
             if !Task.isCancelled { thumbs = (source, images) }
@@ -129,7 +141,7 @@ struct WallpaperScreen: View {
     private func pick(_ wallpaper: Wallpaper) {
         guard choice.image != wallpaper else { return }
         feedback.play(.selection)
-        update { $0.image = wallpaper }
+        update { $0 = $0.with(image: wallpaper) }
     }
 
     /// Keeps a picked photo for the theme as it is (upright, at most 2,000 px) and chooses it, keeping the effect.

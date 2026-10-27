@@ -88,7 +88,7 @@ enum NewAccountRules {
     }
 }
 
-/// The signed-out root (the Arrival board, 01): the shipped wallpaper full-bleed (Torii dither in light, Halo in dark)
+/// The signed-out root (the Arrival board, 01): the shipped wallpaper full-bleed (Torii with Mono in light, Halo in dark)
 /// and, on a frosted pane over its lower half, "Your AI asks, *You decide.*" and the way in: "Continue" (passwordless,
 /// through the server's sign-in page: WorkOS AuthKit on the hosted server). "Other server" is for self-hosters; only a
 /// server of one's own offers the master password forms. What follows a sign-in (the onboarding steps) is
@@ -277,27 +277,32 @@ private struct PaneLink: View {
     }
 }
 
-/// The welcome's wallpaper: the shipped default for the theme, 620 pt tall from the top of the screen, already faded
-/// into the page at its bottom.
+/// The welcome's wallpaper: the shipped default for the theme with its effect (`WallpaperChoice.defaultFor`), 620 pt
+/// tall from the top of the screen, already faded into the page at its bottom.
 private struct WelcomeArt: View {
     @Environment(\.colorScheme) private var scheme
+    @State private var drawn: WallpaperArt.Drawn?
 
     var body: some View {
+        let art = WallpaperArt(choice: .defaultFor(scheme), dark: scheme == .dark)
         GeometryReader { geo in
-            if let image = Wallpaper.defaultFor(scheme).image(scheme) {
-                Image(uiImage: image)
+            if let shown = art.ready() ?? drawn.flatMap({ $0.art == art ? $0 : nil }) {
+                Image(uiImage: shown.image)
                     .resizable()
                     .interpolation(.medium)
                     .scaledToFill()
                     .frame(width: geo.size.width, height: 620, alignment: .top)
                     .clipped()
-                    .backdropArt(key: "welcome-\(scheme == .dark ? "dark" : "light")", image: image, dark: scheme == .dark)
+                    .backdropArt(key: "welcome-" + art.key, image: shown.image, dark: art.dark)
             }
         }
         .frame(height: 620)
         .ignoresSafeArea(edges: .top)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .task(id: art) {
+            if let made = await art.drawn() { drawn = made }
+        }
     }
 }
 

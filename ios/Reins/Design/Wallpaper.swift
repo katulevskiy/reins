@@ -2,18 +2,22 @@ import CoreImage
 import SwiftUI
 import UIKit
 
-/// The art behind Activity (the Wallpaper and Settings boards): dithered and treated images, faded into the page at the
-/// bottom, one for dark and one for light (Halo and Torii dither by default), or the user's own photo. Which image is
-/// one of a theme's three settings (`WallpaperChoice`); the effect and the fade are the others. Groups over it become
-/// frosted panes; Reduce Transparency makes the panes solid and keeps the art.
+/// The art behind Activity (the Wallpaper and Settings boards): images faded into the page at the bottom, one for dark
+/// and one for light (Halo, and Torii with Mono, by default), or the user's own photo. Which image is one of a theme's
+/// three settings (`WallpaperChoice`); the effect and the fade are the others. Groups over it become frosted panes;
+/// Reduce Transparency makes the panes solid and keeps the art.
+///
+/// An image ships as it was before any effect, with the effect the boards gave it as its `defaultEffect` (Eyes with
+/// Scanlines, Torii with Mono). Halo, Crescent, Figure and Ruins ship already treated (the boards' sources are not in
+/// the app): they take no effect (`takesEffects`), so nothing is dithered twice.
 enum Wallpaper: String, CaseIterable, Identifiable {
-    case halo, crescent, figure, hands, ruins, eyes, torii, toriiDither = "torii-dither"
+    case halo, crescent, figure, hands, ruins, eyes, torii
     /// The user's own photo (`OwnWallpaper`).
     case own
 
     var id: String { rawValue }
 
-    static let shipped: [Wallpaper] = [.halo, .crescent, .figure, .hands, .ruins, .eyes, .torii, .toriiDither]
+    static let shipped: [Wallpaper] = [.halo, .crescent, .figure, .hands, .ruins, .eyes, .torii]
 
     var title: String {
         switch self {
@@ -24,18 +28,48 @@ enum Wallpaper: String, CaseIterable, Identifiable {
         case .ruins: "Ruins"
         case .eyes: "Eyes"
         case .torii: "Torii"
-        case .toriiDither: "Torii dither"
         case .own: "Your photo"
         }
     }
 
     var assetName: String { "wallpaper-\(rawValue)" }
 
+    /// The effect picking the image gives it: the boards' look for it.
+    var defaultEffect: WallpaperEffect {
+        switch self {
+        case .eyes: .scanlines
+        case .torii: .mono
+        default: .original
+        }
+    }
+
+    /// False for an image that ships with its effect already in it: it is drawn as it is.
+    var takesEffects: Bool {
+        switch self {
+        case .halo, .crescent, .figure, .ruins: false
+        case .hands, .eyes, .torii, .own: true
+        }
+    }
+
+    /// Where the image already fades into the page (the boards baked it in): an effect fades out over it.
+    var foot: WallpaperEffects.Foot? {
+        switch self {
+        case .hands: .init(start: 0.62, end: 0.98)
+        case .eyes: .init(start: 0.5, end: 0.97)
+        case .torii: .init(start: 0.55, end: 0.97)
+        default: nil
+        }
+    }
+
+    /// The effect that draws the image as it shipped before images came as originals: Eyes shipped with its scanlines
+    /// in it; Torii shipped as the photo (its dither was the separate Torii dither).
+    var shippedLook: WallpaperEffect { self == .torii ? .original : defaultEffect }
+
     /// Where the image alone was kept before the effect and the fade were settings of their own; read once, by
     /// `WallpaperChoice.migrate`.
     static func legacyKey(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper.dark" : "wallpaper.light" }
 
-    static func defaultFor(_ scheme: ColorScheme) -> Wallpaper { scheme == .dark ? .halo : .toriiDither }
+    static func defaultFor(_ scheme: ColorScheme) -> Wallpaper { scheme == .dark ? .halo : .torii }
 
     /// The image itself, before any effect (your photo as it was picked), or nil when your photo is chosen but missing.
     func image(_ scheme: ColorScheme) -> UIImage? {
@@ -43,9 +77,9 @@ enum Wallpaper: String, CaseIterable, Identifiable {
     }
 }
 
-/// A theme's wallpaper as three separate settings: the image (a shipped one or your photo), the effect over it and how
-/// far it fades into the page. Any image takes any effect. Kept as `image|effect|fade` (the fade in hundredths) under
-/// `key(scheme)` in the app group, where `WallpaperLayer` reads it.
+/// A theme's wallpaper as three separate settings: the image (a shipped one or your photo), the effect over it (none
+/// on an image that ships treated) and how far it fades into the page. Kept as `image|effect|fade` (the fade in
+/// hundredths) under `key(scheme)` in the app group, where `WallpaperLayer` reads it.
 struct WallpaperChoice: Hashable, RawRepresentable {
     var image: Wallpaper
     var effect: WallpaperEffect
@@ -71,32 +105,74 @@ struct WallpaperChoice: Hashable, RawRepresentable {
 
     var hundredths: Int { Int((fade * 100).rounded()) }
 
+    /// What is drawn: the effect, or none on an image that ships treated.
+    var drawn: WallpaperChoice {
+        image.takesEffects ? self : WallpaperChoice(image: image, effect: .original, fade: fade)
+    }
+
+    /// `image` picked in this choice's place: with its own effect (`Wallpaper.defaultEffect`); the fade stays.
+    func with(image: Wallpaper) -> WallpaperChoice { WallpaperChoice(image: image, effect: image.defaultEffect, fade: fade) }
+
     static func step(_ fade: Double) -> Double { (min(1, max(0, fade)) * 100).rounded() / 100 }
 
-    static func key(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper2.dark" : "wallpaper2.light" }
+    /// Where a theme's choice is kept: the third key, since the shipped images came as originals.
+    static func key(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper3.dark" : "wallpaper3.light" }
 
-    /// The theme's shipped default as it was drawn: no effect, no added fade.
-    static func defaultFor(_ scheme: ColorScheme) -> WallpaperChoice { WallpaperChoice(image: .defaultFor(scheme)) }
+    /// Where it was kept before the shipped images came as originals; read once (`fromBefore`).
+    static func previousKey(_ scheme: ColorScheme) -> String { scheme == .dark ? "wallpaper2.dark" : "wallpaper2.light" }
 
-    /// What a theme draws: the saved choice; before one was saved, the image the old key kept (your photo as it was
-    /// baked, so Original and no added fade), or the default.
+    /// The theme's shipped default: Halo as it is in the dark, Torii with Mono in the light.
+    static func defaultFor(_ scheme: ColorScheme) -> WallpaperChoice {
+        let image = Wallpaper.defaultFor(scheme)
+        return WallpaperChoice(image: image, effect: image.defaultEffect)
+    }
+
+    /// A choice kept before the shipped images came as originals (`image|effect|hundredths`, or the old key's bare
+    /// image), drawn as it was: Original on a shipped image meant the picture as shipped (`Wallpaper.shippedLook`:
+    /// Eyes with Scanlines), and so did the old Colour (a lift of the picture's colour). Torii dither is Torii with
+    /// Mono. An effect on an image that ships treated is dropped: it drew the art a second time. Nil for an image no
+    /// longer known.
+    static func fromBefore(_ raw: String) -> WallpaperChoice? {
+        let parts = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 1 || parts.count == 3 else { return nil }
+        let toriiDither = parts[0] == "torii-dither"
+        guard let image = toriiDither ? .torii : Wallpaper(rawValue: parts[0]) else { return nil }
+        let old = parts.count == 3 ? parts[1] : "original"
+        let fade = parts.count == 3 ? Double(Int(parts[2]) ?? 0) / 100 : 0
+        let asShipped = old == "original" || old == "colour"
+        let effect: WallpaperEffect = if toriiDither && asShipped {
+            .mono
+        } else if asShipped {
+            image.shippedLook
+        } else {
+            WallpaperEffect(rawValue: old) ?? image.shippedLook
+        }
+        return WallpaperChoice(image: image, effect: effect, fade: fade).drawn
+    }
+
+    /// What a theme draws: the saved choice; before one was saved under this key, the one kept before the originals
+    /// or the image the oldest key kept, looking as it did (`fromBefore`), or the default.
     static func initial(_ scheme: ColorScheme, defaults: UserDefaults = AppGroup.defaults) -> WallpaperChoice {
         if let saved = defaults.string(forKey: key(scheme)).flatMap(WallpaperChoice.init(rawValue:)) { return saved }
-        if let old = defaults.string(forKey: Wallpaper.legacyKey(scheme)).flatMap(Wallpaper.init(rawValue:)) {
-            return WallpaperChoice(image: old)
-        }
+        if let kept = defaults.string(forKey: previousKey(scheme)).flatMap(fromBefore) { return kept }
+        if let old = defaults.string(forKey: Wallpaper.legacyKey(scheme)).flatMap(fromBefore) { return old }
         return defaultFor(scheme)
     }
 
-    /// Moves the old key over, once, at launch: an image kept there becomes the choice with no effect and no added
-    /// fade, so the page looks as it did. Nothing changes when the new key is already there.
-    static func migrate(defaults: UserDefaults = AppGroup.defaults) {
-        for scheme in [ColorScheme.dark, .light] where defaults.object(forKey: Wallpaper.legacyKey(scheme)) != nil {
+    /// Moves the earlier keys over, once, at launch: a choice kept there becomes this key's, looking as it did. Nothing
+    /// changes when this key is already there. Art drawn with the old effects (and from the old Eyes) is dropped.
+    static func migrate(defaults: UserDefaults = AppGroup.defaults, caches: URL? = nil) {
+        var moved = false
+        for scheme in [ColorScheme.dark, .light] {
+            let earlier = [previousKey(scheme), Wallpaper.legacyKey(scheme)].filter { defaults.object(forKey: $0) != nil }
+            guard !earlier.isEmpty else { continue }
             if defaults.string(forKey: key(scheme)) == nil {
                 defaults.set(initial(scheme, defaults: defaults).rawValue, forKey: key(scheme))
             }
-            defaults.removeObject(forKey: Wallpaper.legacyKey(scheme))
+            earlier.forEach(defaults.removeObject(forKey:))
+            moved = true
         }
+        if moved { try? FileManager.default.removeItem(at: caches ?? WallpaperArt.previousCacheDirectory) }
     }
 }
 
