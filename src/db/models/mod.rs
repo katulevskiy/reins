@@ -19,7 +19,6 @@ pub mod reins_org;
 pub mod reins_org_event;
 pub mod reins_org_exec;
 pub mod reins_org_keys;
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod reins_org_policy_code;
 pub mod reins_org_request;
 mod reins_roster;

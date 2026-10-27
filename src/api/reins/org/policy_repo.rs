@@ -14,6 +14,7 @@
 //! The repo is input, never authority.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use diesel::prelude::*;
 use reins_policy::{
@@ -339,7 +340,7 @@ pub fn names_of(c: &mut DbConnInner, org: &str, policy: &mut OrgPolicy) -> Resul
         |g| Ok(groups.get(g).cloned().unwrap_or_else(|| g.to_owned())),
         |m| Ok(people.get(m).cloned().unwrap_or_else(|| m.to_owned())),
     )
-    .map_err(|e| OrgError::Internal(e))
+    .map_err(OrgError::Internal)
 }
 
 /// What checking one commit came to.
@@ -350,7 +351,7 @@ pub enum Checked {
     Simulated {
         revision: u64,
         hash: String,
-        report: SimulationReport,
+        report: Box<SimulationReport>,
         report_hash: String,
     },
 }
@@ -388,7 +389,7 @@ pub fn check_files(
     Ok(Checked::Simulated {
         revision,
         hash,
-        report,
+        report: Box::new(report),
         report_hash,
     })
 }
@@ -434,18 +435,24 @@ pub fn check_run(org: &str, sha: &str, checked: &Checked) -> Value {
                 report.drift
             );
             if !report.top_groups.is_empty() {
-                summary.push_str(&format!("- Top groups: {}\n", tops(&report.top_groups)));
+                let _ = writeln!(summary, "- Top groups: {}", tops(&report.top_groups));
             }
             if !report.top_rules.is_empty() {
-                summary.push_str(&format!("- Top rules: {}\n", tops(&report.top_rules)));
+                let _ = writeln!(summary, "- Top rules: {}", tops(&report.top_rules));
             }
-            summary.push_str(&format!("\nDraft revision {revision}. [Report]({link})"));
+            let _ = write!(summary, "\nDraft revision {revision}. [Report]({link})");
             json!({"name": CHECK_NAME, "head_sha": sha, "status": "completed", "conclusion": "neutral",
                    "details_url": link,
                    "output": {"title": report.line(), "summary": summary}})
         }
     }
 }
+
+/// A pending change and whom to tell about it.
+pub type Proposal = (String, Vec<String>);
+
+/// An org, its bound repo and its webhook secret.
+type Routed = (String, ReinsOrgPolicyRepo, Option<zeroize::Zeroizing<Vec<u8>>>);
 
 /// The database half of a webhook's work: checks what was read and, on a push, proposes the activation (as the system;
 /// it applies nothing). Returns the result and, on a push that compiled, the pending change and whom to tell.
@@ -456,7 +463,7 @@ pub fn act(
     source_ref: &str,
     is_push: bool,
     now: i64,
-) -> Result<(Checked, Option<(String, Vec<String>)>), OrgError> {
+) -> Result<(Checked, Option<Proposal>), OrgError> {
     let checked = match read {
         Ok(files) => check_files(c, org, &files, source_ref, now)?,
         Err(m) => Checked::Errors(vec![SourceError {
@@ -556,7 +563,7 @@ async fn policy_webhook(h: HookHeaders, data: Data<'_>, conn: DbConn, pool: &Sta
     // Which org (from the installation) and its webhook secret; then the signature, before anything is acted on.
     let p = payload.clone();
     let routed = conn
-        .run(move |c| -> Result<Option<(String, ReinsOrgPolicyRepo, Option<zeroize::Zeroizing<Vec<u8>>>)>, OrgError> {
+        .run(move |c| -> Result<Option<Routed>, OrgError> {
             let Some((org, bound)) = route(c, &p)? else {
                 return Ok(None);
             };

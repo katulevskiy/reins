@@ -33,7 +33,6 @@ pub const CHECKPOINT_SECS: i64 = 600;
 const PAGE: i64 = 1000;
 
 /// The audit event kinds O2 adds (O1's stay as they are).
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod kinds {
     pub const REQUEST_RECEIVED: &str = "request.received";
     pub const DECISION_AUTO: &str = "decision.auto";

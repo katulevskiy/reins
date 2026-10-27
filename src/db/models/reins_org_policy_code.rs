@@ -312,26 +312,6 @@ pub fn q_rollout_requests(
         .load(c)
 }
 
-/// Stores a request's retained analysis and rollout step.
-pub fn q_set_request_meta(
-    c: &mut DbConnInner,
-    org: &str,
-    id: &str,
-    analysis: &str,
-    rollout: Option<(&str, i32)>,
-) -> QueryResult<()> {
-    diesel::update(
-        reins_org_requests::table.filter(reins_org_requests::org_uuid.eq(org)).filter(reins_org_requests::uuid.eq(id)),
-    )
-    .set((
-        reins_org_requests::analysis.eq(Some(analysis)),
-        reins_org_requests::rollout_id.eq(rollout.map(|r| r.0)),
-        reins_org_requests::rollout_seq.eq(rollout.map(|r| r.1)),
-    ))
-    .execute(c)
-    .map(drop)
-}
-
 /// Moves a policy revision from one state to another, with its envelope (activation, candidacy, rollback).
 pub fn q_set_policy_state(
     c: &mut DbConnInner,
@@ -390,22 +370,4 @@ pub fn q_newest_from_source(c: &mut DbConnInner, org: &str, source_prefix: &str)
         .filter(reins_org_policies::source_ref.like(format!("{source_prefix}%")))
         .select(diesel::dsl::max(reins_org_policies::revision))
         .first(c)
-}
-
-/// Stores where a draft came from and its rollout plan.
-pub fn q_set_draft_source(
-    c: &mut DbConnInner,
-    org: &str,
-    revision: i64,
-    source_ref: Option<&str>,
-    plan: Option<&str>,
-) -> QueryResult<()> {
-    diesel::update(
-        reins_org_policies::table
-            .filter(reins_org_policies::org_uuid.eq(org))
-            .filter(reins_org_policies::revision.eq(revision)),
-    )
-    .set((reins_org_policies::source_ref.eq(source_ref), reins_org_policies::rollout_plan.eq(plan)))
-    .execute(c)
-    .map(drop)
 }

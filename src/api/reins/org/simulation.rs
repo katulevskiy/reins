@@ -226,3 +226,55 @@ pub fn export(
     }
     Ok(out)
 }
+
+#[cfg(all(test, sqlite))]
+mod tests {
+    use reins_proto::org::Role;
+
+    use super::*;
+    use crate::api::reins::org::{
+        decisions::tests::{ask, issue, pilot},
+        testing::{db, member},
+    };
+    use crate::db::models::reins_org_event;
+
+    #[test]
+    fn samples_require_an_audited_read() {
+        let mut c = db();
+        pilot(&mut c);
+        member(&mut c, "o1", "aud", &[Role::Auditor]);
+        member(&mut c, "o1", "pat", &[Role::PolicyAuthor]);
+        let s = ask(&mut c, &issue("acme/api"), 100);
+        // Neither a member nor a Policy author opens a sample; nothing is recorded for them.
+        assert_eq!(sample(&mut c, "o1", "lee", &s.id, 101).unwrap_err(), OrgError::Forbidden);
+        assert_eq!(sample(&mut c, "o1", "pat", &s.id, 101).unwrap_err(), OrgError::Forbidden);
+        let reads = |c: &mut DbConnInner| {
+            reins_org_event::q_events(c, "o1", None, 100)
+                .unwrap()
+                .into_iter()
+                .filter(|e| e.kind == "audit.read")
+                .count()
+        };
+        assert_eq!(reads(&mut c), 0);
+        // An Auditor (or a Security admin) does, and the read is in the chain first.
+        let case = sample(&mut c, "o1", "aud", &s.id, 102).unwrap();
+        assert_eq!(case.id, s.id);
+        assert_eq!(reads(&mut c), 1);
+        sample(&mut c, "o1", "dana", &s.id, 103).unwrap();
+        assert_eq!(reads(&mut c), 2);
+        let e = reins_org_event::q_events(&mut c, "o1", None, 1).unwrap().remove(0);
+        assert_eq!(
+            (e.kind.as_str(), e.actor.as_deref(), e.subject.as_deref()),
+            ("audit.read", Some("dana"), Some(s.id.as_str()))
+        );
+        // Another org's request is not found.
+        assert_eq!(sample(&mut c, "o2", "aud", &s.id, 104).unwrap_err(), OrgError::Forbidden);
+        // The export needs ViewAdminEvents, is audited, and is body-free JSON lines.
+        assert_eq!(export(&mut c, "o1", "pat", 0, 200, 105).unwrap_err(), OrgError::Forbidden);
+        let lines = export(&mut c, "o1", "aud", 0, 200, 105).unwrap();
+        let back: Retained = serde_json::from_str(lines.lines().next().unwrap()).unwrap();
+        assert_eq!(back.id, s.id);
+        assert!(!lines.contains("Flaky test"), "{lines}");
+        assert_eq!(reads(&mut c), 3);
+    }
+}

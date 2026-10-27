@@ -126,7 +126,10 @@ impl GithubReader {
     }
 }
 
-static TOKENS: LazyLock<Mutex<HashMap<(String, i64), (String, i64)>>> = LazyLock::new(Mutex::default);
+/// Installation tokens by (org, installation): (token, reused until).
+type TokenCache = HashMap<(String, i64), (String, i64)>;
+
+static TOKENS: LazyLock<Mutex<TokenCache>> = LazyLock::new(Mutex::default);
 
 #[derive(serde::Serialize)]
 struct AppClaims {
@@ -214,10 +217,12 @@ impl GithubReader {
         self.call(reqwest::Method::POST, path, Some(body)).await
     }
 
+    #[allow(dead_code, reason = "part of the shared reader interface: O3's routing uses it")]
     pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, String> {
         self.call(reqwest::Method::PATCH, path, Some(body)).await
     }
 
+    #[allow(dead_code, reason = "part of the shared reader interface: O3's SAML links use it")]
     pub async fn graphql(&self, query: &str, vars: Value) -> Result<Value, String> {
         self.post_json("/graphql", &json!({"query": query, "variables": vars})).await
     }

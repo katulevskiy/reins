@@ -34,28 +34,26 @@ pub mod console;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
+pub mod console_policy;
+pub mod console_policy_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
 pub mod executor_api;
 pub mod gate;
 pub mod github;
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod github_reader;
 pub mod invariants;
 pub mod kms;
 pub mod leases;
 pub mod managed_mcp;
 pub mod policy;
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod policy_repo;
 pub mod posture;
 pub mod reviews;
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod rollout;
 pub mod roster;
 pub mod scim;
-#[allow(dead_code, reason = "TEMP-O4: used by the console pages")]
 pub mod simulation;
 pub mod sweeper;
 pub mod tenant;
@@ -84,6 +82,7 @@ pub fn routes() -> Vec<Route> {
     let mut routes = api::routes();
     routes.extend(console::routes());
     routes.extend(console_managed::routes());
+    routes.extend(console_policy::routes());
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
     routes.extend(policy_repo::routes());

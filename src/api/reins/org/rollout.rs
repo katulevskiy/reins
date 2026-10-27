@@ -22,7 +22,7 @@ use crate::db::{
     DbConnInner,
     models::{
         reins_org,
-        reins_org_keys::{self, policy_state},
+        reins_org_keys::policy_state,
         reins_org_policy_code::{self as code, ReinsOrgRollout, rollout_state},
         reins_org_request::ReinsOrgRequest,
     },
@@ -76,13 +76,11 @@ pub fn published_for_org(c: &mut DbConnInner, org: &str, now: i64) -> Result<Vec
     Ok(out)
 }
 
+/// A member's effective policy, its hash, and the rollout step (id, seq) that chose it.
+pub type Effective = (OrgPolicy, String, Option<(String, u32)>);
+
 /// The policy `member` is decided under now, its hash, and the rollout step that chose it (pinned in the decision).
-pub fn effective_policy(
-    c: &mut DbConnInner,
-    org: &str,
-    member: &str,
-    now: i64,
-) -> Result<(OrgPolicy, String, Option<(String, u32)>), OrgError> {
+pub fn effective_policy(c: &mut DbConnInner, org: &str, member: &str, now: i64) -> Result<Effective, OrgError> {
     let (active, _) =
         policy::active(c, org)?.ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
     let active_hash = active.hash();
@@ -259,7 +257,7 @@ pub fn advance(c: &mut DbConnInner, row: &ReinsOrgRollout, actor: Option<&str>, 
 /// The last stage ran cleanly: the candidate becomes the active policy and the previous one retires.
 pub fn complete(c: &mut DbConnInner, row: &ReinsOrgRollout, actor: Option<&str>, now: i64) -> Result<(), OrgError> {
     let mut done = row.clone();
-    done.state = rollout_state::COMPLETE.to_owned();
+    rollout_state::COMPLETE.clone_into(&mut done.state);
     done.updated_at = now;
     if !code::q_save_rollout(c, &done, &row.state)? {
         return Err(OrgError::Invalid("This rollout changed meanwhile."));
@@ -300,7 +298,7 @@ pub fn rollback(
         return Err(OrgError::Invalid("This rollout is over."));
     }
     let mut back = row.clone();
-    back.state = rollout_state::ROLLED_BACK.to_owned();
+    rollout_state::ROLLED_BACK.clone_into(&mut back.state);
     back.reason = Some(why.to_string());
     back.updated_at = now;
     if !code::q_save_rollout(c, &back, &row.state)? {
@@ -400,11 +398,6 @@ pub fn control(c: &mut DbConnInner, org: &str, actor: &str, id: &str, what: Cont
     }
 }
 
-/// The revision's policy hash and state, for display.
-pub fn revision_state(c: &mut DbConnInner, org: &str, revision: i64) -> Result<Option<(String, String)>, OrgError> {
-    Ok(reins_org_keys::q_policy(c, org, revision)?.map(|r| (r.hash, r.state)))
-}
-
 #[cfg(all(test, sqlite))]
 mod tests {
     use reins_proto::managed::{DecisionRecord, EnvelopeKind};
@@ -417,7 +410,7 @@ mod tests {
         simulation,
         testing::{db, member},
     };
-    use crate::db::models::{reins_org_event, reins_org_request};
+    use crate::db::models::{reins_org_event, reins_org_keys, reins_org_request};
 
     /// The pilot org with a stricter candidate (`api-review`) rolling out pilot (Kim) → 25% → everyone, a minute's
     /// dwell, guards judged at `min` decisions; activated at t = 100. Returns (stable, candidate).
