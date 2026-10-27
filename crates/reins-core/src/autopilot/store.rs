@@ -193,6 +193,9 @@ pub struct MatrixNote {
     pub kinds: Vec<reins_policy::effects::EffectKind>,
     #[serde(default)]
     pub resource: Option<String>,
+    /// An explicit rule of the owner (or a repo, an org) asks or denies it: that holds in every automatic mode.
+    #[serde(default)]
+    pub by_rule: bool,
 }
 
 /// A stored profile with its id.

@@ -959,28 +959,32 @@ impl Engine {
             &subject.described.facts.target,
         )?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
-        // Decisions v2: what the matrix says of it (recorded in shadow; deciding in Auto once switched on).
+        // Decisions v2: what the matrix says of it. It decides in Auto once switched on and set up; elsewhere it is
+        // recorded only (shadow), except the owner's own Deny and Review rules, which hold in every automatic mode.
+        let deciding = mode == AutopilotMode::Auto && self.ap_matrix_deciding();
+        let mut unreadable: Option<String> = None;
         let matrix = match row.kind {
             PendingKind::Request => {
                 let parked: ParkedRequest =
                     serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
                 match self.ap_evaluate(&parked.request, !novel, now) {
-                    Ok(Some((note, unknown))) => {
+                    Ok(Some((mut note, unknown))) => {
                         if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
                             log::warn!("Autopilot could not keep a question: {e}");
                         }
+                        note.shadow = !deciding;
                         Some(note)
                     }
                     Ok(None) => None,
                     Err(e) => {
                         log::warn!("Autopilot could not evaluate the matrix: {e}");
+                        unreadable = Some(e.to_string());
                         None
                     }
                 }
             }
             _ => None,
         };
-        let matrix_decides = mode == AutopilotMode::Auto && matrix.as_ref().is_some_and(|m| !m.shadow);
         let mut s = Suggestion {
             deletes: false,
             request_id: subject.id.clone(),
@@ -1018,25 +1022,36 @@ impl Engine {
             }
             AutopilotMode::Bypass | AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight => {}
         }
-        if matrix_decides && let Some(m) = &matrix {
-            match m.outcome {
-                // Only an explicit rule denies.
-                reins_policy::matrix::Outcome::Deny => {
-                    s.verdict = Verdict::Deny;
-                    s.reason = m.line.clone();
-                    return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Rule)).await;
+        if matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) {
+            // Where the matrix decides, what it should read and couldn't waits for the owner: it never falls to the
+            // model.
+            if deciding && let Some(why) = &unreadable {
+                s.reason = format!("Asks: Auto couldn't read this ({why})");
+                return self.ap_wait(&subject, &s);
+            }
+            if let Some(m) = &matrix {
+                match m.outcome {
+                    // Only an explicit rule denies, in any automatic mode.
+                    reins_policy::matrix::Outcome::Deny => {
+                        s.verdict = Verdict::Deny;
+                        s.reason = m.line.clone();
+                        return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Rule)).await;
+                    }
+                    // The owner's Review rules are hard in any automatic mode; the matrix's cells only where it decides.
+                    reins_policy::matrix::Outcome::Ask {
+                        ..
+                    } if m.by_rule || deciding => {
+                        s.reason = format!("Asks: {}", m.line);
+                        return self.ap_wait(&subject, &s);
+                    }
+                    // Permitted: the model is the sanity check below, and can only make it an ask.
+                    reins_policy::matrix::Outcome::Ask {
+                        ..
+                    }
+                    | reins_policy::matrix::Outcome::Auto => {}
                 }
-                reins_policy::matrix::Outcome::Ask {
-                    ..
-                } => {
-                    s.reason = format!("Asks: {}", m.line);
-                    return self.ap_wait(&subject, &s);
-                }
-                // Permitted: the model is the sanity check below, and can only make it an ask.
-                reins_policy::matrix::Outcome::Auto => {}
             }
         }
-
         // A model that rates risk reads, for the risk only, a hook's question as the action it is about, with the context
         // line the core works out (docs/autopilot-risk.md §3), the connection's last hour included. The approval head
         // reads the request as it always did; the risk only ever holds Auto back (its cold-start bar asks for a

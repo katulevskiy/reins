@@ -4352,6 +4352,7 @@ mod decisions_v2 {
         env.relay("r1", OLD, email("friend@x.com", "hi")).await;
         assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Deny, "rule".to_owned())]);
         let entry = env.core.activity(1).await.unwrap().remove(0);
+        assert_eq!(entry.decided_by, "rule");
         assert_eq!(entry.autopilot.unwrap().matrix.unwrap().line, "Deny · No mail from agents");
     }
 
@@ -4437,6 +4438,94 @@ mod decisions_v2 {
         let friend = world.iter().find(|w| w.key == "friend@x.com").expect("proposed");
         assert!(!friend.confirmed && friend.zone == ZoneChoice::Friends, "{friend:?}");
         assert!(!world.iter().any(|w| w.key == "stranger@y.io"), "a bypass's send proposes nobody: {world:?}");
+    }
+
+    fn rule(id: &str, when: When, then: Then) -> Rule {
+        Rule {
+            id: id.to_owned(),
+            issuer: Issuer::Owner,
+            when,
+            then,
+            not_after: None,
+            accepted: true,
+            explain: format!("{id} says so"),
+        }
+    }
+
+    fn add_rule(env: &Env, r: Rule) {
+        let engine = env.core.engine();
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.rules.push(r);
+        engine.ap_put_snapshot(&snap).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_re_zoned_own_address_stays_as_set() {
+        let env = env(false).await;
+        env.store().add_account("gmail", "me@acme.io", 1).unwrap();
+        env.core.auto_setup().await.unwrap();
+        env.core
+            .set_world_zone(FactChoice::Person, "me@acme.io".to_owned(), ZoneChoice::Work, owner_no())
+            .await
+            .unwrap();
+        env.core.auto_setup().await.unwrap();
+        let facts = env.core.engine().ap_snapshot().unwrap().facts;
+        assert!(!facts.own_addresses.contains("me@acme.io"), "the refresh doesn't put it back");
+        assert_eq!(facts.people.get("me@acme.io"), Some(&Zone::Work));
+    }
+
+    #[tokio::test]
+    async fn what_the_deciding_matrix_cant_read_waits() {
+        let env = auto_env().await;
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.approve("r1").await;
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        // A snapshot that can't be opened: never the model's to decide.
+        env.store().meta_set("autopilot.policy", "not sealed").unwrap();
+        env.relay("r2", OLD, email("friend@x.com", "hi again")).await;
+        assert!(env.waiting().await.contains(&"r2".to_owned()), "{:?}", env.decided());
+        assert!(env.suggestion("r2").await.reason.contains("couldn't read"));
+    }
+
+    #[tokio::test]
+    async fn the_owners_rules_hold_in_overnight_and_its_note_is_shadow() {
+        let env = auto_env().await;
+        env.relay("r0", OLD, email("friend@x.com", "hi")).await;
+        env.approve("r0").await;
+        env.mode(None, AutopilotMode::Overnight).await;
+        add_rule(
+            &env,
+            rule(
+                "ask-friend",
+                When {
+                    resource: Some("friend@x.com".to_owned()),
+                    ..When::default()
+                },
+                Then::Review,
+            ),
+        );
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        assert!(env.waiting().await.contains(&"r1".to_owned()));
+        let s = env.suggestion("r1").await;
+        assert!(s.reason.starts_with("Asks: "), "{s:?}");
+        assert!(s.matrix.unwrap().shadow, "the matrix doesn't decide in Overnight");
+        add_rule(
+            &env,
+            rule(
+                "never-mail",
+                When {
+                    effects: vec![EffectKind::Message],
+                    ..When::default()
+                },
+                Then::Deny,
+            ),
+        );
+        env.relay("r2", OLD, email("friend@x.com", "hi")).await;
+        assert!(env.decided().iter().any(|(id, v, by)| id == "r2" && *v == Verdict::Deny && by == "rule"));
     }
 
     #[tokio::test]

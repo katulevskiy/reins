@@ -1982,6 +1982,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.auto_setup() }).await;
             runtime.finish(&engine, result)

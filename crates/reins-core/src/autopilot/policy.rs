@@ -112,58 +112,99 @@ fn current(facts: &Facts, kind: FactKind, key: &str) -> Zone {
     facts.get(kind, key).unwrap_or(Zone::Outside)
 }
 
-/// What a request does, as the consequence engine reads it on the phone, and the repository it acts on. `None` for
-/// what the phone doesn't evaluate: a hook's question from a computer (the computer evaluates those, where the facts
-/// are: 08 R1), an upload, a standing permission's details beyond what it is.
-#[must_use]
-pub fn request_analysis(request: &RelayRequest) -> Option<(Analysis, Option<String>)> {
+/// What the phone reads of a request: its analysis, the repository it acts on, and the host a bare `owner/name`
+/// in it means (the service's).
+#[derive(Clone, Debug)]
+pub struct Reading {
+    pub analysis: Analysis,
+    pub base: Option<String>,
+    pub bare_host: Option<&'static str>,
+}
+
+/// The host a git service's bare `owner/name` is on.
+fn service_host(service: &str) -> Option<&'static str> {
+    use reins_proto::connector::{BITBUCKET, CODEBERG, GITHUB, GITLAB};
+    match service {
+        GITHUB => Some(graph::GITHUB),
+        GITLAB => Some("gitlab.com"),
+        CODEBERG => Some("codeberg.org"),
+        BITBUCKET => Some("bitbucket.org"),
+        _ => None,
+    }
+}
+
+/// What a request does, as the consequence engine reads it on the phone. `Ok(None)` for what the phone doesn't
+/// evaluate: a hook's question from a computer (the computer evaluates those, where the facts are: 08 R1) and an
+/// upload. `Err` for a request it should read and can't (a push without a readable summary, a tool without a spec):
+/// where the matrix decides, that waits for the owner.
+pub fn request_analysis(request: &RelayRequest) -> Result<Option<Reading>, String> {
     use reins_proto::connector::DESKTOP;
     use reins_proto::desktop::{GIT_FETCH_OP, GIT_PUSH_OP, GIT_TAG_PUSH_OP};
-    let json = |v: serde_json::Map<String, serde_json::Value>| serde_json::Value::Object(v);
+    let plain = |analysis: Analysis| {
+        Ok(Some(Reading {
+            analysis,
+            base: None,
+            bare_host: None,
+        }))
+    };
     match &request.call {
         ToolCall::GmailSearch {
             ..
-        } => Some((effects::analyze_tool("gmail_search", &serde_json::Value::Null), None)),
+        } => plain(effects::analyze_tool("gmail_search", &serde_json::Value::Null)),
         ToolCall::GmailRead {
             ..
-        } => Some((effects::analyze_tool("gmail_read", &serde_json::Value::Null), None)),
+        } => plain(effects::analyze_tool("gmail_read", &serde_json::Value::Null)),
         ToolCall::GmailSend {
             email,
-        } => Some((effects::analyze_tool("gmail_send", &serde_json::json!({ "to": email.to, "cc": email.cc })), None)),
+        } => plain(effects::analyze_tool("gmail_send", &serde_json::json!({ "to": email.to, "cc": email.cc }))),
         ToolCall::RequestGrant {
             ..
-        } => Some((effects::analyze_tool("reins_request_access", &serde_json::Value::Null), None)),
+        } => plain(effects::analyze_tool("reins_request_access", &serde_json::Value::Null)),
         ToolCall::ListAccounts {
             ..
-        } => Some((effects::analyze_tool("reins_list_accounts", &serde_json::Value::Null), None)),
-        ToolCall::Mcp(m) => Some((effects::analyze_mcp(&m.server, &m.tool, None), None)),
+        } => plain(effects::analyze_tool("reins_list_accounts", &serde_json::Value::Null)),
+        ToolCall::Mcp(m) => plain(effects::analyze_mcp(&m.server, &m.tool, None)),
         ToolCall::Connector(call) => {
             let repo = call.str_arg("repo").map(str::to_owned);
+            let bare_host = service_host(&call.service);
             match call.op.as_str() {
                 GIT_PUSH_OP | GIT_TAG_PUSH_OP => {
-                    let summary = crate::connector::git::summary_arg(call).ok()?;
+                    let summary =
+                        crate::connector::git::summary_arg(call).map_err(|_| "a push it couldn't read".to_owned())?;
                     let repo = repo.unwrap_or_default();
-                    Some((effects::analyze_push(&repo, &summary), Some(repo)))
+                    Ok(Some(Reading {
+                        analysis: effects::analyze_push(&repo, &summary),
+                        base: Some(repo),
+                        bare_host,
+                    }))
                 }
                 GIT_FETCH_OP => {
                     let repo = repo.unwrap_or_default();
-                    Some((effects::analyze_git_read(&repo), Some(repo)))
+                    Ok(Some(Reading {
+                        analysis: effects::analyze_git_read(&repo),
+                        base: Some(repo),
+                        bare_host,
+                    }))
                 }
-                _ if call.service == DESKTOP => None,
+                _ if call.service == DESKTOP => Ok(None),
                 _ => {
                     let spec = reins_proto::connector::specs()
                         .iter()
-                        .find(|s| s.service == call.service && s.op == call.op)?;
-                    let args = json(call.args.clone());
-                    let base = effects::tool_repo(&args);
-                    Some((effects::analyze_tool(spec.tool, &args), base))
+                        .find(|s| s.service == call.service && s.op == call.op)
+                        .ok_or_else(|| "a tool Auto doesn't know".to_owned())?;
+                    let args = serde_json::Value::Object(call.args.clone());
+                    Ok(Some(Reading {
+                        base: effects::tool_repo(&args),
+                        analysis: effects::analyze_tool(spec.tool, &args),
+                        bare_host,
+                    }))
                 }
             }
         }
         // An upload is weighed as a file (`crate::blob`), not here.
         ToolCall::RequestUpload {
             ..
-        } => None,
+        } => Ok(None),
     }
 }
 
@@ -201,11 +242,20 @@ impl Engine {
         seen: bool,
         now: i64,
     ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
-        let Some((analysis, base)) = request_analysis(request) else {
+        let Some(reading) = request_analysis(request).map_err(CoreError::invalid)? else {
             return Ok(None);
         };
+        let analysis = reading.analysis;
         let snap = self.ap_snapshot()?;
-        let resolved = graph::request_zone(&analysis, &snap.facts, base.as_deref());
+        let resolved = graph::request_zone(
+            &analysis,
+            &snap.facts,
+            &graph::Base {
+                repo: reading.base.as_deref(),
+                remotes: None,
+                bare_host: reading.bare_host,
+            },
+        );
         let e = matrix::evaluate(
             &Input {
                 analysis: &analysis,
@@ -216,6 +266,7 @@ impl Engine {
             },
             &snap,
         );
+        let by_rule = e.why.iter().any(|w| matches!(w, matrix::Why::Rule(_)));
         let mut kinds: Vec<EffectKind> = analysis.effects.iter().map(effects::Effect::kind).collect();
         kinds.sort();
         kinds.dedup();
@@ -229,6 +280,7 @@ impl Engine {
                 shadow: !self.ap_matrix_deciding(),
                 kinds,
                 resource: resolved.resource,
+                by_rule,
             },
             resolved.unknown,
         )))
@@ -311,7 +363,10 @@ impl Engine {
         for a in self.store.accounts()? {
             match a.service.as_str() {
                 crate::views::SERVICE_GMAIL => {
-                    if let Some(k) = graph::key(&a.account) {
+                    // An address the owner gave a zone of its own stays as they set it.
+                    if let Some(k) = graph::key(&a.account)
+                        && snap.facts.get(FactKind::Person, &k).is_none()
+                    {
                         snap.facts.own_addresses.insert(k.clone());
                         if let Some((_, domain)) = k.rsplit_once('@') {
                             propose(&snap, FactKind::Domain, domain, Zone::Work);
@@ -347,8 +402,8 @@ impl Engine {
             }
             if recent && r.service == reins_proto::connector::GITHUB {
                 for t in &r.info.targets {
-                    if let Some((o, _)) = graph::split_repo(t) {
-                        *counts.entry((FactKind::Owner, o)).or_default() += 1;
+                    if let Some(r) = graph::parse_repo(t, Some(graph::GITHUB)) {
+                        *counts.entry((FactKind::Owner, r.owner_key())).or_default() += 1;
                     }
                 }
             }
