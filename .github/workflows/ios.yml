@@ -28,12 +28,11 @@ on:
 permissions:
   contents: read
 
-# Every pull request shares one group, so two pull requests' iOS lanes queue instead of splitting the
-# xcode-27 runners between them (runs 38888346599 and 38889759511 waited 26-35 minutes for a runner that way).
-# A run in progress is not cancelled. GitHub keeps one pending run per group, so a newer pending pull request
-# run replaces an older pending one. A main or nightly run keeps its own group and is not cancelled.
+# One group per pull request: a newer run of the same pull request replaces its pending run (GitHub keeps one pending
+# run per group), and pull requests no longer replace each other's queued runs. A run in progress is not cancelled.
+# A main, nightly or hand run keeps its own group per commit and is not cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && 'pr' || format('{0}-{1}', github.event_name, github.sha) }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: false
 
 defaults:
