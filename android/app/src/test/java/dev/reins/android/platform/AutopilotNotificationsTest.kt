@@ -45,57 +45,40 @@ class AutopilotNotificationsTest {
     private fun decisions() = posted().filter { (it.flags and Notification.FLAG_GROUP_SUMMARY) == 0 }
 
     @Test
-    fun `an automatic approval is quiet, grouped, and can be reported`() {
+    fun `an automatic decision is never a notification, approved or denied, by any mode`() {
         notifier.createChannels()
-        notifier.autoDecided(TestData.autoDecision())
-        val n = decisions().single()
-        val channel = manager.getNotificationChannel(n.channelId)
-        assertTrue(channel.id.startsWith("autopilot-approved-"))
-        assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
-        assertNull("never heard", channel.sound)
-        assertEquals(AppNotifier.GROUP_AUTOPILOT, channel.group)
-        assertEquals("Autopilot approved", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertEquals("Push to a branch · dkat/reins — Claude Code", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
-        assertEquals(AppNotifier.GROUP_AUTOPILOT, n.group)
-        assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
-        assertEquals("Report", n.actions.single().title.toString())
-        val report = shadowOf(n.actions.single().actionIntent).savedIntent
-        assertEquals(AppNotifier.ACTION_OPEN_ACTIVITY, report.action)
-        assertEquals(42L, report.getLongExtra(AppNotifier.EXTRA_ACTIVITY_ID, -1))
-        assertTrue("a summary folds them together", posted().any { (it.flags and Notification.FLAG_GROUP_SUMMARY) != 0 })
-        assertEquals(1, changes)
+        for ((i, by) in listOf("autopilot", "bypass", "overnight", "lockdown").withIndex()) {
+            notifier.autoDecided(TestData.autoDecision("req$i", if (by == "lockdown") Verdict.DENY else Verdict.APPROVE, decidedBy = by))
+        }
+        assertTrue("a notification means something to do", posted().isEmpty())
+        assertEquals(4, changes)
     }
 
     @Test
-    fun `an automatic denial uses its own channel at default importance with a soft sound`() {
-        notifier.autoDecided(TestData.autoDecision(verdict = Verdict.DENY))
-        val channel = manager.getNotificationChannel(decisions().single().channelId)
-        assertTrue(channel.id.startsWith("autopilot-denied-"))
-        assertEquals(NotificationManager.IMPORTANCE_DEFAULT, channel.importance)
-        assertTrue(channel.sound.toString().endsWith("/raw/fx_close"))
+    fun `an automatic decision withdraws the ask that was posted while it waited`() {
+        notifier.createChannels()
+        notifier.itemPending(TestData.pending("req1", "send", 2u))
+        assertEquals(1, posted().size)
+        notifier.autoDecided(TestData.autoDecision("req1", decidedBy = "bypass"))
+        assertTrue(posted().isEmpty())
     }
 
     @Test
-    fun `the Autopilot sound switch silences the denial channel`() {
-        settings = FeedbackSettings(autopilotSounds = false)
-        notifier.autoDecided(TestData.autoDecision(verdict = Verdict.DENY))
-        assertNull(manager.getNotificationChannel(decisions().single().channelId).sound)
-    }
-
-    @Test
-    fun `in front an automatic decision is heard, not posted`() {
+    fun `in front an automatic approval is silent and a denial is heard`() {
         Foreground.focused = true
         notifier.autoDecided(TestData.autoDecision())
         notifier.autoDecided(TestData.autoDecision("req2", Verdict.DENY))
         assertTrue(posted().isEmpty())
-        assertTrue(heard.played(Event.AutoApproved))
+        assertFalse(heard.played(Event.AutoApproved))
         assertTrue(heard.played(Event.AutoDenied))
     }
 
     @Test
-    fun `a decision without an activity entry opens the app and has no Report`() {
-        notifier.autoDecided(TestData.autoDecision(activityId = null))
-        assertTrue(decisions().single().actions.isNullOrEmpty())
+    fun `the old decision channels are removed`() {
+        manager.createNotificationChannel(android.app.NotificationChannel("autopilot-approved-v2-", "x", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(android.app.NotificationChannel("autopilot-denied-v2-", "x", NotificationManager.IMPORTANCE_LOW))
+        notifier.createChannels()
+        assertTrue(manager.notificationChannels.none { it.id.startsWith("autopilot-approved") || it.id.startsWith("autopilot-denied") })
     }
 
     @Test
@@ -208,7 +191,7 @@ class AutopilotNotificationsTest {
     @Test
     fun `Autopilot's channels are listed together`() {
         notifier.createChannels()
-        for (kind in listOf(AppNotifier.Kind.AutoApproved, AppNotifier.Kind.AutoDenied, AppNotifier.Kind.Bypass, AppNotifier.Kind.Overnight, AppNotifier.Kind.ModelDownload)) {
+        for (kind in listOf(AppNotifier.Kind.Bypass, AppNotifier.Kind.Overnight, AppNotifier.Kind.ModelDownload)) {
             assertEquals(kind.name, AppNotifier.GROUP_AUTOPILOT, manager.getNotificationChannel(notifier.channel(kind)).group)
         }
         assertEquals("Autopilot", manager.getNotificationChannelGroup(AppNotifier.GROUP_AUTOPILOT).name.toString())

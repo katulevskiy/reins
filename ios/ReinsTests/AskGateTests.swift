@@ -146,7 +146,7 @@ final class AskGateTests: XCTestCase {
         XCTAssertTrue(stale(.arriving, ago: 90))
         XCTAssertFalse(stale(.deciding, ago: 120), "Autopilot is still to decide: never in the owner's list")
         XCTAssertTrue(stale(.deciding, ago: 700), "the server let it go")
-        XCTAssertFalse(stale(.autopilot, ago: 9_999))
+        XCTAssertTrue(stale(.autopilot, ago: 0), "an automatic decision is in Activity: swept as soon as the app runs")
         XCTAssertFalse(stale(.join, ago: 9_999))
     }
 }

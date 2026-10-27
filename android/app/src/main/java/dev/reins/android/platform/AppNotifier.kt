@@ -84,18 +84,6 @@ class AppNotifier(
             "fx_chime_attention", CueCategory.Alerts, longArrayOf(0, 35, 55, 45), private = false,
         ),
 
-        /** What Autopilot approved by itself: listed, never heard. */
-        AutoApproved(
-            "autopilot-approved", "Approved by Autopilot", "Requests Autopilot or a bypass approved for you", NotificationManager.IMPORTANCE_LOW,
-            null, CueCategory.Autopilot, null, private = true, group = GROUP_AUTOPILOT,
-        ),
-
-        /** What Autopilot (or Lockdown) denied by itself: a soft click, a short tick. */
-        AutoDenied(
-            "autopilot-denied", "Denied by Autopilot", "Requests Autopilot or Lockdown denied for you", NotificationManager.IMPORTANCE_DEFAULT,
-            "fx_close", CueCategory.Autopilot, longArrayOf(0, 12), private = true, group = GROUP_AUTOPILOT,
-        ),
-
         /** A bypass that runs: there to be seen, never heard. */
         Bypass(
             "autopilot-bypass", "Bypass", "Shown while a bypass runs, with Stop", NotificationManager.IMPORTANCE_LOW,
@@ -205,43 +193,18 @@ class AppNotifier(
         ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
 
     override fun autoDecided(decision: AutoDecisionView) {
-        // Decided without the owner: whatever asked them about it is withdrawn (an ask posted while it waited, before a
-        // bypass or Lockdown started), and an ask open on screen closes. Only the decision itself is posted below.
+        // Decided without the owner, so nothing about it needs them: no notification (a notification means something
+        // to do). Whatever asked them about it is withdrawn (an ask posted while it waited, before a bypass or Lockdown
+        // started), an ask open on screen closes, and the decision is in Activity.
         manager.cancel(notificationId(decision.requestId))
         onDecided(decision.requestId)
         onChanged()
-        val approved = decision.verdict == Verdict.APPROVE
-        // In front the list changes before the user's eyes; a quiet sound says why.
+        // In front, a denial (Lockdown, a "never" rule) gets its quiet sound so the list's change is explained; an
+        // approval stays silent (a bypass approves hundreds).
         if (Foreground.focused) {
             feedback().requestArrived(decision.requestId, needsUser = false) // answered: never the request chime
-            feedback().play(if (approved) Event.AutoApproved else Event.AutoDenied)
-            return
+            if (decision.verdict != Verdict.APPROVE) feedback().play(Event.AutoDenied)
         }
-        if (!manager.areNotificationsEnabled()) return
-        val channel = channel(if (approved) Kind.AutoApproved else Kind.AutoDenied)
-        val title = AutopilotText.decisionTitle(decision)
-        val text = AutopilotText.decisionText(decision)
-        val public = Notification.Builder(context, channel)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText("Open Reins to see what it was")
-            .build()
-        val open = decision.activityId?.let { openActivity(it) } ?: openApp()
-        val builder = Notification.Builder(context, channel)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setSubText(AutopilotText.decisionDetail(decision))
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setPublicVersion(public)
-            .setCategory(Notification.CATEGORY_STATUS)
-            .setGroup(GROUP_AUTOPILOT)
-            .setAutoCancel(true)
-            .setContentIntent(open)
-        // "Report" opens the entry, where "This was wrong" teaches Autopilot (an approval cannot be taken back).
-        decision.activityId?.let { builder.addAction(Notification.Action.Builder(null, "Report", openActivity(it)).build()) }
-        manager.notify(notificationId("auto:" + decision.requestId), builder.build())
-        summarize(title, text)
     }
 
     override fun autopilotChanged(event: AutopilotEvent) {
@@ -253,32 +216,6 @@ class AppNotifier(
             is AutopilotEvent.Paused -> paused(event)
             is AutopilotEvent.ModeChanged -> Unit
         }
-    }
-
-    /** The automatic decisions of a while, folded into one group with a summary. */
-    private val recent = ArrayDeque<String>()
-
-    private fun summarize(title: String, text: String) {
-        val lines = synchronized(recent) {
-            recent.addFirst("$title: $text")
-            while (recent.size > SUMMARY_LINES) recent.removeLast()
-            recent.toList()
-        }
-        val style = Notification.InboxStyle()
-        lines.forEach { style.addLine(it) }
-        val summary = Notification.Builder(context, channel(Kind.AutoApproved))
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Autopilot")
-            .setContentText(if (lines.size == 1) "1 request decided" else "${lines.size} requests decided")
-            .setStyle(style)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setGroup(GROUP_AUTOPILOT)
-            .setGroupSummary(true)
-            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
-            .setAutoCancel(true)
-            .setContentIntent(openApp())
-            .build()
-        manager.notify(AUTOPILOT_SUMMARY_ID, summary)
     }
 
     /** Auto-approvals stopped for a connection (unusual volume); its requests wait for the user. */
@@ -540,6 +477,9 @@ class AppNotifier(
         /** The unversioned channels of builds without chimes. */
         private val LEGACY_CHANNELS = setOf("approvals", "grants", "status")
 
+        /** Automatic decisions are never notified any more (a notification means something to do): their channels go. */
+        private val RETIRED_CHANNEL_PREFIXES = listOf("autopilot-approved-v", "autopilot-denied-v")
+
         /** The server holds a request this long; the phone's core the same. */
         const val ITEM_LIFETIME_SECS = 600L
 
@@ -560,12 +500,10 @@ class AppNotifier(
         const val EXTRA_ACTIVITY_ID = "activity"
         const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
         private const val REPLACED_ID = 1
-        const val AUTOPILOT_SUMMARY_ID = 2
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4
         private const val DOWNLOAD_DONE_ID = 5
         const val OVERNIGHT_ID = 6
-        private const val SUMMARY_LINES = 6
 
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
         const val GROUP_AUTOPILOT = "autopilot"
@@ -617,7 +555,10 @@ class AppNotifier(
         fun migrateChannels(manager: NotificationManager) {
             val current = "-v$CHANNEL_VERSION-"
             manager.notificationChannels
-                .filter { ch -> ch.id in LEGACY_CHANNELS || Kind.entries.any { ch.id.startsWith(it.key + "-v") } && !ch.id.contains(current) }
+                .filter { ch ->
+                    ch.id in LEGACY_CHANNELS || RETIRED_CHANNEL_PREFIXES.any { ch.id.startsWith(it) } ||
+                        Kind.entries.any { ch.id.startsWith(it.key + "-v") } && !ch.id.contains(current)
+                }
                 .forEach { manager.deleteNotificationChannel(it.id) }
         }
     }

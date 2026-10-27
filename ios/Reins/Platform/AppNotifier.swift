@@ -46,20 +46,19 @@ final class AppNotifier: Notifier, @unchecked Sendable {
 
     func autoDecided(decision: AutoDecisionView) {
         // Decided without the owner: nothing about it may stay actionable. Its ask (posted while it waited, before a
-        // bypass or Lockdown started) and the extension's texts go; only the decision itself is posted below.
+        // bypass or Lockdown started) and the extension's texts go.
         withdraw(decision.requestId)
         Task { @MainActor in
             guard let model else { return }
             // An ask open on it closes, and a list read a moment ago does not bring it back.
             model.decidedAutomatically(decision.requestId)
+            // A decision needs nothing from the owner, so it is never a notification; it is in Activity. In front a
+            // denial (Lockdown, a "never" rule) gets its quiet sound so the list's change is explained; an approval
+            // stays silent (a bypass approves hundreds). Never the request chime.
             if model.isActive {
-                await model.refreshPending()
-                // In front the list changes before the user's eyes; a quiet sound says why. Never the request chime.
                 model.feedback.requestArrived(decision.requestId, needsUser: false)
-                model.feedback.play(decision.verdict == .approve ? .autoApproved : .autoDenied)
-                return
+                if decision.verdict != .approve { model.feedback.play(.autoDenied) }
             }
-            self.post(Self.decisionId(decision.requestId), NotificationContent.decision(decision, settings: self.settings()))
             await model.refreshPending()
         }
     }
