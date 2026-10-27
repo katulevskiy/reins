@@ -214,7 +214,7 @@ fn git_top(cwd: &str) -> Option<String> {
 }
 
 /// [`shadow`] with the configuration of the repository the request acts in (`head`; `None`: not known).
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>, connection: &str, now: i64) -> Shadow {
     shadow_net(config, a, head, connection, now, false)
 }
