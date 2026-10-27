@@ -75,7 +75,7 @@ jobs:
       saved: ${{ steps.save.outputs.saved }}
     env:
       DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
-      RUN: ${{ inputs.run || 'snapshots,unit:ShellNavigationTests' }}
+      RUN: ${{ inputs.run || 'snapshots:Approve,snapshots:System,unit:GrantLogicTests' }}
       DEVICE: ${{ inputs.device || 'iPhone 17 Pro' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

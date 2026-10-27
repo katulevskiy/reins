@@ -105,22 +105,19 @@ final class ScreenSnapshotTests: XCTestCase {
     }
 
     #if DEBUG
-    /// Next-System: the kit, one board-sized page after another (`system-1`, `system-2`, ...). One tall image would pass
-    /// the renderer's texture limit and come out blank.
+    /// Next-System: the kit, one board-sized page after another (`system-1`, `system-2`, ...), scrolled down a screen
+    /// at a time. One tall image would pass the renderer's texture limit and come out blank.
     func testSystem() async throws {
         try await start()
-        let visible = Board.size.height - Board.insets.top - Board.insets.bottom
-        let fit = UIHostingController(rootView: SystemGalleryPage().environment(model))
-            .sizeThatFits(in: CGSize(width: Board.size.width, height: 100_000))
-        let pages = min(max(Int((fit.height / visible).rounded(.up)), 1), 12)
-        for page in 0..<pages {
-            let view = SystemGalleryPage()
-                .fixedSize(horizontal: false, vertical: true)
-                .offset(y: -CGFloat(page) * visible)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .clipped()
-                .pageBackground()
-            try await shoot("system-\(page + 1)", view)
+        let measure = ScrollMeasure()
+        var pages = 1
+        var page = 0
+        while page < pages {
+            try await shoot("system-\(page + 1)", ScrolledPage(page: page, measure: measure) { SystemGalleryPage() }.pageBackground())
+            if page == 0, measure.visible > 0 {
+                pages = min(max(Int((measure.content / measure.visible).rounded(.up)), 1), 12)
+            }
+            page += 1
         }
     }
     #endif
@@ -202,6 +199,29 @@ final class ScreenSnapshotTests: XCTestCase {
             offset += pixel * 97
         }
         return true
+    }
+
+    /// A long page in a scroll view, scrolled to its `page`th screenful; reports the content's and the screen's height.
+    private struct ScrolledPage<Content: View>: View {
+        var page: Int
+        var measure: ScrollMeasure
+        @ViewBuilder var content: Content
+        @State private var position = ScrollPosition()
+
+        var body: some View {
+            ScrollView { content }
+                .scrollPosition($position)
+                .onScrollGeometryChange(for: CGSize.self, of: { CGSize(width: $0.contentSize.height, height: $0.containerSize.height) }) { _, size in
+                    measure.content = size.width
+                    measure.visible = size.height
+                    position.scrollTo(y: CGFloat(page) * size.height)
+                }
+        }
+    }
+
+    @MainActor private final class ScrollMeasure {
+        var content: CGFloat = 0
+        var visible: CGFloat = 0
     }
 
     private enum Board {

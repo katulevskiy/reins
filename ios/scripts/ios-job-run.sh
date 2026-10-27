@@ -224,11 +224,14 @@ if ! xcodebuild build-for-testing \
   -clonedSourcePackagesDirPath "$DERIVED/SourcePackages" \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackagePluginValidation \
-  "${settings[@]}" > "$OUT/logs/build.log" 2>&1; then
+  -showBuildTimingSummary \
+  "${settings[@]}" < /dev/null > "$OUT/logs/build.log" 2>&1; then
   status=fail
 fi
 record build "$(( $(now) - t0 ))" "$status"
 grep -E "^(/.*: )?(error|fatal error):|\*\* BUILD" "$OUT/logs/build.log" | sort -u | head -60 || true
+# Where the build's time went (xcodebuild's timing summary, slowest first).
+sed -n '/Build Timing Summary/,$p' "$OUT/logs/build.log" | grep -E "seconds" | sort -t'|' -k2 -rn | head -15 || true
 
 finish() {
   python3 - "$OUT" "$RUN" <<'PY'
