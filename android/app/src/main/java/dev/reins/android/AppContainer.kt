@@ -408,6 +408,17 @@ class AppContainer(private val context: Context) {
                 val services = async { core.services() }
                 val servers = async { core.mcpServers() }
                 val starting = async { core.startingPolicy() }
+                // "Auto needs information" cards: listed with the waiting items, never notified. A failed read keeps
+                // the ones shown.
+                val questions = async {
+                    try {
+                        core.autoQuestions()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
                 val loaded = grants.await()
                 if (!state.isCurrent(epoch)) return@coroutineScope
                 val waiting = pending.await()
@@ -421,6 +432,7 @@ class AppContainer(private val context: Context) {
                 state.setMcpServers(servers.await())
                 state.markLoaded()
                 state.setStartingPolicy(starting.await())
+                questions.await()?.let(state::setAutoQuestions)
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
                     if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded)

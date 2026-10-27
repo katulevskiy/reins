@@ -92,6 +92,7 @@ import dev.reins.android.ui.common.untrustedLine
 import dev.reins.core.ApprovalView
 import dev.reins.core.AutopilotMode
 import kotlin.coroutines.cancellation.CancellationException
+import dev.reins.android.ui.common.userMessage
 import kotlinx.coroutines.launch
 
 /**
@@ -123,6 +124,9 @@ fun ActivityDetailScreen(
     var thanked by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val correctable = entry?.autopilot?.correctable == true
+    // "Ask me next time" on what Auto decided (Decisions v2): it needs the request's id, which the recorded approval has.
+    var askedNext by remember(entryId) { mutableStateOf(false) }
+    var askingNext by remember(entryId) { mutableStateOf(false) }
     // The approval as it was shown: read once; until it is known nothing is drawn (no flash of the older page).
     var recorded by remember(entryId) { mutableStateOf<ApprovalView?>(null) }
     var looked by remember(entryId) { mutableStateOf(container == null) }
@@ -177,7 +181,29 @@ fun ActivityDetailScreen(
                   androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
                     AskedSections(entry, includeCommand = false)
                     if (entry.grantId != null || entry.autopilot != null) {
-                        SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant) }
+                        val requestId = shown.requestId.takeIf { it.isNotBlank() }
+                        val askNext: (() -> Unit)? = if (requestId != null && entry.decidedBy == "autopilot" && entry.autopilot?.matrix != null) {
+                            {
+                                askingNext = true
+                                scope.launch {
+                                    try {
+                                        container.core.askMeNextTime(requestId)
+                                        container.feedback.play(Event.Undo)
+                                        askedNext = true
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        container.feedback.play(Event.Error)
+                                        error = e.userMessage()
+                                    } finally {
+                                        askingNext = false
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        }
+                        SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant, askNext, askedNext, askingNext) }
                     }
                     shown.envRelease?.let { release ->
                         dev.reins.android.ui.grants.RevokeEverywhere(
@@ -516,7 +542,15 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
 
 /** The grant and the actual recorded model judgment, shared by recorded and older entries. */
 @Composable
-private fun DecisionDetails(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (String) -> Unit) {
+private fun DecisionDetails(
+    entry: ActivityEntry,
+    grantKnown: Boolean,
+    onOpenGrant: (String) -> Unit,
+    /** "Ask me next time", on what Auto decided (null: not offered here). */
+    onAskNext: (() -> Unit)? = null,
+    askedNext: Boolean = false,
+    askingNext: Boolean = false,
+) {
     val c = LocalColors.current
     var whyOpen by rememberSaveable(entry.id) { mutableStateOf(false) }
     entry.grantId?.let { id ->
@@ -548,6 +582,8 @@ private fun DecisionDetails(entry: ActivityEntry, grantKnown: Boolean, onOpenGra
             }
         }
     }
+    note?.matrix?.let { dev.reins.android.ui.autopilot.MatrixLine(it) }
+    if (onAskNext != null || askedNext) dev.reins.android.ui.autopilot.AskMeNextTime(askedNext, askingNext) { onAskNext?.invoke() }
 }
 
 /** What was shared (or held back): one line per email or item; an email opens from Gmail again. */

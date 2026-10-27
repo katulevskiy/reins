@@ -268,6 +268,13 @@ private fun SignedInContent(
             }
             val apSettings by state.autopilot.collectAsStateWithLifecycle()
             val apUi by autopilot.ui.collectAsStateWithLifecycle()
+            // Picking Auto before its setup was finished opens the setup instead (from any mode control).
+            LaunchedEffect(apUi.setupRequested) {
+                if (apUi.setupRequested) {
+                    modeSheet = false
+                    app.open(Route.AutoSetup)
+                }
+            }
             dev.reins.android.ui.main.ModeSheet(
                 open = modeSheet,
                 settings = apSettings,
@@ -360,6 +367,7 @@ private fun TabContent(
 ) {
     val state = container.state
     val context = androidx.compose.ui.platform.LocalContext.current
+    val questionScope = rememberCoroutineScope()
     when (app.tab) {
         Tab.Activity -> ActivityScreen(
             container = container,
@@ -373,6 +381,12 @@ private fun TabContent(
             },
             onAnswerBurst = { burst, approve ->
                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
+            },
+            onAnswerQuestion = { q, zone ->
+                questionScope.launch { dev.reins.android.ui.activity.answerQuestion(container, authenticator, q, zone)?.let(app::showNotice) }
+            },
+            onDismissQuestion = { q ->
+                questionScope.launch { dev.reins.android.ui.activity.dismissQuestion(container, q)?.let(app::showNotice) }
             },
             onConnectComputer = { app.open(Route.ConnectComputer) },
             onOpenSettings = { app.selectTab(Tab.Settings) },
@@ -488,6 +502,13 @@ private fun PageContent(
             onTryIt = { app.open(Route.TryIt(it)) },
         )
         is Route.TryIt -> TryItScreen(autopilot, route.profileId, onBack = { app.back() })
+        Route.AutoSetup -> dev.reins.android.ui.autopilot.AutoSetupScreen(
+            autopilot,
+            authenticator,
+            onBack = { app.back() },
+            // Auto is on: back to Autopilot, on Trust.
+            onDone = { app.selectTab(Tab.Trust) },
+        )
         is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() }, authenticator = authenticator)
         Route.McpAdd -> McpAddScreen(
             mcp,

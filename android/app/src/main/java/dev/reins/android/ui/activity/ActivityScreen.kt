@@ -166,12 +166,16 @@ fun ActivityScreen(
     onConnectAi: () -> Unit = {},
     /** "Another phone approves": where to switch back. */
     onOpenSettings: () -> Unit = {},
+    /** "Auto needs information": an answer (the owner check first unless Outside), or a dismiss. */
+    onAnswerQuestion: (dev.reins.core.AutoQuestion, dev.reins.core.ZoneChoice) -> Unit = { _, _ -> },
+    onDismissQuestion: (dev.reins.core.AutoQuestion) -> Unit = {},
 ) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
     val state: AppState = container.state
     val entries by state.activity.collectAsStateWithLifecycle()
     val pending by state.pending.collectAsStateWithLifecycle()
+    val questions by state.autoQuestions.collectAsStateWithLifecycle()
     val loaded by state.loaded.collectAsStateWithLifecycle()
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
@@ -387,8 +391,13 @@ fun ActivityScreen(
                             },
                         )
                         if (pending.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
+                        // After what waits: what Auto needs to know, in the same shell (never notified).
+                        if (questions.isNotEmpty()) {
+                            QuestionCards(questions, onAnswerQuestion, onDismissQuestion)
+                            Spacer(Modifier.height(12.dp))
+                        }
                         AnimatedVisibility(
-                            pending.isEmpty() && loaded && !filtersOpen,
+                            pending.isEmpty() && questions.isEmpty() && loaded && !filtersOpen,
                             enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
                             exit = fadeOut(Motion.reduced()),
                         ) {
