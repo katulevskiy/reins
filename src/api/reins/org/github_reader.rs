@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 use super::{OrgError, kms};
-use crate::db::{DbConnInner, models::reins_org_policy_code as code};
+use crate::db::{DbConnInner, models::reins_org_github_reader as code};
 
 /// GitHub's REST API.
 pub const GITHUB_API: &str = "https://api.github.com";
@@ -84,6 +84,21 @@ pub fn for_org(c: &mut DbConnInner, org: &str) -> Result<Option<GithubReader>, O
     }))
 }
 
+impl GithubReader {
+    /// A reader with this key, calling `base` (tests: a loopback mock).
+    #[cfg(test)]
+    #[must_use]
+    pub fn for_tests(org: &str, app_id: i64, installation_id: i64, pem: &str, base: &str) -> Self {
+        Self {
+            org: org.to_owned(),
+            app_id,
+            installation_id,
+            key_pem: Zeroizing::new(pem.to_owned()),
+            base: base.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
 /// The reader's webhook secret, when posted.
 pub fn webhook_secret(c: &mut DbConnInner, org: &str) -> Result<Option<Zeroizing<Vec<u8>>>, OrgError> {
     let Some(row) = code::q_github_reader(c, org)? else {
@@ -112,24 +127,7 @@ pub fn set_secrets(c: &mut DbConnInner, org: &str, pem: &str, webhook_secret: &s
     Ok(())
 }
 
-#[cfg(test)]
-impl GithubReader {
-    /// A reader for `org` with `pem`, calling `base` (a mock).
-    pub fn for_tests(org: &str, installation_id: i64, pem: &str, base: &str) -> Self {
-        Self {
-            org: org.to_owned(),
-            app_id: 1,
-            installation_id,
-            key_pem: Zeroizing::new(pem.to_owned()),
-            base: base.trim_end_matches('/').to_owned(),
-        }
-    }
-}
-
-/// Installation tokens by (org, installation): (token, reused until).
-type TokenCache = HashMap<(String, i64), (String, i64)>;
-
-static TOKENS: LazyLock<Mutex<TokenCache>> = LazyLock::new(Mutex::default);
+static TOKENS: LazyLock<Mutex<HashMap<(String, i64), (String, i64)>>> = LazyLock::new(Mutex::default);
 
 #[derive(serde::Serialize)]
 struct AppClaims {
@@ -140,7 +138,7 @@ struct AppClaims {
 
 impl GithubReader {
     fn client() -> Result<reqwest::Client, String> {
-        crate::http_client::get_reqwest_client_builder(false)
+        reqwest::Client::builder()
             .timeout(TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -217,12 +215,10 @@ impl GithubReader {
         self.call(reqwest::Method::POST, path, Some(body)).await
     }
 
-    #[allow(dead_code, reason = "part of the shared reader interface: O3's routing uses it")]
     pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, String> {
         self.call(reqwest::Method::PATCH, path, Some(body)).await
     }
 
-    #[allow(dead_code, reason = "part of the shared reader interface: O3's SAML links use it")]
     pub async fn graphql(&self, query: &str, vars: Value) -> Result<Value, String> {
         self.post_json("/graphql", &json!({"query": query, "variables": vars})).await
     }

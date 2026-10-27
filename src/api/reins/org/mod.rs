@@ -42,6 +42,11 @@ pub mod dns;
 pub mod executor_api;
 pub mod gate;
 pub mod github;
+#[allow(
+    dead_code,
+    clippy::type_complexity,
+    reason = "shared with O4 (kept identical), whose policy repo uses its writes and webhook secret"
+)]
 pub mod github_reader;
 pub mod invariants;
 pub mod kms;

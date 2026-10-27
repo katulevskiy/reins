@@ -25,7 +25,7 @@ use crate::db::{
         ReinsOrgRole, SUBJECT_GROUP, SUBJECT_MEMBER,
     },
     models::reins_org_exec::{self, ReinsOrgExecutor},
-    models::reins_org_policy_code as code,
+    models::reins_org_github_reader,
     schema::groups,
 };
 
@@ -511,7 +511,7 @@ fn validate(
             if app == 0 || inst == 0 {
                 return Err(OrgError::Invalid("Name the GitHub App and its installation by their numbers."));
             }
-            if code::q_github_reader_by_installation(c, inst)?.is_some_and(|r| r.org_uuid != org) {
+            if reins_org_github_reader::q_github_reader_by_installation(c, inst)?.is_some_and(|r| r.org_uuid != org) {
                 return Err(OrgError::Taken("That GitHub installation belongs to another organization."));
             }
             Ok(())
@@ -687,7 +687,7 @@ fn apply(
             app_id,
             installation_id,
         } => {
-            code::q_set_github_reader(
+            reins_org_github_reader::q_set_github_reader(
                 c,
                 org,
                 i64::try_from(*app_id).unwrap_or(0),

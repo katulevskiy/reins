@@ -33,7 +33,7 @@ use crate::{
     api::reins::now_unix,
     db::{
         DbConn, DbPool,
-        models::{reins_org_keys, reins_org_policy_code as code},
+        models::{reins_org_github_reader, reins_org_keys, reins_org_policy_code as code},
     },
 };
 
@@ -415,7 +415,7 @@ async fn repo_page(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
     };
     let (o, u) = (org.to_owned(), s.user.clone());
     let loaded = run(&conn, move |c| {
-        let reader = code::q_github_reader(c, &o)?
+        let reader = reins_org_github_reader::q_github_reader(c, &o)?
             .map(|r| (r.app_id, r.installation_id, r.sealed.is_some() && r.webhook_sealed.is_some()));
         let repo = code::q_policy_repo(c, &o)?.map(|r| (r.repo, r.default_branch));
         Ok(pages::RepoView {

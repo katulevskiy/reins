@@ -38,7 +38,7 @@ use crate::{
     db::{
         DbConn, DbConnInner, DbPool,
         models::{
-            reins_org,
+            reins_org, reins_org_github_reader,
             reins_org_policy_code::{self as code, ReinsOrgPolicyRepo},
         },
         schema::users,
@@ -185,7 +185,7 @@ pub fn route(c: &mut DbConnInner, payload: &Value) -> Result<Option<(String, Rei
     let Some(installation) = payload["installation"]["id"].as_i64() else {
         return Ok(None);
     };
-    let Some(reader) = code::q_github_reader_by_installation(c, installation)? else {
+    let Some(reader) = reins_org_github_reader::q_github_reader_by_installation(c, installation)? else {
         return Ok(None);
     };
     let Some(bound) = code::q_policy_repo(c, &reader.org_uuid)? else {
@@ -625,7 +625,7 @@ mod tests {
     fn org() -> DbConnInner {
         let mut c = db();
         pilot(&mut c);
-        code::q_set_github_reader(&mut c, "o1", 1, 77, 10).unwrap();
+        reins_org_github_reader::q_set_github_reader(&mut c, "o1", 1, 77, 10).unwrap();
         github_reader::set_secrets(&mut c, "o1", &pem(), SECRET, 10).unwrap();
         apply_binding(&mut c, "o1", "Acme/Reins-Policy", "main", "dana", 11).unwrap();
         c
@@ -832,21 +832,21 @@ mod tests {
         let gh = github(json!({"tree": [blob("reins-policy.toml", 30), blob("README.md", 9_000_000),
                                         {"path": "rules", "type": "tree", "sha": "t1"}]}))
         .await;
-        let reader = GithubReader::for_tests("o-big", 77, &pem(), &gh.uri());
+        let reader = GithubReader::for_tests("o-big", 1, 77, &pem(), &gh.uri());
         let files = read_tree(&reader, "acme/reins-policy", SHA).await.unwrap();
         assert_eq!(files.keys().collect::<Vec<_>>(), ["reins-policy.toml"]);
         assert!(source::compile(&files).is_ok());
         // Over 200 policy files.
         let many: Vec<Value> = (0..201).map(|i| blob(&format!("rules/r{i}.toml"), 10)).collect();
         let gh = github(json!({"tree": many})).await;
-        let reader = GithubReader::for_tests("o-big2", 77, &pem(), &gh.uri());
+        let reader = GithubReader::for_tests("o-big2", 1, 77, &pem(), &gh.uri());
         assert!(read_tree(&reader, "acme/reins-policy", SHA).await.unwrap_err().contains("200"));
         // Over 1 MiB, or a tree GitHub truncated.
         let gh = github(json!({"tree": [blob("rules/a.toml", 1_048_577)]})).await;
-        let reader = GithubReader::for_tests("o-big3", 77, &pem(), &gh.uri());
+        let reader = GithubReader::for_tests("o-big3", 1, 77, &pem(), &gh.uri());
         assert!(read_tree(&reader, "acme/reins-policy", SHA).await.unwrap_err().contains("1 MiB"));
         let gh = github(json!({"tree": [], "truncated": true})).await;
-        let reader = GithubReader::for_tests("o-big4", 77, &pem(), &gh.uri());
+        let reader = GithubReader::for_tests("o-big4", 1, 77, &pem(), &gh.uri());
         assert!(read_tree(&reader, "acme/reins-policy", SHA).await.is_err());
     }
 }
