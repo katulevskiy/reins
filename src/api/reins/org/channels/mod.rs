@@ -67,6 +67,30 @@ pub fn install(
             Some(claim)
         }
     };
+    // A changed app or secret on a channel that is on turns it off: it takes a fresh two-person enable
+    // (`SetApprovalChannel`). Only the Teams connector URL the bot itself reported may change in place.
+    let identity = |v: &Value| {
+        let mut v = v.clone();
+        if let Some(o) = v.as_object_mut() {
+            o.remove("service_url");
+        }
+        v
+    };
+    let before = config_value(c, org, kind)?;
+    let was_on = store::q_channel_for_use(c, org, kind.as_str())?.is_some_and(|r| r.enabled);
+    let changed = before.as_ref().is_none_or(|b| identity(b) != identity(config));
+    if was_on && changed {
+        store::q_set_channel_enabled(c, org, kind.as_str(), false)?;
+        super::audit::record(
+            c,
+            org,
+            super::audit::kinds::ROUTING_CHANGED,
+            None,
+            None,
+            &serde_json::json!({"channel": kind.as_str(), "enabled": false, "why": "reinstalled"}),
+            now,
+        )?;
+    }
     let text = Zeroizing::new(config.to_string());
     let (key_id, sealed) = kms::seal_data(c, org, &aad(org, kind), text.as_bytes(), now)?;
     if store::q_channel_for_use(c, org, kind.as_str())?.is_none() {
@@ -89,6 +113,10 @@ pub fn install(
         now,
     )?;
     Ok(())
+}
+
+fn config_value(c: &mut DbConnInner, org: &str, kind: ChannelKind) -> Result<Option<Value>, OrgError> {
+    Ok(config(c, org, kind, true)?.and_then(|t| serde_json::from_str(&t).ok()))
 }
 
 /// A channel's configuration, when installed and on (`any` also takes one that is off: for inbound verification).
@@ -525,5 +553,41 @@ mod tests {
             .unwrap(),
         );
         assert!(install(&mut c, "o2", ChannelKind::Teams, &squat, Some(&other), 303).is_err());
+    }
+
+    #[test]
+    fn reinstalling_an_enabled_channel_turns_it_off() {
+        use reins_proto::managed::ReviewDecision;
+        use reins_proto::org::AdminAction;
+        let mut c = db();
+        let phones = routed_org(&mut c);
+        let first = json!({"bot_token": "xoxb-1", "signing_secret": "s"});
+        install(&mut c, "o1", ChannelKind::Slack, &first, None, 300).unwrap();
+        let dana = reviews::tests::enroll(&mut c, "o1", "dana", "dana-phone", Some(false), 300);
+        let enable = |c: &mut DbConnInner, at: i64| {
+            let on = AdminAction::SetApprovalChannel {
+                channel: ChannelKind::Slack,
+                enabled: true,
+            };
+            let (crate::api::reins::org::admin::Proposed::Pending(id), _) =
+                crate::api::reins::org::admin::propose(c, "o1", "dana", &on, None, at).unwrap()
+            else {
+                panic!("pending")
+            };
+            reviews::tests::change_answer_as(c, &dana, "dana", &id, ReviewDecision::Propose, at + 1).unwrap();
+            reviews::tests::change_answer_as(c, &phones["kim"], "kim", &id, ReviewDecision::Approve, at + 2).unwrap();
+        };
+        enable(&mut c, 301);
+        assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_some());
+        // The same app again: still on.
+        install(&mut c, "o1", ChannelKind::Slack, &first, None, 310).unwrap();
+        assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_some());
+        // Another token or secret: off until a second admin approves again.
+        install(&mut c, "o1", ChannelKind::Slack, &json!({"bot_token": "xoxb-2", "signing_secret": "s2"}), None, 320)
+            .unwrap();
+        assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_none());
+        enable(&mut c, 330);
+        let on = config(&mut c, "o1", ChannelKind::Slack, false).unwrap().unwrap();
+        assert!(on.contains("xoxb-2"));
     }
 }

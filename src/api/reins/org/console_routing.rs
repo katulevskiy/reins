@@ -240,9 +240,24 @@ async fn reader_key(org: &str, form: Form<ReaderKeyForm>, cookies: &CookieJar<'_
         return console::to_home();
     };
     let (o, now) = (org.to_owned(), now_unix());
-    let r = run(&conn, move |c| github_reader::set_secrets(c, &o, &f.pem, &f.webhook_secret, now)).await;
+    let r = run(&conn, move |c| set_reader_key(c, &o, &f.pem, &f.webhook_secret, now)).await;
     flash(&s.sid, r.as_ref().map_or_else(|e| e.message(), |()| "Key saved."), r.is_err());
     to_org(org, "/routing")
+}
+
+/// Posts the reader's key: only into a reader with none yet. A key in place is replaced only by setting the reader
+/// again (a two-person `SetGithubReader` for another app, which drops its secrets).
+pub fn set_reader_key(
+    c: &mut DbConnInner,
+    org: &str,
+    pem: &str,
+    webhook_secret: &str,
+    now: i64,
+) -> Result<(), OrgError> {
+    if reins_org_github_reader::q_github_reader(c, org)?.is_some_and(|r| r.key_id.is_some()) {
+        return Err(OrgError::Invalid("A key is set. Set the reader again to replace it."));
+    }
+    github_reader::set_secrets(c, org, pem, webhook_secret, now)
 }
 
 #[derive(FromForm)]
@@ -523,5 +538,23 @@ mod tests {
         assert!(row.body.contains("tpl.finance.1"));
         // A draft, not active: activation stays two-person.
         assert!(policy::active(&mut c, "o1").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_reader_key_is_replaced_only_through_a_two_person_change() {
+        use_test_kms();
+        let mut c = db();
+        add_org(&mut c, "o1");
+        let pem = String::from_utf8(openssl::rsa::Rsa::generate(2048).unwrap().private_key_to_pem().unwrap()).unwrap();
+        assert!(set_reader_key(&mut c, "o1", &pem, "a-webhook-secret-123", 5).is_err(), "no reader set up");
+        reins_org_github_reader::q_set_github_reader(&mut c, "o1", 7, 8, 5).unwrap();
+        set_reader_key(&mut c, "o1", &pem, "a-webhook-secret-123", 6).unwrap();
+        assert_eq!(
+            set_reader_key(&mut c, "o1", &pem, "another-secret-4567", 7),
+            Err(OrgError::Invalid("A key is set. Set the reader again to replace it."))
+        );
+        // Setting the reader again (another app, after its two-person change) drops the key.
+        reins_org_github_reader::q_set_github_reader(&mut c, "o1", 70, 9, 8).unwrap();
+        set_reader_key(&mut c, "o1", &pem, "another-secret-4567", 9).unwrap();
     }
 }
