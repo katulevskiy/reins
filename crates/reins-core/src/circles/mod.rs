@@ -363,16 +363,19 @@ impl Engine {
                     Side::Helper => Side::Owner,
                 };
                 let hash = circle::arrangement_hash(&h.signed.body);
-                match change.verify(&h.other().owner_pub, &hash, h.last_seq, verify) {
+                match change.verify(&h.other().owner_pub, &hash, h.arrangement.terms.kind, h.last_seq, verify) {
                     Ok(c) if c.by == other_side => {
                         self.with_circles(&me.slot, |s| {
                             if let Some(h) = s.held_mut(&link.id) {
                                 h.last_seq = c.seq;
-                                h.standing = match c.state {
-                                    LinkState::Active => Standing::Active,
-                                    LinkState::Paused => Standing::Paused,
-                                    LinkState::Ended => Standing::Ended,
-                                };
+                                // A guardianship step carries no state of its own, unless it ends the link.
+                                if c.guardian.is_none() || c.state == LinkState::Ended {
+                                    h.standing = match c.state {
+                                        LinkState::Active => Standing::Active,
+                                        LinkState::Paused => Standing::Paused,
+                                        LinkState::Ended => Standing::Ended,
+                                    };
+                                }
                             }
                             Ok(())
                         })?;
