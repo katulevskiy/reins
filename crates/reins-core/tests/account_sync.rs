@@ -251,3 +251,42 @@ async fn a_state_that_does_not_open_or_is_older_leaves_a_notice_and_is_never_ove
         assert_eq!(app.account_sync_notice().await.unwrap(), None);
     }
 }
+
+/// A phone the server refuses as the approval device (another phone approves; this one is only signed in) tries one
+/// upload, not one after every change: the refusal holds its changes here until it registers as the approval device,
+/// and then they go up.
+#[tokio::test]
+async fn a_phone_refused_as_the_approval_device_stops_uploading_until_it_registers() {
+    let cloud = Cloud::default();
+    let server = server(&cloud).await;
+    Mock::given(method("PUT"))
+        .and(path("/reins/api/device"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": false})))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let phone = sign_in(&server, dir.path()).await;
+    cloud.settle().await;
+
+    cloud.refuse.store(true, Ordering::SeqCst);
+    phone.engine().register_account("github", "first").unwrap();
+    phone.accounts().await.unwrap();
+    cloud.wait_for("the refused upload", |c| c.refused.load(Ordering::SeqCst) == 1).await;
+    for name in ["second", "third"] {
+        phone.engine().register_account("github", name).unwrap();
+        phone.accounts().await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(cloud.refused.load(Ordering::SeqCst), 1, "no refused upload after every change");
+
+    // It becomes the approval device: what it kept goes up with its next change.
+    cloud.refuse.store(false, Ordering::SeqCst);
+    phone.register_device(None).await.unwrap();
+    let before = cloud.revision();
+    phone.engine().register_account("github", "fourth").unwrap();
+    phone.accounts().await.unwrap();
+    cloud.wait_for("the upload", |c| c.revision() > before).await;
+    cloud.settle().await;
+    let other = sign_in(&server, tempfile::tempdir().unwrap().path()).await;
+    assert_eq!(integrations(&other).await, ["first", "fourth", "second", "third"]);
+}

@@ -403,6 +403,10 @@ impl State {
             }
             ("PUT", ["services" | "member"]) | ("POST", ["ack"]) => ResponseTemplate::new(204),
             ("PUT", ["device"]) => ok(json!({"replaced_previous": false})),
+            // The approval device's poll: with a roster, the primary's only (as the real server checks).
+            ("GET", ["pending"]) if self.roster.last().is_some_and(|e| e.primary.device_id != me) => {
+                err(403, "not_approval_device")
+            }
             ("GET", ["pending"]) => {
                 let joins: Vec<&JoinRequest> = self
                     .joins
@@ -1259,12 +1263,14 @@ async fn a_viewer_with_bypass_on_answers_nothing_pushed_to_it() {
         json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "Claude", "created_at": 100,
                "call": {"tool": "gmail_search", "query": "from:bank", "max_results": 1}})
     };
-    // A server (or a stale token) pushes the request to the viewer, and its long-poll carries another.
+    // A server (or a stale token) pushes the request to the viewer; its foreground loop follows the log and never
+    // polls for requests (another waits there for the primary).
     w.state().by_id.insert("r9".to_owned(), request("r9"));
     b.handle_push("req".to_owned(), "r9".to_owned()).await.unwrap();
     b.handle_push_deferring_autopilot("req".to_owned(), "r9".to_owned()).await.unwrap();
     w.state().requests.push(request("r10"));
     b.sync(0).await.unwrap();
+    assert!(calls_of(&w, &b).await.iter().all(|(_, p)| p != "/reins/api/pending"), "a viewer does not poll");
     // Nothing was answered, approved or parked: the requests wait for the primary.
     assert!(w.state().answered.is_empty(), "{:?}", w.state().answered);
     assert!(b.pending().await.unwrap().is_empty());
@@ -1276,14 +1282,14 @@ async fn a_viewer_with_bypass_on_answers_nothing_pushed_to_it() {
     for item in a.pending().await.unwrap() {
         a.deny(item.id).await.unwrap();
     }
-    assert_eq!(w.state().answered, ["r11"]);
+    assert_eq!(w.state().answered, ["r10", "r11"]);
     // Removed, B decides nothing either.
     let b_id = device_of(&b).await;
     a.roster_remove_member(b_id).await.unwrap();
     b.roster_summary(true).await.unwrap();
     w.state().by_id.insert("r12".to_owned(), request("r12"));
     b.handle_push("req".to_owned(), "r12".to_owned()).await.unwrap();
-    assert_eq!(w.state().answered, ["r11"]);
+    assert_eq!(w.state().answered, ["r10", "r11"]);
 }
 
 #[tokio::test]
@@ -1566,6 +1572,81 @@ async fn a_phone_enrolled_later_starts_from_the_checkpoint_at_its_epoch() {
     assert!(state.forked.is_none() && state.notice.is_none(), "{state:?}");
     assert!(c.autopilot_settings().await.unwrap().bypass_until.is_some());
     assert_eq!(state.applied_seq, state.head_seq);
+}
+
+/// The calls a phone made to the Reins API: (method, path).
+async fn calls_of(w: &World, core: &ReinsCore) -> Vec<(String, String)> {
+    let device = device_of(core).await;
+    w.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r.url.path().starts_with("/reins/api/") && r.headers.contains_key("authorization") && caller(r) == device
+        })
+        .map(|r| (r.method.to_string(), r.url.path().to_owned()))
+        .collect()
+}
+
+/// A phone enrolled after the account has history and a running bypass: its foreground loop (`sync`, as the apps call
+/// it) follows the account's log, so it shows the primary's Activity and the bypass and stays live, and it never makes
+/// a call only the approval device makes (the poll, the modes and services reports, the account-state upload).
+#[tokio::test]
+async fn a_viewer_enrolled_later_follows_the_history_and_the_bypass_with_sync_and_writes_nothing_of_the_primarys() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("Pixel".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    // History before the viewer: requests the primary answered.
+    let ask = |id: &str| {
+        json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "Claude", "created_at": 100,
+            "call": {"tool": "gmail_search", "query": "x", "max_results": 1}})
+    };
+    for id in ["r1", "r2", "r3"] {
+        w.state().requests.push(ask(id));
+    }
+    a.sync(0).await.unwrap();
+    for item in a.pending().await.unwrap() {
+        a.deny(item.id).await.unwrap();
+    }
+    let history: Vec<(i64, String)> = a.activity(50).await.unwrap().into_iter().map(|e| (e.at, e.outcome)).collect();
+    assert!(history.len() >= 3, "{history:?}");
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+
+    enroll(&a, &b, "iPhone").await;
+    // Its first turn may come before the primary wrote the checkpoint at the new epoch; the loop's next turn loads it.
+    drop(b.sync(0).await);
+    a.live_sync(0).await.unwrap();
+    b.sync(0).await.unwrap();
+    let seen: Vec<(i64, String)> = b.activity(50).await.unwrap().into_iter().map(|e| (e.at, e.outcome)).collect();
+    for entry in &history {
+        assert!(seen.contains(entry), "the viewer has the primary's {entry:?}: {seen:?}");
+    }
+    assert!(b.autopilot_settings().await.unwrap().bypass_until.is_some(), "the running bypass, with its end");
+
+    // Live: what the primary does next reaches the viewer with its next turn.
+    // (Bypass is on: the primary decides it by itself, and logs it.)
+    let before = a.activity(50).await.unwrap().len();
+    w.state().requests.push(ask("r4"));
+    a.sync(0).await.unwrap();
+    assert_eq!(a.activity(50).await.unwrap().len(), before + 1);
+    a.live_sync(0).await.unwrap();
+    b.sync(0).await.unwrap();
+    assert_eq!(b.activity(50).await.unwrap().len(), seen.len() + 1, "the new entry reached the viewer");
+
+    let calls = calls_of(&w, &b).await;
+    for (method, path) in [
+        ("GET", "/reins/api/pending"),
+        ("PUT", "/reins/api/modes"),
+        ("PUT", "/reins/api/services"),
+        ("PUT", "/reins/api/account-state"),
+        ("POST", "/reins/api/ops"),
+    ] {
+        assert!(!calls.iter().any(|(m, p)| m == method && p == path), "the viewer made {method} {path}: {calls:?}");
+    }
+    assert!(calls.iter().any(|(m, p)| m == "GET" && p == "/reins/api/sync"), "it followed the log");
 }
 
 #[tokio::test]

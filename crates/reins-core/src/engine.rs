@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -103,6 +104,10 @@ pub struct Engine {
     pub(crate) synced_writes: std::sync::atomic::AtomicU64,
     /// A background account sync is queued and has not started yet (see `schedule_account_sync`).
     pub(crate) sync_queued: std::sync::atomic::AtomicBool,
+    /// The server refused a write only the approval device makes (the account state, the modes or services report,
+    /// the poll) because this phone is not it: those stop until it registers as the approval device or a poll goes
+    /// through, instead of failing on every change ([`Engine::refused_as_approval`]).
+    pub(crate) not_approval: std::sync::atomic::AtomicBool,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -256,6 +261,7 @@ impl Engine {
             account_sync: tokio::sync::Mutex::new(()),
             synced_writes: std::sync::atomic::AtomicU64::new(u64::MAX),
             sync_queued: std::sync::atomic::AtomicBool::new(false),
+            not_approval: std::sync::atomic::AtomicBool::new(false),
             http,
             cfg,
             google,
@@ -537,13 +543,13 @@ impl Engine {
         }
         self.set_session(None);
         self.store.clear_session()?;
-        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.closed.store(true, Ordering::Release);
         self.retired.send_replace(true);
         Ok(())
     }
 
     pub(crate) fn ensure_active(&self) -> Result<(), CoreError> {
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+        if self.closed.load(Ordering::Acquire) {
             return Err(CoreError::NotLoggedIn);
         }
         self.store.check_owner()
@@ -566,7 +572,7 @@ impl Engine {
         })
     }
     pub(crate) fn retire(&self) -> Result<(), CoreError> {
-        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.closed.store(true, Ordering::Release);
         self.retired.send_replace(true);
         if let Some(session) = self.session_slot().take() {
             session.close();
@@ -598,6 +604,7 @@ impl Engine {
         match api_call!(&session, |api| api.register_device(&registration)) {
             Ok(_) => {
                 session.forget_proof();
+                self.not_approval.store(false, Ordering::Release);
                 return Ok(());
             }
             Err(e) if !is_takeover_refusal(&e) => return Err(e.into_core()),
@@ -614,6 +621,7 @@ impl Engine {
         match result {
             Ok(_) => {
                 session.forget_proof();
+                self.not_approval.store(false, Ordering::Release);
                 Ok(())
             }
             Err(e) if is_takeover_refusal(&e) => Err(CoreError::OtherApprovalDevice),
@@ -680,6 +688,10 @@ impl Engine {
     /// when that changed since the last report, so that it can tell the AIs what is connected (and lists the MCP
     /// servers' tools). A failure is retried with the next sync.
     pub(crate) async fn report_services(&self, session: &Session) {
+        // Only the phone that decides reports, and not while the server refuses this one as the approval device.
+        if self.require_decider().is_err() || self.not_approval.load(Ordering::Acquire) {
+            return;
+        }
         let mut services = self.integrations();
         services.sort();
         let report = reins_proto::device::ServicesReport {
@@ -691,7 +703,10 @@ impl Engine {
         }
         match api_call!(session, |api| api.put_services(&report)) {
             Ok(()) => *self.reported_services.lock().unwrap_or_else(PoisonError::into_inner) = Some(report),
-            Err(e) => log::warn!("could not report the integrations: {}", e.into_core()),
+            Err(e) => {
+                self.refused_as_approval(&e);
+                log::warn!("could not report the integrations: {}", e.into_core());
+            }
         }
     }
 
@@ -699,7 +714,7 @@ impl Engine {
     /// can show them (each sees only the global mode and its own). Only the phone that decides reports; a failure (an
     /// older server, offline) is retried with the next sync or change.
     pub(crate) async fn report_modes(&self, session: &Session) {
-        if self.require_decider().is_err() {
+        if self.require_decider().is_err() || self.not_approval.load(Ordering::Acquire) {
             return;
         }
         let report = match self.modes_report(unix_now()) {
@@ -714,7 +729,18 @@ impl Engine {
         }
         match api_call!(session, |api| api.put_modes(&report)) {
             Ok(()) => *self.reported_modes.lock().unwrap_or_else(PoisonError::into_inner) = Some(report),
-            Err(e) => log::info!("could not report the modes: {}", e.into_core()),
+            Err(e) => {
+                self.refused_as_approval(&e);
+                log::info!("could not report the modes: {}", e.into_core());
+            }
+        }
+    }
+
+    /// Notes a refusal that says this phone is not the approval device (403 `not_approval_device`): what only that
+    /// device writes stops until it registers or a poll goes through.
+    pub(crate) fn refused_as_approval(&self, e: &ApiFailure) {
+        if matches!(e, ApiFailure::Status { status: 403, code, .. } if code == codes::NOT_APPROVAL_DEVICE) {
+            self.not_approval.store(true, Ordering::Release);
         }
     }
 
@@ -838,6 +864,13 @@ impl Engine {
 
     /// Long-polls the server (foreground channel) and processes what arrives, then runs Autopilot's pass.
     pub async fn sync(&self, wait_secs: u32) -> Result<Vec<PendingItem>, CoreError> {
+        // A phone that views the account (or was taken off it) is asked nothing: the poll, the reports and Autopilot's
+        // pass are the approval device's. Its foreground loop follows the account's log instead: Activity, the modes
+        // and everything else the primary publishes, long-polled like the poll.
+        if !self.decides() && self.holds_roster_now()? {
+            Box::pin(self.live_sync(wait_secs)).await?;
+            return self.pending();
+        }
         // Revocations of secrets not delivered yet go first (Box: kept out of this future's size).
         if let Err(e) = Box::pin(self.flush_revocations(Vec::new())).await {
             log::warn!("could not send the revocations waiting: {e}");
@@ -852,7 +885,16 @@ impl Engine {
         let session = self.session()?;
         self.report_services(&session).await;
         self.report_modes(&session).await;
-        let pending = api_call!(&session, |api| api.pending(wait_secs)).map_err(ApiFailure::into_core)?;
+        let pending = match api_call!(&session, |api| api.pending(wait_secs)) {
+            Ok(pending) => {
+                self.not_approval.store(false, Ordering::Release);
+                pending
+            }
+            Err(e) => {
+                self.refused_as_approval(&e);
+                return Err(e.into_core());
+            }
+        };
         if let Some(email) = pending.account_email.as_deref() {
             session.adopt_account_email(email).await?;
         }

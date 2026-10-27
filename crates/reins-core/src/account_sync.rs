@@ -50,6 +50,8 @@ impl Engine {
         }
         let _guard = self.account_sync.lock().await;
         match self.pull_locked().await? {
+            // Not the approval device (the server said so): its merge stays here until it is.
+            Pulled::Merged if self.not_approval.load(Ordering::Acquire) => Ok(()),
             Pulled::Merged => self.upload_locked().await,
             Pulled::Current | Pulled::Imported | Pulled::Unusable => Ok(()),
         }
@@ -116,6 +118,11 @@ impl Engine {
         if self.store.owner.is_none() || self.synced_writes.load(Ordering::Acquire) == self.store.write_count() {
             return;
         }
+        // The server refuses this phone's uploads (it is not the approval device, and holds no roster): its changes
+        // stay here, merged on the next pull, instead of a refused upload after every change.
+        if self.not_approval.load(Ordering::Acquire) && !self.holds_roster_now().unwrap_or(false) {
+            return;
+        }
         if self.sync_queued.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -137,6 +144,9 @@ impl Engine {
         }
         if self.holds_roster_now()? {
             return Box::pin(self.live_sync_now()).await;
+        }
+        if self.not_approval.load(Ordering::Acquire) {
+            return Ok(());
         }
         let _guard = self.account_sync.lock().await;
         self.upload_locked().await
@@ -191,7 +201,11 @@ impl Engine {
             return Ok(Put::Behind);
         }
         if !response.status().is_success() {
-            // 403: this phone is not the approval device. Its changes stay here, merged on every pull, until it is.
+            // 403: this phone is not the approval device. Its changes stay here, merged on every pull, until it is; no
+            // more uploads are tried until then (`not_approval`).
+            if response.status().as_u16() == 403 {
+                self.not_approval.store(true, Ordering::Release);
+            }
             return Err(CoreError::Server {
                 status: response.status().as_u16(),
                 reason: "could not sync encrypted account data; the local encrypted copy was kept".to_owned(),
