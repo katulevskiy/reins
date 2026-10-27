@@ -243,6 +243,30 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** This phone's signing-key fingerprint ("4821 9930 1274"), with the account it was read for; null until read. */
+    private val _signingKey = MutableStateFlow<Pair<Long, String>?>(null)
+    val signingKey: StateFlow<Pair<Long, String>?> = _signingKey.asStateFlow()
+    @Volatile private var signingKeyReading = false
+
+    /** Reads the signing-key fingerprint once per account (it names this phone's key, which agents pin). */
+    fun loadSigningKey() {
+        val epoch = container.state.accountEpoch.value
+        if (_signingKey.value?.first == epoch || signingKeyReading) return
+        signingKeyReading = true
+        viewModelScope.launch {
+            try {
+                val fingerprint = container.core.signingKeyFingerprint()
+                if (container.state.isCurrent(epoch)) _signingKey.value = epoch to fingerprint
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Not shown; More reads it again next time it opens.
+            } finally {
+                signingKeyReading = false
+            }
+        }
+    }
+
     /** Gone from the list at once; the server is told in the background (and the connection is back if it fails). */
     fun disconnect(connectionId: String, onDone: () -> Unit) {
         container.feedback.play(Event.Revoked)

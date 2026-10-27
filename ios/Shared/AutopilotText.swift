@@ -94,7 +94,7 @@ enum AutopilotText {
     static func line(key: String) -> String {
         switch key {
         case "auto": "Decides the easy ones"
-        case "overnight": "Holds what is too risky"
+        case "overnight": "Parks what it would ask"
         case "bypass": "Approve everything"
         case "lockdown": "Deny everything"
         default: "Ask, with a hint"
@@ -150,7 +150,7 @@ enum AutopilotText {
 
     /// The line under "Overnight" while it runs.
     static func overnightLine(until: Int64, since: Int64?, now: Int64) -> String {
-        guard isUntilOff(until) else { return "Holds what is too risky" }
+        guard isUntilOff(until) else { return "Parks what it would ask" }
         guard let since else { return "On until you stop it" }
         return "On until you stop it · " + ranFor(since: since, now: now)
     }
@@ -158,23 +158,28 @@ enum AutopilotText {
     /// "Overnight on · 5 h left", "Overnight on · until you stop it".
     static func overnightTitle(until: Int64, now: Int64) -> String { "\(overnightName) on · " + timeLeft(until: until, now: now) }
 
-    static func overnightText(scope: String) -> String { "For \(scope). Holds what is too risky." }
+    static func overnightText(scope: String) -> String { "For \(scope). Parks what it would ask." }
 
     /// Under the Overnight sheet's title.
-    static let overnightSummary = "Decides like Auto. Holds what is too risky."
+    static let overnightSummary = "Decides like Auto. Parks the rest for the morning."
 
-    /// Behind the (?) of the Overnight sheet, when the model rates risk.
-    static let overnightHelp = "For agents left working. \(overnightName) decides like Auto and weighs the risky requests Auto always leaves to you. What it rates catastrophic, a tripwire, or anything this phone cannot read for sure is held: it waits for you, or is denied."
+    /// Behind the (?) of the Overnight sheet: what it would ask is parked, never denied (Decisions v2, 01 §11).
+    static let overnightHelp = "For agents left working. \(overnightName) decides like Auto. What it would ask is parked: the agent carries on, and one note in the morning lists what waits. Nothing is denied unless a rule of yours says so. Messages to work and outside people always wait; small cleanups in your own repos run."
 
-    /// Behind the same (?) when the model does not rate risk.
+    /// Added behind the same (?) when the model does not rate risk.
     static let overnightNoRiskHelp = "This model does not rate risk, so \(overnightName) decides like Auto."
 
-    static func overnightHelpText(riskRated: Bool) -> String { riskRated ? overnightHelp : overnightNoRiskHelp }
+    static func overnightHelpText(riskRated: Bool) -> String { riskRated ? overnightHelp : overnightHelp + " " + overnightNoRiskHelp }
 
-    /// The setting's title, and its two choices.
-    static let whenRiskyTitle = "If something is too risky:"
-    static let whenRiskyWait = "Wait for me"
-    static let whenRiskyDeny = "Deny it"
+    /// How long what Overnight parks waits after the morning: its title and the hours offered (the core takes 1 to 48).
+    static let overnightExpiryTitle = "Expires after"
+    static let overnightExpiryHours: [UInt32] = [6, 12, 24]
+
+    /// "12 h".
+    static func expiryLabel(hours: UInt32) -> String { "\(hours) h" }
+
+    /// What a parked request says about itself.
+    static let parkedWord = "Parked"
 
     /// The length (seconds) a bypass with `leftSeconds` to go was most likely given: the shortest choice that fits.
     static func bypassLength(leftSeconds: Int64) -> Int64 {
@@ -227,7 +232,7 @@ enum AutopilotText {
     static let bypassHelp = bypassStillAsks
 
     /// What the Autopilot page's "Mode" explains behind its (?).
-    static let modeHelp = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. \(overnightName) decides like Auto and holds what is too risky, for agents left working. Bypass approves for a while without asking; Lock down denies everything that would ask."
+    static let modeHelp = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. \(overnightName) decides like Auto and parks what it would ask for the morning, for agents left working. Bypass approves for a while without asking; Lock down denies everything that would ask."
 
     /// What "How sure" explains behind its (?).
     static let howSureHelp = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."

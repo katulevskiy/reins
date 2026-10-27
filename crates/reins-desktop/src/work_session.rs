@@ -239,10 +239,11 @@ pub async fn start(paths: &Paths, config: &Config, request: &Request, tell: Opti
     Ok(session)
 }
 
-fn refusal_text(r: &Refusal) -> String {
+pub(crate) fn refusal_text(r: &Refusal) -> String {
     match r {
         Refusal::Denied(m) => format!("denied on your phone: {m}"),
         Refusal::Waiting(m) | Refusal::Unavailable(m) => m.clone(),
+        Refusal::Parked(p) => p.message.clone(),
     }
 }
 

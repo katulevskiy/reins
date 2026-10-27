@@ -149,6 +149,30 @@ impl ReinsAuthorizer {
                     log::info!("{} {}: the phone answered request {request_id}", q.tool, q.repo);
                     return self.open(q, &asked.nonce, outcome);
                 }
+                CallStatus::Deferred {
+                    ticket,
+                    expected_by,
+                    ..
+                } => {
+                    log::info!("{} {}: request {request_id} parked for review as {ticket}", q.tool, q.repo);
+                    if q.read {
+                        // A read is produced when collected: running git again polls the ticket.
+                        self.keep_in_flight(q, asked);
+                        return Err(Refusal::Waiting(format!(
+                            "Parked for review on your phone (ticket {ticket}). Run git again once it is approved."
+                        )));
+                    }
+                    return Err(Refusal::Parked(Box::new(super::Parking::new(&ticket, &asked.nonce, expected_by))));
+                }
+                CallStatus::Closed {
+                    state,
+                    ..
+                } => {
+                    return Err(Refusal::Unavailable(format!(
+                        "Not approved: the request is {}. Run git again.",
+                        state.as_str().replace('_', " ")
+                    )));
+                }
                 CallStatus::Pending | CallStatus::Offline => {
                     let polled_at = Instant::now();
                     let remaining = deadline.saturating_duration_since(polled_at);

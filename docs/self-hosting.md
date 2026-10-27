@@ -134,6 +134,9 @@ SSO_SIGNUPS_MATCH_EMAIL=true        # an existing account with the same (WorkOS-
 # REINS_WORKOS_WEBHOOK_SECRET=...
 # REINS_ORGS_ENABLED=true           # Reins for organizations (Managed work profiles), see below
 # REINS_WORKOS_DSYNC_SECS=20        # how often directory (SCIM) events are read without a webhook
+# REINS_ORG_KMS_KEY_FILE=data/reins_org_kms.key  # master key sealing every org's keys (made on first use; back it up apart)
+# REINS_ATTEST_ANDROID_ROOTS=        # PEM of Android key attestation roots (empty: Google's)
+# REINS_APP_ATTEST_APP_ID=           # TEAMID.bundle id App Attest must name (empty: not verified)
 ```
 
 In the WorkOS dashboard (or through its API), add `https://<domain>/identity/connect/oidc-signin` to the redirect
@@ -173,6 +176,13 @@ How it fits together:
   directory sync, which reads `dsync.*` events every `REINS_WORKOS_DSYNC_SECS` otherwise (keep it under 60, the
   deprovisioning target). A GitHub-org identity needs GitHub's `read:org` scope on the WorkOS GitHub connection, with
   provider tokens returned. See [security model](security-model.md#organizations-managed-work-profiles).
+- **Org executors** run Managed requests with the org's credentials. Build `reins-executor`
+  (`cargo build --release -p reins-executor`), then on the executor's host: `reins-executor keygen --out
+  executor.key`, register its public key in the console (Executors; it takes two admins' phones), write a config
+  (server, org, executor id, key file, state directory, `[github]` app id, installation id, owner and private key file,
+  optional `[google]` service account), compare `reins-executor pin --config executor.toml` with the keys the console
+  shows, then `pin --accept` and `reins-executor run --config executor.toml`. Run one per org, as its own user, with
+  its state directory private; see [deployment](deployment.md#org-executors).
 - **Deleting an account in the app** (Settings → Delete account) deletes the WorkOS user too
   (`DELETE /user_management/users/<id>` with `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET`), before the account
   itself; while WorkOS cannot, nothing is deleted and the app says to try again. Without WorkOS (password accounts, or

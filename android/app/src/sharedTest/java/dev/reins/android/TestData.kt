@@ -80,10 +80,99 @@ object TestData {
         suggestion: String? = null,
         headline: String = "",
         quick: Boolean = false,
+        ticket: dev.reins.core.TicketView? = null,
+        canDefer: Boolean = false,
+        parkedUntil: Long? = null,
+        taskId: String? = null,
+        taskTitle: String? = null,
+        batchable: Boolean = false,
+        taskProposal: dev.reins.core.TaskView? = null,
+        circle: dev.reins.core.CircleProgress? = null,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
-        service, account, waitUntil, op, opTitle, suggestion, headline, quick,
+        service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
+        ticket = ticket, canDefer = canDefer, parkedUntil = parkedUntil, taskId = taskId, taskTitle = taskTitle,
+        batchable = batchable, taskProposal = taskProposal, circle = circle,
     )
+
+    /** A task (or a proposal's envelope): one agent's, for [length] seconds from [startedAt]. */
+    fun task(
+        id: String = "task1",
+        title: String = "Fix CI",
+        conn: String = "c1",
+        label: String = "Claude",
+        repos: List<String> = listOf("dkat/reins", "dkat/site"),
+        branches: List<String> = listOf("fix/*"),
+        paths: List<String> = emptyList(),
+        people: List<String> = emptyList(),
+        operations: List<String> = listOf("git_push"),
+        ceiling: UByte = 1u,
+        budget: UInt? = 20u,
+        startedAt: Long = 1_700_000_100,
+        length: Long = 4 * 3_600,
+        endedAt: Long? = null,
+        startedBy: String = "agent",
+        reason: String? = null,
+        auto: UInt = 0u,
+        asked: UInt = 0u,
+        parked: UInt = 0u,
+    ) = dev.reins.core.TaskView(
+        id, conn, label, title, reason, repos, branches, paths, people, operations, ceiling, budget, budget,
+        startedAt, startedAt + length, endedAt, startedBy, auto, asked, parked,
+    )
+
+    // ---- Circles (Decisions v2, 04) -----------------------------------------------------------------------------------
+
+    /** Who else decides an owner's request ("Needs Alex too"). */
+    fun circleProgress(
+        needs: List<String> = listOf("alex@example.com"),
+        approved: List<String> = emptyList(),
+        waitingForYou: Boolean = true,
+        youApproved: Boolean = false,
+        line: String = "Needs Alex too",
+        deadline: Long = 1_700_014_500,
+    ) = dev.reins.core.CircleProgress(needs, approved, waitingForYou, youApproved, true, deadline, line)
+
+    /** One arrangement: [mine] when the other person helps this account. */
+    fun circlePerson(
+        linkId: String = "l1",
+        peer: String = "alex@example.com",
+        role: dev.reins.core.CircleRole = dev.reins.core.CircleRole.COSIGN,
+        mine: Boolean = true,
+        scopeLine: String = "Money",
+        deferred: Boolean = true,
+        state: dev.reins.core.CircleLinkState = dev.reins.core.CircleLinkState.ACTIVE,
+    ) = dev.reins.core.CirclePerson(linkId, peer, role, mine, scopeLine, deferred, 14_400uL, state, 1_699_000_000)
+
+    /** A request of [person]'s account waiting for this phone, due [left] seconds after the frozen now. */
+    fun circleReview(
+        id: String = "rv1",
+        person: String = "sam@example.com",
+        title: String = "Buy headphones",
+        left: Long = 3 * 3_600,
+        state: dev.reins.core.CircleReviewState = dev.reins.core.CircleReviewState.WAITING,
+        role: dev.reins.core.CircleRole = dev.reins.core.CircleRole.GUARDIAN,
+        createdAt: Long = 1_700_000_000,
+        detail: String? = null,
+    ) = dev.reins.core.CircleReviewView(
+        id, "link-$person", person, role, title, "\$42 at Example Store", "Spends money", "payments", "ChatGPT",
+        "Ask · Outside · Spends money", detail, "Money", createdAt, 1_700_000_100 + left, state,
+    )
+
+    fun circleNotice(id: String = "n1", person: String = "sam@example.com", text: String = "Sam turned on Bypass for 1 h", at: Long = 1_700_000_000) =
+        dev.reins.core.CircleNoticeView(id, person, text, null, at)
+
+    /** A request that became a ticket [age] seconds before [now], due [left] seconds after it. */
+    fun ticket(
+        id: String,
+        left: Long = 3 * 3_600,
+        age: Long = 3_600,
+        now: Long = 1_700_000_100,
+        state: String = "deferred",
+        question: String? = null,
+        agentReply: String? = null,
+        stale: String? = null,
+    ) = dev.reins.core.TicketView("rt_$id", state, now - age, now + left, question, agentReply, stale)
 
     fun pairingItem(id: String = "pair1") = PendingItem(
         PendingKind.PAIRING, id, "Connect Claude to Reins?", "claude.ai", 1_700_000_200, "", "Claude", "pair", 1u, "", null, null, "", "", null,

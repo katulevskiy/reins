@@ -59,6 +59,10 @@ impl Engine {
         if check_version(request.v).is_err() {
             return self.reject(session, &request, "This version of the Reins app is too old for the server.").await;
         }
+        // As relayed, before anything here resolves or normalizes it: a ticket's digest is over this.
+        if let Ok(raw) = serde_json::to_string(&request) {
+            self.store.remember_received(&request.id.0, &raw, unix_now())?;
+        }
         // Defense in depth: the server normalizes too, but a call is never trusted as received.
         let Ok(call) = request.call.clone().normalized() else {
             return self.reject(session, &request, "The request was malformed.").await;
@@ -744,10 +748,14 @@ impl Engine {
         self.require_decider()?;
         // Who decided, when the user did not (Autopilot, a bypass, Lockdown): the desktop app shows it. Inside the
         // signed bytes.
+        // A ticket's answer carries this phone's signed transitions (approved, then done or failed; denied).
+        let events = self.answer_events(id, &outcome)?;
+        let after = outcome.clone();
         let response = RelayResponse {
             v: PROTOCOL_VERSION,
             outcome,
             decided: crate::autopilot::context::told(),
+            events,
         };
         // With a roster, the primary signs the answer's exact bytes (the server and desktops check it).
         let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
@@ -766,14 +774,34 @@ impl Engine {
             })
         };
         match sent {
+            // A result the server refused as already decided: the action ran here, but nobody may hear of it. Never
+            // a success: the app shows it.
+            Err(ApiFailure::Status {
+                status: 404 | 409,
+                ..
+            }) if matches!(after, RelayOutcome::Result { .. }) && self.answered_a_write(id) => Err(CoreError::invalid(
+                "The server refused this answer as already decided. The action ran on this phone; check Activity before \
+                 asking again.",
+            )),
             // Ok, or expired on the server / answered already: nothing more to do.
             Ok(())
             | Err(ApiFailure::Status {
                 status: 404 | 409,
                 ..
-            }) => Ok(()),
+            }) => self.after_answer(id, &after),
             Err(e) => Err(e.into_core()),
         }
+    }
+
+    /// Whether request `id` (as the server relayed it) changes something when run: a refused answer to it means an
+    /// action ran that nobody may hear of. Unknown counts as a write.
+    fn answered_a_write(&self, id: &str) -> bool {
+        self.store
+            .received(id)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<RelayRequest>(&raw).ok())
+            .is_none_or(|r| reins_proto::ticket::execution(&r.call) == reins_proto::ticket::Execution::OnApprove)
     }
 
     async fn fail_with(
@@ -854,6 +882,11 @@ impl Engine {
         let payload = serde_json::to_vec(parked).map_err(|e| CoreError::storage(e.to_string()))?;
         let request = &parked.request;
         self.store.park(&request.id.0, PendingKind::Request, request.created_at, unix_now(), &payload)?;
+        // A Circle hold, before anything looks at it (local; the packets go out after the pass). Autopilot routes it
+        // again (idempotent) and waits when that fails.
+        if let Err(e) = self.circle_route(&request.id.0) {
+            log::warn!("a Circle could not be applied to a request: {e}");
+        }
         Ok(())
     }
 

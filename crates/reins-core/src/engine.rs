@@ -108,6 +108,10 @@ pub struct Engine {
     /// the poll) because this phone is not it: those stop until it registers as the approval device or a poll goes
     /// through, instead of failing on every change ([`Engine::refused_as_approval`]).
     pub(crate) not_approval: std::sync::atomic::AtomicBool,
+    /// The server's Instant window (seconds), as its last poll said.
+    pub(crate) instant_window: std::sync::atomic::AtomicI64,
+    /// Serializes changes to this account's Circle state (`circles`).
+    pub(crate) circles_lock: Mutex<()>,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -233,6 +237,7 @@ impl Engine {
             ),
         ))));
         connectors.add(Arc::new(crate::connector::desktop::Desktop));
+        connectors.add(Arc::new(crate::connector::tasks::Tasks));
         connectors.add(Arc::new(crate::connector::githost::GitLab::new(
             http.clone(),
             &cfg.gitlab_base,
@@ -262,6 +267,10 @@ impl Engine {
             synced_writes: std::sync::atomic::AtomicU64::new(u64::MAX),
             sync_queued: std::sync::atomic::AtomicBool::new(false),
             not_approval: std::sync::atomic::AtomicBool::new(false),
+            circles_lock: Mutex::new(()),
+            instant_window: std::sync::atomic::AtomicI64::new(
+                i64::try_from(reins_proto::ticket::INSTANT_DEFAULT_SECS).unwrap_or(i64::MAX),
+            ),
             http,
             cfg,
             google,
@@ -600,6 +609,9 @@ impl Engine {
         let mut registration = DeviceRegistration {
             fcm_token,
             master_password_hash: None,
+            // Deferred decisions: what the server seals parked requests to, and what checks this phone's ticket events.
+            sign_pub: self.sign_key().ok().map(|k| k.public_b64()),
+            box_pub: self.box_key().ok().map(|k| k.public_b64()),
         };
         match api_call!(&session, |api| api.register_device(&registration)) {
             Ok(_) => {
@@ -808,7 +820,18 @@ impl Engine {
     pub async fn handle_push(&self, kind: &str, id: &str) -> Result<(), CoreError> {
         let result = self.handle_push_inner(kind, id).await;
         self.autopilot_pass().await;
+        self.circles_after(kind == "circle").await;
         result
+    }
+
+    /// Circles after an intake: packets for what was just parked, answers and reviews when the server had news.
+    async fn circles_after(&self, news: bool) {
+        let Ok(session) = self.session() else {
+            return;
+        };
+        if let Err(e) = Box::pin(self.circles_sync(&session, news)).await {
+            log::info!("Circles: {e}");
+        }
     }
 
     /// Like [`Engine::handle_push`], for a process that cannot run the model (the iOS notification extension): Bypass
@@ -819,6 +842,7 @@ impl Engine {
         let result = self.handle_push_inner(kind, id).await;
         // Bypass and Lockdown need no model: they decide here, so a bypass answers while the app is not running.
         self.autopilot_pass_without_model().await;
+        self.circles_after(kind == "circle").await;
         result
     }
 
@@ -830,6 +854,10 @@ impl Engine {
             }
             "blob" => self.handle_blob_push(id).await,
             "join" => self.fetch_and_park_join(id).await,
+            // The app shows the work profile's reviews (`org_reviews`); nothing to fetch and park here.
+            "orgreview" => check_id(id),
+            // Circles: handled after the pass (`circles_after`), with everything else that is new.
+            "circle" => Ok(()),
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;
@@ -840,10 +868,11 @@ impl Engine {
                     let fetched = api_call!(&session, |api| api.get_request(id));
                     match fetched {
                         Ok(request) => self.process_request_unguarded(&session, request).await,
+                        // Not a relay request (any more): a ticket's news, which comes with the poll.
                         Err(ApiFailure::Status {
                             status: 404,
                             ..
-                        }) => Ok(()),
+                        }) => self.take_ticket_news(&session).await,
                         Err(e) => Err(e.into_core()),
                     }
                 } else {
@@ -877,11 +906,14 @@ impl Engine {
         }
         let result = self.sync_inner(wait_secs).await;
         self.autopilot_pass().await;
+        let news = matches!(&result, Ok(true));
+        self.circles_after(news).await;
         result?;
         self.pending()
     }
 
-    async fn sync_inner(&self, wait_secs: u32) -> Result<(), CoreError> {
+    /// `Ok(true)`: the server had Circle news.
+    pub(crate) async fn sync_inner(&self, wait_secs: u32) -> Result<bool, CoreError> {
         let session = self.session()?;
         self.report_services(&session).await;
         self.report_modes(&session).await;
@@ -921,13 +953,22 @@ impl Engine {
             }
         }
         self.park_blobs(pending.blobs)?;
+        if let Some(window) = pending.instant_window_secs.and_then(|w| i64::try_from(w).ok()) {
+            self.instant_window.store(window, Ordering::Release);
+        }
+        // Tickets: requests the agent does not wait for (deferred, a "Why?" answered, an approval collected now), and
+        // every open ticket the server holds, so one delivered while this phone could not keep it is never lost.
+        let taken = self.take_tickets(&session, pending.tickets).await;
+        let reconciled = self.reconcile_tickets(&session).await;
+        self.defer_overdue().await;
+        taken.and(reconciled)?;
         // On an account with phone roles, the log comes with the poll (proposals and brakes from the viewers).
         if self.holds_roster_now().unwrap_or(false)
             && let Err(e) = Box::pin(self.live_sync_now()).await
         {
             log::warn!("the account's log did not sync: {e}");
         }
-        Ok(())
+        Ok(pending.circles)
     }
 
     // ---- read-only views -----------------------------------------------------------

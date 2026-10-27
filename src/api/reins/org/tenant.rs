@@ -94,6 +94,7 @@ pub fn create_org(
                 created_by: creator.to_owned(),
                 created_at: now,
                 updated_at: now,
+                body_retention_days: 30,
             },
         )?;
         let membership = Membership::new(creator.to_owned().into(), org.uuid.clone(), None);

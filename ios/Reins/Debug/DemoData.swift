@@ -735,7 +735,8 @@ enum DemoData {
     }
 
     static func note(
-        _ suggested: Verdict = .approve, pApprove: Float = 0.98, correctable: Bool = true, mode: AutopilotMode = .auto, risk: RiskView? = nil
+        _ suggested: Verdict = .approve, pApprove: Float = 0.98, correctable: Bool = true, mode: AutopilotMode = .auto, risk: RiskView? = nil,
+        matrix: MatrixView? = nil
     ) -> AutopilotNote {
         AutopilotNote(
             mode: mode, suggested: suggested, pApprove: pApprove, pDeny: 1 - pApprove, confidence: 0.93, profileId: "personal",
@@ -747,7 +748,8 @@ enum DemoData {
                 ? "Like 4 times you approved: Push to a branch · dkat/reins"
                 : "Like 2 times you denied: Send an email · unknown recipient",
             correctable: correctable,
-            risk: risk
+            risk: risk,
+            matrix: matrix
         )
     }
 
@@ -765,7 +767,8 @@ enum DemoData {
         return [
             entry(14, at: now - 60, conn: "c6", label: desktop, action: "write", outcome: "sent",
                   detail: "feature/laya → dkat/reins · 3 commits", service: "github", account: "dkat", op: "git_push",
-                  opTitle: "Push to a branch", decidedBy: "autopilot", autopilot: note(),
+                  opTitle: "Push to a branch", decidedBy: "autopilot",
+                  autopilot: note(matrix: MatrixView(outcome: .approve, hard: false, zone: .mine, level: 0, line: "Auto · Mine · Undoable", shadow: false)),
                   requestLabel: requestLabel("github", "push", "Push 3 commits to", "dkat/reins"),
                   request: ActivityRequest(
                       agent: "Claude Code", cwd: "~/dev/reins", why: "Pushing to a shared repository",

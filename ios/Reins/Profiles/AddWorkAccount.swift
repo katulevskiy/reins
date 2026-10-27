@@ -49,9 +49,21 @@ final class EnclaveDeviceKeys: DeviceKeys, @unchecked Sendable {
 
     func sign(profileId: String, data: Data) throws -> Data {
         lock.lock(); defer { lock.unlock() }
+        if keys[profileId] == nil, soft[profileId] == nil { loadLocked(profileId: profileId) }
         if let key = keys[profileId] { return try key.signature(for: data).derRepresentation }
         if let key = soft[profileId] { return try key.signature(for: data).derRepresentation }
         throw ForeignError.Failed(reason: "no device key")
+    }
+
+    /// The key made at enrollment, from the Keychain (after a relaunch): a Secure Enclave key's handle, or a software
+    /// key's 32 raw bytes.
+    private func loadLocked(profileId: String) {
+        guard let data = KeyItem.load(tag: WorkProfiles.orgKeyTag(profileId: profileId)) else { return }
+        if data.count == 32, let key = try? P256.Signing.PrivateKey(rawRepresentation: data) {
+            soft[profileId] = key
+        } else if SecureEnclave.isAvailable, let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data) {
+            keys[profileId] = key
+        }
     }
 
     func attest(clientDataHash: Data) async -> (keyId: String, attestation: Data)? {
@@ -79,6 +91,20 @@ enum KeyItem {
         query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemAdd(query as CFDictionary, nil)
+    }
+
+    static func load(tag: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.reins2fa.app.org-device",
+            kSecAttrAccount as String: tag,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }
+        return out as? Data
     }
 }
 

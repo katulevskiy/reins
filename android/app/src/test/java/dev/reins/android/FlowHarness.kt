@@ -98,6 +98,8 @@ abstract class FlowHarness {
         core.approveFailure = null
         container.state.flash(null)
         core.denials.clear()
+        core.resetTickets()
+        core.resetCircles()
         core.secretsRevoked.clear()
         core.alwaysAsk.clear()
         core.secretsRevokeAnswer = dev.reins.core.SecretsRevoked(0u, 0u, emptyList())

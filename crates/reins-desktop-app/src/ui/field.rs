@@ -1,5 +1,5 @@
 //! One-line text fields: the server under "Other server", the inputs of the Rules lists, the work session form's
-//! reason and branches, and the phone key's digits in the secrets review. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
+//! reason and branches, the phone key's digits in the secrets review, and "Add a host" in the Auto setup. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
 //! text input widget.
 
 use gpui::prelude::FluentBuilder as _;
@@ -23,6 +23,8 @@ pub enum Field {
     SessionBranch(u8),
     /// The twelve digits of the phone's key, in the secrets review (the first time only).
     PhoneKey,
+    /// "Add a host" in this computer's Auto setup.
+    AutoHost,
 }
 
 /// What a key press did to a field's text.
@@ -76,6 +78,7 @@ impl Root {
             Field::SessionReason => &self.session_reason,
             Field::SessionBranch(i) => self.branch_fields.get(usize::from(i)).unwrap_or(&self.focus),
             Field::PhoneKey => &self.phone_key_field,
+            Field::AutoHost => &self.auto_host_field,
         }
     }
 
@@ -98,6 +101,7 @@ impl Root {
                 crate::secrets::Flow::Review(r) => r.key.as_ref().map(|k| k.typed.clone()).unwrap_or_default(),
                 _ => String::new(),
             },
+            Field::AutoHost => self.auto_setup.as_ref().map(|s| s.host.clone()).unwrap_or_default(),
         }
     }
 
@@ -126,6 +130,11 @@ impl Root {
                 self.model.update(cx, crate::model::Model::start_work_session);
             }
             Field::PhoneKey => self.model.update(cx, crate::model::Model::check_phone_key),
+            Field::AutoHost => {
+                if let Some(s) = self.auto_setup.as_mut() {
+                    s.add_host();
+                }
+            }
         }
         cx.notify();
     }
@@ -168,6 +177,12 @@ impl Root {
                             }
                         });
                     }),
+                    Field::AutoHost => {
+                        if let Some(s) = self.auto_setup.as_mut() {
+                            s.host = text;
+                            s.host_refused = false;
+                        }
+                    }
                 }
                 cx.notify();
             }
@@ -200,6 +215,7 @@ impl Root {
             Field::SessionReason => "session-reason".into(),
             Field::SessionBranch(i) => SharedString::from(format!("session-branch-{i}")),
             Field::PhoneKey => "secrets-phone-key".into(),
+            Field::AutoHost => "auto-host".into(),
         };
         let click_focus = focus.clone();
         div()

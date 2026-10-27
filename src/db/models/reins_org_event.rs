@@ -105,6 +105,44 @@ pub fn q_events(c: &mut DbConnInner, org: &str, before: Option<i64>, limit: i64)
     q.order(reins_org_events::seq.desc()).limit(limit).load(c)
 }
 
+/// Oldest first: up to `limit` events of `org` after `after` (a sequence number; 0 for the first).
+pub fn q_events_from(c: &mut DbConnInner, org: &str, after: i64, limit: i64) -> QueryResult<Vec<ReinsOrgEvent>> {
+    reins_org_events::table
+        .filter(reins_org_events::org_uuid.eq(org))
+        .filter(reins_org_events::seq.gt(after))
+        .order(reins_org_events::seq.asc())
+        .limit(limit)
+        .load(c)
+}
+
+/// The chain head of `org`: the last event's sequence number and hash.
+pub fn q_head(c: &mut DbConnInner, org: &str) -> QueryResult<Option<(i64, String)>> {
+    reins_org_events::table
+        .filter(reins_org_events::org_uuid.eq(org))
+        .order(reins_org_events::seq.desc())
+        .select((reins_org_events::seq, reins_org_events::hash))
+        .first(c)
+        .optional()
+}
+
+impl ReinsOrgEvent {
+    /// The event as an audit export carries it.
+    #[must_use]
+    pub fn to_audit(&self) -> reins_proto::managed::AuditEvent {
+        reins_proto::managed::AuditEvent {
+            org: self.org_uuid.clone(),
+            seq: self.seq,
+            at: self.at,
+            kind: self.kind.clone(),
+            actor: self.actor.clone(),
+            subject: self.subject.clone(),
+            detail: self.detail.clone(),
+            prev_hash: self.prev_hash.clone(),
+            hash: self.hash.clone(),
+        }
+    }
+}
+
 /// Whether `events` (one org's, oldest first, from its first event) form an unbroken chain.
 #[must_use]
 pub fn verify_chain(events: &[ReinsOrgEvent]) -> bool {

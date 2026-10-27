@@ -1,44 +1,26 @@
-//! Engines a corpus is replayed through: `guard` (how Reins decides today) and `effects` (the consequence engine plus
-//! a policy file: the 01 §4 matrix, the 08 R4 floor and certainty `None`).
+//! Engines a corpus is replayed through: `guard` (how Reins decides today) and `effects` (the consequence engine, the
+//! context graph and the matrix of `reins_policy`: the 01 §4 matrix, the 08 R3 rules and the 08 R4 floor).
 //!
-//! Zones come from the corpus context only (the owner's GitHub owners, the workspace, the owner's devices), the way
-//! the P2 setup screens will confirm them. Nothing here reads a case's label: decisions never see the answer.
+//! Zones come from the corpus context only (the owner's GitHub owners, the workspace, the owner's devices) as
+//! `reins_policy::context::Facts`, the way the setup screens confirm them. Nothing here reads a case's label: decisions never see the answer.
 
-use reins_policy::effects::{
-    self, Analysis, Area, Certainty, Channel, CodeSource, Context as EngineContext, Effect, Level, NetMethod, Workspace,
-};
+use reins_policy::context::{self as graph, Facts, Zone};
+use reins_policy::effects::{self, Analysis, Certainty, Context as EngineContext, Workspace};
+use reins_policy::matrix::{self, Evaluation, Input, Outcome, Snapshot};
 use serde::{Deserialize, Serialize};
 
 use crate::corpus::{Case, Context, Kind};
 
-/// Whose a thing is (01 §3), least trusted last.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Zone {
-    Mine,
-    Friends,
-    Work,
-    Outside,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Cell {
-    Auto,
-    Ask,
-}
-
-/// The zone × level matrix and how partial certainty is treated.
+/// The policy a corpus is replayed with: a matrix snapshot (its facts come from the corpus context) and a knob.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
     pub name: String,
-    pub mine: [Cell; 4],
-    pub friends: [Cell; 4],
-    pub work: [Cell; 4],
-    pub outside: [Cell; 4],
+    /// The matrix, rules and tasks (`reins_policy::matrix::Snapshot`); its facts are merged with the corpus's.
+    #[serde(flatten)]
+    pub snapshot: Snapshot,
     /// Ask whenever certainty is `Partial`. Off, as 01 §2.4 has it: a Partial request's level is already its worst
-    /// plausible effect in the workspace (at least L1) and the zone's cell decides; the model's risk rating (P2) is what
-    /// may force an ask. On, the recorded corpus asks 11.2% and 11 known false positives return.
+    /// plausible effect in the workspace (at least L1) and the zone's cell decides; the model's risk rating is what may
+    /// force an ask. On, the recorded corpus asks 11.2% and 11 known false positives return.
     #[serde(default)]
     pub ask_on_partial: bool,
     /// Safety nets (P3): a command from a harness whose hook can rewrite it is decided on its netted levels.
@@ -49,28 +31,12 @@ pub struct Policy {
 impl Default for Policy {
     /// 01 §4, Personal mode.
     fn default() -> Self {
-        use Cell::{Ask, Auto};
         Self {
             name: "Personal default (01 §4)".to_owned(),
-            mine: [Auto, Auto, Auto, Ask],
-            friends: [Auto, Ask, Auto, Ask],
-            work: [Auto, Ask, Ask, Ask],
-            outside: [Ask, Ask, Ask, Ask],
+            snapshot: Snapshot::default(),
             ask_on_partial: false,
             nets: false,
         }
-    }
-}
-
-impl Policy {
-    fn cell(&self, zone: Zone, level: Level) -> Cell {
-        let row = match zone {
-            Zone::Mine => &self.mine,
-            Zone::Friends => &self.friends,
-            Zone::Work => &self.work,
-            Zone::Outside => &self.outside,
-        };
-        row[level as usize]
     }
 }
 
@@ -91,6 +57,8 @@ pub struct Decision {
     pub why: String,
     pub analysis: Option<Analysis>,
     pub zone: Option<Zone>,
+    /// The matrix's evaluation (the effects engine only).
+    pub evaluation: Option<Evaluation>,
 }
 
 /// The engine's context for a case.
@@ -167,108 +135,110 @@ pub fn netted(ctx: &Context, case: &Case) -> Option<Analysis> {
     effects::nets::plan_command(case.command.as_deref()?, &ec, &facts, runner).map(|p| p.after)
 }
 
-/// The owner of `github.com/<owner>/<name>` or `<owner>/<name>`.
-fn owner(repo: &str) -> Option<&str> {
-    // `https://host/owner/name.git`, `git@host:owner/name`, `github.com/owner/name`, `owner/name`.
-    let r = match repo.split_once("://") {
-        Some((_, rest)) => rest.split_once('/').map_or("", |(_, path)| path),
-        None => match repo.split_once(':') {
-            Some((host, path)) if host.contains('@') => path,
-            _ => repo.strip_prefix("github.com/").unwrap_or(repo),
-        },
-    };
-    let (o, n) = r.split_once('/')?;
-    (!o.is_empty() && !n.is_empty()).then_some(o)
-}
-
-fn repo_zone(ctx: &Context, repo: &str, fallback: Zone) -> Zone {
-    match owner(repo) {
-        Some(o) if ctx.mine_owners.iter().any(|m| m.eq_ignore_ascii_case(o)) => Zone::Mine,
-        Some(_) => Zone::Outside,
-        // `origin`, "this repository": the repository the agent works in.
-        None => fallback,
-    }
-}
-
-fn host_zone(ctx: &Context, host: &str) -> Zone {
-    if effects::local_host(host) || ctx.mine_hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
-        Zone::Mine
-    } else {
-        Zone::Outside
-    }
-}
-
-fn area_zone(area: &Area, ctx: &Context) -> Zone {
-    match area {
-        Area::Generated | Area::Scratch | Area::Source | Area::Unknown => Zone::Mine,
-        Area::Home | Area::System => Zone::Outside,
-        Area::Remote(h) => host_zone(ctx, h),
-    }
-}
-
-/// The request's zone: the least trusted of what its effects change or reach (01 §3). What only reads (a file that
-/// is not a secret, public data from the network) adds no zone: 01 §3 would make every read outside the workspace
-/// Outside, so `grep Host ~/.ssh/config` would ask at L0; the replay reads the matrix for what a request changes.
-#[must_use]
-pub fn zone(ctx: &Context, case: &Case, a: &Analysis) -> Zone {
-    let base = match case.kind {
-        Kind::GitPush | Kind::GitRead => repo_zone(ctx, case.repo.as_deref().unwrap_or_default(), Zone::Outside),
-        // The repository the call will act on, exactly as the connector reads it; one it doesn't name exactly is
-        // Outside.
-        Kind::Mcp => {
-            case.args.as_ref().filter(|a| a.get("repo").is_some() || a.get("owner").is_some()).map_or(Zone::Mine, |a| {
-                match (a.get("repo"), a.get("owner").and_then(|o| o.as_str())) {
-                    // `owner` alone (listing a user's repositories): that user.
-                    (None, Some(o)) => repo_zone(ctx, &format!("{o}/*"), Zone::Outside),
-                    _ => effects::tool_repo(a).map_or(Zone::Outside, |r| repo_zone(ctx, &r, Zone::Outside)),
-                }
-            })
+/// The repository a case acts on, as the request names it exactly: the git remote, or the connector's `owner`/`repo`
+/// arguments. An `owner` alone (listing a user's repositories) stands for that owner (`owner/.owner`, a name no fact
+/// is ever written for). Arguments that name a repository inexactly give an unparsable base: Outside.
+fn base_repo(ctx: &Context, case: &Case) -> Option<String> {
+    match case.kind {
+        // A command or a file hook in a known worktree: `origin` is that worktree's repository, unless the command
+        // may act on another one (`git -C`, a `cd` out of it, `GIT_DIR`…).
+        Kind::Command | Kind::File => {
+            let cwd = case.cwd.as_deref()?;
+            let ws = engine_context(ctx, case).workspace;
+            let top = worktree_top(&ws, &effects::normalize(cwd, cwd, &ws.home));
+            let at = case
+                .command
+                .as_deref()
+                .map_or(graph::RepoAt::Cwd, |c| graph::repo_at(c, cwd, top.as_deref(), &ws.home));
+            // The corpus records one `origin` for the owner's known worktrees (the desktop reads each one's own).
+            let known = match at {
+                graph::RepoAt::Cwd => top.is_some(),
+                graph::RepoAt::Dir(d) => worktree_top(&ws, &d).is_some(),
+                graph::RepoAt::Unknown => false,
+            };
+            known.then(|| ctx.origin.clone()).flatten()
         }
-        _ => Zone::Mine,
-    };
-    let mut z = base;
-    for e in &a.effects {
-        let ez = match e {
-            Effect::FileWrite {
-                path,
-            } => area_zone(&path.area, ctx),
-            Effect::FileDelete {
-                paths,
-                ..
-            } => paths.iter().map(|p| area_zone(&p.area, ctx)).max().unwrap_or(Zone::Mine),
-            Effect::GitPush {
-                repo,
-                ..
+        Kind::GitPush | Kind::GitRead => Some(case.repo.clone().unwrap_or_default()),
+        Kind::Mcp => {
+            let a = case.args.as_ref().filter(|a| a.get("repo").is_some() || a.get("owner").is_some())?;
+            match (a.get("repo"), a.get("owner").and_then(|o| o.as_str())) {
+                (None, Some(o)) => Some(format!("{o}/.owner")),
+                _ => Some(effects::tool_repo(a).unwrap_or_default()),
             }
-            | Effect::GitRefDelete {
-                repo,
-                ..
-            } => repo_zone(ctx, repo, base),
-            Effect::Message {
-                channel: Channel::GitHub,
-                to,
-                ..
-            } => to.iter().map(|r| repo_zone(ctx, r, base)).max().unwrap_or(base),
-            Effect::Message {
-                ..
-            }
-            | Effect::Infra {
-                local: false,
-                ..
-            }
-            | Effect::Exec {
-                source: CodeSource::Downloaded,
-                ..
-            } => Zone::Outside,
-            Effect::Network {
-                host,
-                method: NetMethod::Write | NetMethod::Connect | NetMethod::UploadExecutable,
-            } => host_zone(ctx, host),
-            _ => continue,
-        };
-        z = z.max(ez);
+        }
+        Kind::Ask => None,
     }
-    z
+}
+
+/// The known worktree `abs` is in (`dir/*` patterns stand for each folder in `dir`), the deepest one.
+fn worktree_top(ws: &Workspace, abs: &str) -> Option<String> {
+    ws.worktrees
+        .iter()
+        .filter_map(|w| {
+            let w = effects::normalize(w, "/", &ws.home);
+            match w.strip_suffix("/*") {
+                Some(dir) => {
+                    let rest = abs.strip_prefix(&format!("{dir}/"))?;
+                    let first = rest.split('/').next().filter(|f| !f.is_empty())?;
+                    Some(format!("{dir}/{first}"))
+                }
+                None => (abs == w || abs.starts_with(&format!("{w}/"))).then_some(w),
+            }
+        })
+        .max_by_key(String::len)
+}
+
+/// The host a case's bare `owner/name` means: GitHub's for the phone's GitHub tools, none for a command (where a
+/// bare name is a remote's).
+fn bare_host(case: &Case) -> Option<&'static str> {
+    match case.kind {
+        Kind::Mcp if case.tool.as_deref().is_some_and(|t| t.starts_with("github_")) => Some(graph::GITHUB),
+        _ => None,
+    }
+}
+
+/// The facts a corpus context verifies.
+#[must_use]
+pub fn facts(ctx: &Context, policy: &Policy) -> Facts {
+    let mut f = ctx.facts();
+    for (k, v) in &policy.snapshot.facts.owners {
+        f.owners.insert(k.clone(), *v);
+    }
+    f
+}
+
+/// What the matrix says of a case.
+#[must_use]
+pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Evaluation {
+    evaluate_with(ctx, case, policy, a, false)
+}
+
+/// What the matrix says of a case, in Overnight (`overnight`) or not.
+#[must_use]
+pub fn evaluate_with(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis, overnight: bool) -> Evaluation {
+    let mut snap = policy.snapshot.clone();
+    snap.facts = facts(ctx, policy);
+    let base = base_repo(ctx, case);
+    let resolved = graph::request_zone(
+        a,
+        &snap.facts,
+        &graph::Base {
+            repo: base.as_deref(),
+            remotes: None,
+            bare_host: bare_host(case),
+        },
+    );
+    matrix::evaluate(
+        &Input {
+            analysis: a,
+            resolved: &resolved,
+            connection: case.agent.as_deref().unwrap_or_default(),
+            seen_resource: false,
+            now: case.at,
+            overnight,
+        },
+        &snap,
+    )
 }
 
 /// Decides one case.
@@ -298,6 +268,7 @@ pub fn decide(ctx: &Context, case: &Case, policy: &Policy, engine: EngineKind) -
                 },
                 analysis: None,
                 zone: None,
+                evaluation: None,
             }
         }
         EngineKind::Effects => {
@@ -307,23 +278,20 @@ pub fn decide(ctx: &Context, case: &Case, policy: &Policy, engine: EngineKind) -
                 None
             }
             .unwrap_or_else(|| analyze(ctx, case));
-            let z = zone(ctx, case, &a);
+            let e = evaluate(ctx, case, policy, &a);
             let (ask, why) = if !a.floor.is_empty() {
                 (true, format!("always asked: {}", a.floor.iter().map(|f| f.label()).collect::<Vec<_>>().join(", ")))
-            } else if a.certainty == Certainty::None {
-                (true, "couldn't be read".to_owned())
-            } else if policy.ask_on_partial && a.certainty == Certainty::Partial {
+            } else if policy.ask_on_partial && a.certainty == Certainty::Partial && e.outcome == Outcome::Auto {
                 (true, "partly unread".to_owned())
-            } else if policy.cell(z, a.level) == Cell::Ask {
-                (true, format!("{z:?} · {}", a.level.label()))
             } else {
-                (false, format!("Auto · {z:?} · {}", a.level.label()))
+                (e.outcome != Outcome::Auto, e.line())
             };
             Decision {
                 ask,
                 why,
+                zone: Some(e.zone),
                 analysis: Some(a),
-                zone: Some(z),
+                evaluation: Some(e),
             }
         }
     }

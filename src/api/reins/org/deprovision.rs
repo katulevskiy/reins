@@ -135,6 +135,10 @@ pub fn q_deprovision(
     // Account-wide on purpose: this account is this org's alone (`reins_org_members`, one org per account).
     let cut = reins_org::q_cut_off_user(c, user)?;
     let enrolled_devices = reins_org::q_revoke_devices(c, org, user, now)?;
+    // O2: their credential leases die now (the executor revokes the issued ones upstream), and their open requests and
+    // review answers go.
+    let leases = super::leases::q_revoke_for_deprovision(c, org, user, now)?;
+    let requests = super::decisions::on_member_removed(c, org, user, now)?;
     let clear_external = reason == Reason::AdminRemoval;
     reins_org::q_end_membership(c, org, user, &membership, new_state, keep_owner, clear_external, actor, now)?;
     if keep_owner && member.is_active() {
@@ -160,6 +164,8 @@ pub fn q_deprovision(
             "devices": cut.devices,
             "enrolled_devices": enrolled_devices,
             "connections": cut.connections,
+            "leases": leases,
+            "requests_cancelled": requests,
             "sso_sessions": cut.sso_sessions.len(),
             "db_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),

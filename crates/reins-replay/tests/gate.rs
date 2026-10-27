@@ -18,6 +18,13 @@ fn replay_gate() {
             .expect("a baseline");
     let fails = report::gate(&r, Some(&baseline));
     assert!(fails.is_empty(), "{fails:?}\n{}", report::text(&r, false));
+    assert_eq!(r.real_risk_auto, 0, "no labelled risk Auto (P2)");
+    // P2's line (07 §1) is a developer ask rate ≤ 5%. With the hardened engine and the review's stricter zones the
+    // matrix asks 48 of 738 (6.5%): 44 hard obligations (L3, unreadable, the floor; 18 are L3 deletes in Mine that
+    // P3's nets make recoverable) and 4 pushes after more than one `cd`, whose `origin` can't be read. The baseline's
+    // ratchet holds it from rising meanwhile.
+    let rate = baseline.developer_ask_rate.expect("the baseline records the developer ask rate");
+    assert!(r.developer_ask_rate <= rate + 1e-9, "developer ask rate {:.4} > {rate:.4}", r.developer_ask_rate);
 }
 
 #[test]
@@ -43,6 +50,8 @@ fn full_certainty_and_the_ask_rate_are_ratchets() {
         full_certainty,
         asks: r.asks,
         ask_rate,
+        developer_ask_rate: None,
+        overnight_decisions_mean: None,
     };
     assert!(report::gate(&r, Some(&base(full + 0.004, r.ask_rate))).is_empty(), "within half a point");
     assert!(report::gate(&r, Some(&base(full + 0.006, r.ask_rate))).iter().any(|f| f.contains("Full certainty")));
@@ -83,4 +92,25 @@ fn nets_keep_recall_and_lower_the_ask_rate() {
         let human = case.tagged("real_risk");
         assert_eq!(d.ask, human, "{}: {} ({})", case.id, d.why, case.command.as_deref().unwrap_or_default());
     }
+}
+
+#[test]
+fn overnight_gate() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let policy: Policy =
+        serde_json::from_slice(&std::fs::read(reins_replay::default_policy()).expect("the policy file"))
+            .expect("a policy");
+    let r = report::run(&corpus, &policy, EngineKind::Effects);
+    let o = r.overnight.as_ref().expect("the effects engine replays Overnight");
+    assert_eq!(o.real_risk_auto, 0, "no labelled risk runs in Overnight");
+    assert_eq!(o.denied, 0, "Overnight never denies without a rule");
+    // Overnight parks at most what Auto asks (its looser L1 for the owner's own work), never more but for people:
+    // the default matrix already asks every Work and Outside L2.
+    assert!(o.parks <= r.asks, "{} parks > {} asks", o.parks, r.asks);
+    assert!(o.agent_nights > 0);
+    let baseline: Baseline =
+        serde_json::from_slice(&std::fs::read(reins_replay::default_baseline()).expect("baseline.json"))
+            .expect("a baseline");
+    let mean = baseline.overnight_decisions_mean.expect("the baseline records Overnight's decisions");
+    assert!(o.decisions_mean <= mean + report::OVERNIGHT_SLACK + 1e-9, "{} > {mean}", o.decisions_mean);
 }

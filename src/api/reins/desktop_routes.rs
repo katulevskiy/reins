@@ -60,7 +60,7 @@ pub struct DesktopResponse {
 }
 
 impl DesktopResponse {
-    fn json(status: Status, body: Value) -> Self {
+    pub fn json(status: Status, body: Value) -> Self {
         Self {
             status,
             body,
@@ -70,22 +70,22 @@ impl DesktopResponse {
     }
 
     /// 429: `what` was limited; try again after `wait`.
-    fn rate_limited(what: &str, wait: Duration) -> Self {
+    pub fn rate_limited(what: &str, wait: Duration) -> Self {
         Self {
             retry_after: Some(retry_secs(wait)),
             ..Self::error(Status::TooManyRequests, "rate_limited", &rate_limited_text(what, wait))
         }
     }
 
-    fn error(status: Status, error: &str, message: &str) -> Self {
+    pub fn error(status: Status, error: &str, message: &str) -> Self {
         Self::json(status, json!({"error": error, "message": message}))
     }
 
-    fn not_found() -> Self {
+    pub fn not_found() -> Self {
         Self::json(Status::NotFound, json!({"error": "not_found"}))
     }
 
-    fn unauthorized(refused: Unauthorized) -> Self {
+    pub fn unauthorized(refused: Unauthorized) -> Self {
         let error = if refused.invalid_token {
             "invalid_token"
         } else {
@@ -133,8 +133,44 @@ pub fn wait_body(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> Option<V
             }
             Some(body)
         }
+        WaitResult::Deferred(ticket) => Some(json!({"request_id": id.0, "status": "deferred", "ticket": ticket})),
         WaitResult::NotFound => None,
     }
+}
+
+/// Where ticket `id` of `connection` stands for the desktop app, after waiting up to `wait` (and collecting it when
+/// it is approved, unless `peek`). `None`: no such ticket of this connection.
+pub async fn ticket_body(id: &RequestId, connection: &str, wait: Duration, peek: bool, pool: &DbPool) -> Option<Value> {
+    use super::tickets::AgentView;
+    let view = super::tickets::agent_wait(&id.0, connection, wait, !peek, pool).await?;
+    let ticket = reins_proto::ticket::ticket_of(id);
+    let waiting = |row: &crate::db::models::ReinsTicket| {
+        let mut body = json!({"request_id": id.0, "status": "deferred", "ticket": ticket, "expected_by": row.deadline,
+               "state": row.state});
+        // The phone's note on a park ("Parked until morning"), never a reviewer's note to a denial (that's an answer).
+        if let Some(note) =
+            row.note.as_deref().filter(|_| row.state == reins_proto::ticket::TicketState::Deferred.as_str())
+        {
+            body["note"] = json!(note);
+        }
+        body
+    };
+    Some(match view {
+        AgentView::Open(row) | AgentView::Approved(row) => waiting(&row),
+        AgentView::Outcome(outcome) => json!({"request_id": id.0, "status": "answered", "outcome": outcome}),
+        AgentView::Done(row) => {
+            let data: Value = row.result.as_deref().and_then(|r| serde_json::from_str(r).ok()).unwrap_or(json!({}));
+            json!({"request_id": id.0, "status": "answered",
+                   "outcome": {"outcome": "result", "result": {"kind": "connector", "data": data}}})
+        }
+        AgentView::Closed(row) => {
+            let mut body = json!({"request_id": id.0, "status": "closed", "ticket": ticket, "state": row.state});
+            if let Some(stale) = row.stale {
+                body["stale"] = json!(stale);
+            }
+            body
+        }
+    })
 }
 
 /// [`wait_body`] with what the phone said beside it ([`Told`]): who decided an answered call, where Autopilot leans
@@ -309,6 +345,14 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
     };
     let account = call.account;
     let call = ToolCall::Connector(call.call);
+    if let Some(open) = super::tickets::open_for(&connection.uuid, account.as_deref(), &call, &conn).await {
+        drop(conn);
+        let parked = RequestId(open.id);
+        return match ticket_body(&parked, &connection.uuid, Duration::ZERO, true, pool.inner()).await {
+            Some(body) => DesktopResponse::json(Status::Ok, body),
+            None => DesktopResponse::not_found(),
+        };
+    }
     let request_id = match submit_to_phone_waiting(&connection, None, call, account, &conn, pool.inner(), request.waits)
         .await
     {
@@ -323,25 +367,85 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
             return DesktopResponse::rate_limited(ACCOUNT_CALLS_LIMITED, wait);
         }
     };
-    // Never hold a pooled DB connection while waiting for the phone.
-    drop(conn);
     let connection_id = ConnectionId(connection.uuid.clone());
     let user = connection.user_uuid.to_string();
+    if request.defer
+        && let Some(relayed) = HUB.relay.unanswered(&user, &request_id)
+    {
+        let deferred = reins_proto::ticket::TicketState::Deferred;
+        match super::tickets::park(&user, &relayed, deferred, None, &conn, pool.inner()).await {
+            Ok(row) => {
+                drop(conn);
+                let parked = RequestId(row.id);
+                return match ticket_body(&parked, &connection.uuid, Duration::ZERO, true, pool.inner()).await {
+                    Some(body) => DesktopResponse::json(Status::Ok, body),
+                    None => DesktopResponse::not_found(),
+                };
+            }
+            Err(super::tickets::ParkError::TooMany) => {
+                return DesktopResponse::error(Status::TooManyRequests, "too_many_tickets", TOO_MANY_TICKETS);
+            }
+            // No key to seal it to: it waits as an Instant request.
+            Err(_) => {}
+        }
+    }
+    // Never hold a pooled DB connection while waiting for the phone.
+    drop(conn);
     let desktop = HUB.is_desktop(&user, &connection.uuid);
     let waited = wait_on(&request_id, &connection_id, desktop, true).await;
+    if let WaitResult::Deferred(ticket) = &waited
+        && let Some(parked) = reins_proto::ticket::request_of(ticket)
+        && let Some(body) = ticket_body(&parked, &connection.uuid, Duration::ZERO, true, pool.inner()).await
+    {
+        return DesktopResponse::json(Status::Ok, body);
+    }
     wait_response(&waited, &request_id, &connection_id, desktop, HUB.presence.status(&user, now_unix()))
 }
+
+/// What a caller over the open-ticket cap is told.
+pub const TOO_MANY_TICKETS: &str = "Too many requests of this connection are waiting for review. Wait for some to \
+be decided (reins tickets), then try again.";
 
 /// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out). With
 /// `peek=true`, says where it stands now without waiting (the desktop app reads where Autopilot leans and why it
 /// decided this way, kept in its memory rather than in its activity log).
 #[get("/reins/desktop/calls/<id>?<peek>")]
-async fn get_call(id: &str, peek: Option<bool>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+async fn get_call(
+    id: &str,
+    peek: Option<bool>,
+    request: McpRequest,
+    conn: DbConn,
+    pool: &State<DbPool>,
+) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
         Ok(c) => c,
         Err(response) => return response,
     };
     drop(conn);
+    let Some(ticket_id) = reins_proto::ticket::request_of(id) else {
+        return DesktopResponse::not_found();
+    };
+    let peeking = peek == Some(true);
+    let in_relay = !matches!(
+        HUB.relay.peek(&ticket_id, &ConnectionId(connection.uuid.clone())),
+        WaitResult::NotFound | WaitResult::Deferred(_)
+    );
+    if id.starts_with(reins_proto::ticket::TICKET_PREFIX) || !in_relay {
+        let wait = if peeking {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(crate::CONFIG.reins_relay_wait_secs())
+        };
+        let _waiting = match enter_waiting(&connection) {
+            Ok(place) => place,
+            Err(wait) => return DesktopResponse::rate_limited(CONNECTION_WAITING_LIMITED, wait),
+        };
+        return match ticket_body(&ticket_id, &connection.uuid, wait, peeking, pool.inner()).await {
+            Some(body) => DesktopResponse::json(Status::Ok, body),
+            None => DesktopResponse::not_found(),
+        };
+    }
+    let id = ticket_id.0.as_str();
     if id.is_empty() || id.len() > MAX_REQUEST_ID_BYTES {
         return DesktopResponse::not_found();
     }

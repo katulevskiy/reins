@@ -30,9 +30,19 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             GrantReminders.sync(list, profile: WorkProfiles.active)
         }
         let pending = model.onPendingChanged
-        model.onPendingChanged = { [weak self] list in
+        model.onPendingChanged = { [weak self, weak model] list in
             pending?(list)
             self?.dropStale(keeping: Set(list.map(\.id)))
+            TicketReminders.sync(list)
+            // Overnight's one morning note: planned again from the core's digest whenever what waits changes.
+            if let core = model?.core { Task { await OvernightDigestNotice.sync(core) } }
+        }
+        let circles = model.onCircleReviewsChanged
+        model.onCircleReviewsChanged = { [weak self] list in
+            circles?(list)
+            self?.dropSettledCircles(
+                waiting: Set(list.filter { $0.state == .waiting }.map(\.id)), settled: Set(list.filter { $0.state != .waiting }.map(\.id))
+            )
         }
         let signedIn = model.onSignedIn
         // The `-demo` build asks only when told to (`-askNotifications`): the prompt would cover every screenshot.
@@ -71,6 +81,15 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             options: [.authenticationRequired],
             icon: UNNotificationActionIcon(systemImageName: "checkmark")
         )
+        // A ticket's denial can carry a note the agent receives ("Use the staging bucket"); same checks as Deny.
+        let denyNote = UNTextInputNotificationAction(
+            identifier: NotificationAction.denyNote,
+            title: "Deny with note",
+            options: [.destructive, .authenticationRequired],
+            icon: UNNotificationActionIcon(systemImageName: "text.bubble"),
+            textInputButtonTitle: "Deny",
+            textInputPlaceholder: "Note to the agent"
+        )
         // "Report" opens the entry, where "This was wrong" teaches Autopilot (an approval cannot be taken back).
         let report = UNNotificationAction(
             identifier: NotificationAction.report,
@@ -81,6 +100,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         return [
             category(.request, [deny]),
             category(.quickRequest, [deny, approve]),
+            category(.waiting, [deny, denyNote]),
             category(.pairing),
             category(.blob),
             category(.join),
@@ -90,6 +110,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             category(.autopilot, [report]),
             category(.grant),
             category(.status),
+            category(.orgReview),
+            // Another account's request: answered in the app, with its card in front, never from the notification.
+            category(.circle),
         ]
     }
 
@@ -127,6 +150,20 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Takes away "Sam: purchase $42 waiting" once that review no longer waits (answered here, settled by the owner's
+    /// side, expired). A guardianship's notice stays until it is looked at.
+    private func dropSettledCircles(waiting: Set<String>, settled: Set<String>) {
+        center.getDeliveredNotifications { delivered in
+            let now = Date()
+            let settled = delivered.filter { n in
+                let content = n.request.content
+                guard content.categoryIdentifier == NotificationCategory.circle.rawValue else { return false }
+                return CircleSweep.isSettled(info: content.userInfo, date: n.date, waiting: waiting, settled: settled, now: now)
+            }.map(\.request.identifier)
+            if !settled.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: settled) }
+        }
+    }
+
     // MARK: Delivery
 
     /// In front, items pop up in the app with the in-app chime instead of a banner (the push still makes the app
@@ -142,7 +179,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 switch category {
-                case .request, .quickRequest, .pairing, .blob, .join, .arriving:
+                case .request, .quickRequest, .waiting, .pairing, .blob, .join, .arriving:
                     // Another profile's push: shown as it came (its generic text), never fetched by this core.
                     if payload != nil, !WorkProfiles.belongsHere(notification.request.content.userInfo, remote: true) {
                         completionHandler([.banner, .list])
@@ -156,7 +193,23 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                         }
                     }
                     completionHandler([])
-                case .status:
+                case .circle:
+                    // Another profile's push: shown as it came, never fetched by this core.
+                    if payload != nil, !WorkProfiles.belongsHere(notification.request.content.userInfo, remote: true) {
+                        completionHandler([.banner, .list])
+                        return
+                    }
+                    // In front, "For others" shows it (the core's `circleChanged` chimes); the app fetches what the push
+                    // announced.
+                    if let payload, payload.circle != nil, let host = self.host {
+                        Task {
+                            guard let model = await host.ready() else { return }
+                            try? await model.core.handlePush(kind: payload.kind, id: payload.id)
+                            await model.refreshCircles()
+                        }
+                    }
+                    completionHandler([])
+                case .status, .orgReview:
                     completionHandler([.banner, .list])
                 case .autopilot, .grant, .deciding, nil:
                     completionHandler([])
@@ -176,6 +229,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let remote = request.trigger is UNPushNotificationTrigger
         let link = (info[NotificationKey.link] as? String).flatMap(URL.init(string:)).flatMap(DeepLink.init(url:))
         let payload = PushPayload(userInfo: info)
+        let note = (response as? UNTextInputNotificationResponse)?.userText
+        let circle = info[NotificationKey.kind] as? String == "circle"
         let owner = WorkProfiles.owner(of: info, remote: remote)
         Task { @MainActor in
             // Another profile's notification is never acted on by this core: a tap opens the app on its profile, an
@@ -183,17 +238,19 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if owner != WorkProfiles.active.id {
                 if action == UNNotificationDefaultActionIdentifier, let owner,
                    (try? WorkProfiles.registry().list().contains { $0.id == owner }) == true {
+                    // An org review opens that profile's reviews once it is shown.
+                    if payload?.kind == PushPayload.orgReview { ProfileSwitch.then = .orgReviews }
                     ProfileSwitch.switchTo(owner)
                 }
                 completionHandler()
                 return
             }
-            await self.respond(action: action, link: link ?? payload?.link, payload: payload, remote: remote)
+            await self.respond(action: action, link: link ?? payload?.link, payload: payload, remote: remote, note: note, circle: circle)
             completionHandler()
         }
     }
 
-    private func respond(action: String, link: DeepLink?, payload: PushPayload?, remote: Bool) async {
+    private func respond(action: String, link: DeepLink?, payload: PushPayload?, remote: Bool, note: String?, circle: Bool = false) async {
         guard let model = await host?.ready() else { return }
         switch action {
         case UNNotificationDismissActionIdentifier:
@@ -201,6 +258,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         case NotificationAction.deny:
             guard let payload, payload.itemKind == .request else { return }
             await answer(payload, approve: false, remote: remote, model: model)
+        case NotificationAction.denyNote:
+            guard let payload, payload.itemKind == .request else { return }
+            await answer(payload, approve: false, note: TicketInbox.note(note), remote: remote, model: model)
         case NotificationAction.approve:
             guard let payload, payload.itemKind == .request else { return }
             await answer(payload, approve: true, remote: remote, model: model)
@@ -208,15 +268,18 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             guard let link else { return }
             await waitForSession(model)
             // The extension may have left the item for the app to fetch.
-            if remote, let payload, payload.itemKind != nil {
+            if remote, let payload, payload.itemKind != nil || payload.circle != nil {
                 try? await model.core.handlePush(kind: payload.kind, id: payload.id)
             }
+            // A Circle notification opens Activity, with "For others" read again.
+            if circle { await model.refreshCircles() }
             await model.handle(link)
         }
     }
 
-    /// "Deny" or "Approve" from the notification: the app runs in the background for it and plays nothing.
-    private func answer(_ payload: PushPayload, approve: Bool, remote: Bool, model: AppModel) async {
+    /// "Deny", "Deny with note" or "Approve" from the notification: the app runs in the background for it and plays
+    /// nothing. A note goes with the denial (`denyWithNote`).
+    private func answer(_ payload: PushPayload, approve: Bool, note: String? = nil, remote: Bool, model: AppModel) async {
         // Ended exactly once: by its expiration handler or when this returns, whichever comes first.
         let task = BackgroundTaskToken.begin(approve ? "approve" : "deny")
         defer { task.end() }
@@ -225,6 +288,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if remote { try? await model.core.handlePush(kind: payload.kind, id: payload.id) }
             if approve {
                 try await model.core.approveQuick(requestId: payload.id)
+            } else if let note {
+                try await model.core.denyWithNote(requestId: payload.id, note: note)
             } else {
                 try await model.core.deny(requestId: payload.id)
             }

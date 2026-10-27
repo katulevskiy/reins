@@ -170,6 +170,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** An org review notification: Settings > Reviews of this (work) profile. */
+    fun openOrgReviews() {
+        home()
+        selectTab(Tab.Settings)
+        open(Route.OrgReviews)
+    }
+
     /** The bypass notification or the download's: the Trust tab, where Autopilot lives. */
     fun openAutopilot() {
         home()
@@ -189,14 +196,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Opens the sheet a notification pointed at, if (and only if) that item is really waiting. */
     fun handleDeepLink(link: DeepLink) {
         viewModelScope.launch {
-            val route = try {
-                link.resolve(container.core.pending())
+            val pending = try {
+                container.core.pending()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: CoreException) {
-                null
+                emptyList()
             }
             home()
+            // A task proposal is a card on Activity, not a sheet.
+            if (pending.any { it.id == link.id && it.taskProposal != null }) {
+                selectTab(Tab.Activity)
+                return@launch
+            }
+            val route = link.resolve(pending)
             if (route == null) {
                 _notice.value = "That request is no longer waiting."
             } else {

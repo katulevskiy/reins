@@ -130,7 +130,7 @@ class AutopilotNotificationsTest {
         val nowMillis = 1_700_000_000_000L
         notifier.showBypass(AutopilotText.BypassNotice("Bypass on · 15 min left", "For Claude.", 1_700_000_900, false, listOf("c1")), nowMillis)
         val notice = AutopilotText.BypassNotice(
-            "Overnight on · 8 h left", "For every AI. Too risky or unclear waits for you.", 1_700_028_800, true, emptyList(),
+            "Overnight on · 8 h left", "For every AI. What would ask is parked for the morning.", 1_700_028_800, true, emptyList(),
             since = 1_699_999_000, mode = dev.reins.core.AutopilotMode.OVERNIGHT,
         )
         notifier.showOvernight(notice, nowMillis)

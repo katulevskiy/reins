@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Schedule
@@ -54,6 +57,8 @@ import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.ConnectionAvatar
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.HelpText
+import dev.reins.android.feedback.play
 import dev.reins.android.design.LabelText
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.Platforms
@@ -153,6 +158,9 @@ fun ConnectionDetailScreen(
                 ) { picking = Picker.Icon }
             }
 
+            // What few need: closed at first.
+            ConnectionMore(viewModel)
+
             // Next: a red-wash card, held to disconnect; the line under says what it ends.
             dev.reins.android.design.HoldButton(
                 "Disconnect ${untrustedName(connection.label, 24)}",
@@ -197,9 +205,8 @@ fun ConnectionDetailScreen(
             OvernightSheets(
                 overnightOpen,
                 who = connection.label,
-                risky = apSettings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-                ratesRisk = apSettings?.model?.risk == true,
-                onRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
+                expiryHours = apSettings?.overnightExpiryHours ?: dev.reins.android.autopilot.AutopilotText.DEFAULT_EXPIRY_HOURS,
+                onExpiry = { autopilot.setOvernightExpiry(it) },
                 onStart = { minutes -> autopilot.startOvernight(minutes, connection.id, connection.label, authenticator) },
                 onClose = { overnightOpen = false },
             )
@@ -208,6 +215,49 @@ fun ConnectionDetailScreen(
 }
 
 private enum class Picker { Icon, Profile, Name }
+
+/**
+ * "More" under the details, closed at first: this phone's signing key, which agents and the desktop app pin, as one
+ * row with its (?). Read from the core once, when More first opens.
+ */
+@Composable
+private fun ConnectionMore(viewModel: SettingsViewModel) {
+    val c = LocalColors.current
+    val feedback = dev.reins.android.feedback.LocalFeedback.current
+    var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.padding(horizontal = 20.dp).padding(top = 14.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(14.dp), label = if (open) "Less" else "More") {
+                    open = !open
+                    feedback.play(dev.reins.android.feedback.Event.expand(open))
+                }
+                .testTag("connectionMore")
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RText("More", RType.sans(15f, FontWeight.Medium), c.ink2, Modifier.weight(1f), maxLines = 1)
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, Modifier.size(20.dp), tint = c.ink2)
+        }
+        if (open) {
+            androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.loadSigningKey() }
+            val key by viewModel.signingKey.collectAsStateWithLifecycle()
+            var help by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+            Row(
+                Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).testTag("signingKey"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RText("Signing key", RType.row, c.ink, maxLines = 1)
+                HelpIcon(help, "Signing key") { help = it }
+                Spacer(Modifier.weight(1f))
+                RText(key?.second.orEmpty(), RType.mono(14f), c.ink2, Modifier.testTag("signingKeyValue"), maxLines = 1, ltr = true)
+            }
+            HelpText("Agents and your computer use this to check what this phone signs.", help)
+        }
+    }
+}
 
 /**
  * The quiet line under a renamed connection's name, or a numbered one's ("Claude 2"): what it calls itself, quoted

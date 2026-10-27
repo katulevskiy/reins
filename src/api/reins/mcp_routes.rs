@@ -3,6 +3,7 @@
 
 use std::{convert::Infallible, io::Cursor, time::Duration};
 
+use reins_proto::ticket::{TicketState, request_of, ticket_of};
 use reins_proto::{
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
@@ -14,7 +15,10 @@ use rocket::{
     data::ToByteUnit,
     http::{ContentType, Status},
     request::{FromRequest, Outcome},
-    response::{Responder, Response},
+    response::{
+        Responder, Response,
+        stream::{Event, EventStream},
+    },
 };
 use serde_json::{Value, json};
 
@@ -24,8 +28,9 @@ use super::{
     mcp::{self, Action, INVALID_PARAMS, INVALID_REQUEST, McpHeaders, RATE_LIMITED},
     now_unix,
     oauth::canonical_mcp_url,
+    presence::PhoneSeen,
     push,
-    relay::QueueFull,
+    relay::{QueueFull, WaitResult},
     tools::{self, ToolArgError, ToolInvocation},
 };
 use crate::{
@@ -33,7 +38,7 @@ use crate::{
     auth::reins::decode_access_token,
     db::{
         DbConn, DbPool,
-        models::{ReinsConnection, ReinsDevice, User, UserId},
+        models::{ReinsConnection, ReinsDevice, ReinsTicket, User, UserId},
     },
 };
 
@@ -60,10 +65,16 @@ pub struct McpRequest {
     /// `X-Reins-Wait`: how long the caller keeps asking for the answer (the desktop app polls past one relay wait);
     /// the phone counts that down. Capped by the relay to the request's lifetime.
     pub waits: Option<Duration>,
+    /// `X-Reins-Defer: 1`: the caller asks not to wait (it has other work): the call becomes a ticket at once.
+    pub defer: bool,
+    /// `Accept`, for `GET /mcp` (an event stream).
+    pub accept: Option<String>,
 }
 
 /// The header a caller states its own deadline in, in seconds (see [`McpRequest::waits`]).
 pub const WAIT_HEADER: &str = "X-Reins-Wait";
+/// The header a caller asks for a ticket at once with (see [`McpRequest::defer`]).
+pub const DEFER_HEADER: &str = "X-Reins-Defer";
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for McpRequest {
@@ -86,6 +97,8 @@ impl<'r> FromRequest<'r> for McpRequest {
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .filter(|&s| s > 0)
                 .map(Duration::from_secs),
+            defer: request.headers().get_one(DEFER_HEADER).is_some_and(|v| matches!(v.trim(), "1" | "true")),
+            accept: get("Accept"),
         })
     }
 }
@@ -350,7 +363,13 @@ struct ToolRun {
     arguments: Value,
     modern: bool,
     via: Option<String>,
+    /// The client asked for a ticket at once (`_meta` or `X-Reins-Defer`).
+    defer: bool,
 }
+
+/// What a caller over the open-ticket cap is told.
+pub const TOO_MANY_TICKETS: &str = "Too many of your requests are waiting for review. Wait for some to be decided \
+(reins_tickets), then try again.";
 
 async fn run_tool(
     run: ToolRun,
@@ -365,6 +384,7 @@ async fn run_tool(
         arguments,
         modern,
         via,
+        defer,
     } = run;
     let ok = |result: Value| McpResponse::json(200, Some(mcp::tool_reply(&id, modern, result)));
     let invocation = match tools::parse_invocation_with(&name, &arguments, mcp_servers) {
@@ -382,11 +402,24 @@ async fn run_tool(
         Ok(place) => place,
         Err(wait) => return ok(tools::failure(&rate_limited_text(CONNECTION_WAITING_LIMITED, wait))),
     };
-    let (request_id, first) = match invocation {
-        ToolInvocation::GetResult(request_id) => (request_id, false),
+    let (request_id, first, summary) = match invocation {
+        ToolInvocation::GetResult(request_id) => (request_id, false, None),
+        ToolInvocation::Wait(request_id, secs) => {
+            drop(conn);
+            return ok(wait_ticket(&request_id, &connection, Duration::from_secs(secs), pool).await);
+        }
+        ToolInvocation::Tickets => return ok(list_tickets(&connection, &conn).await),
+        ToolInvocation::Cancel(request_id) => return ok(cancel(&request_id, &connection, &conn).await),
+        ToolInvocation::Reply(request_id, text) => {
+            return ok(reply(&request_id, &text, &connection, &conn, pool.inner()).await);
+        }
         ToolInvocation::Relay(call, account) => {
+            let summary = super::tickets::summary_of(&call);
+            if let Some(open) = super::tickets::open_for(&connection.uuid, account.as_deref(), &call, &conn).await {
+                return ok(tools::success(&super::tickets::pending_review(&open, Some(&summary))));
+            }
             match submit_to_phone(&connection, via.as_deref(), call, account, &conn, pool.inner()).await {
-                Ok(request_id) => (request_id, true),
+                Ok(request_id) => (request_id, true, Some(summary)),
                 Err(SubmitError::Busy) => {
                     return ok(tools::failure("Reins is busy right now. Try again in a minute."));
                 }
@@ -397,6 +430,18 @@ async fn run_tool(
             }
         }
     };
+    let user = connection.user_uuid.to_string();
+    if defer
+        && first
+        && let Some(relayed) = HUB.relay.unanswered(&user, &request_id)
+    {
+        match super::tickets::park(&user, &relayed, TicketState::Deferred, None, &conn, pool.inner()).await {
+            Ok(row) => return ok(tools::success(&super::tickets::pending_review(&row, summary.as_deref()))),
+            Err(super::tickets::ParkError::TooMany) => return ok(tools::failure(TOO_MANY_TICKETS)),
+            // No key to seal it to: it waits as an Instant request.
+            Err(_) => {}
+        }
+    }
     // Never hold a pooled DB connection while waiting for the phone.
     drop(conn);
     let waited = if first {
@@ -404,8 +449,153 @@ async fn run_tool(
     } else {
         HUB.relay.wait(&request_id, &connection_id).await
     };
-    let seen = HUB.presence.status(&connection.user_uuid.to_string(), now_unix());
-    ok(tools::render_wait(&waited, &request_id, seen))
+    match waited {
+        WaitResult::Deferred(ref ticket) => {
+            let Ok(conn) = pool.get().await else {
+                return ok(tools::render_wait(&waited, &request_id, PhoneSeen::Never));
+            };
+            // A duplicate shares the ticket of the first call.
+            let parked = request_of(ticket).unwrap_or_else(|| request_id.clone());
+            match ReinsTicket::find_for_connection(&parked.0, &connection.uuid, &conn).await {
+                Some(row) => ok(tools::success(&super::tickets::pending_review(&row, summary.as_deref()))),
+                None => ok(tools::render_wait(&waited, &request_id, PhoneSeen::Never)),
+            }
+        }
+        // Not in the relay: a ticket by now (or never one of this connection's).
+        WaitResult::NotFound if !first => {
+            ok(wait_ticket(&request_id, &connection, Duration::from_secs(CONFIG.reins_relay_wait_secs()), pool).await)
+        }
+        _ => {
+            let seen = HUB.presence.status(&user, now_unix());
+            ok(tools::render_wait(&waited, &request_id, seen))
+        }
+    }
+}
+
+/// `reins_get_result` / `reins_wait` on a ticket: waits up to `max`, collecting an approved read.
+async fn wait_ticket(id: &RequestId, connection: &ReinsConnection, max: Duration, pool: &State<DbPool>) -> Value {
+    // Still Instant: the relay's own wait first.
+    let connection_id = ConnectionId(connection.uuid.clone());
+    if !matches!(HUB.relay.peek(id, &connection_id), WaitResult::NotFound | WaitResult::Deferred(_)) {
+        let waited = HUB.relay.wait(id, &connection_id).await;
+        if !matches!(waited, WaitResult::NotFound | WaitResult::Deferred(_)) {
+            let seen = HUB.presence.status(&connection.user_uuid.to_string(), now_unix());
+            return tools::render_wait(&waited, id, seen);
+        }
+    }
+    match super::tickets::agent_wait(&id.0, &connection.uuid, max, true, pool.inner()).await {
+        Some(view) => tools::render_ticket(&view),
+        None => tools::render_wait(&WaitResult::NotFound, id, PhoneSeen::Never),
+    }
+}
+
+async fn list_tickets(connection: &ReinsConnection, conn: &DbConn) -> Value {
+    let since = now_unix() - super::ticket_routes::RECENT_SECS;
+    let rows = ReinsTicket::list_for_connection(&connection.uuid, since, conn).await;
+    let tickets: Vec<Value> = rows.iter().map(super::tickets::status_value).collect();
+    tools::success(&json!({"tickets": tickets}))
+}
+
+async fn cancel(id: &RequestId, connection: &ReinsConnection, conn: &DbConn) -> Value {
+    let cancelled = json!({"status": "cancelled", "ticket": ticket_of(id)});
+    match HUB.relay.cancel(id, &ConnectionId(connection.uuid.clone())) {
+        super::relay::Cancel::Cancelled => return tools::success(&cancelled),
+        super::relay::Cancel::PhoneHasIt => {
+            return tools::failure(
+                "The user's phone already has this request and may be running it; it can no longer be withdrawn. \
+Call reins_get_result to learn what happened.",
+            );
+        }
+        super::relay::Cancel::Answered => return tools::failure("This request was already answered."),
+        super::relay::Cancel::NotFound => {}
+    }
+    let Some(mut row) = ReinsTicket::find_for_connection(&id.0, &connection.uuid, conn).await else {
+        return tools::failure("Unknown or expired ticket.");
+    };
+    if super::tickets::transition(&mut row, TicketState::Cancelled, "agent", &json!({}), |_| {}, conn).await {
+        tools::success(&cancelled)
+    } else {
+        tools::failure(&format!("This ticket can no longer be withdrawn: it is {}.", row.state))
+    }
+}
+
+async fn reply(id: &RequestId, text: &str, connection: &ReinsConnection, conn: &DbConn, pool: &DbPool) -> Value {
+    let Some(mut row) = ReinsTicket::find_for_connection(&id.0, &connection.uuid, conn).await else {
+        return tools::failure("Unknown or expired ticket.");
+    };
+    if row.state != TicketState::NeedsInfo.as_str() {
+        return tools::failure("Nobody asked a question on this ticket.");
+    }
+    let Some(keys) = super::tickets::device_keys(&row.user_uuid, conn).await else {
+        return tools::failure("The user's phone cannot receive an answer right now.");
+    };
+    let Ok(sealed) = super::tickets::seal_bytes(&keys.box_pub, text.as_bytes()) else {
+        return tools::failure("The answer could not be sent.");
+    };
+    if !super::tickets::transition(
+        &mut row,
+        TicketState::Deferred,
+        "agent",
+        &json!({"replied": true}),
+        |t| {
+            t.sealed_reply = Some(sealed);
+        },
+        conn,
+    )
+    .await
+    {
+        return tools::failure("The ticket moved on meanwhile.");
+    }
+    super::tickets::wake_phone(&row.user_uuid, &row.id, conn, pool).await;
+    tools::success(&super::tickets::pending_review(&row, None))
+}
+
+/// `resources/*` for tickets: this connection's only.
+async fn resource(method: &str, params: &Value, connection: &ReinsConnection, conn: &DbConn) -> Result<Value, String> {
+    let uri_ticket = || {
+        params
+            .get("uri")
+            .and_then(Value::as_str)
+            .and_then(|u| u.strip_prefix(mcp::TICKET_URI))
+            .and_then(request_of)
+            .ok_or_else(|| "Unknown resource.".to_owned())
+    };
+    match method {
+        "resources/list" => {
+            let rows = ReinsTicket::list_for_connection(&connection.uuid, now_unix(), conn).await;
+            let resources: Vec<Value> = rows
+                .iter()
+                .map(|r| {
+                    let ticket = ticket_of(&RequestId(r.id.clone()));
+                    json!({"uri": format!("{}{ticket}", mcp::TICKET_URI), "name": ticket,
+                           "description": format!("A request waiting for review ({})", r.state),
+                           "mimeType": "application/json"})
+                })
+                .collect();
+            Ok(json!({"resources": resources}))
+        }
+        "resources/templates/list" => Ok(json!({"resourceTemplates": [{
+            "uriTemplate": format!("{}{{ticket}}", mcp::TICKET_URI), "name": "Ticket",
+            "description": "A request waiting for review, by its ticket (rt_...).", "mimeType": "application/json"}]})),
+        "resources/read" => {
+            let id = uri_ticket()?;
+            let row = ReinsTicket::find_for_connection(&id.0, &connection.uuid, conn)
+                .await
+                .ok_or_else(|| "Unknown resource.".to_owned())?;
+            let uri = params.get("uri").cloned().unwrap_or(Value::Null);
+            Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json",
+                                    "text": super::tickets::status_value(&row).to_string()}]}))
+        }
+        "resources/subscribe" | "resources/unsubscribe" => {
+            let id = uri_ticket()?;
+            ReinsTicket::find_for_connection(&id.0, &connection.uuid, conn)
+                .await
+                .ok_or_else(|| "Unknown resource.".to_owned())?;
+            HUB.tickets.subscribe(&connection.uuid, &id.0, method == "resources/subscribe");
+            Ok(json!({}))
+        }
+        _ => Err("Method not found".to_owned()),
+    }
 }
 
 #[post("/mcp", data = "<data>")]
@@ -426,6 +616,12 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
             );
         }
     };
+    // A Managed account's calls go to its org's decision service, never to a phone (Decisions v2 · O2).
+    if let Some(org) = super::org::managed_mcp::org_of(&connection, &conn).await {
+        let (status, body) =
+            super::org::managed_mcp::post(&org, &request.headers, &body, &connection, conn, pool.inner()).await;
+        return McpResponse::json(status, body);
+    }
     let user = connection.user_uuid.to_string();
     let services = HUB.services_of(&user);
     let mcp_servers = HUB.mcp_servers_of(&user);
@@ -458,6 +654,7 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
             name,
             arguments,
             modern,
+            defer,
         } => {
             let run = ToolRun {
                 id,
@@ -465,9 +662,19 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
                 arguments,
                 modern,
                 via: request.via,
+                defer: defer || request.defer,
             };
             run_tool(run, &mcp_servers, connection, conn, pool).await
         }
+        Action::Resource {
+            id,
+            method,
+            params,
+            modern,
+        } => match resource(&method, &params, &connection, &conn).await {
+            Ok(result) => McpResponse::json(200, Some(mcp::resource_reply(&id, modern, result))),
+            Err(message) => McpResponse::json(200, Some(mcp::rpc_error(&id, INVALID_PARAMS, &message, None))),
+        },
     }
 }
 
@@ -488,6 +695,10 @@ pub fn rate_limited_reply(action: Action, wait: Duration) -> McpResponse {
             let id = body.as_ref().and_then(|b| b.get("id")).cloned().unwrap_or(Value::Null);
             McpResponse::json(429, Some(mcp::rpc_error(&id, RATE_LIMITED, &text, None)))
         }
+        Action::Resource {
+            id,
+            ..
+        } => McpResponse::json(429, Some(mcp::rpc_error(&id, RATE_LIMITED, &text, None))),
     };
     response.with_header("Retry-After", retry_secs(wait).to_string())
 }
@@ -496,11 +707,55 @@ fn method_not_allowed() -> McpResponse {
     McpResponse::json(405, Some(json!({"error": "method_not_allowed"}))).with_header("Allow", "POST".to_owned())
 }
 
-/// Streamable HTTP without a server-initiated stream: GET is not supported.
+/// The server-to-client stream (Streamable HTTP `GET`), for clients that subscribed to tickets: it carries
+/// `notifications/resources/updated` for this connection's subscribed tickets, and nothing else. Without
+/// `Accept: text/event-stream` (or without a valid token), GET is not supported, as before.
 #[get("/mcp")]
-fn mcp_get() -> McpResponse {
-    method_not_allowed()
+#[allow(tail_expr_drop_order, reason = "the stream's temporaries hold nothing whose drop order matters")]
+async fn mcp_get(request: McpRequest, conn: DbConn) -> Result<EventStream![], McpResponse> {
+    if !request.accept.as_deref().is_some_and(|a| a.contains("text/event-stream")) {
+        return Err(method_not_allowed());
+    }
+    if !origin_allowed(request.origin.as_deref(), &CONFIG.domain_origin()) {
+        return Err(McpResponse::json(
+            403,
+            Some(mcp::rpc_error(&Value::Null, INVALID_REQUEST, "Origin not allowed", None)),
+        ));
+    }
+    let connection = match authenticate(request.authorization.as_deref(), &conn).await {
+        Ok(c) => c,
+        Err(refused) => return Err(unauthorized(refused)),
+    };
+    drop(conn);
+    let Some(slot) = HUB.tickets.open_stream(&connection.uuid) else {
+        return Err(McpResponse::json(429, Some(mcp::rpc_error(&Value::Null, RATE_LIMITED, "Too many streams", None))));
+    };
+    let mut updates = HUB.tickets.updates();
+    let until = tokio::time::Instant::now() + STREAM_LIFETIME;
+    let mine = connection.uuid;
+    let stream = EventStream! {
+        let _slot = slot;
+        loop {
+            let next = tokio::time::timeout_at(until, updates.recv()).await;
+            let Ok(next) = next else { break };
+            let (who, ticket) = match next {
+                Ok(update) => update,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            };
+            if who != mine || !HUB.tickets.subscribed(&mine, &ticket) {
+                continue;
+            }
+            let uri = format!("{}{}", mcp::TICKET_URI, ticket_of(&RequestId(ticket)));
+            yield Event::json(&json!({"jsonrpc": "2.0", "method": "notifications/resources/updated",
+                                      "params": {"uri": uri}}));
+        }
+    };
+    Ok(stream.heartbeat(Duration::from_secs(25)))
 }
+
+/// How long one event stream stays open; clients open another.
+const STREAM_LIFETIME: Duration = Duration::from_mins(25);
 
 /// There are no sessions to end.
 #[delete("/mcp")]
@@ -520,6 +775,7 @@ mod tests {
             name: "gmail_search".to_owned(),
             arguments: json!({}),
             modern: false,
+            defer: false,
         };
         let r = rate_limited_reply(call, wait);
         assert_eq!(r.status, Status::Ok);

@@ -97,6 +97,32 @@ pub enum Refusal {
     Waiting(String),
     /// Cannot be decided now (offline phone, not logged in, no token, an error).
     Unavailable(String),
+    /// A push the reviewer will decide later (a ticket): the proxy keeps it and pushes it once approved.
+    Parked(Box<Parking>),
+}
+
+/// A push parked for a later review: its ticket, the nonce the eventual credential echoes, when an answer is expected
+/// (Unix seconds), and the message for the person or agent running git.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parking {
+    pub ticket: String,
+    pub nonce: String,
+    pub expected_by: i64,
+    pub message: String,
+}
+
+impl Parking {
+    #[must_use]
+    pub fn new(ticket: &str, nonce: &str, expected_by: i64) -> Self {
+        Self {
+            ticket: ticket.to_owned(),
+            nonce: nonce.to_owned(),
+            expected_by,
+            message: format!(
+                "Reins: parked for review (ticket {ticket}). It will be pushed when approved; you can keep working."
+            ),
+        }
+    }
 }
 
 impl Refusal {
@@ -104,6 +130,7 @@ impl Refusal {
     pub fn message(&self) -> &str {
         match self {
             Self::Denied(m) | Self::Waiting(m) | Self::Unavailable(m) => m,
+            Self::Parked(p) => &p.message,
         }
     }
 }

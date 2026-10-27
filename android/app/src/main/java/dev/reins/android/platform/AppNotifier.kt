@@ -12,6 +12,8 @@ import android.media.AudioAttributes
 import android.net.Uri
 import dev.reins.android.ui.activity.field
 import dev.reins.android.ui.activity.pendingTone
+import dev.reins.android.ui.activity.parked
+import dev.reins.android.ui.activity.pressing
 import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
 import dev.reins.android.BuildConfig
@@ -30,6 +32,7 @@ import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.AutoDecisionView
 import dev.reins.core.AutopilotEvent
+import dev.reins.core.CircleEvent
 import dev.reins.core.Notifier
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
@@ -54,6 +57,8 @@ class AppNotifier(
     private val onAutopilot: (AutopilotEvent) -> Unit = {},
     /** A mode or Autopilot decided this request: it no longer waits, and an ask open on it closes. */
     private val onDecided: (String) -> Unit = {},
+    /** Something about Circles changed (a review for this phone, a person, an owner's progress): read it again. */
+    private val onCircles: () -> Unit = {},
     private val onChanged: () -> Unit,
 ) : Notifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -82,6 +87,14 @@ class AppNotifier(
         Approvals(
             "approvals", "Approvals", "Requests from your AI clients that wait for your approval", NotificationManager.IMPORTANCE_HIGH,
             "fx_chime_request", CueCategory.Requests, longArrayOf(0, 18, 90, 18), private = true,
+        ),
+        /**
+         * A request that can wait (a ticket, Decisions v2): it arrives quietly, under Waiting for you, and its
+         * reminders come here too while more than an hour is left (then they use [Approvals]).
+         */
+        Waiting(
+            "waiting", "Waiting for you", "Requests that can wait for you, and reminders before they are due", NotificationManager.IMPORTANCE_DEFAULT,
+            null, CueCategory.Requests, null, private = true,
         ),
         Grants(
             "grants", "Grants ending", "A reminder shortly before a grant runs out", NotificationManager.IMPORTANCE_DEFAULT,
@@ -122,14 +135,20 @@ class AppNotifier(
 
     override fun itemPending(item: PendingItem) {
         onChanged()
+        val nowSeconds = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+        // Parked by Overnight for the morning (Decisions v2, 01 §11): parking never notifies, in front or not. The one
+        // morning summary ([OvernightDigest]) covers it.
+        if (item.parked(nowSeconds)) return
+        // A ticket can wait: it arrives quietly unless less than an hour is left (Decisions v2, 03 §5.2).
+        val quiet = item.ticket?.let { !it.pressing(nowSeconds) } ?: false
         // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
         // chime still sounds, on the notification stream, for a phone left open on the desk.
         if (Foreground.focused) {
-            feedback().requestArrived(item.id)
+            feedback().requestArrived(item.id, needsUser = !quiet)
             return
         }
         if (!manager.areNotificationsEnabled()) return
-        val channel = channel(Kind.Approvals)
+        val channel = channel(if (quiet) Kind.Waiting else Kind.Approvals)
         // The ask in the one formatter's words (ASK-TEXT.md): the sentence with its italic target as the title, who
         // asks beside the app's name, the machine part in mono under it, and the request's icon as the large icon.
         val ask = askSentence(item)
@@ -197,8 +216,11 @@ class AppNotifier(
     }
 
     /** How long an item's notification may stay: until the server lets it go ([ITEM_LIFETIME_SECS] after it was made). */
-    private fun lifetimeMillis(item: PendingItem, nowMillis: Long = System.currentTimeMillis()): Long =
-        ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
+    private fun lifetimeMillis(item: PendingItem, nowMillis: Long = System.currentTimeMillis()): Long {
+        // A ticket waits until its deadline.
+        item.ticket?.let { return (it.deadline * 1000 - nowMillis).coerceAtLeast(MIN_LIFETIME_MS) }
+        return ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
+    }
 
     override fun autoDecided(decision: AutoDecisionView) {
         // Decided without the owner, so nothing about it needs them: no notification (a notification means something
@@ -225,6 +247,63 @@ class AppNotifier(
             is AutopilotEvent.ModeChanged -> Unit
         }
     }
+
+    /**
+     * Circles (Decisions v2, 04). A request of another account waiting for this phone is the one Circle notification,
+     * titled by person ("Sam: Buy headphones waiting"), with Open only: it is answered in For others, never inline.
+     * Anything else (a review settled, a person added, an owner's progress) refreshes the screens quietly.
+     */
+    override fun circleChanged(event: CircleEvent) {
+        onCircles()
+        val review = (event as? CircleEvent.ReviewWaiting)?.review ?: return
+        if (Foreground.focused) {
+            // In front, For others shows it; the chime says something arrived.
+            feedback().requestArrived(CIRCLE_PREFIX + review.id, needsUser = true)
+            return
+        }
+        if (!manager.areNotificationsEnabled()) return
+        val channel = channel(Kind.Approvals)
+        val public = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Reins")
+            .setContentText("Something is waiting for you")
+            .build()
+        val text = listOfNotNull(untrusted(review.subtitle).ifBlank { null }, untrusted(review.agent).ifBlank { null }).joinToString(" · ")
+        val notification = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(dev.reins.android.ui.circles.reviewNotificationTitle(review.copy(person = untrusted(review.person), title = untrusted(review.title))))
+            .setContentText(text.ifEmpty { "For others" })
+            .addAction(Notification.Action.Builder(null, "Open", openForOthers(review.id)).build())
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(public)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(openForOthers(review.id))
+            .setWhen(review.createdAt * 1000)
+            .setTimeoutAfter((review.deadline * 1000 - System.currentTimeMillis()).coerceAtLeast(MIN_LIFETIME_MS))
+            .addExtras(android.os.Bundle().apply { putString(EXTRA_CIRCLE, review.id) })
+            .build()
+        manager.notify(tag, notificationId(CIRCLE_PREFIX + review.id), notification)
+    }
+
+    /** Takes away the notifications of Circle reviews that no longer wait ([waiting] are the ids that do). */
+    fun dropStaleCircles(waiting: Set<String>) {
+        manager.activeNotifications
+            .filter { n -> n.tag == tag && n.notification.extras.getString(EXTRA_CIRCLE)?.let { it !in waiting } == true }
+            .forEach { manager.cancel(tag, it.id) }
+    }
+
+    /** Opens For others in Activity (a Circle review's notification). */
+    private fun openForOthers(id: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        notificationId(CIRCLE_PREFIX + id),
+        Intent(context, MainActivity::class.java)
+            .setAction(ACTION_OPEN_FOR_OTHERS)
+            .putExtra(EXTRA_ID, id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile(),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /** Auto-approvals stopped for a connection (unusual volume); its requests wait for the user. */
     private fun paused(event: AutopilotEvent.Paused) {
@@ -469,12 +548,42 @@ class AppNotifier(
         manager.notify(target.id, id, notification)
     }
 
+    /**
+     * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
+     * channel; tapping opens that profile's reviews. Says nothing of the review itself.
+     */
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) {
+        onChanged()
+        if (!manager.areNotificationsEnabled()) return
+        val open = PendingIntent.getActivity(
+            context,
+            notificationId(reviewId),
+            WorkProfiles.stamp(
+                context,
+                Intent(context, MainActivity::class.java)
+                    .setAction(ACTION_OPEN_ORG_REVIEWS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                target.id,
+            ),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(context, channel(context, Kind.Approvals, settings(), silent = false, profile = target))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(if (target.managed) target.label else "Reins")
+            .setContentText("A review waits for you.")
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        manager.notify(target.id, notificationId(reviewId), notification)
+    }
+
     /** Takes away every notification of this profile (signing out), and none of another's. */
     fun cancelOwn() {
         manager.activeNotifications.filter { it.tag == tag }.forEach { manager.cancel(it.tag, it.id) }
     }
 
-    private fun notificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
+    private fun notificationId(id: String): Int = itemNotificationId(id)
 
     /** The request's icon (the integration with the action on its corner), ringed in the notification's colour. */
     private fun largeIcon(ask: AskSentence, ring: Int): android.graphics.drawable.Icon? = try {
@@ -486,6 +595,45 @@ class AppNotifier(
     }
 
     companion object {
+        /** The notification id of a waiting item: its arrival, a failed answer and a ticket's reminders share it. */
+        fun itemNotificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
+
+        /** Approve or Deny from a notification ([ApprovalActionReceiver]). */
+        private fun answer(context: Context, id: String, approve: Boolean, profile: WorkProfiles.Active): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                itemNotificationId(id) xor if (approve) 0x1 else 0x2,
+                WorkProfiles.stamp(
+                    context,
+                    Intent(context, ApprovalActionReceiver::class.java)
+                        .setAction(if (approve) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY)
+                        .putExtra(EXTRA_ID, id),
+                    profile.id,
+                ),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+
+        /** Deny [profile]'s request from a notification (a ticket's reminder). */
+        fun denyRequest(context: Context, id: String, profile: WorkProfiles.Active = WorkProfiles.PERSONAL): PendingIntent =
+            answer(context, id, approve = false, profile = profile)
+
+        /** Opens [profile]'s waiting request's approval screen. */
+        fun openRequest(context: Context, id: String, profile: WorkProfiles.Active = WorkProfiles.PERSONAL): PendingIntent =
+            PendingIntent.getActivity(
+                context,
+                itemNotificationId(id),
+                WorkProfiles.stamp(
+                    context,
+                    Intent(context, MainActivity::class.java)
+                        .setAction(ACTION_OPEN_ITEM)
+                        .putExtra(EXTRA_KIND, KIND_REQUEST)
+                        .putExtra(EXTRA_ID, id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                    profile.id,
+                ),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+
         /** The large icon's size: what a notification shows at its side. */
         private const val LARGE_ICON_DP = 64
 
@@ -547,6 +695,14 @@ class AppNotifier(
         const val ACTION_OPEN_ACTIVITY = "dev.reins.android.OPEN_ACTIVITY"
         const val EXTRA_ACTIVITY_ID = "activity"
         const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
+        /** A work profile's org reviews ([orgReview]). */
+        const val ACTION_OPEN_ORG_REVIEWS = "dev.reins.android.OPEN_ORG_REVIEWS"
+        /** A Circle review's notification: Activity, at For others. */
+        const val ACTION_OPEN_FOR_OTHERS = "dev.reins.android.OPEN_FOR_OTHERS"
+        /** The Circle review a notification is about, in its extras (see [dropStaleCircles]). */
+        const val EXTRA_CIRCLE = "dev.reins.android.CIRCLE"
+        /** Keeps a review's notification id apart from a request's of the same id. */
+        private const val CIRCLE_PREFIX = "circle:"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4

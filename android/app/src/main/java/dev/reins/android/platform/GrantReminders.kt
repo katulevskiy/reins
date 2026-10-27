@@ -73,14 +73,14 @@ object GrantReminders {
     }
 
     /** The profiles that planned reminders (an alarm names one by id; its label names the channel group). */
-    private fun remember(context: Context, profile: Active) {
+    internal fun remember(context: Context, profile: Active) {
         if (!profile.managed) return
         val index = context.getSharedPreferences(PROFILES, Context.MODE_PRIVATE)
         val json = JSONObject().put("label", profile.label).put("prefix", profile.channelPrefix).put("key", profile.keyAlias).toString()
         if (index.getString(profile.id, null) != json) index.edit().putString(profile.id, json).apply()
     }
 
-    private fun profiles(context: Context): List<Active> = listOf(WorkProfiles.PERSONAL) +
+    internal fun profiles(context: Context): List<Active> = listOf(WorkProfiles.PERSONAL) +
         context.getSharedPreferences(PROFILES, Context.MODE_PRIVATE).all.mapNotNull { (id, v) ->
             runCatching {
                 val o = JSONObject(v as String)
@@ -88,7 +88,7 @@ object GrantReminders {
             }.getOrNull()
         }
 
-    private fun profileNamed(context: Context, id: String?): Active? =
+    internal fun profileNamed(context: Context, id: String?): Active? =
         if (id == null) WorkProfiles.PERSONAL else profiles(context).firstOrNull { it.id == id }
 
     /** The alarm for [id] of [profile] went off. */

@@ -5,10 +5,14 @@
 //! Every check fails closed: malformed or unknown data never grants access.
 
 pub mod authorization;
+pub mod circles;
+pub mod context;
 pub mod effects;
 mod evaluate;
 mod grant;
 pub mod guard;
+pub mod matrix;
+pub mod org;
 mod pattern;
 mod scope;
 pub mod shell;

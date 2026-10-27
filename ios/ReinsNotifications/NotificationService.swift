@@ -37,7 +37,7 @@ final class NotificationService: UNNotificationServiceExtension {
         // profile on this phone keeps its generic text and never reaches this profile's core.
         _ = CoreFactory.activeProfile()
         let ours = WorkProfiles.belongsHere(request.content.userInfo, remote: true)
-        guard ours, let payload, payload.itemKind != nil, !AppPresence.inFront(), CoreFactory.storeExists else {
+        guard ours, let payload, payload.itemKind != nil || payload.circle?.alerts == true, !AppPresence.inFront(), CoreFactory.storeExists else {
             finish(generic)
             return
         }
@@ -128,6 +128,11 @@ final class NotificationService: UNNotificationServiceExtension {
         } catch {
             return .failed
         }
+        if let circle = payload.circle {
+            let content = await circleContent(circle, capture: capture, core: core, original: original, settings: settings)
+            if !Task.isCancelled { await SnapshotWriter.update(from: core) }
+            return .done(WorkProfiles.stamp(content, profile: WorkProfiles.active))
+        }
         // Only the owner's list makes an ask: what a mode decided is said as decided, and what Autopilot has still to
         // decide (only the app can) is said as that, without an action.
         let decision = capture.decision(payload.id)
@@ -143,11 +148,38 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 }
 
+extension NotificationService {
+    /// A Circle push, once the core fetched what it announced: a review waiting for this phone names its person and
+    /// title ("Sam: purchase $42 waiting"); a guardianship that ended names its person. One already settled (answered on
+    /// another of this account's phones, withdrawn, expired) is a quiet line instead of an alarm for nothing.
+    fileprivate static func circleContent(
+        _ push: CirclePush, capture: CapturingNotifier, core: ReinsCore, original: UNNotificationContent, settings: FeedbackSettings
+    ) async -> UNNotificationContent {
+        switch push.wake {
+        case .review:
+            var review = capture.review(push.id)
+            if review == nil {
+                review = (try? await core.circleReviews(refresh: false))?.first { $0.id == push.id && $0.state == .waiting }
+            }
+            guard let review else { return NotificationContent.handled(original) }
+            return NotificationContent.circleReview(review, settings: settings)
+        case .alert:
+            guard let person = (try? await core.circlePeople(refresh: false))?.first(where: { $0.linkId == push.id }) else {
+                return NotificationContent.generic(original, payload: PushPayload(kind: "circle", id: "alert:\(push.id)"), settings: settings)
+            }
+            return NotificationContent.circleAlert(person, settings: settings)
+        case .news:
+            return NotificationContent.handled(original)
+        }
+    }
+}
+
 /// The core's `Notifier` for one push: keeps what it reported so the notification can say it.
 private final class CapturingNotifier: Notifier, @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: PendingItem] = [:]
     private var decisions: [String: AutoDecisionView] = [:]
+    private var reviews: [String: CircleReviewView] = [:]
 
     func itemPending(item: PendingItem) { lock.withLock { items[item.id] = item } }
 
@@ -156,6 +188,13 @@ private final class CapturingNotifier: Notifier, @unchecked Sendable {
     func autoDecided(decision: AutoDecisionView) { lock.withLock { decisions[decision.requestId] = decision } }
 
     func autopilotChanged(event: AutopilotEvent) {}
+
+    /// A review of another account that waits for this phone; anything else in Circles changes nothing shown here.
+    func circleChanged(event: CircleEvent) {
+        if case let .reviewWaiting(review) = event { lock.withLock { reviews[review.id] = review } }
+    }
+
+    func review(_ id: String) -> CircleReviewView? { lock.withLock { reviews[id] } }
 
     func item(_ id: String) -> PendingItem? { lock.withLock { items[id] } }
 

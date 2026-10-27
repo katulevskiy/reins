@@ -247,6 +247,27 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::POST, &format!("/requests/{id}/response")).json(response)).await.map(drop)
     }
 
+    /// `GET /tickets`: every open or approved ticket of the account, sealed as stored.
+    pub async fn tickets(&self) -> Result<Vec<reins_proto::ticket::TicketItem>, ApiFailure> {
+        #[derive(serde::Deserialize)]
+        struct Tickets {
+            tickets: Vec<reins_proto::ticket::TicketItem>,
+        }
+        let all: Tickets = Self::json(self.request(Method::GET, "/tickets")).await?;
+        Ok(all.tickets)
+    }
+
+    /// `POST /tickets/{id}/events`: this phone's signed transitions of a ticket (Later, "Why?", an approval to
+    /// collect later, an expiry it confirms).
+    pub async fn post_ticket_events(
+        &self,
+        id: &str,
+        events: &reins_proto::ticket::TicketEvents,
+    ) -> Result<reins_proto::ticket::TicketStatus, ApiFailure> {
+        check_id(id)?;
+        Self::json(self.request(Method::POST, &format!("/tickets/{id}/events")).json(events)).await
+    }
+
     /// A5 `GET /pairings/{id}`.
     pub async fn get_pairing(&self, id: &str) -> Result<PairingRequest, ApiFailure> {
         check_id(id)?;
@@ -327,6 +348,30 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::PUT, "/org/posture").json(posture)).await.map(drop)
     }
 
+    /// O2 `GET /org/reviews`: what waits for this member's review; none for an account that isn't an org's member
+    /// (404).
+    pub async fn org_reviews(&self) -> Result<Vec<reins_proto::managed::ReviewItem>, ApiFailure> {
+        match Self::json(self.request(Method::GET, "/org/reviews")).await {
+            Ok(items) => Ok(items),
+            Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// O2 `POST /org/reviews/{id}`: this device's signed answer.
+    pub async fn org_answer(&self, id: &str, answer: &reins_proto::managed::ReviewAnswer) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::POST, &format!("/org/reviews/{id}")).json(answer)).await.map(drop)
+    }
+
+    /// O2 `PUT /org/member-policy`: the member's own stricter policy, signed by this device.
+    pub async fn org_member_policy(&self, policy: &reins_proto::managed::SignedMemberPolicy) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::PUT, "/org/member-policy").json(policy)).await.map(drop)
+    }
+
     /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
     pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
         check_id(id)?;
@@ -385,6 +430,8 @@ mod tests {
         let reg = DeviceRegistration {
             fcm_token: Some("fcm-1".to_owned()),
             master_password_hash: None,
+            sign_pub: None,
+            box_pub: None,
         };
         assert!(api.register_device(&reg).await.unwrap().replaced_previous);
         assert_eq!(api.connections().await.unwrap().connections[0].client_host, "chatgpt.com");
@@ -497,6 +544,7 @@ mod tests {
                 reason: None,
             },
             decided: None,
+            events: vec![],
         };
         Mock::given(method("POST"))
             .and(path("/reins/api/requests/r1/response"))

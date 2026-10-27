@@ -51,6 +51,7 @@ struct MainPage: View {
     /// The status bar's height: the field runs under it.
     var top: CGFloat = 0
     @Environment(ApprovalNav.self) private var nav
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -60,6 +61,19 @@ struct MainPage: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 4)
                     .accessibilityIdentifier("noLongerWaiting")
+            }
+            // A ticket: when it is due, and what happened since (a Why?, the agent's answer, what changed).
+            if !vm.readOnly, let ticket = app.pending.first(where: { $0.id == view.requestId })?.ticket {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    VStack(alignment: .leading, spacing: 8) {
+                        DueText(deadline: ticket.deadline, now: Int64(context.date.timeIntervalSince1970))
+                        TicketNotes(ticket: ticket, id: view.requestId)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ticketFacts")
             }
             if nav.riskInFacts, let risk = vm.suggestion?.risk, !untrusted(risk.why).isEmpty {
                 FactGroup {

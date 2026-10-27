@@ -66,7 +66,7 @@ Q6 11.17 6 12t-.59 1.41Q4.83 14 4 14Zm0-6q-.83 0-1.41-.59Q2 6.83 2 6t.59-1.41Q3.
 1.41Q4.83 8 4 8Z";
 }
 
-fn svg(path: &str) -> String {
+pub(super) fn svg(path: &str) -> String {
     format!("<svg class=\"i\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"{path}\"/></svg>")
 }
 
@@ -77,6 +77,10 @@ pub enum Tab {
     Overview,
     Members,
     Events,
+    Policy,
+    Requests,
+    Audit,
+    Executors,
 }
 
 /// What every signed-in page shows in its header.
@@ -108,6 +112,10 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
                 tab(Tab::Overview, format!("{up}{}", e(id)), "Overview"),
                 tab(Tab::Members, format!("{up}{}/members", e(id)), "Members"),
                 tab(Tab::Events, format!("{up}{}/events", e(id)), "Events"),
+                tab(Tab::Policy, format!("{up}{}/policy", e(id)), "Policy"),
+                tab(Tab::Requests, format!("{up}{}/requests", e(id)), "Requests"),
+                tab(Tab::Audit, format!("{up}{}/audit", e(id)), "Audit"),
+                tab(Tab::Executors, format!("{up}{}/executors", e(id)), "Executors"),
             ]
             .concat(),
             None => tab(Tab::Home, up.to_owned(), "Orgs"),
@@ -144,7 +152,7 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
     )
 }
 
-fn hidden_csrf(csrf: &str) -> String {
+pub(super) fn hidden_csrf(csrf: &str) -> String {
     format!("<input type=\"hidden\" name=\"csrf\" value=\"{}\">", e(csrf))
 }
 
@@ -377,8 +385,96 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
                 },
             ),
         ),
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => (
+            format!("Activate policy revision {revision}"),
+            field("Policy", "current", &e(&format!("revision {revision} · {}", hash.get(..12).unwrap_or(hash)))),
+        ),
+        AdminAction::SetRetention {
+            days,
+        } => ("Request body retention".to_owned(), field("Bodies kept", "current", &retention_text(*days))),
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            public_key,
+        } => (
+            format!("Register executor {}", e(executor_id)),
+            [field("Mode", "—", mode.as_str()), field("Key", "—", &e(public_key.get(..16).unwrap_or(public_key)))]
+                .concat(),
+        ),
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => (format!("Remove executor {}", e(executor_id)), field("Executor", "registered", "removed")),
     };
     format!("<div>{title}</div>{fields}")
+}
+
+/// A pending change in a few words, for the reviewer's phone (the console shows more, [`overview`]).
+#[must_use]
+pub fn action_title(action: &AdminAction) -> String {
+    match action {
+        AdminAction::GrantRole {
+            role,
+            ..
+        } => format!("Give {}", role.label()),
+        AdminAction::RevokeRole {
+            role,
+            ..
+        } => format!("Take {}", role.label()),
+        AdminAction::SetIdentity {
+            identity,
+            ..
+        } => format!("Sign-in: {}", identity.label()),
+        AdminAction::SetTier {
+            tier,
+        } => format!("Plan: {}", tier.label()),
+        AdminAction::RemoveDomain {
+            domain,
+        } => format!("Remove domain {domain}"),
+        AdminAction::RemoveMember {
+            ..
+        } => "Remove a member".to_owned(),
+        AdminAction::SetTwoPerson {
+            on,
+        } => format!(
+            "Two-person approval {}",
+            if *on {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+        AdminAction::ConfirmDirectoryRemovals {
+            ..
+        } => "Remove members the directory dropped".to_owned(),
+        AdminAction::ActivatePolicy {
+            revision,
+            ..
+        } => format!("Activate policy revision {revision}"),
+        AdminAction::SetRetention {
+            days,
+        } => format!("Keep request bodies: {}", retention_text(*days)),
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            ..
+        } => format!("Register executor {executor_id} ({})", mode.as_str()),
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => format!("Remove executor {executor_id}"),
+    }
+}
+
+/// "none", "30 days", "1 year".
+#[must_use]
+pub fn retention_text(days: u32) -> String {
+    match days {
+        0 => "none".to_owned(),
+        365 => "1 year".to_owned(),
+        d => format!("{d} days"),
+    }
 }
 
 pub fn overview(frame: &Frame<'_>, v: &OverviewView) -> String {

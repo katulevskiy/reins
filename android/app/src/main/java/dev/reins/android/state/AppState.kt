@@ -71,6 +71,54 @@ class AppState {
         _startingPolicy.value = policy
     }
 
+    /** "Auto needs information": who a party a request named is, listed with the waiting items (never notified). */
+    private val _autoQuestions = MutableStateFlow<List<dev.reins.core.AutoQuestion>>(emptyList())
+    val autoQuestions: StateFlow<List<dev.reins.core.AutoQuestion>> = _autoQuestions.asStateFlow()
+
+    fun setAutoQuestions(questions: List<dev.reins.core.AutoQuestion>) {
+        _autoQuestions.value = questions
+    }
+
+    /** An answered or dismissed question leaves at once; the next read settles the list. */
+    fun removeAutoQuestion(id: String) {
+        _autoQuestions.value = _autoQuestions.value.filter { it.id != id }
+    }
+
+    /** Tasks (Decisions v2, 01 §12): the live ones, then those that ended in the last day. */
+    private val _tasks = MutableStateFlow<List<dev.reins.core.TaskView>>(emptyList())
+    val tasks: StateFlow<List<dev.reins.core.TaskView>> = _tasks.asStateFlow()
+
+    fun setTasks(tasks: List<dev.reins.core.TaskView>) {
+        _tasks.value = tasks
+    }
+
+    /** Circles' For others: requests of other accounts waiting for this phone, and those settled lately. */
+    private val _circleReviews = MutableStateFlow<List<dev.reins.core.CircleReviewView>>(emptyList())
+    val circleReviews: StateFlow<List<dev.reins.core.CircleReviewView>> = _circleReviews.asStateFlow()
+
+    /** What a watcher was told lately (no buttons). */
+    private val _circleNotices = MutableStateFlow<List<dev.reins.core.CircleNoticeView>>(emptyList())
+    val circleNotices: StateFlow<List<dev.reins.core.CircleNoticeView>> = _circleNotices.asStateFlow()
+
+    /** Counts the core's "something about Circles changed": screens that list people read them again. */
+    private val _circleRevision = MutableStateFlow(0L)
+    val circleRevision: StateFlow<Long> = _circleRevision.asStateFlow()
+
+    fun setCircles(reviews: List<dev.reins.core.CircleReviewView>?, notices: List<dev.reins.core.CircleNoticeView>?) {
+        reviews?.let { _circleReviews.value = it }
+        notices?.let { _circleNotices.value = it }
+    }
+
+    /** A review answered here shows settled at once; the next read settles the list. */
+    fun markCircleAnswered(id: String, approve: Boolean) {
+        val state = if (approve) dev.reins.core.CircleReviewState.APPROVED else dev.reins.core.CircleReviewState.DENIED
+        _circleReviews.value = _circleReviews.value.map { if (it.id == id) it.copy(state = state) else it }
+    }
+
+    fun circlesChanged() {
+        _circleRevision.value += 1
+    }
+
     private val _services = MutableStateFlow<List<ServiceView>>(emptyList())
     val services: StateFlow<List<ServiceView>> = _services.asStateFlow()
 
@@ -283,6 +331,10 @@ class AppState {
             _connectedServers.value = emptyMap()
             _services.value = emptyList()
             _startingPolicy.value = null
+            _autoQuestions.value = emptyList()
+            _tasks.value = emptyList()
+            _circleReviews.value = emptyList()
+            _circleNotices.value = emptyList()
             _connections.value = emptyList()
             _connectionsHidden.value = false
             setMcpServers(emptyList())

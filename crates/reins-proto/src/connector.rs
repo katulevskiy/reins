@@ -21,6 +21,8 @@ pub const GITHUB: &str = "github";
 pub const VAULT: &str = "vault";
 /// The desktop app itself (`reins ask`).
 pub const DESKTOP: &str = "desktop";
+/// Tasks (Decisions v2, 01 §12): proposed by an agent, approved on the phone; `connector::tasks`.
+pub const TASKS: &str = "tasks";
 pub const GITLAB: &str = "gitlab";
 pub const CODEBERG: &str = "codeberg";
 pub const BITBUCKET: &str = "bitbucket";
@@ -31,6 +33,7 @@ pub const MAX_TEXT_LEN: usize = 8_000;
 pub const MAX_ACCOUNT_LEN: usize = 100;
 
 mod desktop;
+pub mod tasks;
 pub use desktop::{
     AUTOPILOT_CORRECT_OP, AUTOPILOT_MODE_OP, AUTOPILOT_MODES, MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS,
     SESSION_END_OP, SESSION_OP, TOKEN_HOSTS, TOKEN_STORE_OP,
@@ -950,6 +953,7 @@ fn build_specs() -> Vec<ToolSpec> {
     all.extend(vault::tools());
     all.extend(desktop::tools());
     all.extend(payments::tools());
+    all.extend(tasks::tools());
     all
 }
 

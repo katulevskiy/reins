@@ -574,6 +574,189 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == requestId }
     }
 
+    // ---- tickets (Decisions v2): Later, a denial's note, Why? ------------------------------------------------------
+
+    /** `decideLater` calls, by request id. */
+    val laterCalls = CopyOnWriteArrayList<String>()
+    /** `denyWithNote` calls: (request id, note). */
+    val notedDenials = CopyOnWriteArrayList<Pair<String, String?>>()
+    /** `askWhy` calls: (request id, question). */
+    val whyQuestions = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** The window Later gives (the server's default Deferred window). */
+    @Volatile var deferredWindowSecs: Long = 14_400
+
+    override suspend fun decideLater(requestId: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        if (!item.canDefer || item.ticket != null) throw CoreException.Invalid("This request can't wait.")
+        laterCalls += requestId
+        val at = now()
+        val ticket = dev.reins.core.TicketView("rt_$requestId", "deferred", at, at + deferredWindowSecs, null, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) {
+        notedDenials += requestId to note
+        pending = pending.filterNot { it.id == requestId }
+    }
+
+    override suspend fun askWhy(requestId: String, question: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        whyQuestions += requestId to question
+        val at = now()
+        val ticket = item.ticket?.copy(state = "needs_info", question = question, agentReply = null)
+            ?: dev.reins.core.TicketView("rt_$requestId", "needs_info", at, at + deferredWindowSecs, question, null, null)
+        pending = pending.map { if (it.id == requestId) it.copy(ticket = ticket, canDefer = false, waitUntil = ticket.deadline) else it }
+    }
+
+    /** This phone's signing key, as agents and the desktop app pin it; [signingKeyCalls] counts the reads. */
+    @Volatile var signingKey: String = "4821 9930 1274"
+    val signingKeyCalls = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun signingKeyFingerprint(): String {
+        signingKeyCalls.incrementAndGet()
+        return signingKey
+    }
+
+    fun resetTickets() {
+        laterCalls.clear()
+        notedDenials.clear()
+        whyQuestions.clear()
+        deferredWindowSecs = 14_400
+        signingKey = "4821 9930 1274"
+        signingKeyCalls.set(0)
+    }
+
+    // ---- Circles (Decisions v2, 04): people who share control ------------------------------------------------------
+
+    /** Whether this phone can take part in Circles (the account's primary phone). */
+    @Volatile var circlesOn: Boolean = true
+    /** The arrangements, either side. */
+    @Volatile var circlePeopleList: List<CirclePerson> = emptyList()
+    /** Requests of other accounts for this phone (For others), waiting and settled. */
+    @Volatile var circleReviewList: List<CircleReviewView> = emptyList()
+    /** What a watcher was told. */
+    @Volatile var circleNoticeList: List<CircleNoticeView> = emptyList()
+    /** `circleAnswer` calls: (review id, approve, note). */
+    val circleAnswers = CopyOnWriteArrayList<Triple<String, Boolean, String?>>()
+    /** Thrown by `circleAnswer` when set. */
+    @Volatile var circleAnswerFailure: Exception? = null
+    /** The drafts `circleInviteCreate` was given. */
+    val circleDrafts = CopyOnWriteArrayList<CircleDraft>()
+    /** What `circleInvitePoll` answers next, one per poll (the last one stays). */
+    val circleInviteSteps = java.util.concurrent.ConcurrentLinkedQueue<CircleInviteProgress>()
+    @Volatile private var circleInviteLast: CircleInviteProgress = CircleInviteProgress.Waiting
+    val circleInviteConfirms = CopyOnWriteArrayList<String>()
+    val circleInviteCancels = CopyOnWriteArrayList<String>()
+    /** The links `circleJoinOpen` was given. */
+    val circleJoinLinks = CopyOnWriteArrayList<String>()
+    /** What `circleJoinOpen` and `circleJoinPoll` answer. */
+    @Volatile var circleJoinView: CircleInviteView? = null
+    val circleJoinAccepts = CopyOnWriteArrayList<String>()
+    val circleJoinDeclines = CopyOnWriteArrayList<String>()
+    /** `circlePause` calls: (link id, paused). */
+    val circlePauses = CopyOnWriteArrayList<Pair<String, Boolean>>()
+    val circleEnds = CopyOnWriteArrayList<String>()
+    val circleReviewReads = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun circlesAvailable(): Boolean = circlesOn
+
+    override suspend fun circleInviteCreate(draft: CircleDraft): CircleInviteStart {
+        circleDrafts += draft
+        return CircleInviteStart("inv1", "reins-circle:127.0.0.1:8000/secret123", now() + 900)
+    }
+
+    override suspend fun circleInvitePoll(id: String): CircleInviteProgress {
+        circleInviteSteps.poll()?.let { circleInviteLast = it }
+        return circleInviteLast
+    }
+
+    override suspend fun circleInviteConfirm(id: String): CirclePerson {
+        circleInviteConfirms += id
+        val helper = (circleInviteLast as? CircleInviteProgress.Accepted)?.helper ?: "alex@example.com"
+        val draft = circleDrafts.lastOrNull()
+        val person = CirclePerson(
+            "link-$id", helper, draft?.role ?: CircleRole.COSIGN, true, "Money", draft?.deferred ?: true, 14_400uL,
+            CircleLinkState.ACTIVE, now(),
+        )
+        circlePeopleList = circlePeopleList + person
+        circleInviteLast = CircleInviteProgress.Active(person.linkId)
+        return person
+    }
+
+    override suspend fun circleInviteCancel(id: String) {
+        circleInviteCancels += id
+        circleInviteLast = CircleInviteProgress.Cancelled
+    }
+
+    override suspend fun circleJoinOpen(link: String): CircleInviteView {
+        circleJoinLinks += link
+        if (!link.startsWith("reins-circle:")) throw CoreException.Invalid("This is not a Circle invitation.")
+        return circleJoinView ?: throw CoreException.NotFound()
+    }
+
+    override suspend fun circleJoinPoll(id: String): CircleInviteView = circleJoinView ?: throw CoreException.NotFound()
+
+    override suspend fun circleJoinAccept(id: String) {
+        circleJoinAccepts += id
+        circleJoinView = circleJoinView?.copy(stage = CircleJoinStage.ACCEPTED)
+    }
+
+    override suspend fun circleJoinDecline(id: String) {
+        circleJoinDeclines += id
+        circleJoinView = circleJoinView?.copy(stage = CircleJoinStage.DECLINED)
+    }
+
+    override suspend fun circlePeople(refresh: Boolean): List<CirclePerson> = circlePeopleList
+
+    override suspend fun circlePause(linkId: String, paused: Boolean) {
+        circlePauses += linkId to paused
+        circlePeopleList = circlePeopleList.map {
+            if (it.linkId == linkId) it.copy(state = if (paused) CircleLinkState.PAUSED else CircleLinkState.ACTIVE) else it
+        }
+    }
+
+    override suspend fun circleEnd(linkId: String) {
+        circleEnds += linkId
+        circlePeopleList = circlePeopleList.filterNot { it.linkId == linkId }
+    }
+
+    override suspend fun circleReviews(refresh: Boolean): List<CircleReviewView> {
+        circleReviewReads.incrementAndGet()
+        return circleReviewList
+    }
+
+    override suspend fun circleNotices(): List<CircleNoticeView> = circleNoticeList
+
+    override suspend fun circleAnswer(reviewId: String, approve: Boolean, note: String?) {
+        circleAnswerFailure?.let { throw it }
+        circleAnswers += Triple(reviewId, approve, note)
+        circleReviewList = circleReviewList.map {
+            if (it.id == reviewId) it.copy(state = if (approve) CircleReviewState.APPROVED else CircleReviewState.DENIED) else it
+        }
+    }
+
+    fun resetCircles() {
+        circlesOn = true
+        circlePeopleList = emptyList()
+        circleReviewList = emptyList()
+        circleNoticeList = emptyList()
+        circleAnswers.clear()
+        circleAnswerFailure = null
+        circleDrafts.clear()
+        circleInviteSteps.clear()
+        circleInviteLast = CircleInviteProgress.Waiting
+        circleInviteConfirms.clear()
+        circleInviteCancels.clear()
+        circleJoinLinks.clear()
+        circleJoinView = null
+        circleJoinAccepts.clear()
+        circleJoinDeclines.clear()
+        circlePauses.clear()
+        circleEnds.clear()
+        circleReviewReads.set(0)
+    }
+
     override suspend fun gmailStatus() = gmail
 
     override suspend fun grants() = grants
@@ -669,6 +852,10 @@ class FakeCore : ReinsCoreInterface {
         org = null
         orgsOffered = false
         pushTag = null
+        orgReviews = emptyList()
+        orgDecisions.clear()
+        orgDecideError = null
+        memberPolicies.clear()
         ssoBeginWorks.clear()
         enrollments.clear()
         postures.clear()
@@ -733,6 +920,28 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) {
         postures += posture
+    }
+
+    /** The org reviews waiting for this member (`orgReviews`); a Personal account (no [org]) has none. */
+    @Volatile var orgReviews: List<dev.reins.core.OrgReviewView> = emptyList()
+
+    /** `orgDecide` calls: (id, approve, at, signature). */
+    val orgDecisions = CopyOnWriteArrayList<List<Any>>()
+    @Volatile var orgDecideError: CoreException? = null
+    /** `orgSetMemberPolicy` calls: (body, version, at, signature). */
+    val memberPolicies = CopyOnWriteArrayList<List<Any>>()
+
+    override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = if (org == null) emptyList() else orgReviews
+
+    override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) {
+        orgDecideError?.let { throw it }
+        if (orgReviews.none { it.id == id }) throw CoreException.NotFound()
+        orgDecisions += listOf(id, approve, at, signature)
+        orgReviews = orgReviews.filterNot { it.id == id }
+    }
+
+    override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) {
+        memberPolicies += listOf(body, version, at, signature)
     }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {
@@ -1266,10 +1475,24 @@ class FakeCore : ReinsCoreInterface {
     val bypassCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
     /** `startOvernight` calls, like [bypassCalls]. */
     val overnightCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
-    /** The owner checks handed to `startOvernight` and `setOvernightWhenRisky`, refused or not. */
+    /** The owner checks handed to `startOvernight`, refused or not. */
     val overnightOwners = CopyOnWriteArrayList<dev.reins.core.OwnerCheck>()
-    @Volatile var whenRisky = dev.reins.core.OvernightRisky.WAIT
-    val whenRiskyCalls = CopyOnWriteArrayList<dev.reins.core.OvernightRisky>()
+    /** How long what Overnight parks waits past the morning, and the `setOvernightExpiry` calls. */
+    @Volatile var overnightExpiry: UInt = 12u
+    val expiryCalls = CopyOnWriteArrayList<UInt>()
+    /** What `overnightDigest` answers; reading it throws [digestFailure] instead when set. */
+    @Volatile var digest: dev.reins.core.OvernightDigest? = null
+    @Volatile var digestFailure: CoreException? = null
+    /** What `tasks` lists (live first, then those ended in the last day). */
+    @Volatile var tasks: List<dev.reins.core.TaskView> = emptyList()
+    /** `approveAll` calls: (connection, task). */
+    val approveAllCalls = CopyOnWriteArrayList<Pair<String, String?>>()
+    /** `startTask`, `endTask` and `approveTask` calls. */
+    val startedTasks = CopyOnWriteArrayList<dev.reins.core.TaskView>()
+    val endedTasks = CopyOnWriteArrayList<String>()
+    val approvedTasks = CopyOnWriteArrayList<Pair<String, dev.reins.core.TaskView>>()
+    /** The owner checks handed to `startTask` and `approveTask`. */
+    val taskOwners = CopyOnWriteArrayList<dev.reins.core.OwnerCheck>()
     @Volatile var stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
     /** What `thresholdReplay` answers; null: numbers that move with the thresholds. */
     @Volatile var replay: dev.reins.core.ThresholdReplay? = null
@@ -1302,11 +1525,15 @@ class FakeCore : ReinsCoreInterface {
         updateFailure = null
         updateCalls.clear()
         autoUpdateCalls.clear()
-        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls, overnightOwners).forEach { it.clear() }
-        whenRisky = dev.reins.core.OvernightRisky.WAIT
+        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, expiryCalls, overnightOwners, approveAllCalls, startedTasks, endedTasks, approvedTasks, taskOwners).forEach { it.clear() }
+        overnightExpiry = 12u
+        digest = null
+        digestFailure = null
+        tasks = emptyList()
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
         replay = null
         downloads.set(0)
+        resetDecisions()
     }
 
     private fun defaultProfile() = profiles.firstOrNull { it.isDefault } ?: profiles.first()
@@ -1337,7 +1564,7 @@ class FakeCore : ReinsCoreInterface {
             bypassSince = apGlobal.bypassSince.takeIf { (apGlobal.bypassUntil ?: 0) > now },
             overnightUntil = (apGlobal.overnightUntil ?: Long.MAX_VALUE).takeIf { apGlobal.overnighting(now) },
             overnightSince = apGlobal.overnightSince.takeIf { apGlobal.overnighting(now) },
-            overnightWhenRisky = whenRisky,
+            overnightExpiryHours = overnightExpiry,
             defaultProfileId = defaultProfile().id,
             wifiOnly = wifiOnly,
             autoUpdate = autoUpdate,
@@ -1403,13 +1630,48 @@ class FakeCore : ReinsCoreInterface {
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
     }
 
-    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) {
-        overnightOwners += owner
-        if (whenRisky == risky) return
-        val reason = if (risky == dev.reins.core.OvernightRisky.DENY) "Overnight: deny what is too risky" else "Overnight: wait for you when something is too risky"
-        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
-        whenRiskyCalls += risky
-        whenRisky = risky
+    override suspend fun setOvernightExpiry(hours: UInt) {
+        // As the core: 1 to 48 hours, and no owner check (it never loosens).
+        if (hours == 0u || hours > 48u) throw CoreException.Invalid("between 1 and 48 hours")
+        expiryCalls += hours
+        overnightExpiry = hours
+    }
+
+    override suspend fun overnightDigest(): dev.reins.core.OvernightDigest? {
+        digestFailure?.let { throw it }
+        return digest
+    }
+
+    /** As the core: only the batchable ones of that agent's task (or none); the rest stay. */
+    override suspend fun approveAll(connectionId: String, taskId: String?): UInt {
+        approveAllCalls += connectionId to taskId
+        val taken = pending.filter { it.connectionId == connectionId && it.taskId == taskId && it.batchable }
+        pending = pending - taken.toSet()
+        return taken.size.toUInt()
+    }
+
+    override suspend fun tasks(): List<dev.reins.core.TaskView> = tasks
+
+    override suspend fun startTask(draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck): dev.reins.core.TaskView {
+        taskOwners += owner
+        if (!owner.confirm("Start a task for ${draft.connectionLabel}")) throw CoreException.Invalid("the owner did not confirm")
+        val task = draft.copy(id = "task${startedTasks.size + 1}", startedBy = "you")
+        startedTasks += task
+        tasks = listOf(task) + tasks.map { if (it.connectionId == draft.connectionId && it.endedAt == null) it.copy(endedAt = now()) else it }
+        return task
+    }
+
+    override suspend fun endTask(id: String) {
+        endedTasks += id
+        tasks = tasks.map { if (it.id == id && it.endedAt == null) it.copy(endedAt = now()) else it }
+    }
+
+    override suspend fun approveTask(requestId: String, draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck) {
+        taskOwners += owner
+        if (!owner.confirm("Approve the task \"${draft.title}\"")) throw CoreException.Invalid("the owner did not confirm")
+        approvedTasks += requestId to draft
+        pending = pending.filterNot { it.id == requestId }
+        tasks = listOf(draft.copy(id = "task-$requestId")) + tasks
     }
 
     override suspend fun startBypass(connectionId: String?, minutes: UInt?) {
@@ -1513,6 +1775,117 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun correctDecision(activityId: Long, shouldHave: Verdict) {
         corrections += activityId to shouldHave
         activity = activity.map { e -> if (e.id == activityId) e.copy(autopilot = e.autopilot?.copy(correctable = false)) else e }
+    }
+
+    // ---- Decisions v2: Auto's setup, questions, Ask me next time --------------------------------------------------
+
+    /** The setup was finished: picking Auto sets the mode at once. Tests of the setup turn it off. */
+    @Volatile var autoSetupDone = true
+    @Volatile var matrixDecides = false
+    @Volatile var world: List<WorldItem> = emptyList()
+    /** Rows Mine, Friends, Work, Outside; cells L0..L3 (01 §4's defaults). */
+    @Volatile var matrix: List<List<CellChoice>> = defaultMatrix()
+    @Volatile var autoQuestionList: List<AutoQuestion> = emptyList()
+    /** `setWorldZone` calls that changed something: kind, key, zone. */
+    val worldZoneCalls = CopyOnWriteArrayList<Triple<FactChoice, String, ZoneChoice>>()
+    val matrixCellCalls = CopyOnWriteArrayList<Triple<ZoneChoice, UByte, CellChoice>>()
+    val finishSetupCalls = java.util.concurrent.atomic.AtomicInteger()
+    val answeredQuestions = CopyOnWriteArrayList<Pair<String, ZoneChoice>>()
+    val dismissedQuestions = CopyOnWriteArrayList<String>()
+    val askedNextTime = CopyOnWriteArrayList<String>()
+    /** Every owner check the setup and the questions asked with, refused or not (their reasons). */
+    val autoOwnerReasons = CopyOnWriteArrayList<String>()
+
+    fun resetDecisions() {
+        autoSetupDone = true
+        matrixDecides = false
+        world = emptyList()
+        matrix = defaultMatrix()
+        autoQuestionList = emptyList()
+        listOf(worldZoneCalls, matrixCellCalls, answeredQuestions, dismissedQuestions, askedNextTime, autoOwnerReasons).forEach { it.clear() }
+        finishSetupCalls.set(0)
+    }
+
+    private fun defaultMatrix(): List<List<CellChoice>> = listOf(
+        listOf(CellChoice.AUTO, CellChoice.AUTO, CellChoice.AUTO, CellChoice.ASK),
+        listOf(CellChoice.AUTO, CellChoice.ASK_FIRST, CellChoice.AUTO, CellChoice.ASK),
+        listOf(CellChoice.AUTO, CellChoice.ASK, CellChoice.ASK, CellChoice.ASK),
+        listOf(CellChoice.ASK, CellChoice.ASK, CellChoice.ASK, CellChoice.ASK),
+    )
+
+    private suspend fun ownerConfirms(owner: OwnerCheck, reason: String) {
+        autoOwnerReasons += reason
+        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
+    }
+
+    private fun zoneLabel(z: ZoneChoice) = z.name.lowercase().replaceFirstChar { it.uppercase() }
+
+    private fun strictness(c: CellChoice) = when (c) {
+        CellChoice.AUTO -> 0
+        CellChoice.ASK_FIRST -> 1
+        CellChoice.ASK -> 2
+    }
+
+    override suspend fun autoSetup(): AutoSetup {
+        val zones = listOf(ZoneChoice.MINE, ZoneChoice.FRIENDS, ZoneChoice.WORK, ZoneChoice.OUTSIDE)
+        val rows = zones.mapIndexed { i, z ->
+            val names = world.filter { it.zone == z }.sortedWith(compareByDescending<WorldItem> { it.count }.thenBy { it.label }).take(3).map { it.label }
+            MatrixRowView(z, matrix[i], names)
+        }
+        return AutoSetup(autoSetupDone, matrixDecides, world, rows, autoQuestionList.size.toUInt())
+    }
+
+    override suspend fun setWorldZone(kind: FactChoice, key: String, zone: ZoneChoice, owner: OwnerCheck) {
+        // As the core: toward Mine (looser than where it is; an unknown thing is Outside) asks the owner first.
+        val current = world.firstOrNull { it.kind == kind && it.key == key && it.confirmed }?.zone ?: ZoneChoice.OUTSIDE
+        if (zone.ordinal < current.ordinal) ownerConfirms(owner, "Treat $key as ${zoneLabel(zone)}")
+        worldZoneCalls += Triple(kind, key, zone)
+        world = if (world.any { it.kind == kind && it.key == key }) {
+            world.map { if (it.kind == kind && it.key == key) it.copy(zone = zone, confirmed = true) else it }
+        } else {
+            world + WorldItem(kind, key, key, if (kind == FactChoice.OWNER || kind == FactChoice.REPO) "github" else "email", zone, true, 0u)
+        }
+        autoQuestionList = autoQuestionList.filterNot { it.kind == kind && it.key == key }
+    }
+
+    override suspend fun setMatrixCell(zone: ZoneChoice, level: UByte, cell: CellChoice, owner: OwnerCheck) {
+        if (level > 3u) throw CoreException.Invalid("a level is 0 to 3")
+        val row = zone.ordinal
+        if (strictness(cell) < strictness(matrix[row][level.toInt()])) ownerConfirms(owner, "Let Auto do more in ${zoneLabel(zone)}")
+        matrixCellCalls += Triple(zone, level, cell)
+        matrix = matrix.mapIndexed { i, cells -> if (i == row) cells.mapIndexed { l, c -> if (l == level.toInt()) cell else c } else cells }
+    }
+
+    override suspend fun finishAutoSetup(owner: OwnerCheck) {
+        ownerConfirms(owner, "Turn on Auto")
+        finishSetupCalls.incrementAndGet()
+        world = world.map { it.copy(confirmed = true) }
+        autoSetupDone = true
+        setAutopilotMode(null, AutopilotMode.AUTO, null)
+    }
+
+    override suspend fun setMatrixDecides(on: Boolean, owner: OwnerCheck) {
+        if (on && !matrixDecides) ownerConfirms(owner, "Let the matrix decide")
+        matrixDecides = on
+    }
+
+    override suspend fun autoQuestions(): List<AutoQuestion> = autoQuestionList.sortedByDescending { it.at }
+
+    override suspend fun answerAutoQuestion(id: String, zone: ZoneChoice, owner: OwnerCheck) {
+        val q = autoQuestionList.firstOrNull { it.id == id } ?: throw CoreException.NotFound()
+        setWorldZone(q.kind, q.key, zone, owner)
+        answeredQuestions += id to zone
+        autoQuestionList = autoQuestionList.filterNot { it.id == id }
+    }
+
+    override suspend fun dismissAutoQuestion(id: String) {
+        if (autoQuestionList.none { it.id == id }) throw CoreException.NotFound()
+        dismissedQuestions += id
+        autoQuestionList = autoQuestionList.filterNot { it.id == id }
+    }
+
+    override suspend fun askMeNextTime(requestId: String) {
+        askedNextTime += requestId
     }
 
     override suspend fun modelStatus(): ModelStatus = model

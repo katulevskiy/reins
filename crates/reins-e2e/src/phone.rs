@@ -41,6 +41,8 @@ pub struct Notes {
     /// What Autopilot (or a bypass, or Lockdown) decided on its own.
     pub decided: Mutex<Vec<AutoDecisionView>>,
     pub events: Mutex<Vec<AutopilotEvent>>,
+    /// Circle events (reviews waiting, changes).
+    pub circle: Mutex<Vec<reins_core::CircleEvent>>,
 }
 
 impl Notifier for Notes {
@@ -56,6 +58,9 @@ impl Notifier for Notes {
 
     fn autopilot_changed(&self, event: AutopilotEvent) {
         self.events.lock().expect("notes").push(event);
+    }
+    fn circle_changed(&self, event: reins_core::CircleEvent) {
+        self.circle.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(event);
     }
 }
 
@@ -223,6 +228,17 @@ impl Phone {
                 .mount(&self.gmail)
                 .await;
         }
+    }
+
+    /// The sends that reached the fake Gmail.
+    pub async fn sent_emails(&self) -> Vec<wiremock::Request> {
+        self.gmail
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.url.path() == "/users/me/messages/send")
+            .collect()
     }
 
     pub async fn accept_sends(&self) {

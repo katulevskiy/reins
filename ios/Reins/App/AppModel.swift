@@ -140,6 +140,19 @@ final class AppModel {
     private(set) var mcpServers: [McpServerView] = []
     /// Autopilot's modes, bypasses and model; nil until first read.
     private(set) var autopilot: AutopilotSettings?
+    /// "Who is octo?": what Auto met and doesn't know yet, newest first. Shown with what waits, never notified.
+    private(set) var autoQuestions: [AutoQuestion] = []
+    /// Tasks: live ones, then those that ended in the last day (Activity's task chips). Never notified.
+    private(set) var tasks: [TaskView] = []
+    /// Auto's setup is open (`AutoSetupScreen`): picking Auto for every AI before it was done guides through it first.
+    var autoSetupOpen = false
+    /// Circles: other accounts' requests waiting for this phone, and those settled lately ("For others").
+    private(set) var circleReviews: [CircleReviewView] = []
+    /// Circles: what this account was told as a watcher (no buttons).
+    private(set) var circleNotices: [CircleNoticeView] = []
+    /// Bumped whenever the core says something in Circles changed (a person, an invitation): Settings › Circles reads
+    /// its list again.
+    private(set) var circleTick = 0
     private(set) var seenActivityId: Int64 = 0
     /// The server said another phone became the approval device.
     /// `-demoReplaced` (screenshots): the demo as if another phone had become the approval device.
@@ -384,6 +397,11 @@ final class AppModel {
         syncNotice = nil
         onboarding = false
         autopilot = nil
+        autoQuestions = []
+        tasks = []
+        autoSetupOpen = false
+        circleReviews = []
+        circleNotices = []
         sheet = nil
         paths = [:]
         section = .activity
@@ -585,6 +603,10 @@ final class AppModel {
             async let servicesRead = core.services()
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
+            async let questionsRead = core.autoQuestions()
+            async let tasksRead = core.tasks()
+            async let reviewsRead = core.circleReviews(refresh: false)
+            async let noticesRead = core.circleNotices()
             let newPending = AskGate.waiting(try await pendingRead, decided: autoDecided)
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
@@ -592,6 +614,12 @@ final class AppModel {
             let newServices = try await servicesRead.filter { $0.service != "sms" }
             let newServers = try await serversRead
             let newStarting = try? await startingRead
+            // Questions are extra: a list that cannot be read keeps the last one.
+            let newQuestions = try? await questionsRead
+            let newTasks = try? await tasksRead
+            // Circles too: an account without them (or a read that fails) keeps the last lists.
+            let newReviews = try? await reviewsRead
+            let newNotices = try? await noticesRead
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 // Read before a change shown ahead of the core: read once more instead.
@@ -603,6 +631,10 @@ final class AppModel {
             if activity != newActivity { activity = newActivity }
             if grants != newGrants { grants = newGrants }
             if startingPolicy != newStarting { startingPolicy = newStarting }
+            if let newQuestions, autoQuestions != newQuestions { autoQuestions = newQuestions }
+            if let newTasks, tasks != newTasks { tasks = newTasks }
+            if let newReviews, circleReviews != newReviews { setCircleReviews(newReviews) }
+            if let newNotices, circleNotices != newNotices { circleNotices = newNotices }
             if accounts != newAccounts { accounts = newAccounts }
             if services != newServices { services = newServices }
             if mcpServers != newServers { setMcpServers(newServers) }
@@ -708,6 +740,111 @@ final class AppModel {
     /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
     /// what is too risky: the same check as a bypass's.
     var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
+
+    /// Reads the tasks again (kept as they were when they cannot be read).
+    func refreshTasks() async {
+        let epoch = accountEpoch
+        guard let read = try? await core.tasks(), epoch == accountEpoch else { return }
+        if read != tasks { tasks = read }
+    }
+
+    // MARK: Circles
+
+    /// Called with the reviews whenever they change (the notifications of those no longer waiting go).
+    @ObservationIgnored var onCircleReviewsChanged: (([CircleReviewView]) -> Void)?
+
+    private func setCircleReviews(_ list: [CircleReviewView]) {
+        circleReviews = list
+        onCircleReviewsChanged?(list)
+    }
+
+    /// Reads "For others" again: `fromServer` asks the server for news first.
+    func refreshCircles(fromServer: Bool = false) async {
+        let epoch = accountEpoch
+        let core = self.core
+        async let reviewsRead = core.circleReviews(refresh: fromServer)
+        async let noticesRead = core.circleNotices()
+        let reviews = try? await reviewsRead
+        let notices = try? await noticesRead
+        guard epoch == accountEpoch else { return }
+        if let reviews, reviews != circleReviews { setCircleReviews(reviews) }
+        if let notices, notices != circleNotices { circleNotices = notices }
+    }
+
+    /// Something in Circles changed (the core said so): the lists, the owner's cards and Settings › Circles read again,
+    /// quietly.
+    func circlesChanged() async {
+        circleTick &+= 1
+        await refreshCircles()
+        await refreshPending()
+    }
+
+    /// Answers another account's request. Approving asks for Face ID, Touch ID or the passcode first (the helper's
+    /// decision is signed by this phone); denying is one tap, with an optional note. nil when it went through, else what
+    /// to say.
+    func answerCircle(_ review: CircleReviewView, approve: Bool, note: String? = nil) async -> String? {
+        if approve {
+            let who = CircleLogic.name(review.person)
+            switch await OwnerPrompt.confirm(self, reason: "Approve for \(who): \(untrusted(review.title))") {
+            case .confirmed: break
+            case .cancelled: return nil
+            case .unavailable:
+                feedback.play(.error)
+                return OwnerPrompt.unavailableMessage
+            }
+        }
+        let epoch = accountEpoch
+        do {
+            try await core.circleAnswer(reviewId: review.id, approve: approve, note: approve ? nil : CircleLogic.note(note))
+            guard epoch == accountEpoch else { return nil }
+            feedback.play(approve ? .approved : .denied)
+            await refreshCircles()
+            return nil
+        } catch {
+            guard epoch == accountEpoch else { return nil }
+            feedback.play(.error)
+            await refreshCircles()
+            return decisionErrorMessage(error)
+        }
+    }
+
+    // MARK: Auto's questions
+
+    /// Reads Auto's open questions again (kept as they were when they cannot be read).
+    func refreshAutoQuestions() async {
+        let epoch = accountEpoch
+        guard let read = try? await core.autoQuestions(), epoch == accountEpoch else { return }
+        if read != autoQuestions { autoQuestions = read }
+    }
+
+    /// Answers "Who is octo?" with a zone: anything but Outside is the owner's to say (the core asks for the check).
+    /// nil when it went through, else what to say.
+    func answerAutoQuestion(_ id: String, zone: ZoneChoice) async -> String? {
+        do {
+            try await core.answerAutoQuestion(id: id, zone: zone, owner: ownerCheck)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.selection)
+        autoQuestions.removeAll { $0.id == id }
+        await refreshAutoQuestions()
+        return nil
+    }
+
+    /// Puts a question away unanswered: the thing stays Outside and is not asked about again. Nothing to confirm.
+    func dismissAutoQuestion(_ id: String) async -> String? {
+        do {
+            try await core.dismissAutoQuestion(id: id)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.close)
+        autoQuestions.removeAll { $0.id == id }
+        await refreshAutoQuestions()
+        return nil
+    }
 
     /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
     /// a bypass of the same scope too, which only ever makes Autopilot stricter.
@@ -829,6 +966,22 @@ final class AppModel {
             ))
         }
         dropPending(id)
+        Task {
+            do {
+                try await work()
+            } catch {
+                feedback.play(.error)
+                notice = "\(failed): \(decisionErrorMessage(error))"
+            }
+            await refreshPending()
+        }
+    }
+
+    /// Later or Why?: the request is not answered but becomes (or stays) a ticket under "Waiting for you". `work` runs
+    /// without anyone waiting for it; with `leaveStack` the card leaves the stack now and the next read brings it back
+    /// as a ticket. If it fails, a few words say why and the next read shows the request as it is.
+    func ticketInBackground(_ id: String, failed: String, leaveStack: Bool, work: @escaping @Sendable () async throws -> Void) {
+        if leaveStack { dropPending(id) }
         Task {
             do {
                 try await work()
@@ -1217,6 +1370,9 @@ final class AppModel {
             open(.connections)
         case .home:
             home()
+        case .orgReviews:
+            // Only a work profile has them; the Personal one opens Settings.
+            if WorkProfiles.active.managed { show(.orgReviews, in: .settings) } else { open(.settings) }
         case .pair:
             break
         }

@@ -126,6 +126,48 @@ pub struct PendingItem {
     /// What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
     #[uniffi(default)]
     pub label: Option<RequestLabel>,
+    /// The request became a ticket (the agent does not wait for it): its window, and a "Why?" and the agent's answer.
+    #[uniffi(default)]
+    pub ticket: Option<TicketView>,
+    /// An Instant request the reviewer can move to later (`decide_later`).
+    #[uniffi(default)]
+    pub can_defer: bool,
+    /// Parked by Overnight for the morning (Decisions v2, 01 §11): no notification and no reminder before then; the
+    /// morning digest (`overnight_digest`) covers it.
+    #[uniffi(default)]
+    pub parked_until: Option<i64>,
+    /// The task its agent was working on when it was parked or asked (the digest and the inbox group by it).
+    #[uniffi(default)]
+    pub task_id: Option<String>,
+    #[uniffi(default)]
+    pub task_title: Option<String>,
+    /// "Approve all" may cover it: what the matrix asked is soft and below L3 (03 §5.2: batch never crosses L3).
+    #[uniffi(default)]
+    pub batchable: bool,
+    /// An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
+    #[uniffi(default)]
+    pub task_proposal: Option<crate::autopilot::TaskView>,
+    /// Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
+    #[uniffi(default)]
+    pub circle: Option<crate::circles::CircleProgress>,
+}
+
+/// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct TicketView {
+    /// `rt_…`, as the agent knows it.
+    pub ticket: String,
+    /// "deferred", "needs_info", "escalated", "stale", "approved", ...
+    pub state: String,
+    /// The window: from when it became a ticket to its deadline (Unix seconds). Reminders fall at 50% and 90% of it.
+    pub deferred_at: i64,
+    pub deadline: i64,
+    /// The reviewer's "Why?", while it waits for the agent.
+    pub question: Option<String>,
+    /// The agent's answer to it: the agent's words, shown as the agent's, never a fact.
+    pub agent_reply: Option<String>,
+    /// What changed since it was approved ("main moved from 1a2b3c4 to 5d6e7f8").
+    pub stale: Option<String>,
 }
 
 /// What a request is, the same on every screen: the thing it touches (the tile), what it does to it (the badge on the

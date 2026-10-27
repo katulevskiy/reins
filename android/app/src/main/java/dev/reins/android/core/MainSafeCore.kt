@@ -198,6 +198,47 @@ class MainSafeCore(
 
     override suspend fun deny(requestId: String) = io { deny(requestId) }
 
+    override suspend fun decideLater(requestId: String) = io { decideLater(requestId) }
+
+    override suspend fun denyWithNote(requestId: String, note: String?) = io { denyWithNote(requestId, note) }
+
+    override suspend fun askWhy(requestId: String, question: String) = io { askWhy(requestId, question) }
+
+    // ---- Circles (Decisions v2, 04): people who share control of an account ---------------------------------------
+
+    override suspend fun circlesAvailable(): Boolean = io { circlesAvailable() }
+
+    override suspend fun circleInviteCreate(draft: dev.reins.core.CircleDraft): dev.reins.core.CircleInviteStart =
+        io { circleInviteCreate(draft) }
+
+    override suspend fun circleInvitePoll(id: String): dev.reins.core.CircleInviteProgress = io { circleInvitePoll(id) }
+
+    override suspend fun circleInviteConfirm(id: String): dev.reins.core.CirclePerson = io { circleInviteConfirm(id) }
+
+    override suspend fun circleInviteCancel(id: String) = io { circleInviteCancel(id) }
+
+    override suspend fun circleJoinOpen(link: String): dev.reins.core.CircleInviteView = io { circleJoinOpen(link) }
+
+    override suspend fun circleJoinPoll(id: String): dev.reins.core.CircleInviteView = io { circleJoinPoll(id) }
+
+    override suspend fun circleJoinAccept(id: String) = io { circleJoinAccept(id) }
+
+    override suspend fun circleJoinDecline(id: String) = io { circleJoinDecline(id) }
+
+    override suspend fun circlePeople(refresh: Boolean): List<dev.reins.core.CirclePerson> = io { circlePeople(refresh) }
+
+    override suspend fun circlePause(linkId: String, paused: Boolean) = io { circlePause(linkId, paused) }
+
+    override suspend fun circleEnd(linkId: String) = io { circleEnd(linkId) }
+
+    override suspend fun circleReviews(refresh: Boolean): List<dev.reins.core.CircleReviewView> = io { circleReviews(refresh) }
+
+    override suspend fun circleNotices(): List<dev.reins.core.CircleNoticeView> = io { circleNotices() }
+
+    override suspend fun circleAnswer(reviewId: String, approve: Boolean, note: String?) = io { circleAnswer(reviewId, approve, note) }
+
+    override suspend fun signingKeyFingerprint(): String = io { signingKeyFingerprint() }
+
     override suspend fun gmailStatus(): GmailStatus = io { gmailStatus() }
 
     override suspend fun grants(): List<GrantView> = io { grants() }
@@ -224,6 +265,10 @@ class MainSafeCore(
     override suspend fun orgChallenge(): String = io { orgChallenge() }
     override suspend fun orgEnroll(challenge: String, input: dev.reins.core.EnrollInput) = io { orgEnroll(challenge, input) }
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) = io { orgReportPosture(posture) }
+    override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = io { orgReviews() }
+    override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) = io { orgDecide(id, approve, at, signature) }
+    override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) =
+        io { orgSetMemberPolicy(body, version, at, signature) }
     override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }
 
     override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =
@@ -428,8 +473,21 @@ class MainSafeCore(
     override suspend fun startOvernight(connectionId: String?, minutes: UInt?, owner: dev.reins.core.OwnerCheck) =
         io { startOvernight(connectionId, minutes, owner) }
 
-    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) =
-        io { setOvernightWhenRisky(risky, owner) }
+    override suspend fun setOvernightExpiry(hours: UInt) = io { setOvernightExpiry(hours) }
+
+    override suspend fun overnightDigest(): dev.reins.core.OvernightDigest? = io { overnightDigest() }
+
+    override suspend fun approveAll(connectionId: String, taskId: String?): UInt = io { approveAll(connectionId, taskId) }
+
+    override suspend fun tasks(): List<dev.reins.core.TaskView> = io { tasks() }
+
+    override suspend fun startTask(draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck): dev.reins.core.TaskView =
+        io { startTask(draft, owner) }
+
+    override suspend fun endTask(id: String) = io { endTask(id) }
+
+    override suspend fun approveTask(requestId: String, draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck) =
+        io { approveTask(requestId, draft, owner) }
 
     override suspend fun autopilotStats(days: UInt): dev.reins.core.AutopilotStats = io { autopilotStats(days) }
 
@@ -461,6 +519,29 @@ class MainSafeCore(
     override suspend fun autopilotSuggestion(requestId: String): SuggestionView? = io { autopilotSuggestion(requestId) }
 
     override suspend fun correctDecision(activityId: Long, shouldHave: Verdict) = io { correctDecision(activityId, shouldHave) }
+
+    // ---- Decisions v2: Auto's setup, questions, Ask me next time --------------------------------------------------
+
+    override suspend fun autoSetup(): dev.reins.core.AutoSetup = io { autoSetup() }
+
+    override suspend fun setWorldZone(kind: dev.reins.core.FactChoice, key: String, zone: dev.reins.core.ZoneChoice, owner: OwnerCheck) =
+        io { setWorldZone(kind, key, zone, owner) }
+
+    override suspend fun setMatrixCell(zone: dev.reins.core.ZoneChoice, level: UByte, cell: dev.reins.core.CellChoice, owner: OwnerCheck) =
+        io { setMatrixCell(zone, level, cell, owner) }
+
+    override suspend fun finishAutoSetup(owner: OwnerCheck) = io { finishAutoSetup(owner) }
+
+    override suspend fun setMatrixDecides(on: Boolean, owner: OwnerCheck) = io { setMatrixDecides(on, owner) }
+
+    override suspend fun autoQuestions(): List<dev.reins.core.AutoQuestion> = io { autoQuestions() }
+
+    override suspend fun answerAutoQuestion(id: String, zone: dev.reins.core.ZoneChoice, owner: OwnerCheck) =
+        io { answerAutoQuestion(id, zone, owner) }
+
+    override suspend fun dismissAutoQuestion(id: String) = io { dismissAutoQuestion(id) }
+
+    override suspend fun askMeNextTime(requestId: String) = io { askMeNextTime(requestId) }
 
     override suspend fun modelStatus(): ModelStatus = io { modelStatus() }
 

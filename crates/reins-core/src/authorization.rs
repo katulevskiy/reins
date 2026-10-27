@@ -25,6 +25,9 @@ use crate::{
 pub(crate) enum AuthorizationSource {
     Automatic,
     OwnerReview,
+    /// An agent collects a ticket the owner approved earlier on this phone: the owner's recorded review, limited to
+    /// exactly what the owner approved (never a new tap).
+    TicketCollect,
 }
 
 /// A local normalization result, deliberately not serializable and not an account-access or execution proof.
@@ -428,7 +431,7 @@ pub(crate) fn verify_decision(
         DecisionOutcome::Permit if decision.authorization_path.is_empty() => Ok(()),
         DecisionOutcome::Review
             if review_adapter_request(call)
-                && source == AuthorizationSource::OwnerReview
+                && matches!(source, AuthorizationSource::OwnerReview | AuthorizationSource::TicketCollect)
                 && decision.required_reviews.iter().all(|r| {
                     r.role_id == "owner" && r.quorum == 1 && !r.exclude_requester && r.distinct_humans_group.is_none()
                 }) =>

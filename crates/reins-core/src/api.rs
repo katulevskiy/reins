@@ -12,8 +12,13 @@ use reins_proto::oplog::Restriction;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
-    AutopilotMode, AutopilotSettings, AutopilotStats, DownloadProgress, ModelRuntime, ModelStatus, ModelUpdateOutcome,
-    OvernightRisky, Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
+    AutoQuestion, AutoSetup, AutopilotMode, AutopilotSettings, AutopilotStats, CellChoice, DownloadProgress,
+    FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightDigest, Preset, ProfileView, SuggestionView,
+    TaskView, ThresholdReplay, Verdict, ZoneChoice,
+};
+use crate::circles::{
+    CircleDraft, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleNoticeView, CirclePerson,
+    CircleReviewView,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -240,6 +245,55 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.org_report_posture(posture).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+    /// Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+    pub async fn org_reviews(&self) -> Result<Vec<crate::org::OrgReviewView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_reviews().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+    pub async fn org_decide(&self, id: String, approve: bool, at: i64, signature: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_decide(&id, approve, at, signature).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+    /// `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+    /// app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+    pub async fn org_set_member_policy(
+        &self,
+        body: String,
+        version: u64,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.org_set_member_policy(body, version, at, signature).await }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1067,6 +1121,247 @@ impl ReinsCore {
         .await
     }
 
+    /// Later: an Instant request becomes a ticket (the agent is told at once and carries on); it waits under
+    /// "Waiting for you" until its deadline.
+    pub async fn decide_later(&self, request_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.decide_later(&request_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Circles are possible here: this account has phone roles and this phone is its approval phone.
+    pub async fn circles_available(&self) -> Result<bool, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { Ok(engine.circle_me(&*engine.session()?).await.is_ok()) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Starts an invitation (Settings › Circles › Add): returns the link or QR code the other person opens.
+    pub async fn circle_invite_create(&self, draft: CircleDraft) -> Result<CircleInviteStart, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_create(draft)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where an invitation stands; once someone answered, the six digits both phones show.
+    pub async fn circle_invite_poll(&self, id: String) -> Result<CircleInviteProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_poll(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Confirms an accepted invitation (after comparing the code; the app asks for the hold and biometric first).
+    pub async fn circle_invite_confirm(&self, id: String) -> Result<CirclePerson, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_confirm(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Withdraws an invitation.
+    pub async fn circle_invite_cancel(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_invite_cancel(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Opens an invitation link (Settings › Circles › Join) and answers it.
+    pub async fn circle_join_open(&self, link: String) -> Result<CircleInviteView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_open(&link)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where an invitation this phone answered stands; the terms and the code once the inviter's phone sent them.
+    pub async fn circle_join_poll(&self, id: String) -> Result<CircleInviteView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_poll(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Accepts an invitation (after comparing the code).
+    pub async fn circle_join_accept(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_accept(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Declines an invitation.
+    pub async fn circle_join_decline(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_join_decline(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The arrangements this account is in, either side (`refresh`: ask the server first).
+    pub async fn circle_people(&self, refresh: bool) -> Result<Vec<CirclePerson>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_people(refresh)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Pauses or resumes an arrangement this account made (nothing goes to the helper meanwhile).
+    pub async fn circle_pause(&self, link_id: String, paused: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_pause(&link_id, paused)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Ends an arrangement (either side; for a helper, leaving).
+    pub async fn circle_end(&self, link_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_end(&link_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Requests of other accounts waiting for this one, and those settled lately (For others). `refresh`: ask the server first.
+    pub async fn circle_reviews(&self, refresh: bool) -> Result<Vec<CircleReviewView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine
+                .run_account(async {
+                    if refresh {
+                        engine.circles_sync(&*engine.session()?, true).await?;
+                    }
+                    engine.circle_reviews()
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// What watchers (or helpers) were told lately; no buttons.
+    pub async fn circle_notices(&self) -> Result<Vec<CircleNoticeView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.circle_notices() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers another account's request (this phone must be the approval phone).
+    pub async fn circle_answer(&self, review_id: String, approve: bool, note: Option<String>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.circle_answer(&review_id, approve, note)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The twelve digits naming this phone's signing key ("4821 9930 1274"): what agents and the desktop app pin to
+    /// check the events and webhooks this phone signs. Shown under a connection's More.
+    pub async fn signing_key_fingerprint(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.signing_key_fingerprint() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The user refused, with an optional note the agent receives ("Use the staging bucket").
+    pub async fn deny_with_note(&self, request_id: String, note: Option<String>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.deny_with_note(&request_id, note).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Why?": asks the agent; the request waits as a ticket until it answers (shown as the agent's words).
+    pub async fn ask_why(&self, request_id: String, question: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.ask_why(&request_id, &question).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
     /// all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
     pub async fn approve_quick(&self, request_id: String) -> Result<(), CoreError> {
@@ -1889,6 +2184,15 @@ impl ReinsCore {
                     if brake {
                         engine.brake_out(restriction).await?;
                     }
+                    if mode == Some(AutopilotMode::Bypass) {
+                        // Watchers hear it (04 §6.3), quietly.
+                        let text = match minutes {
+                            Some(m) if m < 120 => format!("Bypass on for {m} min"),
+                            Some(m) => format!("Bypass on for {} h", m / 60),
+                            None => "Bypass on".to_owned(),
+                        };
+                        engine.circle_bypass_on(&text).await;
+                    }
                     Ok(())
                 })
                 .await;
@@ -1916,11 +2220,11 @@ impl ReinsCore {
 
     /// Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
     /// minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
-    /// `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
-    /// of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
-    /// held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
-    /// its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
-    /// rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
+    /// `i64::MAX`). It is Auto while the owner is away (Decisions v2, 01 §11): what Auto would ask is parked for the
+    /// morning (a ticket; the agent carries on), Work and Outside people always wait, the owner's own L1 work runs, and
+    /// nothing is ever denied but by an explicit rule; what already waits is judged too. Its end is the morning of the
+    /// digest (`overnight_digest`); then it returns to the mode it interrupted; stop it earlier with
+    /// `set_autopilot_mode`. Until Auto's setup is done it decides as before, minus any deny. Every start, restart or change of its length asks `owner` first (the core asks
     /// it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
     pub async fn start_overnight(
         &self,
@@ -1942,11 +2246,98 @@ impl ReinsCore {
         .await
     }
 
-    /// What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
-    /// A change either way asks `owner` first.
-    pub async fn set_overnight_when_risky(
+    /// How long what Overnight parks waits past the morning before it expires, not approved (1 to 48 hours).
+    pub async fn set_overnight_expiry(&self, hours: u32) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_overnight_expiry(hours) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The morning digest of what Overnight parked and still waits, grouped by agent and task (`None`: nothing waits).
+    /// The app shows it as one notification at `at`, and on Activity when opened.
+    pub async fn overnight_digest(&self) -> Result<Option<OvernightDigest>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.overnight_digest() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Approve all" for one agent's parked requests under one task (`task_id` = `None`: under none). Only what is
+    /// soft and below L3 is approved; the rest stays for the owner one by one. Returns how many were approved.
+    pub async fn approve_all(&self, connection_id: String, task_id: Option<String>) -> Result<u32, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.approve_all(&connection_id, task_id.as_deref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Live tasks, then those that ended in the last day (with what ran under them).
+    pub async fn tasks(&self) -> Result<Vec<TaskView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.tasks() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The owner starts a task for one AI (`draft.connection_id`), from Activity or with Overnight
+    /// (`draft.started_by` = "overnight"); its length is `ends_at - started_at`. Asks `owner` first: a task loosens.
+    pub async fn start_task(&self, draft: TaskView, owner: Arc<dyn OwnerCheck>) -> Result<TaskView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.start_task(draft, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Stop: ends a task now. It only takes away, so nothing is asked.
+    pub async fn end_task(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.end_task(&id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Approves an agent's task proposal (`request_id`) as the owner narrowed it (`draft`: every list a subset, the
+    /// ceiling, length and budget no higher). Asks `owner` first: a task loosens.
+    pub async fn approve_task(
         &self,
-        risky: OvernightRisky,
+        request_id: String,
+        draft: TaskView,
         owner: Arc<dyn OwnerCheck>,
     ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
@@ -1956,7 +2347,7 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result =
-                engine.run_account(async { engine.set_overnight_when_risky(risky, owner.as_ref()).await }).await;
+                engine.run_account(async { engine.approve_task(&request_id, draft, owner.as_ref()).await }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1970,6 +2361,151 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_stats(days) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Auto's setup (Decisions v2): the owner's world (facts and proposals) and the matrix with real names.
+    pub async fn auto_setup(&self) -> Result<AutoSetup, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.auto_setup() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets the zone of one thing in the owner's world. Toward Mine asks `owner` first; toward Outside needs nothing.
+    pub async fn set_world_zone(
+        &self,
+        kind: FactChoice,
+        key: String,
+        zone: ZoneChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_world_zone(kind, &key, zone, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets one matrix cell (`level` 0 to 3). Looser asks `owner` first.
+    pub async fn set_matrix_cell(
+        &self,
+        zone: ZoneChoice,
+        level: u8,
+        cell: CellChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_matrix_cell(zone, level, cell, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Finishes Auto's setup and turns Auto on, after `owner` confirms.
+    pub async fn finish_auto_setup(&self, owner: Arc<dyn OwnerCheck>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.finish_auto_setup(owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Lets the matrix decide (asks `owner`), or returns it to shadow.
+    pub async fn set_matrix_decides(&self, on: bool, owner: Arc<dyn OwnerCheck>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_matrix_decides(on, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The open "Auto needs information" questions, newest first. They are listed, never notified.
+    pub async fn auto_questions(&self) -> Result<Vec<AutoQuestion>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.auto_questions() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers a question with a zone (anything but Outside asks `owner` first).
+    pub async fn answer_auto_question(
+        &self,
+        id: String,
+        zone: ZoneChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.answer_auto_question(&id, zone, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Dismisses a question: the thing stays Outside and isn't asked about again.
+    pub async fn dismiss_auto_question(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.dismiss_auto_question(&id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Ask me next time" on something Auto did: an exception for that kind of thing, and a 24-hour pause.
+    pub async fn ask_me_next_time(&self, request_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.ask_me_next_time(&request_id) }).await;
             runtime.finish(&engine, result)
         })
         .await

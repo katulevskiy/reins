@@ -253,7 +253,8 @@ impl Daemon {
         let run_listener = crate::run_socket::bind(paths)?;
         let counts = Arc::new(crate::stats::Stats::default());
         let proxy = Proxy::new(&config, Arc::clone(&authorizer))?
-            .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts));
+            .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts))
+            .with_tickets(paths.clone());
         let phone = Arc::new(crate::phone::PhoneLink::new(
             config.mode,
             paths.clone(),
@@ -266,8 +267,10 @@ impl Daemon {
         let revoked = crate::leases::poll_revocations(leases, paths.clone(), Arc::clone(&identity));
         // The Reins trash is pruned here, never inside an agent's netted command.
         let nets = crate::nets::prune_loop(paths.clone());
-        let revocations = Box::pin(async move {
-            tokio::join!(revoked, nets);
+        // Collects what the reviewer decided later: passes for parked commands, and parked pushes, pushed.
+        let tickets = crate::tickets::refresher(paths.clone());
+        let revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
+            tokio::join!(revoked, nets, tickets);
         });
         let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
         let overview = {

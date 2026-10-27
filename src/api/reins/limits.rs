@@ -476,6 +476,13 @@ pub static ROSTER_CHANGES: LazyLock<RateLimit<String>> = LazyLock::new(|| {
     )
 });
 
+/// Circle invitations an account creates (key: user id): one per 6 minutes, 10 at once.
+pub static CIRCLE_INVITES: LazyLock<RateLimit<String>> = LazyLock::new(|| RateLimit::with_period(360, 10));
+
+/// Circle invitation links opened from one address: one per 3 minutes, 20 at once (a link's secret has 256 bits; this
+/// only keeps probing cheap to refuse).
+pub static CIRCLE_OPENS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(180, 20));
+
 /// Housekeeping: drops rate-limit state of keys that are back at a full budget.
 pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
@@ -493,6 +500,8 @@ pub fn retain_recent() {
     HANDOVER_REQUESTS.retain_recent();
     PRIMARY_ALERTS.retain_recent();
     JOIN_CREATIONS.retain_recent();
+    CIRCLE_INVITES.retain_recent();
+    CIRCLE_OPENS.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Reins is enabled.

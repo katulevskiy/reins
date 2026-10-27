@@ -1,0 +1,12 @@
+DROP TABLE reins_org_checkpoints;
+DROP TABLE reins_org_leases;
+DROP TABLE reins_org_executors;
+DROP TABLE reins_org_approvals;
+DROP TABLE reins_org_bodies;
+DROP TABLE reins_org_requests;
+DROP TABLE reins_org_member_policies;
+DROP TABLE reins_org_policies;
+DROP TABLE reins_org_keys;
+ALTER TABLE reins_org_devices DROP COLUMN attestation_detail;
+ALTER TABLE reins_org_devices DROP COLUMN attestation_state;
+ALTER TABLE reins_orgs DROP COLUMN body_retention_days;

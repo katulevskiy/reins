@@ -130,7 +130,7 @@ final class AutopilotFlowTests: XCTestCase {
 
     func testTheOptimisticBypassMatchesTheCoresRules() {
         var s = AutopilotSettings(
-            mode: .lockdown, baseMode: .lockdown, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
+            mode: .lockdown, baseMode: .lockdown, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
             model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
             connections: []
         )
@@ -247,23 +247,27 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(owner.asked.filter { $0.hasPrefix("Start Overnight") }.count, 1, "Overnight started once, by the owner")
     }
 
-    func testWhatOvernightDoesWithWhatIsTooRiskyIsASetting() async throws {
+    func testHowLongOvernightsParksWaitIsASettingWithoutTheOwnersCheck() async throws {
         await start()
-        XCTAssertEqual(model.autopilot?.overnightWhenRisky, .wait, "it waits for the user by default")
-        await ap.setOvernightWhenRisky(.deny)
-        XCTAssertEqual(model.autopilot?.overnightWhenRisky, .deny)
+        XCTAssertEqual(model.autopilot?.overnightExpiryHours, 12, "12 hours after the morning by default")
+        await ap.setOvernightExpiry(24)
+        XCTAssertEqual(model.autopilot?.overnightExpiryHours, 24)
         let read = try await core.autopilotSettings()
-        XCTAssertEqual(read.overnightWhenRisky, .deny)
-        XCTAssertEqual(owner.asked, ["Overnight: deny what is too risky"], "a change either way is the owner's")
-        owner.answer = false
-        await ap.setOvernightWhenRisky(.wait)
-        XCTAssertEqual(model.autopilot?.overnightWhenRisky, .deny, "refused: nothing changes")
-        XCTAssertEqual(owner.asked.last, "Overnight: wait for you when something is too risky")
+        XCTAssertEqual(read.overnightExpiryHours, 24)
+        XCTAssertTrue(owner.asked.isEmpty, "an expired request is not approved: no owner check")
+        await ap.setOvernightExpiry(6)
+        XCTAssertEqual(model.autopilot?.overnightExpiryHours, 6)
+        // Outside 1 to 48 hours the core refuses, and what it holds shows again.
+        await ap.setOvernightExpiry(72)
+        XCTAssertEqual(model.autopilot?.overnightExpiryHours, 6, "refused: nothing changes")
+        XCTAssertNotNil(ap.error)
+        XCTAssertEqual(ExpiryPicker.choices(12), [6, 12, 24])
+        XCTAssertEqual(ExpiryPicker.choices(36), [6, 12, 24, 36], "a value set elsewhere still shows")
     }
 
     func testTheOptimisticOvernightMatchesTheCoresRules() {
         var s = AutopilotSettings(
-            mode: .auto, baseMode: .auto, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
+            mode: .auto, baseMode: .auto, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
             model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
             connections: []
         )

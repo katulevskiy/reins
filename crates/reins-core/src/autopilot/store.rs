@@ -28,8 +28,8 @@ const CREATED_KEY: &str = "autopilot_created:";
 const OVERNIGHT_UNTIL_KEY: &str = "autopilot_overnight_until:";
 const OVERNIGHT_SINCE_KEY: &str = "autopilot_overnight_since:";
 const OVERNIGHT_RETURN_KEY: &str = "autopilot_overnight_return:";
-/// `meta` key: what Overnight does with what is too risky ("wait" | "deny").
-pub const OVERNIGHT_RISKY_KEY: &str = "autopilot.overnight_risky";
+/// `meta` key: how long a parked request waits past the morning, in hours.
+pub const OVERNIGHT_EXPIRY_KEY: &str = "autopilot.overnight_expiry_hours";
 
 /// A profile as stored (sealed).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -171,6 +171,49 @@ pub struct Suggestion {
     /// It was read to delete, move away or overwrite something (the connection's last hour counts these).
     #[serde(default)]
     pub deletes: bool,
+    /// What the matrix decided, or would have decided in shadow (Decisions v2).
+    #[serde(default)]
+    pub matrix: Option<MatrixNote>,
+    /// The task its agent was working on (Decisions v2, 01 §12).
+    #[serde(default)]
+    pub task: Option<String>,
+    /// Overnight parked it for the morning (01 §11).
+    #[serde(default)]
+    pub parked: Option<Parked>,
+}
+
+/// An Overnight park: a Deferred ticket until `deadline`, shown in the morning digest at `until`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Parked {
+    pub until: i64,
+    pub deadline: i64,
+    /// "Approve all" may cover it (not hard, not L3, nothing always asked).
+    pub batchable: bool,
+}
+
+/// What the matrix said of a request (`reins_policy::matrix::Evaluation`, as kept).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatrixNote {
+    pub outcome: reins_policy::matrix::Outcome,
+    pub zone: reins_policy::context::Zone,
+    pub level: reins_policy::effects::Level,
+    /// "Auto · Mine · Undoable".
+    pub line: String,
+    /// The policy snapshot's hash.
+    pub snapshot: String,
+    /// Recorded only: something else decided.
+    pub shadow: bool,
+    /// The kinds of effect it had, and the resource it acted on ("Ask me next time" writes its exception from them).
+    #[serde(default)]
+    pub kinds: Vec<reins_policy::effects::EffectKind>,
+    #[serde(default)]
+    pub resource: Option<String>,
+    /// An explicit rule of the owner (or a repo, an org) asks or denies it: that holds in every automatic mode.
+    #[serde(default)]
+    pub by_rule: bool,
+    /// The task whose envelope made it Auto (a use is spent before it runs).
+    #[serde(default)]
+    pub by_task: Option<String>,
 }
 
 /// A stored profile with its id.

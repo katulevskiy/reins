@@ -166,12 +166,28 @@ fun ActivityScreen(
     onConnectAi: () -> Unit = {},
     /** "Another phone approves": where to switch back. */
     onOpenSettings: () -> Unit = {},
+    /** "Auto needs information": an answer (the owner check first unless Outside), or a dismiss. */
+    onAnswerQuestion: (dev.reins.core.AutoQuestion, dev.reins.core.ZoneChoice) -> Unit = { _, _ -> },
+    onDismissQuestion: (dev.reins.core.AutoQuestion) -> Unit = {},
+    /** A task proposal approved as narrowed (the owner check first), or denied. */
+    onApproveTask: (PendingItem, dev.reins.core.TaskView) -> Unit = { _, _ -> },
+    onDenyTask: (PendingItem) -> Unit = {},
+    /** A live task's Stop. */
+    onStopTask: (dev.reins.core.TaskView) -> Unit = {},
+    /** "Approve all" for one agent's task under Waiting for you. */
+    onApproveAll: (AgentTickets) -> Unit = {},
+    /** For others (Circles): answers another account's request; a message when it did not go through. */
+    onAnswerCircle: suspend (dev.reins.core.CircleReviewView, Boolean, String?) -> String? = { _, _, _ -> null },
 ) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
     val state: AppState = container.state
     val entries by state.activity.collectAsStateWithLifecycle()
     val pending by state.pending.collectAsStateWithLifecycle()
+    val questions by state.autoQuestions.collectAsStateWithLifecycle()
+    val tasks by state.tasks.collectAsStateWithLifecycle()
+    val circleReviews by state.circleReviews.collectAsStateWithLifecycle()
+    val circleNotices by state.circleNotices.collectAsStateWithLifecycle()
     val loaded by state.loaded.collectAsStateWithLifecycle()
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
@@ -189,6 +205,9 @@ fun ActivityScreen(
     val searching = search.searching
     val details = rememberPendingDetails(container, pending, entries)
     val cards = remember(pending) { waitCards(pending) }
+    // Requests that became tickets, and what Overnight parked, wait in their own section above Today (Decisions v2).
+    val tickets = remember(pending) { pending.filter { it.inInbox() } }
+    val proposals = remember(pending) { taskProposals(pending) }
     val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
     val zone = ZoneId.systemDefault()
     val today = localDay(nowSeconds, zone)
@@ -254,7 +273,8 @@ fun ActivityScreen(
     }
     // The items above the river, in the order the list lays them out.
     val headerCount = (if (warnings.isEmpty()) 0 else 1) + 2 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
-        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1)
+        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1) + (if (searching || tickets.isEmpty()) 0 else 1) +
+        (if (searching || (circleReviews.isEmpty() && circleNotices.isEmpty())) 0 else 1)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
@@ -296,6 +316,7 @@ fun ActivityScreen(
             refreshing = true
             scope.launch {
                 container.refreshPending()
+                container.refreshCircles(fromServer = true)
                 refreshing = false
             }
         },
@@ -377,6 +398,15 @@ fun ActivityScreen(
                         else -> 70.dp
                     }
                     Column(Modifier.padding(top = open)) {
+                        // Tasks: the live ones with Stop, then what ended today; then what an agent proposes.
+                        if (tasks.isNotEmpty()) {
+                            TaskChips(tasks, nowSeconds, onStopTask)
+                            Spacer(Modifier.height(12.dp))
+                        }
+                        if (proposals.isNotEmpty()) {
+                            TaskProposalCards(proposals, onApproveTask, onDenyTask)
+                            Spacer(Modifier.height(12.dp))
+                        }
                         WaitingStack(
                             cards,
                             details,
@@ -385,15 +415,44 @@ fun ActivityScreen(
                                 answeredAt = System.currentTimeMillis()
                                 onAnswerBurst(burst, approve)
                             },
+                            onLater = { item -> container.keepWaitingInBackground(item.id, "Not moved") { container.core.decideLater(item.id) } },
                         )
-                        if (pending.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
+                        if (cards.isNotEmpty()) Spacer(Modifier.height(if (cards.size > 1) 30.dp else 12.dp))
+                        // After what waits: what Auto needs to know, in the same shell (never notified).
+                        if (questions.isNotEmpty()) {
+                            QuestionCards(questions, onAnswerQuestion, onDismissQuestion)
+                            Spacer(Modifier.height(12.dp))
+                        }
                         AnimatedVisibility(
-                            pending.isEmpty() && loaded && !filtersOpen,
+                            pending.isEmpty() && questions.isEmpty() && loaded && !filtersOpen,
                             enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
                             exit = fadeOut(Motion.reduced()),
                         ) {
                             Quiet(ais, computers, entries.isEmpty(), onConnectComputer, onConnectAi)
                         }
+                    }
+                }
+                if (tickets.isNotEmpty()) {
+                    item(key = "waiting") {
+                        WaitingInbox(
+                            tickets,
+                            details,
+                            onOpen = onOpenPending,
+                            onBatch = { burst, approve ->
+                                scope.launch {
+                                    answeredAt = System.currentTimeMillis()
+                                    onAnswerBurst(burst, approve)
+                                }
+                            },
+                            modifier = Modifier.padding(bottom = 10.dp),
+                            onApproveAll = onApproveAll,
+                        )
+                    }
+                }
+                // For others (Circles): other people's requests that wait for this phone, under what waits for you.
+                if (circleReviews.isNotEmpty() || circleNotices.isNotEmpty()) {
+                    item(key = "forOthers") {
+                        ForOthersSection(circleReviews, circleNotices, onAnswerCircle, Modifier.padding(bottom = 10.dp))
                     }
                 }
             }

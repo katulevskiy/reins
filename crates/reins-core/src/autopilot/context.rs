@@ -24,6 +24,8 @@ pub struct Decision {
     /// The origin a permission granted while deciding is stored with (a bypass marks its own, to take them back when
     /// it ends); `None`: the usual one.
     pub grant_origin: Option<String>,
+    /// A Circle decided (or helped decide) it: who, in words ("Approved by alex@example.com"), for the entry's note.
+    pub circle: Option<String>,
 }
 
 impl Decision {
@@ -33,7 +35,15 @@ impl Decision {
             note,
             seq: Mutex::new(None),
             grant_origin: None,
+            circle: None,
         }
+    }
+
+    /// Who in the owner's Circle decided, for the activity entry.
+    #[must_use]
+    pub fn by_circle(mut self, line: String) -> Self {
+        self.circle = Some(line);
+        self
     }
 
     /// Permissions granted while deciding are stored with `origin`.
@@ -71,6 +81,9 @@ pub fn stamp(info: &mut AuditInfo) {
             if info.autopilot.is_none() {
                 info.autopilot.clone_from(&d.note);
             }
+            if info.note.is_none() {
+                info.note.clone_from(&d.circle);
+            }
         })
         .ok();
 }
@@ -81,6 +94,8 @@ pub fn denied_detail() -> String {
     match by.as_str() {
         "autopilot" => "denied by Autopilot",
         "lockdown" => "denied by Lockdown",
+        "rule" => "denied by your rule",
+        "circle" => "denied in your Circle",
         _ => "denied by the user",
     }
     .to_owned()
@@ -103,7 +118,9 @@ pub fn told() -> Option<reins_proto::autopilot::Decided> {
     DECISION
         .try_with(|d| {
             let by = match d.decided_by.as_str() {
-                "autopilot" => DecidedBy::Autopilot,
+                // An explicit rule decided it on its own: the desktop app (which has no word for a rule) shows it as
+                // an automatic decision.
+                "autopilot" | "rule" => DecidedBy::Autopilot,
                 "overnight" => DecidedBy::Overnight,
                 "bypass" => DecidedBy::Bypass,
                 "lockdown" => DecidedBy::Lockdown,

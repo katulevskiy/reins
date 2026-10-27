@@ -12,6 +12,7 @@ pub mod github;
 pub mod gmail;
 pub mod payments;
 pub(crate) mod sealed;
+pub mod tasks;
 pub mod telegram;
 pub mod telegram_client;
 pub mod vault;

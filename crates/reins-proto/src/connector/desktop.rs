@@ -122,6 +122,12 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                     false,
                     "What a standing answer may cover (`command:git push --force`); default: ask.",
                 ),
+                str_p(
+                    "digest",
+                    64,
+                    false,
+                    "The command's digest: a deferred yes lets exactly this command through once.",
+                ),
                 CLIENT_KEY,
                 NONCE,
             ],

@@ -8,7 +8,6 @@ import dev.reins.core.AutopilotSettings
 import dev.reins.core.ClassView
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
-import dev.reins.core.OvernightRisky
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.RiskLevel
@@ -257,7 +256,7 @@ object AutopilotText {
             connections.map { Triple(it.connectionId, it.overnightUntil!!, it.overnightSince) },
             label,
             nowSeconds,
-            overnightStillAsks(settings.overnightWhenRisky),
+            OVERNIGHT_STILL_ASKS,
         )
     }
 
@@ -295,39 +294,25 @@ object AutopilotText {
     fun overnightTitle(who: String?): String = "$OVERNIGHT for ${who?.let(::untrusted) ?: "every AI"}?"
 
     /** What Overnight does, in one line under its title. */
-    fun overnightLine(risky: OvernightRisky): String = when (risky) {
-        OvernightRisky.WAIT -> "Decides like Auto. Too risky waits."
-        OvernightRisky.DENY -> "Decides like Auto. Too risky is denied."
-    }
+    const val OVERNIGHT_LINE = "Auto while you're away. Asks wait for the morning."
 
-    /** What still reaches the user while Overnight runs. */
-    fun overnightStillAsks(risky: OvernightRisky): String = when (risky) {
-        OvernightRisky.WAIT -> "Too risky or unclear waits for you."
-        OvernightRisky.DENY -> "Too risky is denied. Unclear waits for you."
-    }
+    /** What still reaches the user while Overnight runs: nothing until the morning; it never denies. */
+    const val OVERNIGHT_STILL_ASKS = "What would ask is parked for the morning."
 
-    /**
-     * Behind the (?) of the Overnight sheet. Without a model that rates risk ([ratesRisk] false) Overnight decides like
-     * Auto, and says so.
-     */
-    fun overnightHelp(ratesRisk: Boolean): String = if (ratesRisk) {
-        "$OVERNIGHT decides like Auto, for agents left working. Deletions, force pushes and destructive tools are weighed " +
-            "by their risk instead of always asked. Anything catastrophic, a tripwire, or what this phone can't read for " +
-            "sure is held: it waits for you, or is denied if you chose that. Purchases, secrets, sign-ins and new connections still ask."
-    } else {
-        "Your model doesn't rate risk yet, so $OVERNIGHT decides like Auto: deletions, force pushes and the rest of what " +
-            "Auto always asks still wait for you."
-    }
+    /** Behind the (?) of the Overnight sheet (Decisions v2, 01 §11). */
+    const val OVERNIGHT_HELP = "$OVERNIGHT is Auto while you're away. What Auto would ask is parked: the agent carries on, " +
+        "and you get one summary in the morning. Messages to work or outside people always wait; your own small fixes run. " +
+        "Nothing is denied but by your own rules. Parked requests expire, not approved, after the time you pick."
 
-    /** The setting's question, with [whenRiskyLabel]'s two answers. */
-    const val WHEN_RISKY = "If something is too risky:"
+    /** The setting's label, with [expiryChoices] as its answers (hours after the morning). */
+    const val EXPIRES_AFTER = "Expires after"
 
-    val whenRiskyChoices = listOf(OvernightRisky.WAIT, OvernightRisky.DENY)
+    val expiryChoices: List<UInt> = listOf(6u, 12u, 24u)
 
-    fun whenRiskyLabel(r: OvernightRisky): String = when (r) {
-        OvernightRisky.WAIT -> "Wait for me"
-        OvernightRisky.DENY -> "Deny it"
-    }
+    /** The default the core uses before the owner picks one. */
+    const val DEFAULT_EXPIRY_HOURS: UInt = 12u
+
+    fun expiryLabel(hours: UInt): String = "$hours h"
 
     // ---- risk ---------------------------------------------------------------------------------------------------
 
@@ -410,7 +395,7 @@ object AutopilotText {
         "Approves when ${percent(p.approveAt)} sure, denies when ${percent(p.denyAt)} sure"
 
     /** What "How sure" explains behind its (?). */
-    const val MODE_HELP = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. $OVERNIGHT is Auto for agents left working: risky requests are weighed, and too risky ones held. Bypass approves for a while without asking; Lock down denies everything that would ask."
+    const val MODE_HELP = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. $OVERNIGHT is Auto while you're away: what would ask is parked for the morning, never denied. Bypass approves for a while without asking; Lock down denies everything that would ask."
 
     const val HOW_SURE_HELP = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
 

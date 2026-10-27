@@ -52,4 +52,7 @@ pub trait Notifier: Send + Sync {
     fn auto_decided(&self, decision: AutoDecisionView);
     /// A mode changed, a bypass ended, or auto-approvals paused for a connection.
     fn autopilot_changed(&self, event: AutopilotEvent);
+    /// Circles: a review of another account waits for this phone (the one Circle notification), or something else
+    /// changed that the screens refresh quietly.
+    fn circle_changed(&self, event: crate::circles::CircleEvent);
 }

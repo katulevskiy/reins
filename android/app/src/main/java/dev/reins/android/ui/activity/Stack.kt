@@ -52,6 +52,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.Schedule
 import dev.reins.android.design.ButtonSize
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.Field
@@ -121,6 +123,8 @@ fun WaitingStack(
     onReview: (PendingItem) -> Unit,
     onAnswer: suspend (Burst, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** Later: the request becomes a ticket and moves under "Waiting for you" (offered when it can wait). */
+    onLater: (PendingItem) -> Unit = {},
 ) {
     val reduce = LocalReduceMotion.current
     // A card answered elsewhere (its button, the sheet, another device) folds away; a flicked one has already left.
@@ -148,6 +152,7 @@ fun WaitingStack(
                             onReview = onReview,
                             onFlown = { flown += card.key },
                             onAnswer = onAnswer,
+                            onLater = onLater,
                         )
                     }
                 }
@@ -207,6 +212,7 @@ private fun StackCard(
     onReview: (PendingItem) -> Unit,
     onFlown: () -> Unit,
     onAnswer: suspend (Burst, Boolean) -> Unit,
+    onLater: (PendingItem) -> Unit,
 ) {
     val reduce = LocalReduceMotion.current
     val feedback = LocalFeedback.current
@@ -300,7 +306,7 @@ private fun StackCard(
             .then(if (flickable) Modifier.draggable(drag, Orientation.Horizontal, onDragStopped = { v -> settle(v) }) else Modifier),
         propagateMinConstraints = true,
     ) {
-        CardFace(card, details, showContent = top, action = action, onReview = { onReview(card.first) }) { approve ->
+        CardFace(card, details, showContent = top, action = action, onReview = { onReview(card.first) }, onLater = { onLater(card.first) }) { approve ->
             // Answered by its button: it folds in place when it leaves the list, and the river takes it.
             scope.launch { onAnswer(burst, approve) }
         }
@@ -351,6 +357,7 @@ private fun CardFace(
     showContent: Boolean,
     action: WaitAction,
     onReview: () -> Unit,
+    onLater: () -> Unit = {},
     onAnswer: (Boolean) -> Unit,
 ) {
     val c = LocalColors.current
@@ -415,6 +422,15 @@ private fun CardFace(
             ask.details?.let {
                 RText(it, RType.mono(13f), c.onField.copy(alpha = 0.85f), Modifier.padding(top = 0.dp).testTag("cardDetails:${first.id}"), maxLines = 2, ltr = true)
             }
+            // Circles: who else decides it, and how far it got ("Needs Alex too").
+            if (card is WaitCard.One) {
+                first.circle?.let { dev.reins.android.ui.circles.progressLine(it) }?.ifEmpty { null }?.let { line ->
+                    Row(Modifier.testTag("cardCircle:${first.id}"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Group, null, Modifier.size(16.dp), tint = c.onField2)
+                        RText(dev.reins.android.ui.common.untrusted(line), RType.sans(13.5f), c.onField2, maxLines = 2)
+                    }
+                }
+            }
             if (card is WaitCard.Group) {
                 card.items.take(3).forEach { item ->
                     RText(groupLine(item, details.views[item.id]), RType.sans(13.5f), c.onField2, Modifier.testTag("burstItem:${item.id}"), maxLines = 1)
@@ -436,10 +452,17 @@ private fun CardFace(
             else -> null
         }?.let { (it * 100).roundToInt() }?.takeIf { it > 0 }
         val one = card is WaitCard.One
+        // The owner approved already (Circles): it waits for the others, and Allow reads as done.
+        val approvedByMe = one && dev.reins.android.ui.circles.approvedByMe(first.circle)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val many = if (count > 1) " $count" else ""
             val pct = percent?.let { "$it%" }
-            when (action) {
+            if (approvedByMe) {
+                SignalButton(
+                    "Approved", Modifier.weight(1f).testTag("allowDone:${first.id}"),
+                    style = ButtonStyle.OnFieldWash, size = ButtonSize.Small, glyph = Glyph.Check, enabled = false,
+                ) {}
+            } else when (action) {
                 WaitAction.Allow -> SignalButton(
                     "Allow$many", Modifier.weight(1f).testTag(if (one) "allow:${first.id}" else "approveAll"),
                     style = ButtonStyle.OnFieldWhite, size = ButtonSize.Small, glyph = Glyph.Fingerprint, trailing = pct,
@@ -467,6 +490,19 @@ private fun CardFace(
                 size = ButtonSize.Small,
                 onClick = onReview,
             )
+            // Later (Decisions v2): an Instant request the server can park; the agent carries on.
+            if (one && first.kind == PendingKind.REQUEST && first.canDefer && first.ticket == null) {
+                SignalButton(
+                    "Later",
+                    Modifier.testTag("later:${first.id}"),
+                    style = ButtonStyle.OnFieldWash,
+                    size = ButtonSize.Small,
+                    leading = {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Schedule, null, Modifier.size(18.dp), tint = c.onField)
+                    },
+                    onClick = onLater,
+                )
+            }
         }
     }
 }

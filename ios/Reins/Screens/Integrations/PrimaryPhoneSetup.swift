@@ -90,9 +90,6 @@ struct PrimaryPhoneSetupSection: View {
     @State private var setup: PrimaryPhoneSetupModel?
     @State private var showing = false
     @State private var sheetSetup: PrimaryPhoneSetupModel?
-    @State private var backupConfirmed = false
-    @State private var enterProof = false
-    @State private var proof = ""
 
     var body: some View {
         Section("Automatic permissions on this phone") {
@@ -122,29 +119,90 @@ struct PrimaryPhoneSetupSection: View {
         .onDisappear { close(); setup?.deactivate() }
         .sheet(isPresented: $showing) {
             if let setup = sheetSetup {
-                NavigationStack {
-                    List {
-                        Section {
-                            Text("This makes this phone the primary approval phone for your whole Reins account, including its other integrations. It creates protected recovery information. It does not allow any agent action by itself.")
-                            Toggle("I have saved my recovery code or master password.", isOn: $backupConfirmed).disabled(setup.busy).accessibilityIdentifier("primarySetupBackup")
-                            if enterProof { SecureField("Recovery code or master password", text: $proof).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(setup.busy).accessibilityIdentifier("primarySetupProof") }
-                            else { ActionButton(title: "Use a recovery code or master password", kind: .secondary, lineLimit: nil) { enterProof = true }.disabled(setup.busy) }
-                            if let error = setup.error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("primarySetupError") }
-                            if !setup.canCreate, !setup.busy { Text("The phone's role changed. Close this screen and check its current status.").font(.footnote) }
-                            ActionButton(title: "Make this my primary phone", busy: setup.busy, lineLimit: nil) {
-                                let entered = proof; proof = ""
-                                Task { await setup.enable(backupConfirmed: backupConfirmed, proof: entered) { close(setup); await editor.reload() } }
-                            }.disabled(!backupConfirmed || !setup.canCreate).accessibilityIdentifier("primarySetupConfirm")
-                            ActionButton(title: "Cancel", kind: .secondary, lineLimit: nil) { close(setup) }.accessibilityIdentifier("primarySetupCancel")
-                        }
-                    }.integrationList().navigationTitle("Enable automatic permissions").navigationBarTitleDisplayMode(.inline)
-                }.privacyCover().accessibilityIdentifier("primarySetupDialog").onDisappear { close(setup) }
+                PrimaryPhoneSetupForm(setup: setup, title: "Enable automatic permissions") {
+                    close(setup); await editor.reload()
+                } onCancel: { close(setup) }
+                .onDisappear { close(setup) }
             }
         }
     }
-    private func close() { proof = ""; enterProof = false; backupConfirmed = false; showing = false; sheetSetup?.cancelAttempt(); sheetSetup = nil }
+    private func close() { showing = false; sheetSetup?.cancelAttempt(); sheetSetup = nil }
     private func close(_ presented: PrimaryPhoneSetupModel) {
         presented.cancelAttempt()
         if sheetSetup === presented { close() }
+    }
+}
+
+/// The setup itself, in a sheet: what making this phone the primary does, the backup acknowledgement, an optional proof
+/// for an older account, then the owner check (`PrimaryPhoneSetupModel.enable`). Used by Permissions and by Circles.
+struct PrimaryPhoneSetupForm: View {
+    var setup: PrimaryPhoneSetupModel
+    var title: String
+    var onDone: () async -> Void
+    var onCancel: () -> Void
+    @State private var backupConfirmed = false
+    @State private var enterProof = false
+    @State private var proof = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("This makes this phone the primary approval phone for your whole Reins account, including its other integrations. It creates protected recovery information. It does not allow any agent action by itself.")
+                    Toggle("I have saved my recovery code or master password.", isOn: $backupConfirmed).disabled(setup.busy).accessibilityIdentifier("primarySetupBackup")
+                    if enterProof { SecureField("Recovery code or master password", text: $proof).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(setup.busy).accessibilityIdentifier("primarySetupProof") }
+                    else { ActionButton(title: "Use a recovery code or master password", kind: .secondary, lineLimit: nil) { enterProof = true }.disabled(setup.busy) }
+                    if let error = setup.error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("primarySetupError") }
+                    if !setup.canCreate, !setup.busy { Text("The phone's role changed. Close this screen and check its current status.").font(.footnote) }
+                    ActionButton(title: "Make this my primary phone", busy: setup.busy, lineLimit: nil) {
+                        let entered = proof; proof = ""
+                        Task { await setup.enable(backupConfirmed: backupConfirmed, proof: entered) { await onDone() } }
+                    }.disabled(!backupConfirmed || !setup.canCreate).accessibilityIdentifier("primarySetupConfirm")
+                    ActionButton(title: "Cancel", kind: .secondary, lineLimit: nil) { proof = ""; onCancel() }.accessibilityIdentifier("primarySetupCancel")
+                }
+            }.integrationList().navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+        }.privacyCover().accessibilityIdentifier("primarySetupDialog")
+    }
+}
+
+/// Settings › Circles without a primary phone: checks this phone's role, then the same setup as Permissions.
+struct PrimaryPhoneSetupSheet: View {
+    var onClose: () -> Void
+    @Environment(AppModel.self) private var app
+    @State private var setup: PrimaryPhoneSetupModel?
+    @State private var shown = true
+
+    var body: some View {
+        Group {
+            if let setup, !setup.checking, setup.canCreate || setup.busy {
+                PrimaryPhoneSetupForm(setup: setup, title: "Primary phone") { onClose() } onCancel: { onClose() }
+            } else if let setup, !setup.checking {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(setup.role == .primary
+                         ? "This phone is already the primary."
+                         : "Use your primary phone\(setup.primaryName.map { " (\(untrusted($0)))" } ?? "") for Circles.")
+                        .textRole(.body)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("primarySetupGuidance")
+                    if let error = setup.error { Banner(untrusted(error), kind: .error) }
+                    Button("Close", action: onClose).buttonStyle(SignalButtonStyle(.outline))
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .presentationDetents([.medium])
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task {
+            let model = PrimaryPhoneSetupModel(app: app, parentCurrent: { shown })
+            setup = model
+            await model.check()
+        }
+        .onDisappear {
+            shown = false
+            setup?.deactivate()
+        }
     }
 }

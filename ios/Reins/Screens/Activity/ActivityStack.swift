@@ -201,7 +201,10 @@ struct FieldWaitCard: View {
 
     private var item: PendingItem { group.first }
     private var field: FieldKind { ActivityText.field(item, danger: danger) }
-    private var pick: AutopilotPick? { WaitCardIdentity.pick(item, ActivityText.pick(advice, suggestion)) }
+    /// Nothing to take once the owner approved a request their Circle still decides: it waits for the others.
+    private var pick: AutopilotPick? {
+        item.circle?.youApproved == true ? nil : WaitCardIdentity.pick(item, ActivityText.pick(advice, suggestion))
+    }
 
     var body: some View {
         let line = AskLabels.pending(item, field: field)
@@ -249,14 +252,22 @@ struct FieldWaitCard: View {
                         .padding(.top, -4)
                         .accessibilityIdentifier("cardDetails:\(item.id)")
                 }
+                // Who else in the owner's Circle decides it, and how far it got.
+                if !group.isBurst, let circle = item.circle {
+                    CircleProgressLine(progress: circle, onField: true)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .accessibilityIdentifier("cardCircle:\(item.id)")
+                }
                 if group.isBurst { peek }
-                if let pick {
-                    WaitCardButtons(pick: pick, onPick: { pressed { take(pick) } }, onReview: { pressed(review) })
-                        .accessibilityIdentifier(pickIdentifier(pick))
-                } else {
-                    Button("Review") { pressed(review) }
-                        .buttonStyle(SignalButtonStyle(.onField, size: .small))
-                        .accessibilityIdentifier("review:\(item.id)")
+                WithLater(later: canLater ? { pressed(later) } : nil) {
+                    if let pick {
+                        WaitCardButtons(pick: pick, onPick: { pressed { take(pick) } }, onReview: { pressed(review) })
+                            .accessibilityIdentifier(pickIdentifier(pick))
+                    } else {
+                        Button("Review") { pressed(review) }
+                            .buttonStyle(SignalButtonStyle(.onField, size: .small))
+                            .accessibilityIdentifier("review:\(item.id)")
+                    }
                 }
             }
         }
@@ -277,6 +288,19 @@ struct FieldWaitCard: View {
         .accessibilityActions {
             if let pick, pick.firm { Button(pick.title) { take(pick) } }
             if item.kind == .request { Button("Deny") { answer(approve: false) } }
+            if canLater { Button("Later") { later() } }
+        }
+    }
+
+    /// Every request on the card can be moved to "Waiting for you".
+    private var canLater: Bool { group.items.allSatisfy(TicketInbox.canLater) }
+
+    /// Later: each request on the card becomes a ticket (no check: nothing is approved); the card leaves the stack.
+    private func later() {
+        feedback.play(.tap)
+        let core = model.core
+        for id in group.items.map(\.id) {
+            model.ticketInBackground(id, failed: "Not moved to later", leaveStack: true) { try await core.decideLater(requestId: id) }
         }
     }
 
@@ -363,6 +387,7 @@ struct FieldWaitCard: View {
 
     @ViewBuilder private var menu: some View {
         Button("Review", systemImage: "checkmark.shield", action: review)
+        if canLater { Button("Later", systemImage: "clock.arrow.circlepath", action: later) }
         if group.isBurst {
             // Approving without opening it needs who asks on the card, as one-tap Allow does.
             if WaitCardIdentity.who(item) != nil {

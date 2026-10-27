@@ -1,5 +1,14 @@
 # Autopilot risk: the Overnight mode
 
+> **Decisions v2 (P5) changed Overnight** (`docs/design/decisions-v2/01-decision-engine.md` §11,
+> `docs/superpowers/plans/2026-10-26-dv2-p5.md`). It never denies: what it would ask, or used to hold or deny, is
+> **parked** for the morning as a Deferred ticket (the agent is told "Parked until morning" and carries on), and the
+> owner gets one digest. Once Auto's setup is done, the zone × level matrix decides Overnight too, with its overlay:
+> L2 to Work or Outside people always parks, L1 in Mine and Friends runs, L3 and the always-ask floor park. The
+> `overnight_when_risky` setting is gone; `set_overnight_expiry` (1–48 h, 12 by default) sets how long a park waits
+> past the morning. Below, "held" and "denied" read as "parked". The risk gate decides only until Auto's setup is
+> done.
+
 Status: design (2026-10-14). Builds on the Autopilot spec (`docs/superpowers/specs/2026-10-01-autopilot-laya.md`) and
 the Laya tooling in `tools/laya/`. The name **Overnight** is a working name: it is one constant per platform
 (`OVERNIGHT` labels in the core's `AutopilotMode::label`, the Android and iOS mode tables) plus strings.
@@ -15,7 +24,7 @@ deleting `main` is not; `rm -rf build/` is fine, `rm -rf ~` is not.
 |---|---|---|
 | Manual | nothing (shows the suggestion and the risk) | |
 | Auto | what it is confident about, in kinds the user's history unlocked; the hard floor asks | model |
-| **Overnight** | **Auto, except that the part of the hard floor about what an action does (a destructive tool, a push that rewrites history, a far-reaching change, an upload that may run) is weighed by the risk model instead of always asked; and what the risk model rates catastrophic in context, a tripwire fires on, or the core could not read with certainty is held: it waits for the user, or is denied (a setting; uncertain always waits)** | **model with the risk output** |
+| **Overnight** | **Auto, except that the part of the hard floor about what an action does (a destructive tool, a push that rewrites history, a far-reaching change, an upload that may run) is weighed by the risk model instead of always asked; and what the risk model rates catastrophic in context, a tripwire fires on, or the core could not read with certainty is held: parked for the morning (Decisions v2: never denied)** | **model with the risk output** |
 | Bypass | approves everything (pairings and other phones still ask) | |
 | Lockdown | denies everything | |
 
@@ -182,8 +191,8 @@ pairings, which keep their rules:
    known when it runs (a variable, a command's output), a program named at run time, a value changed to be shown, a
    target placed after the command changes folder, code handed to an interpreter, scheduled jobs it does not show. A
    missing risk or threshold is uncertain too. Otherwise `P(catastrophic)` with the two-pass rule; at or above **θ_c**:
-   held, it waits for the user ("wait for me", the default) or is denied ("deny it"); the note reads
-   `Waited: risk catastrophic · deletes the default branch main`. An unresolved delete target that an empty value
+   held: parked for the morning (Decisions v2; before, a setting could deny it); the note reads
+   `Parked: risk catastrophic · deletes the default branch main`. An unresolved delete target that an empty value
    turns into the root (`rm -rf "$DIR/"`) is a tripwire.
 5. **Auto's rules**: the approval verdict, the class gates (a class still learning waits), Auto's rate limit (30 per
    10 minutes, 200 a day). Approved by Overnight only on an Approve verdict; a weighed floor is never denied by the
@@ -237,10 +246,11 @@ points).
   connection's mode > the global mode.
 - It approves once, as Auto does; what is granted while carrying out its decision carries the origin `overnight` /
   `overnight:<connection>` and ends with it, through the bypass-origin mechanism.
-- Setting `overnight_when_risky`: `Wait` (default) or `Deny`.
-- Only the owner starts it: `start_overnight` and `set_overnight_when_risky` take an `OwnerCheck` (biometrics or the
-  device passcode) that the core asks itself, in its own words, before anything changes. Every start, restart, new
-  length and change of the setting either way is asked; turning it off is not. `set_autopilot_mode` never starts it,
+- Setting `overnight_expiry_hours` (Decisions v2): how long a park waits past the morning, 1–48 h, 12 by default; no
+  owner check (nothing more runs either way). The old `overnight_when_risky` is removed: Overnight never denies.
+- Only the owner starts it: `start_overnight` takes an `OwnerCheck` (biometrics or the device passcode) that the core
+  asks itself, in its own words, before anything changes. Every start, restart and new length is asked; turning it off
+  is not. `set_autopilot_mode` never starts it,
   nor puts an AI kept on Manual in a global Overnight; a bypass ends the Overnight of its scope, so nothing returns to
   Overnight without the owner. The app also holds to start, like Bypass. The app shows it like Bypass
   (pill, persistent notification, Stop), with a moon icon and its own color.

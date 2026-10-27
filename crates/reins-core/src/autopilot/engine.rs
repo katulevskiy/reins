@@ -28,8 +28,8 @@ use super::store::{
 };
 use super::types::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
-    ConnectionAutopilot, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset,
-    ProfileView, RiskLevel, SuggestionView, ThresholdReplay, Verdict,
+    ConnectionAutopilot, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, Preset, ProfileView,
+    RiskLevel, SuggestionView, ThresholdReplay, Verdict,
 };
 use crate::engine::Engine;
 use crate::phone_api::check_id;
@@ -105,16 +105,16 @@ pub struct State {
 }
 
 /// A parked item, as the pass sees it.
-struct Subject {
+pub(crate) struct Subject {
     id: String,
-    kind: PendingKind,
-    connection_id: String,
+    pub(crate) kind: PendingKind,
+    pub(crate) connection_id: String,
     connection_label: String,
     described: Described,
     floor: Option<String>,
     /// Overnight may weigh `floor` with the risk model instead of always asking ([`gates::overnight_weighs`]).
     floor_weighable: bool,
-    item: PendingItem,
+    pub(crate) item: PendingItem,
     /// What approving it once selects (as the approval screen preselects).
     choice: ApprovalChoice,
     /// What a bypass approves: every message or item shown, every account offered.
@@ -174,6 +174,8 @@ struct RiskStates {
 /// ([`overnight::gate`]); nothing else can make one.
 enum By {
     Lockdown,
+    /// An explicit rule that denies (Decisions v2: the only way anything but Lockdown denies).
+    Rule,
     Bypass,
     Autopilot,
     Overnight(Option<overnight::Proof>),
@@ -183,6 +185,7 @@ impl By {
     fn name(&self) -> &'static str {
         match self {
             Self::Lockdown => "lockdown",
+            Self::Rule => "rule",
             Self::Bypass => "bypass",
             Self::Autopilot => "autopilot",
             Self::Overnight(_) => "overnight",
@@ -303,6 +306,7 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
         neighbours: neighbour_lines(j),
         reason: s.reason.clone(),
         risk: s.risk.clone(),
+        matrix: s.matrix.clone(),
     }
 }
 
@@ -310,6 +314,7 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
 pub(crate) fn activity_note(r: &AuditRecord) -> Option<AutopilotNote> {
     let n = r.info.autopilot.as_ref()?;
     Some(AutopilotNote {
+        request_id: n.request_id.clone(),
         mode: n.mode,
         suggested: n.suggested,
         p_approve: n.p_approve,
@@ -323,6 +328,7 @@ pub(crate) fn activity_note(r: &AuditRecord) -> Option<AutopilotNote> {
             && matches!(r.outcome.as_str(), "released" | "sent" | "denied")
             && r.at > unix_now() - SUGGESTION_RETENTION_SECS,
         risk: n.risk.as_ref().map(RiskNote::view),
+        matrix: n.matrix.as_ref().map(super::policy::matrix_view),
     })
 }
 
@@ -356,6 +362,7 @@ fn suggestion_view(s: &Suggestion) -> SuggestionView {
         floor: s.floor.is_some(),
         judged: j.is_some(),
         risk: s.risk.as_ref().map(RiskNote::view),
+        matrix: s.matrix.as_ref().map(super::policy::matrix_view),
     }
 }
 
@@ -604,6 +611,8 @@ impl Engine {
         if let Err(e) = self.ap_pass(self.ap_may_run_model()).await {
             log::warn!("Autopilot could not look at the waiting items: {e}");
         }
+        // What Overnight parked becomes a ticket: the agent is told at once and carries on.
+        self.ap_park_waiting().await;
         // A bypass or an Overnight that ran out: the desktop apps hear of it, and of what Autopilot leans to.
         self.report_modes_now().await;
         self.tell_suggestions().await;
@@ -753,6 +762,9 @@ impl Engine {
             decided: None,
             risk: None,
             deletes: false,
+            matrix: None,
+            task: None,
+            parked: None,
         }
     }
 
@@ -902,6 +914,9 @@ impl Engine {
                 reason: "Always asks: a new connection is only ever approved by you".to_owned(),
                 decided: None,
                 risk: None,
+                matrix: None,
+                task: None,
+                parked: None,
             };
             self.store.ap_put_suggestion(&s)?;
             let mut item = views::pairing_item(&pairing);
@@ -910,8 +925,8 @@ impl Engine {
             return Ok(());
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
-        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
-            // A change of Autopilot asked from a computer is the owner's alone, in every mode (`ap_conclude` holds to
+        if super::desktop::owners_alone(&subject.item.service, &subject.item.op) {
+            // A change of Autopilot asked from a computer, or a task an agent proposes, is the owner's alone, in every mode (`ap_conclude` holds to
             // it too). Told at once, before anything that needs the model: where the model cannot run, it would
             // otherwise sit unjudged, unseen by its owner, until a pass that can.
             let s =
@@ -928,6 +943,23 @@ impl Engine {
                     .authorization_execute(&parked.request, crate::authorization::AuthorizationSource::Automatic)
                     .err()
                     .map_or_else(|| "Account policy requires review".to_owned(), |e| e.to_string());
+                let suggestion = Self::ap_asks(&subject, mode, now, reason.clone(), Some(reason));
+                return self.ap_wait(&subject, &suggestion);
+            }
+        }
+        if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
+            // A Circle request (04, 08 R3): others decide it too, so no automatic mode approves it; the owner's tap
+            // fills the owner's slot. Routed again here (idempotent), and when that fails it waits for the owner too.
+            let routed = self.circle_route(&row.id);
+            if let Err(e) = &routed {
+                log::warn!("a Circle could not be applied; the request waits: {e}");
+            }
+            if routed.is_err() || self.circle_hold(&row.id).is_some() {
+                let reason = self
+                    .circle_progress(&row.id)
+                    .map(|p| p.line)
+                    .filter(|l| !l.is_empty())
+                    .unwrap_or_else(|| "Your Circle decides this too".to_owned());
                 let suggestion = Self::ap_asks(&subject, mode, now, reason.clone(), Some(reason));
                 return self.ap_wait(&subject, &suggestion);
             }
@@ -950,6 +982,34 @@ impl Engine {
             &subject.described.facts.target,
         )?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
+        // Decisions v2: what the matrix says of it. It decides in Auto once switched on and set up; elsewhere it is
+        // recorded only (shadow), except the owner's own Deny and Review rules, which hold in every automatic mode.
+        // Overnight is Auto while the owner is away (01 §11): the matrix with its Overnight overlay decides it too.
+        let deciding = matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) && self.ap_matrix_deciding();
+        let overnight_mode = mode == AutopilotMode::Overnight;
+        let mut unreadable: Option<String> = None;
+        let matrix = match row.kind {
+            PendingKind::Request => {
+                let parked: ParkedRequest =
+                    serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
+                match self.ap_evaluate(&parked.request, !novel, now, overnight_mode) {
+                    Ok(Some((mut note, unknown))) => {
+                        if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
+                            log::warn!("Autopilot could not keep a question: {e}");
+                        }
+                        note.shadow = !deciding;
+                        Some(note)
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        log::warn!("Autopilot could not evaluate the matrix: {e}");
+                        unreadable = Some(e.to_string());
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
         let mut s = Suggestion {
             deletes: false,
             request_id: subject.id.clone(),
@@ -976,6 +1036,9 @@ impl Engine {
             reason: String::new(),
             decided: None,
             risk: None,
+            matrix: matrix.clone(),
+            task: None,
+            parked: None,
         };
 
         match mode {
@@ -986,7 +1049,31 @@ impl Engine {
             }
             AutopilotMode::Bypass | AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight => {}
         }
-
+        if matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) {
+            // Where the matrix decides, what it should read and couldn't waits for the owner: it never falls to the
+            // model.
+            if deciding && let Some(why) = &unreadable {
+                s.reason = format!("Asks: Auto couldn't read this ({why})");
+                return self.ap_wait(&subject, &s);
+            }
+            if let Some(m) = &matrix {
+                match m.outcome {
+                    // Only an explicit rule denies, in any automatic mode.
+                    reins_policy::matrix::Outcome::Deny => {
+                        s.verdict = Verdict::Deny;
+                        s.reason = m.line.clone();
+                        return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Rule)).await;
+                    }
+                    // The owner's Review rules are hard in any automatic mode; the matrix's cells only where it decides.
+                    o if o.reviews() && (m.by_rule || deciding) => {
+                        s.reason = format!("Asks: {}", m.line);
+                        return self.ap_wait(&subject, &s);
+                    }
+                    // Permitted: the model is the sanity check below, and can only make it an ask.
+                    _ => {}
+                }
+            }
+        }
         // A model that rates risk reads, for the risk only, a hook's question as the action it is about, with the context
         // line the core works out (docs/autopilot-risk.md §3), the connection's last hour included. The approval head
         // reads the request as it always did; the risk only ever holds Auto back (its cold-start bar asks for a
@@ -1052,7 +1139,7 @@ impl Engine {
         // always asked, and only once a verified model rated this very request and the core read it with certainty
         // (below). The rest of the floor (who decides, money, sign-ins, what could not be read) and a just-paired AI
         // wait, as in Auto.
-        let weighed = mode == AutopilotMode::Overnight && rates_risk && subject.floor_weighable;
+        let weighed = mode == AutopilotMode::Overnight && !deciding && rates_risk && subject.floor_weighable;
         let floor = subject.floor.clone().filter(|_| !weighed);
         // Auto and Overnight never decide on the model a push to the default branch or a protected one, or one whose
         // destination is not known (a git push of the desktop app, or a command a hook asks about: the core's own
@@ -1110,7 +1197,7 @@ impl Engine {
         s.reason = reason_of(&judged, s.verdict, novel, thresholds.0);
         // Overnight acts on risk when the verified package that judged this request declares it; it then decides only
         // through its gate (overnight::gate), the one place an Overnight approval is made.
-        let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
+        let overnight = mode == AutopilotMode::Overnight && judged.risk_declared && !deciding;
         if overnight {
             // Overnight's own rule, as it always was (the earned classes, the rule of before the cold start), and
             // whatever Auto would approve on its own (never a floor, which Auto always asks; a push to the default
@@ -1186,28 +1273,27 @@ impl Engine {
                         Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, By::Overnight(Some(proof)))).await
                     }
                 }
-                overnight::Gate::Hold(overnight::Hold::Catastrophic(_)) => match self.ap_overnight_risky()? {
-                    OvernightRisky::Wait => {
-                        s.verdict = Verdict::Ask;
-                        s.reason = format!("Waited: {line}");
-                        self.ap_wait(&subject, &s)
-                    }
-                    OvernightRisky::Deny => {
-                        s.verdict = Verdict::Deny;
-                        s.reason = format!("Denied {}: {line}", OVERNIGHT_NAME.to_lowercase());
-                        Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Overnight(None))).await
-                    }
-                },
+                // Overnight never denies (07 §2): what is too risky is parked for the morning.
+                overnight::Gate::Hold(overnight::Hold::Catastrophic(_)) => {
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("Parked: {line}");
+                    self.ap_wait(&subject, &s)
+                }
                 overnight::Gate::Hold(overnight::Hold::Uncertain(why)) => {
                     // whatever the setting: nothing was read to deny it on
                     s.verdict = Verdict::Ask;
                     s.reason = format!("Waited: {why}");
                     self.ap_wait(&subject, &s)
                 }
+                // Auto never denies (Decisions v2): what Auto's own rule would deny waits for the owner.
                 overnight::Gate::Hold(overnight::Hold::Auto {
                     deny: true,
                     ..
-                }) => Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Overnight(None))).await,
+                }) => {
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("{} — asks you", s.reason);
+                    self.ap_wait(&subject, &s)
+                }
                 overnight::Gate::Hold(overnight::Hold::Auto {
                     why,
                     deny: false,
@@ -1240,7 +1326,9 @@ impl Engine {
                 s.floor = Some(floor);
                 return self.ap_wait(&subject, &s);
             }
-            s.reason = format!("{OVERNIGHT_NAME} needs a model that rates risk; decided like Auto: {}", s.reason);
+            if !deciding {
+                s.reason = format!("{OVERNIGHT_NAME} needs a model that rates risk; decided like Auto: {}", s.reason);
+            }
         }
 
         // Auto's rules: the model's verdict (with the cold-start bar), the class gates, the rate limit.
@@ -1259,18 +1347,25 @@ impl Engine {
                             CLOSER_LOOK.clone_into(&mut s.reason);
                             return self.ap_wait(&subject, &s);
                         }
+                        // A task's envelope made it Auto: one of its uses is spent before it runs; none left, it waits.
+                        if deciding
+                            && let Some(task) = matrix.as_ref().and_then(|m| m.by_task.clone())
+                            && let Err(e) = self.ap_task_count(&task, super::tasks::Count::Auto)
+                        {
+                            s.verdict = Verdict::Ask;
+                            s.reason = format!("Asks: {e}");
+                            return self.ap_wait(&subject, &s);
+                        }
                         return Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, By::Autopilot)).await;
                     }
                     s.reason = format!("{} — paused: unusual volume from this connection", s.reason);
                     self.ap_pause_notice(&subject, now, "unusual volume");
                 }
-                // Denying stays conservative: a class that earned it (10 decisions, no wrong denial), else only what the
-                // risk head is sure is catastrophic.
-                Verdict::Deny if gate.deny || (gate.deny_catastrophic && decide::surely_catastrophic(readable)) => {
-                    return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Autopilot)).await;
-                }
+                // Auto never denies (Decisions v2, 01 §6): only explicit rules deny. What the model would deny waits
+                // for the owner, as an ask.
                 Verdict::Deny => {
-                    s.reason = format!("{} — denies this kind on its own after more of your answers", s.reason);
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("{} — asks you", s.reason);
                 }
                 Verdict::Ask => {}
             }
@@ -1318,6 +1413,9 @@ impl Engine {
             decided: None,
             risk: None,
             deletes: false,
+            matrix: None,
+            task: None,
+            parked: None,
         };
         subject.choice = subject.everything.clone();
         if subject.grant {
@@ -1564,8 +1662,12 @@ impl Engine {
         Ok(Some(format!("this AI in the last hour: {}", parts.join(", "))))
     }
 
-    /// Keeps the evaluation and tells the app the item waits for the user.
+    /// Keeps the evaluation and tells the app the item waits for the user. In Overnight it is parked for the morning
+    /// (a ticket made right after the pass: `ap_park_waiting`), and counted against the agent's live task.
     fn ap_wait(&self, subject: &Subject, s: &Suggestion) -> Result<(), CoreError> {
+        let mut s = s.clone();
+        self.ap_mark_wait(subject, &mut s, unix_now());
+        let s = &s;
         self.store.ap_put_suggestion(s)?;
         if subject.kind == PendingKind::Request
             && let Some(told) = leaning_of(s)
@@ -1574,6 +1676,9 @@ impl Engine {
         }
         let mut item = subject.item.clone();
         item.suggestion = suggestion_line(s);
+        item.parked_until = s.parked.as_ref().map(|p| p.until);
+        item.batchable = s.parked.as_ref().map_or_else(|| super::parking::batchable(s, item.quick), |p| p.batchable);
+        item.task_id.clone_from(&s.task);
         self.names().item(&mut item);
         self.notifier.item_pending(item);
         Ok(())
@@ -1589,7 +1694,7 @@ impl Engine {
     ) -> Result<(), CoreError> {
         // A change of Autopilot asked from a computer is the owner's alone: no mode decides it, either way (a bypass
         // would approve its own extension, Lockdown would deny the way out of it).
-        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+        if super::desktop::owners_alone(&subject.item.service, &subject.item.op) {
             s.verdict = Verdict::Ask;
             s.floor = Some(OWNER_ONLY.to_owned());
             s.reason = format!("Always asks: {OWNER_ONLY}");
@@ -1602,14 +1707,17 @@ impl Engine {
             let still = |m: AutopilotMode| now_mode == Some(m) && s.mode == m;
             let allowed = match &by {
                 By::Bypass => still(AutopilotMode::Bypass),
-                By::Lockdown | By::Overnight(None) => false,
+                By::Lockdown | By::Rule | By::Overnight(None) => false,
                 // Overnight's gate proved it, for this very request, and Overnight still holds for its AI
                 By::Overnight(Some(proof)) => proof.request_id() == subject.id && still(AutopilotMode::Overnight),
                 // Auto, or an Overnight without a model that rates risk (which decides like Auto): Overnight with one
                 // approves only through its gate
                 By::Autopilot => {
+                    let matrix_decided = s.matrix.as_ref().is_some_and(|m| !m.shadow);
                     (still(AutopilotMode::Auto) || still(AutopilotMode::Overnight))
-                        && !(s.mode == AutopilotMode::Overnight && s.judged.as_ref().is_some_and(|j| j.risk_declared))
+                        && (matrix_decided
+                            || !(s.mode == AutopilotMode::Overnight
+                                && s.judged.as_ref().is_some_and(|j| j.risk_declared)))
                 }
             };
             if !allowed {
@@ -1704,7 +1812,7 @@ impl Engine {
     }
 
     /// The Overnight in force for a connection: its own (the connection's id), else the global one (`""`).
-    fn ap_overnight_scope(&self, connection_id: &str, now: i64) -> Result<String, CoreError> {
+    pub(crate) fn ap_overnight_scope(&self, connection_id: &str, now: i64) -> Result<String, CoreError> {
         Ok(if self.store.ap_mode_row(connection_id)?.overnighting(now) {
             connection_id.to_owned()
         } else {
@@ -1761,7 +1869,7 @@ impl Engine {
     }
 
     async fn ap_execute(&self, subject: &Subject, verdict: Verdict) -> Result<(), CoreError> {
-        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+        if super::desktop::owners_alone(&subject.item.service, &subject.item.op) {
             return Err(CoreError::invalid("a change of Autopilot from a computer is never decided automatically"));
         }
         if subject.purchase && verdict == Verdict::Approve {
@@ -2232,31 +2340,28 @@ impl Engine {
         Ok((laya, true))
     }
 
-    /// What Overnight does with what is too risky (the user's setting).
-    fn ap_overnight_risky(&self) -> Result<OvernightRisky, CoreError> {
-        Ok(self
-            .store
-            .meta_get(super::store::OVERNIGHT_RISKY_KEY)?
-            .as_deref()
-            .and_then(OvernightRisky::parse)
-            .unwrap_or_default())
+    /// How long a parked request waits past the morning, in hours (the owner's setting).
+    pub(crate) fn ap_overnight_expiry_hours(&self) -> u32 {
+        self.store
+            .meta_get(super::store::OVERNIGHT_EXPIRY_KEY)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|h| (overnight::MIN_EXPIRY_HOURS..=overnight::MAX_EXPIRY_HOURS).contains(h))
+            .unwrap_or(overnight::DEFAULT_EXPIRY_HOURS)
     }
 
-    /// A change either way asks the owner first.
-    pub async fn set_overnight_when_risky(
-        &self,
-        risky: OvernightRisky,
-        owner: &dyn OwnerCheck,
-    ) -> Result<(), CoreError> {
-        if self.ap_overnight_risky()? == risky {
-            return Ok(());
+    /// Sets how long a parked request waits past the morning (1 to 48 hours). It loosens no policy (nothing more runs
+    /// on its own either way), so it asks no owner check.
+    pub fn set_overnight_expiry(&self, hours: u32) -> Result<(), CoreError> {
+        if !(overnight::MIN_EXPIRY_HOURS..=overnight::MAX_EXPIRY_HOURS).contains(&hours) {
+            return Err(CoreError::invalid("Parked requests expire 1 to 48 hours after the morning."));
         }
-        let reason = match risky {
-            OvernightRisky::Wait => format!("{OVERNIGHT_NAME}: wait for you when something is too risky"),
-            OvernightRisky::Deny => format!("{OVERNIGHT_NAME}: deny what is too risky"),
-        };
-        confirm_owner(owner, reason).await?;
-        self.store.meta_set(super::store::OVERNIGHT_RISKY_KEY, risky.as_str())
+        self.store.meta_set(super::store::OVERNIGHT_EXPIRY_KEY, &hours.to_string())?;
+        self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
+            connection_id: None,
+        });
+        Ok(())
     }
 
     /// Downloads and verifies the newest model this build trusts, and puts it in use once it passed its self-check
@@ -2327,7 +2432,7 @@ impl Engine {
                 .overnighting(now)
                 .then(|| global.overnight_until.unwrap_or(modes::BYPASS_UNTIL_OFF)),
             overnight_since: global.overnight_since.filter(|_| global.overnighting(now)),
-            overnight_when_risky: self.ap_overnight_risky()?,
+            overnight_expiry_hours: self.ap_overnight_expiry_hours(),
             default_profile_id,
             wifi_only: self.store.meta_get(WIFI_ONLY_KEY)?.is_none_or(|v| v != "0"),
             auto_update: self.ap_auto_update()?,
@@ -2551,6 +2656,9 @@ impl Engine {
                 decided: None,
                 risk: None,
                 deletes: false,
+                matrix: None,
+                task: None,
+                parked: None,
             });
             s.mode = AutopilotMode::Lockdown;
             "Lockdown: every request is denied".clone_into(&mut s.reason);
@@ -2604,6 +2712,9 @@ impl Engine {
             reason: String::new(),
             decided: None,
             risk: None,
+            matrix: None,
+            task: None,
+            parked: None,
         };
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);

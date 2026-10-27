@@ -129,7 +129,12 @@ class MainActivity : FragmentActivity() {
         val requested = dev.reins.android.profiles.WorkProfiles.requestedProfile(this, intent)
         if (requested != null && requested != container.profile.id) {
             val known = runCatching { container.profiles.list().any { it.id == requested } }.getOrDefault(false)
-            if (known) dev.reins.android.profiles.ProfileSwitch.switchTo(this, container.profiles, requested)
+            if (known) {
+                // Its reviews are opened there too (the intent is the app's own, stamped for that profile).
+                val then = intent?.takeIf { it.action == AppNotifier.ACTION_OPEN_ORG_REVIEWS }
+                    ?.let { Intent(this, MainActivity::class.java).setAction(it.action).also { i -> dev.reins.android.profiles.WorkProfiles.stamp(this, i, requested) } }
+                dev.reins.android.profiles.ProfileSwitch.switchTo(this, container.profiles, requested, then)
+            }
             return
         }
         if (intent?.getStringExtra(dev.reins.android.profiles.WorkProfiles.EXTRA_PROFILE)?.let { it != container.profile.id } == true) return
@@ -158,6 +163,24 @@ class MainActivity : FragmentActivity() {
                     container.state.session.first { it is SessionState.SignedIn }
                     app.openActivityEntry(id)
                 }
+            }
+            return
+        }
+        if (intent?.action == AppNotifier.ACTION_OPEN_ORG_REVIEWS) {
+            if (container.profile.managed || dev.reins.android.profiles.WorkProfiles.active.managed) {
+                lifecycleScope.launch {
+                    container.state.session.first { it is SessionState.SignedIn }
+                    app.openOrgReviews()
+                }
+            }
+            return
+        }
+        if (intent?.action == AppNotifier.ACTION_OPEN_FOR_OTHERS) {
+            // A Circle review: For others sits in Activity, under Waiting for you.
+            lifecycleScope.launch {
+                container.state.session.first { it is SessionState.SignedIn }
+                app.home()
+                container.refreshCircles(fromServer = true)
             }
             return
         }

@@ -208,10 +208,26 @@ impl Engine {
         let session = self.session()?;
         self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
+        // A Circle request runs only once everyone it needs approved (04, 08 R3): the owner's tap fills the owner's
+        // slot; until the others answer, nothing runs and the card waits.
+        if !self.circle_gate(request_id, &choice, source)? {
+            return Ok(());
+        }
         if self.store.invocation_started(request_id)? {
             return Err(CoreError::invalid(
                 "This request was already attempted. Check Activity and the provider before creating a new request; do not repeat this approval.",
             ));
+        }
+        // A ticket runs only as the request it was made for, within its window (03 §6); the owner's picks are what a
+        // later collect may release.
+        self.revalidate_ticket(request_id, &parked.request)?;
+        if source == crate::authorization::AuthorizationSource::OwnerReview {
+            self.record_ticket_selection(request_id, &choice.selected_message_ids)?;
+        }
+        // A ticket's approval is signed and accepted by the server before anything runs: cancelled, expired or stale
+        // meanwhile means nothing runs (07 review: never execute first and report after).
+        if source != crate::authorization::AuthorizationSource::TicketCollect {
+            self.approve_ticket_first(&session, request_id).await?;
         }
         // This explicit source follows the entry point; Auto, Bypass and Overnight cannot impersonate an owner tap.
         self.authorization_execute(&parked.request, source)?;
@@ -412,6 +428,25 @@ impl Engine {
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn deny_claimed(&self, request_id: &str) -> Result<(), CoreError> {
+        self.deny_claimed_with(request_id, None).await
+    }
+
+    /// The user refused, with a note for the agent ("Use the staging bucket").
+    pub async fn deny_with_note(&self, request_id: &str, note: Option<String>) -> Result<(), CoreError> {
+        let Some(_claim) = self.claim(request_id) else {
+            return Err(CoreError::NotFound);
+        };
+        let note = note.and_then(|n| reins_proto::ticket::clean_text(&n, reins_proto::ticket::MAX_NOTE_CHARS));
+        let decision = Decision::new("", self.ap_human_note(request_id));
+        let (result, _) = deciding(decision, self.deny_claimed_with(request_id, note)).await;
+        if result.is_ok() {
+            self.ap_learn(request_id, Verdict::Deny);
+        }
+        result
+    }
+
+    /// [`Engine::deny_claimed`] with the reviewer's note to the agent.
+    pub(crate) async fn deny_claimed_with(&self, request_id: &str, note: Option<String>) -> Result<(), CoreError> {
         // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
         self.require_decider()?;
         let session = self.session()?;
@@ -432,13 +467,15 @@ impl Engine {
         self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
         self.store.mark_handled(request_id, now)?;
+        // Either deny wins: a Circle hold is settled (its packets are withdrawn on the next sync).
+        self.circle_denied(request_id);
         self.notifier.item_resolved(request_id.to_owned());
         self.discard_input(&session, &parked).await;
         self.respond(
             &session,
             request_id,
             RelayOutcome::Denied {
-                reason: None,
+                reason: note,
             },
         )
         .await

@@ -16,7 +16,8 @@ const MAX_HOOK_INPUT: u64 = 4 * 1024 * 1024;
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Ask a yes-or-no question: on your phone when logged in, else here. Exit code 0 yes, 1 no, 2 no answer.
+    /// Ask a yes-or-no question: on your phone when logged in, else here. Exit code 0 yes, 1 no, 2 no answer, 3
+    /// parked for a later review (the ticket on stdout; `reins wait` it, then ask again).
     #[command(display_order = 11)]
     Ask {
         question: String,
@@ -27,6 +28,27 @@ pub enum Command {
         #[arg(long, value_name = "TOPIC")]
         topic: Option<String>,
         /// Seconds to wait for the answer (default: `approval_timeout_secs`).
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
+        /// Do not wait: park the question for a later review on your phone and print its ticket.
+        #[arg(long)]
+        defer: bool,
+    },
+    /// Questions and pushes parked for a later review on your phone, and where each stands.
+    #[command(display_order = 12)]
+    Tickets {
+        /// The phone's signing key changed: trust the new one, after comparing its digits with the phone (the
+        /// connection's More).
+        #[arg(long)]
+        trust_key: bool,
+    },
+    /// Wait for a parked question or push to be decided. Exit code 0 approved (or pushed), 1 denied, 2 expired,
+    /// stale, cancelled or out of time.
+    #[command(display_order = 13)]
+    Wait {
+        /// The ticket (`rt_…`).
+        ticket: String,
+        /// Seconds to wait at most (default 600).
         #[arg(long, value_name = "SECONDS")]
         timeout: Option<u64>,
     },
@@ -117,7 +139,15 @@ pub async fn run(cmd: Command) -> ExitCode {
             detail,
             topic,
             timeout,
-        } => ask(&paths, &config, &question, detail, topic.as_deref(), timeout).await,
+            defer,
+        } => ask(&paths, &config, &question, detail, topic.as_deref(), timeout, defer).await,
+        Command::Tickets {
+            trust_key,
+        } => tickets(&paths, &config, trust_key).await,
+        Command::Wait {
+            ticket,
+            timeout,
+        } => wait(&paths, &config, &ticket, timeout).await,
         Command::Hook {
             harness,
         } => hook(&paths, &config, harness).await,
@@ -147,6 +177,7 @@ async fn ask(
     detail: Option<String>,
     topic: Option<&str>,
     timeout: Option<u64>,
+    defer: bool,
 ) -> ExitCode {
     let from_stdin = detail.as_deref() == Some("-");
     let detail = if from_stdin {
@@ -169,7 +200,23 @@ async fn ask(
     let timeout = Duration::from_secs(timeout.unwrap_or(config.approval_timeout_secs).clamp(1, 3_600));
     let interactive = !from_stdin && std::io::stdin().is_terminal();
     let secs = timeout.as_secs();
+    let phone = matches!(crate::ask::decider(paths, config), Ok(Decider::Phone));
+    // The same question asked again where it was parked: an approval since lets it through once.
+    let cwd = std::env::current_dir().ok().map(|d| d.display().to_string());
+    // Bound to the question as typed; one cut to reach the phone never becomes a ticket.
+    let digest = crate::ask::reaches_whole(question, detail.as_deref(), topic)
+        .then(|| crate::tickets::ask_digest(cwd.as_deref(), question, detail.as_deref(), topic));
+    if phone && let Some(digest) = &digest {
+        let now = crate::now_unix();
+        if crate::tickets::TicketStore::load(paths).passes().iter().any(|p| p.digest == *digest && p.session.is_none())
+            && let Ok(Some(pass)) = crate::tickets::TicketStore::update(paths, |s| s.take_pass(digest, None, now))
+        {
+            eprintln!("Yes (approved earlier, ticket {}).", pass.ticket);
+            return ExitCode::SUCCESS;
+        }
+    }
     match crate::ask::decider(paths, config) {
+        Ok(Decider::Phone) if defer => eprintln!("Parking it for a later review on your phone…"),
         Ok(Decider::Phone) => eprintln!("Asking on your phone; waiting up to {secs} s…"),
         Ok(Decider::Local) if !interactive => eprintln!(
             "Asking on this computer (a desktop notification; not paired with a phone); waiting up to {secs} s…"
@@ -181,8 +228,59 @@ async fn ask(
         .service(q.topic.as_deref())
         .detail(q.detail.as_deref());
     let tell = |line: &str| eprintln!("{line}");
-    let (answer, timed_out) =
-        crate::ask::ask_logged(paths, config, &q, timeout, interactive, &DesktopAsk, entry, Some(&tell)).await;
+    if defer && digest.is_none() {
+        eprintln!("reins: this question is too long to park whole; asking it now instead.");
+    }
+    let ticketing = digest.as_deref().map(|digest| crate::ask::Ticketing {
+        digest,
+        defer,
+    });
+    let (answer, timed_out, _entry) = crate::ask::ask_logged_ticketed(
+        paths,
+        config,
+        &q,
+        timeout,
+        interactive,
+        &DesktopAsk,
+        entry,
+        Some(&tell),
+        ticketing.filter(|_| phone),
+    )
+    .await;
+    let answer = match answer {
+        Ok(a) => a,
+        Err(parked) => {
+            let now = crate::now_unix();
+            let ticket = crate::tickets::LocalTicket {
+                ticket: parked.ticket.clone(),
+                kind: crate::tickets::TicketKind::Ask,
+                session: None,
+                summary: crate::tickets::summary_of(&q.question),
+                digest: digest.unwrap_or_default(),
+                nonce: parked.nonce,
+                created_at: now,
+                expected_by: parked.expected_by,
+                state: reins_proto::ticket::TicketState::Deferred.as_str().to_owned(),
+                told: None,
+                repo: None,
+                refs: Vec::new(),
+                note: None,
+                stale: None,
+                push: None,
+            };
+            if let Err(e) = crate::tickets::TicketStore::update(paths, |s| s.add(ticket)) {
+                eprintln!("reins: {e}");
+            }
+            eprintln!(
+                "{} `reins wait {}` waits for it; then ask again.",
+                crate::tickets::parked_hook_message(&parked.ticket, parked.expected_by, now, parked.until_morning)
+                    .replace("re-run this exact command", "ask this exact question again"),
+                parked.ticket
+            );
+            say(&parked.ticket);
+            return ExitCode::from(3);
+        }
+    };
     match &answer {
         Answer::Yes => eprintln!("Yes."),
         Answer::No(why) => eprintln!("No: {why}"),
@@ -190,6 +288,117 @@ async fn ask(
         Answer::Unanswered(why) => eprintln!("No answer: {why}"),
     }
     ExitCode::from(answer.exit_code())
+}
+
+/// While the phone's signing key changed and is not trusted: says so (both fingerprints) and the exit code 2.
+fn refused_for_key(paths: &Paths) -> Option<ExitCode> {
+    let (was, now) = crate::tickets::TicketStore::load(paths).key_change()?;
+    eprintln!("reins: {}", crate::tickets::key_changed_message(&was, &now));
+    Some(ExitCode::from(2))
+}
+
+/// `reins tickets`: this computer's tickets, after a look at where they stand now; `trust_key`: pin the phone's
+/// changed signing key first.
+async fn tickets(paths: &Paths, config: &Config, trust_key: bool) -> ExitCode {
+    use crate::tickets::TicketStore;
+    if trust_key {
+        match TicketStore::update(paths, TicketStore::trust_key) {
+            Ok(Some(_)) => {}
+            Ok(None) => say("The phone's signing key has not changed; nothing to trust."),
+            Err(e) => return fail(&e),
+        }
+    }
+    if crate::server::oauth::logged_in_server(paths).is_some() {
+        let pushes = !crate::tickets::daemon_running(paths, config).await;
+        match crate::server::client::DesktopClient::new(paths) {
+            Ok(client) => {
+                let look = async {
+                    if TicketStore::load(paths).needs_look() {
+                        crate::tickets::refresh(paths, &client, pushes).await.map(|_| ())
+                    } else {
+                        crate::tickets::see_signing_key(paths, &client).await
+                    }
+                };
+                match tokio::time::timeout(Duration::from_secs(20), look).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => eprintln!("reins: cannot look at the tickets now: {e}"),
+                    Err(_) => eprintln!("reins: the Reins server did not answer in time; showing what is known."),
+                }
+            }
+            Err(e) => eprintln!("reins: {e}"),
+        }
+    }
+    if let Some(code) = refused_for_key(paths) {
+        return code;
+    }
+    let store = TicketStore::load(paths);
+    if let Some(fp) = store.signing_key_fingerprint() {
+        say(&format!("Phone key {fp}"));
+    }
+    let mut list: Vec<_> = store.tickets().iter().collect();
+    if list.is_empty() {
+        say("No tickets: nothing waits for a later review.");
+        return ExitCode::SUCCESS;
+    }
+    list.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+    let now = crate::now_unix();
+    say(&format!("{:<24} {:<5} {:<12} {:<10} WHAT", "TICKET", "KIND", "STATE", "DUE"));
+    for t in list {
+        let due = if t.waits() && t.expected_by > now {
+            format!("in {}", crate::tickets::within(t.expected_by - now))
+        } else {
+            "-".to_owned()
+        };
+        let mut what = t.summary.clone();
+        if let Some(n) = t.note.as_deref().or(t.stale.as_deref()) {
+            what = format!("{what} ({n})");
+        }
+        say(&format!("{:<24} {:<5} {:<12} {:<10} {what}", t.ticket, t.kind.label(), t.state.replace('_', " "), due));
+    }
+    ExitCode::SUCCESS
+}
+
+/// `reins wait <ticket>`.
+async fn wait(paths: &Paths, config: &Config, ticket: &str, timeout: Option<u64>) -> ExitCode {
+    let Some(id) = reins_proto::ticket::request_of(ticket.trim()) else {
+        eprintln!("reins: `{ticket}` is not a ticket (rt_…)");
+        return ExitCode::from(2);
+    };
+    let ticket = reins_proto::ticket::ticket_of(&id);
+    if crate::server::oauth::logged_in_server(paths).is_none() {
+        eprintln!("reins: not logged in to a Reins server; run `reins login`");
+        return ExitCode::from(2);
+    }
+    let client = match crate::server::client::DesktopClient::new(paths) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("reins: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let timeout = Duration::from_secs(timeout.unwrap_or(reins_proto::ticket::MAX_WAIT_SECS).clamp(1, 86_400));
+    // The daemon pushes parked pushes; without it, waiting for one pushes it here.
+    let pushes = !crate::tickets::daemon_running(paths, config).await;
+    let code = crate::tickets::wait(paths, &client, &ticket, timeout, pushes).await;
+    if let Some(code) = refused_for_key(paths) {
+        return code;
+    }
+    let store = crate::tickets::TicketStore::load(paths);
+    let known = store.get(&ticket);
+    if known.is_none() {
+        eprintln!("{ticket}: not a ticket of this computer; `reins tickets` lists them.");
+        return ExitCode::from(code);
+    }
+    match (code, known.and_then(crate::tickets::LocalTicket::state)) {
+        (0, _) => eprintln!("{ticket}: approved."),
+        (1, _) => eprintln!(
+            "{ticket}: denied{}",
+            known.and_then(|t| t.note.as_deref()).map_or_else(|| ".".to_owned(), |n| format!(": {n}"))
+        ),
+        (_, Some(s)) if !s.is_open() => eprintln!("{ticket}: {}.", s.as_str().replace('_', " ")),
+        _ => eprintln!("{ticket}: not decided within {} s.", timeout.as_secs()),
+    }
+    ExitCode::from(code)
 }
 
 async fn hook(paths: &Paths, config: &Config, harness: Harness) -> ExitCode {

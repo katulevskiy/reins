@@ -6,7 +6,7 @@ repository = "https://github.com/katulevskiy/reins"
 publish = false
 
 [workspace]
-members = ["macros", "crates/reins-proto", "crates/reins-policy", "crates/reins-core", "crates/reins-e2e", "crates/reins-desktop", "crates/reins-desktop-app", "crates/reins-laya", "crates/reins-replay"]
+members = ["macros", "crates/reins-proto", "crates/reins-policy", "crates/reins-audit", "crates/reins-executor", "crates/reins-core", "crates/reins-e2e", "crates/reins-desktop", "crates/reins-desktop-app", "crates/reins-laya", "crates/reins-replay"]
 
 [package]
 name = "vaultwarden"
@@ -127,6 +127,8 @@ libsqlite3-sys = { version = "0.38.2", optional = true }
 # Crypto-related libraries
 rand = "0.10.2"
 ring = "0.17.14"
+# Seals a parked request to the approval device (Decisions v2, 03 §9).
+crypto_box = { version = "0.9.1", features = ["seal", "std"] }
 rustls = { version = "0.23.44", features = ["ring", "std"], default-features = false }
 subtle = "2.6.1"
 
@@ -280,6 +282,12 @@ reqsign-core = { version = "3.3.1", optional = true }
 
 # Reins wire types shared with the phone core
 reins-proto = { path = "crates/reins-proto" }
+# Organizations (O2): the Managed evaluation the decision service shares with executors, and envelope verification
+reins-policy = { path = "crates/reins-policy" }
+reins-audit = { path = "crates/reins-audit" }
+# Organizations (O2): Android key attestation chains
+x509-parser = "0.16.0"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 # Paused-clock relay timing tests and #[tokio::test]

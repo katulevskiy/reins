@@ -11,12 +11,17 @@ mod folder;
 mod group;
 mod org_policy;
 mod organization;
+pub mod reins_circle;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
 pub mod reins_org;
 pub mod reins_org_event;
+pub mod reins_org_exec;
+pub mod reins_org_keys;
+pub mod reins_org_request;
 mod reins_roster;
+mod reins_ticket;
 mod reins_vault_passkey;
 pub mod reins_workos;
 mod send;
@@ -42,6 +47,7 @@ pub use self::organization::{
     Membership, MembershipId, MembershipStatus, MembershipType, OrgApiKeyId, Organization, OrganizationApiKey,
     OrganizationId,
 };
+pub use self::reins_circle::{ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket};
 pub use self::reins_client::{ReinsClient, ReinsJwtClient};
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
@@ -51,6 +57,9 @@ pub use self::reins_roster::{
     Listed, LogLimits, OpsQuota, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
     ReinsRosterRow, WriteError,
 };
+#[cfg(all(test, sqlite))]
+pub use self::reins_ticket::tests::ticket as test_ticket;
+pub use self::reins_ticket::{ReinsCallback, ReinsDeviceKeys, ReinsTicket, ReinsTicketEvent};
 pub use self::reins_vault_passkey::ReinsVaultPasskey;
 pub use self::reins_workos::{ReinsDeviceSignout, ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};

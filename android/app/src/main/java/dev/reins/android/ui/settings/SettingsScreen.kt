@@ -114,8 +114,11 @@ fun SettingsScreen(
     onTour: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
+    /** Circles: people who share control of this account. */
+    onCircles: () -> Unit = {},
     /** Profiles > Add work account. */
     onAddWorkAccount: () -> Unit = {},
+    onOrgReviews: () -> Unit = {},
     /** Debug builds: the Signal component gallery. */
     onSignalGallery: () -> Unit = {},
     authenticator: Authenticator,
@@ -152,11 +155,16 @@ fun SettingsScreen(
                 }
                 if (signedIn != null) {
                     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as? dev.reins.android.ReinsApp
-                    app?.let { ProfilesGroup(it.container, signedIn.info.serverUrl, onAddWorkAccount) }
+                    app?.let { ProfilesGroup(it.container, signedIn.info.serverUrl, onAddWorkAccount, onOrgReviews) }
                 }
                 ui.message?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp)) }
                 ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp), BannerKind.Error) }
 
+                if (signedIn != null) {
+                    SettingsGroup(header = "People", glyph = Glyph.People) {
+                        SetRow("Circles", Glyph.People, Modifier.testTag("circlesRow"), divider = false, onClick = onCircles)
+                    }
+                }
                 SettingsGroup(header = "This phone", glyph = Glyph.Phone) {
                     if (signedIn != null) {
                         SetRow("Devices", Glyph.Devices, Modifier.testTag("devicesRow"), value = devices?.toString(), onClick = onDevices)

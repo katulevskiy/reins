@@ -31,10 +31,17 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             // "Autopilot has still to decide") gives way to the ask itself.
             self.withdraw(item.id, keeping: item.id)
             guard let model else { return }
+            // Parked by Overnight for the morning: no notification and no chime now; the morning digest says it.
+            let parked = OvernightDigestNotice.isParked(item, now: Int64(Date().timeIntervalSince1970))
             if model.isActive {
                 await model.refreshPending()
-                // The chime still sounds (once per request and per burst), for a phone left open on the desk.
-                model.feedback.requestArrived(item.id, needsUser: true)
+                // The chime still sounds (once per request and per burst), for a phone left open on the desk; a
+                // ticket (nobody waits on it) and news about one arrive quietly.
+                model.feedback.requestArrived(item.id, needsUser: item.ticket == nil && !parked)
+                return
+            }
+            if parked {
+                await model.refreshPending()
                 return
             }
             // Posted before the refresh: in the background the app may be suspended any moment, and the notification
@@ -96,6 +103,32 @@ final class AppNotifier: Notifier, @unchecked Sendable {
                 ))
             case .modeChanged:
                 break
+            }
+        }
+    }
+
+    /// Circles. A request of another account waiting for this phone is the one Circle notification ("Sam: purchase $42
+    /// waiting"; a tap opens Reins, nothing is answered from it); in front it chimes and "For others" shows it.
+    /// Anything else (a review settled, an invitation moved, the owner's progress) refreshes quietly.
+    func circleChanged(event: CircleEvent) {
+        Task { @MainActor in
+            guard let model else { return }
+            switch event {
+            case let .reviewWaiting(review):
+                if model.isActive {
+                    model.feedback.requestArrived(review.id, needsUser: true)
+                } else {
+                    // The extension may have shown the same push already (both processes read the packet): one
+                    // notification per review, never a second chime.
+                    let id = NotificationContent.reviewId(review.id)
+                    let shown = await self.center.deliveredNotifications().contains { n in
+                        n.request.identifier == id || n.request.content.userInfo[NotificationKey.id] as? String == id
+                    }
+                    if !shown { self.post(id, NotificationContent.circleReview(review, settings: self.settings())) }
+                }
+                await model.refreshCircles()
+            case .changed:
+                await model.circlesChanged()
             }
         }
     }

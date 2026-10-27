@@ -341,6 +341,27 @@ pub async fn get_once(url: &str, accept: &str, timeout: Duration) -> Result<Resp
         .map_err(|e| describe(&host, &e))
 }
 
+/// One POST of a small JSON `body` under the same guard, without following redirects, with a total `timeout`: for
+/// webhooks to URLs an agent registered.
+pub async fn post_once(
+    url: &str,
+    headers: HeaderMap,
+    body: Vec<u8>,
+    timeout: Duration,
+) -> Result<Response, OutboundError> {
+    let url = check_url(url, allow_loopback())?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    client()
+        .post(url)
+        .headers(headers)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| describe(&host, &e))
+}
+
 /// A transport error in words that name the host but never the request.
 fn describe(host: &str, e: &reqwest::Error) -> OutboundError {
     let mut source: Option<&dyn std::error::Error> = Some(e);

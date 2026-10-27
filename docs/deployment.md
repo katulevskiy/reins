@@ -260,6 +260,33 @@ to connect it: the phone knows the moment an account is added, the server only a
 servers added on the phone are listed once it reports them; an open chat may need a new chat to see those.
 
 
+## Org executors
+
+Organizations (`REINS_ORGS_ENABLED`) run Managed requests through an **executor** per org: a separate program with its
+own key, bound to one tenant, holding the org's GitHub App key and Google service account. It talks to the server
+over HTTPS only and refuses any job it can't verify on its own (see the
+[security model](security-model.md#decisions-in-managed-mode-o2)).
+
+- **Reins Cloud:** one per tenant, as its own system user, with a systemd template:
+
+  ```ini
+  # /etc/systemd/system/reins-executor@.service
+  [Service]
+  ExecStart=/usr/local/bin/reins-executor run --config /etc/reins-executor/%i.toml
+  DynamicUser=yes
+  StateDirectory=reins-executor/%i
+  LoadCredential=key:/etc/reins-executor/%i.key
+  ProtectSystem=strict
+  NoNewPrivileges=yes
+  Restart=always
+  ```
+
+  `systemctl enable --now reins-executor@<org>`.
+- **Dedicated / self-hosted:** the same binary in the org's own network, registered with mode `dedicated` or
+  `self_hosted`; nothing else differs.
+- Its key is registered in the console (Executors), which takes two admins' phones; its pins come from
+  `reins-executor pin` and are compared with the console's before `--accept`.
+
 ## WorkOS passkeys and recovery rollout
 
 With Reins and WorkOS enabled, accounts can only authenticate through WorkOS; local password sign-in and registration

@@ -18,10 +18,13 @@ import dev.reins.android.ui.common.userMessage
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.AutopilotStats
+import dev.reins.core.AutoSetup
+import dev.reins.core.CellChoice
+import dev.reins.core.WorldItem
+import dev.reins.core.ZoneChoice
 import dev.reins.core.ThresholdReplay
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
-import dev.reins.core.OvernightRisky
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
@@ -58,6 +61,10 @@ data class AutopilotUi(
     val checking: Boolean = false,
     /** What the last "Check now" found ("Up to date", "Waiting for Wi-Fi", an error). */
     val checkResult: String? = null,
+    /** Auto's setup as last read (Decisions v2): the owner's world and the matrix. */
+    val setup: AutoSetup? = null,
+    /** Picking Auto before the setup was finished: the setup should open (the page that shows it clears this). */
+    val setupRequested: Boolean = false,
 )
 
 /** Settings > Autopilot, its profiles and "Try it", and the Autopilot part of a connection's page. */
@@ -159,7 +166,32 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
             if (authenticator != null) endLockdown(mode ?: AutopilotMode.MANUAL, authenticator, connectionId)
             return
         }
+        // Turning on Auto for every AI guides first, until its setup is finished (Decisions v2, 01 §9.1).
+        if (mode == AutopilotMode.AUTO && connectionId == null && modeOf(null) != AutopilotMode.AUTO) {
+            guideOrApply()
+            return
+        }
         applyMode(mode, connectionId)
+    }
+
+    /** Auto with its setup finished is set at once; before that, the setup opens instead and nothing changes yet. */
+    private fun guideOrApply() {
+        viewModelScope.launch {
+            val setup = try {
+                container.core.autoSetup()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Nothing to guide with: Auto is set as before.
+                null
+            }
+            if (setup != null && !setup.done) {
+                container.feedback.play(Event.Open)
+                _ui.update { it.copy(setup = setup, setupRequested = true) }
+            } else {
+                applyMode(AutopilotMode.AUTO, null)
+            }
+        }
     }
 
     /** Whether setting [mode] would take [connectionId] (or every AI) out of a Lockdown in force. */
@@ -227,15 +259,14 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * What Overnight does with a request too risky to decide: wait for the user, or deny it. Either way the core asks
-     * the owner first; the choice shows once it is made.
+     * How long what Overnight parks waits past the morning before it expires, not approved. It never loosens
+     * anything, so nothing is asked; the choice shows at once.
      */
-    fun setOvernightWhenRisky(risky: OvernightRisky, authenticator: Authenticator) {
-        if (settings.value?.overnightWhenRisky == risky) return
-        val owner = OwnerPrompt(authenticator, "Change ${AutopilotText.OVERNIGHT}")
-        ownerAsked(owner) {
-            container.core.setOvernightWhenRisky(risky, owner)
-            draft { it.copy(overnightWhenRisky = risky) }
+    fun setOvernightExpiry(hours: UInt) {
+        if (settings.value?.overnightExpiryHours == hours) return
+        draft { it.copy(overnightExpiryHours = hours) }
+        perform {
+            container.core.setOvernightExpiry(hours)
             container.refreshAutopilot()
         }
     }
@@ -331,6 +362,87 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
             container.core.assignProfile(connectionId, profileId)
             container.refreshAutopilot()
             loadProfiles()
+        }
+    }
+
+    // ---- Auto's setup (Decisions v2) ----------------------------------------------------------------------------
+
+    /** The setup page is up: the request to open it is answered, and what it shows is read again. */
+    fun showingSetup() {
+        _ui.update { it.copy(setupRequested = false) }
+        viewModelScope.launch { loadSetup() }
+    }
+
+    private suspend fun loadSetup() {
+        try {
+            val setup = container.core.autoSetup()
+            _ui.update { it.copy(setup = setup) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _ui.update { it.copy(error = e.userMessage()) }
+        }
+    }
+
+    /**
+     * Whose [item] is. Shown at once; toward Mine the core asks the owner first ([authenticator]) and a refusal puts
+     * the old zone back.
+     */
+    fun setWorldZone(item: WorldItem, zone: ZoneChoice, authenticator: Authenticator) {
+        if (item.zone == zone && item.confirmed) return
+        container.feedback.play(Event.Selection)
+        _ui.update { ui ->
+            ui.copy(setup = ui.setup?.let { s -> s.copy(world = s.world.map { if (it.kind == item.kind && it.key == item.key) it.copy(zone = zone, confirmed = true) else it }) })
+        }
+        val owner = OwnerPrompt(authenticator, "Auto")
+        setupChange(owner) { container.core.setWorldZone(item.kind, item.key, zone, owner) }
+    }
+
+    /** One cell of the matrix ([level] 0 to 3). Looser asks the owner first; a refusal puts the old one back. */
+    fun setMatrixCell(zone: ZoneChoice, level: Int, cell: CellChoice, authenticator: Authenticator) {
+        container.feedback.play(Event.Selection)
+        _ui.update { ui ->
+            ui.copy(
+                setup = ui.setup?.let { s ->
+                    s.copy(matrix = s.matrix.map { row -> if (row.zone != zone) row else row.copy(cells = row.cells.mapIndexed { l, c -> if (l == level) cell else c }) })
+                },
+            )
+        }
+        val owner = OwnerPrompt(authenticator, "Auto")
+        setupChange(owner) { container.core.setMatrixCell(zone, level.toUByte(), cell, owner) }
+    }
+
+    /** "Turn on": confirms what the setup shows and turns Auto on, after the owner's check; then [onDone]. */
+    fun finishSetup(authenticator: Authenticator, onDone: () -> Unit) {
+        val owner = OwnerPrompt(authenticator, "Turn on Auto")
+        val old = modeOf(null)
+        setupChange(owner) {
+            container.core.finishAutoSetup(owner)
+            AutopilotText.modeChangeEvent(old, AutopilotMode.AUTO)?.let { container.feedback.play(it) }
+            container.refreshAutopilot()
+            onDone()
+        }
+    }
+
+    /** Runs a setup change the core may ask the owner about; whatever happens, the setup is read again. */
+    private fun setupChange(owner: OwnerPrompt, block: suspend () -> Unit) {
+        _ui.update { it.copy(busy = true, error = null, notice = null) }
+        viewModelScope.launch {
+            try {
+                block()
+                _ui.update { it.copy(busy = false) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val error = when (owner.last) {
+                    AuthResult.Cancelled -> null
+                    AuthResult.Unavailable -> "Set a screen lock or fingerprint on this phone first."
+                    else -> e.userMessage()
+                }
+                if (error != null && owner.last != AuthResult.Unavailable) container.feedback.play(Event.Error)
+                _ui.update { it.copy(busy = false, error = error) }
+            }
+            loadSetup()
         }
     }
 

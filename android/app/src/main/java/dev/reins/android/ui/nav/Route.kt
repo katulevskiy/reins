@@ -28,14 +28,23 @@ sealed interface Route {
     /** Settings > Account > Devices: the account's phones (sign out a lost one) and computers. */
     data object Devices : Route
 
+    /** Settings > Circles: people who share control of this account, and those it helps (Decisions v2, 04). */
+    data object Circles : Route
+
     /** Settings > Profiles > Add work account: sign in a work account and enroll this phone to its org. */
     data object AddWorkAccount : Route
+
+    /** Settings > Profiles > Reviews (a work profile's): the org reviews waiting for this member. */
+    data object OrgReviews : Route
 
     /** Trust > Ended: the grants that ran out, to resume or delete. */
     data object EndedGrants : Route
 
     /** One Autopilot profile. */
     data class AutopilotProfile(val id: String) : Route
+
+    /** Turning on Auto the first time: the owner's world, the matrix, then Turn on (Decisions v2). */
+    data object AutoSetup : Route
 
     /** Autopilot's "Try it", for a profile (null = the default one). */
     data class TryIt(val profileId: String?) : Route

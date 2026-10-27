@@ -224,17 +224,17 @@ final class AutopilotUITests: XCTestCase {
         selected("modeSwitch:manual")
     }
 
-    /// Overnight starts on a tap from "For a while" (the owner's check is the core's), runs as Trust's field with what
-    /// to do with what is too risky under it, and stops back to the mode it interrupted.
+    /// Overnight starts on a tap from "For a while" (the owner's check is the core's), runs as Trust's field with how
+    /// long what it parks waits under it, and stops back to the mode it interrupted.
     func testOvernightStartsOnATapRunsAndStopsBackToTheModeItInterrupted() {
         launch()
         tapAuto()
         selected("modeSwitch:auto")
         pickTimed("overnight")
         waitFor("overnightClock")
-        selected("whenRisky:wait")
-        tap("whenRisky:deny")
-        selected("whenRisky:deny")
+        selected("expiry:12")
+        tap("expiry:24")
+        selected("expiry:24")
         shot("autopilot-overnight")
         tap("stopOvernight")
         selected("modeSwitch:auto")

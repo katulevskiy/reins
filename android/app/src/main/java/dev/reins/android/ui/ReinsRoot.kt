@@ -268,6 +268,13 @@ private fun SignedInContent(
             }
             val apSettings by state.autopilot.collectAsStateWithLifecycle()
             val apUi by autopilot.ui.collectAsStateWithLifecycle()
+            // Picking Auto before its setup was finished opens the setup instead (from any mode control).
+            LaunchedEffect(apUi.setupRequested) {
+                if (apUi.setupRequested) {
+                    modeSheet = false
+                    app.open(Route.AutoSetup)
+                }
+            }
             dev.reins.android.ui.main.ModeSheet(
                 open = modeSheet,
                 settings = apSettings,
@@ -288,9 +295,8 @@ private fun SignedInContent(
             OvernightSheets(
                 timedSheet == AutopilotMode.OVERNIGHT,
                 who = null,
-                risky = apSettings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-                ratesRisk = (apUi.model ?: apSettings?.model)?.risk == true,
-                onRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
+                expiryHours = apSettings?.overnightExpiryHours ?: AutopilotText.DEFAULT_EXPIRY_HOURS,
+                onExpiry = { autopilot.setOvernightExpiry(it) },
                 onStart = { minutes -> autopilot.startOvernight(minutes, authenticator = authenticator) },
                 onClose = { timedSheet = null },
             )
@@ -360,6 +366,7 @@ private fun TabContent(
 ) {
     val state = container.state
     val context = androidx.compose.ui.platform.LocalContext.current
+    val questionScope = rememberCoroutineScope()
     when (app.tab) {
         Tab.Activity -> ActivityScreen(
             container = container,
@@ -373,6 +380,25 @@ private fun TabContent(
             },
             onAnswerBurst = { burst, approve ->
                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
+            },
+            onAnswerCircle = { review, approve, note ->
+                dev.reins.android.ui.activity.answerCircle(container, authenticator, review, approve, note)
+            },
+            onAnswerQuestion = { q, zone ->
+                questionScope.launch { dev.reins.android.ui.activity.answerQuestion(container, authenticator, q, zone)?.let(app::showNotice) }
+            },
+            onDismissQuestion = { q ->
+                questionScope.launch { dev.reins.android.ui.activity.dismissQuestion(container, q)?.let(app::showNotice) }
+            },
+            onApproveTask = { item, draft ->
+                questionScope.launch { dev.reins.android.ui.activity.approveTaskProposal(container, authenticator, item, draft)?.let(app::showNotice) }
+            },
+            onDenyTask = { item -> dev.reins.android.ui.activity.denyTaskProposal(container, item) },
+            onStopTask = { task ->
+                questionScope.launch { dev.reins.android.ui.activity.stopTask(container, task)?.let(app::showNotice) }
+            },
+            onApproveAll = { group ->
+                questionScope.launch { dev.reins.android.ui.activity.approveAllForTask(container, authenticator, group)?.let(app::showNotice) }
             },
             onConnectComputer = { app.open(Route.ConnectComputer) },
             onOpenSettings = { app.selectTab(Tab.Settings) },
@@ -433,7 +459,9 @@ private fun TabContent(
             onTour = app::replaySetup,
             onVaultPasskeys = { app.open(Route.VaultPasskeys) },
             onDevices = { app.open(Route.Devices) },
+            onCircles = { app.open(Route.Circles) },
             onAddWorkAccount = { app.open(Route.AddWorkAccount) },
+            onOrgReviews = { app.open(Route.OrgReviews) },
             onSignalGallery = { app.open(Route.SignalGallery) },
             authenticator = authenticator,
         )
@@ -460,6 +488,22 @@ private fun PageContent(
     when (route) {
         Route.AddWorkAccount -> dev.reins.android.ui.settings.AddWorkAccountScreen(
             viewModel(key = "addWorkAccount") { dev.reins.android.ui.settings.AddWorkAccountViewModel(container) },
+            onBack = { app.back() },
+        )
+        Route.OrgReviews -> dev.reins.android.ui.org.OrgReviewsScreen(
+            viewModel(key = "orgReviews") {
+                dev.reins.android.ui.org.OrgReviewsViewModel(
+                    container.core,
+                    dev.reins.android.profiles.WorkProfiles.active,
+                    dev.reins.android.profiles.ProfilesProvider.deviceKeys,
+                )
+            },
+            onBack = { app.back() },
+        )
+        Route.Circles -> dev.reins.android.ui.circles.CirclesScreen(
+            viewModel(key = "circles:$accountEpoch") { dev.reins.android.ui.circles.CirclesViewModel(container) },
+            container,
+            authenticator,
             onBack = { app.back() },
         )
         Route.Devices -> DevicesScreen(
@@ -493,6 +537,13 @@ private fun PageContent(
             onTryIt = { app.open(Route.TryIt(it)) },
         )
         is Route.TryIt -> TryItScreen(autopilot, route.profileId, onBack = { app.back() })
+        Route.AutoSetup -> dev.reins.android.ui.autopilot.AutoSetupScreen(
+            autopilot,
+            authenticator,
+            onBack = { app.back() },
+            // Auto is on: back to Autopilot, on Trust.
+            onDone = { app.selectTab(Tab.Trust) },
+        )
         is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() }, authenticator = authenticator)
         Route.McpAdd -> McpAddScreen(
             mcp,

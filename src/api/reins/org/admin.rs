@@ -24,6 +24,7 @@ use crate::db::{
         self, ACTIVE_STATUS, CHANGE_APPLIED, CHANGE_EXPIRED, CHANGE_PENDING, CHANGE_REJECTED, ReinsOrgChange,
         ReinsOrgRole, SUBJECT_GROUP, SUBJECT_MEMBER,
     },
+    models::reins_org_exec::{self, ReinsOrgExecutor},
     schema::groups,
 };
 
@@ -120,7 +121,8 @@ pub fn propose(
             return Err(OrgError::Invalid("A new Org owner takes two Security admins. Ask Reins support."));
         }
         let alone = !tenant.two_person && !is_owner_recovery(c, org, action)?;
-        if alone || others == 0 {
+        // 06 §3's actions wait for the proposer's own device signature, whoever else may approve them.
+        if (alone || others == 0) && !action.needs_device_signatures() {
             let followups = apply(c, org, action, proposer, binding, now)?;
             event(
                 c,
@@ -202,6 +204,71 @@ pub fn approve(
         Ok(Some(followups))
     })?;
     expired.ok_or(OrgError::Invalid("This change expired before it was approved."))
+}
+
+/// Whether a pending change may apply on its proposer's device signature alone: two-person approval is off, or
+/// nobody else holds the capability.
+pub fn can_apply_alone(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &ReinsOrgChange,
+    action: &AdminAction,
+) -> Result<bool, OrgError> {
+    let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
+    if is_owner_recovery(c, org, action)? {
+        return Ok(false);
+    }
+    let cap = needed(c, org, action)?;
+    Ok(!tenant.two_person || other_holders(c, org, cap, &change.proposed_by)? == 0)
+}
+
+/// Applies a pending change its proposer confirmed on their device, when [`can_apply_alone`].
+pub fn apply_alone(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &str,
+    proposer: &str,
+    now: i64,
+) -> Result<Followups, OrgError> {
+    let (row, action) = load_pending(c, org, change)?;
+    if row.proposed_by != proposer || !can_apply_alone(c, org, &row, &action)? {
+        return Err(OrgError::Forbidden);
+    }
+    let cap = needed(c, org, &action)?;
+    if !can(c, org, proposer, cap)? {
+        return Err(OrgError::Forbidden);
+    }
+    validate(c, org, &action, None)?;
+    if !reins_org::q_decide(c, change, CHANGE_APPLIED, proposer, now)? {
+        return Err(OrgError::Invalid("This change was already decided."));
+    }
+    let followups = apply(c, org, &action, proposer, None, now)?;
+    event(
+        c,
+        org,
+        "change.applied",
+        Some(proposer),
+        Some(change),
+        &json!({"action": action, "sole_holder": true}),
+        now,
+    )?;
+    Ok(followups)
+}
+
+/// The console's Approve: only after the approver approved it on their enrolled phone (06 §3), which binds the
+/// approval to a device key. The console then supplies what only it can (WorkOS's word for a new sign-in).
+pub fn approve_from_console(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &str,
+    approver: &str,
+    binding: Option<&VerifiedBinding>,
+    now: i64,
+) -> Result<Followups, OrgError> {
+    if !super::reviews::device_approved(c, org, change, approver)? {
+        return Err(OrgError::Invalid("Approve it on your phone first."));
+    }
+    approve(c, org, change, approver, binding, now)
 }
 
 /// Rejects a pending change (its proposer withdrawing it, or another holder of the capability).
@@ -360,7 +427,55 @@ fn validate(
         AdminAction::ConfirmDirectoryRemovals {
             held,
         } => super::scim::q_confirm_held(c, org, held, true).map(drop),
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => super::policy::check_draft(c, org, *revision, hash).map(drop),
+        AdminAction::SetRetention {
+            days,
+        } => {
+            if [0, 30, 365].contains(days) {
+                Ok(())
+            } else {
+                Err(OrgError::Invalid("Keep request bodies for none, 30 days or 1 year."))
+            }
+        }
+        AdminAction::RegisterExecutor {
+            executor_id,
+            public_key,
+            ..
+        } => {
+            if !executor_id_ok(executor_id) {
+                return Err(OrgError::Invalid("Name the executor with 1-32 of a-z, 0-9 and -."));
+            }
+            if executor_key(public_key).is_none() {
+                return Err(OrgError::Invalid("That isn't an Ed25519 public key (base64url, 32 bytes)."));
+            }
+            if reins_org_exec::q_executor(c, org, executor_id)?.is_some() {
+                return Err(OrgError::Invalid("That executor name is taken."));
+            }
+            Ok(())
+        }
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => match reins_org_exec::q_executor(c, org, executor_id)? {
+            Some(e) if e.revoked_at.is_none() => Ok(()),
+            _ => Err(OrgError::NotFound),
+        },
     }
+}
+
+/// An executor's name: 1-32 of `a-z`, `0-9`, `-`.
+#[must_use]
+pub fn executor_id_ok(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// An executor's Ed25519 public key (base64url without padding, 32 bytes, a strict key).
+#[must_use]
+pub fn executor_key(b64: &str) -> Option<[u8; 32]> {
+    let key: [u8; 32] = reins_proto::canon::decode_payload(b64.trim())?.try_into().ok()?;
+    reins_proto::canon::strict_ed25519_key(&key).then_some(key)
 }
 
 /// Applies a validated action inside the caller's transaction.
@@ -473,6 +588,68 @@ fn apply(
         } => {
             let count = super::scim::q_confirm_held(c, org, held, false)?;
             event(c, org, "directory.removals_confirmed", Some(actor), None, &json!({"count": count}), now)?;
+        }
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => super::policy::apply_activation(c, org, *revision, hash, actor, now)?,
+        AdminAction::SetRetention {
+            days,
+        } => {
+            let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
+            tenant.body_retention_days = i32::try_from(*days).unwrap_or(30);
+            tenant.updated_at = now;
+            reins_org::q_save_org(c, &tenant)?;
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::RETENTION_SET,
+                Some(actor),
+                None,
+                &json!({"days": days}),
+                now,
+            )?;
+        }
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            public_key,
+        } => {
+            let row = ReinsOrgExecutor {
+                org_uuid: org.to_owned(),
+                executor_id: executor_id.clone(),
+                mode: mode.as_str().to_owned(),
+                public_key: public_key.trim().to_owned(),
+                created_at: now,
+                last_seen: None,
+                revoked_at: None,
+            };
+            if !reins_org_exec::q_insert_executor(c, &row)? {
+                return Err(OrgError::Invalid("That executor name is taken."));
+            }
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::EXECUTOR_REGISTERED,
+                Some(actor),
+                Some(executor_id),
+                &json!({"mode": mode.as_str(), "public_key": row.public_key}),
+                now,
+            )?;
+        }
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => {
+            reins_org_exec::q_revoke_executor(c, org, executor_id, now)?;
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::EXECUTOR_REMOVED,
+                Some(actor),
+                Some(executor_id),
+                &json!({}),
+                now,
+            )?;
         }
     }
     Ok(Vec::new())

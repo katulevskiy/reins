@@ -362,6 +362,82 @@ desktop key; approve anything; read your vault; read your grants, activity log o
 
 Push notifications through Firebase carry only a request id. The phone then fetches the request from the server.
 
+## Deferred decisions
+
+A request that waits for review longer than its Instant window becomes a ticket, and the server keeps it until its
+deadline (up to 7 days).
+
+**Stored in clear:**
+- the metadata: ticket id, state, deadlines, connection, and the request digest;
+- the reviewer's note on a denial, and their "Why?" question, because the agent has no key and must read them;
+- a write's minimal result (ids, a status, a link).
+
+**Never stored in clear:**
+- the request body: it is sealed on the server to the approval device's box key, and the clear copy is dropped;
+- an agent's answer to a "Why?", sealed the same way;
+- a read's result: it passes through memory to the agent waiting for it, and is never stored.
+
+The request did reach the server over TLS, as every request does.
+
+**Why a compromised server can't fake an outcome:**
+- Every transition the phone makes is signed with its device key. The phone acts only on what its own record proves:
+  - it runs a collected read only on its own valid approval of that exact request;
+  - it releases only the items the owner picked, once;
+  - it signs an expiry only when its own clock and record agree.
+- Webhooks carry only those signed events, so a server can delay or drop them but not forge `ticket.approved`.
+- Each event names the state it moves from and is accepted once. An approval signed at one point of a ticket's
+  history can't be replayed at another.
+- Agents and the desktop app pin the phone's signing key. The phone shows it as twelve digits (a connection's More),
+  so a key a server swapped in shows as different digits.
+- On the desktop, a ticket counts as approved only after the app opens the phone's sealed answer and checks its
+  nonce, the digest of the raw command and its expiry. A one-time pass is refused for any call whose shown text isn't
+  exactly the raw call, or which contains invisible or bidi characters.
+
+## Circles (shared control)
+
+Circles let another Reins account share control of this one (Decisions v2, 04): a **delegate** (either decides), a
+**co-signer** (both decide), a **guardian** (must approve; cooperative in Personal mode, 08 R7) or a **watcher** (is
+told). Both accounts need phone roles: each side is known by its roster's **owner key**.
+
+**What the server learns** (08 R8 accepts it): who is in an arrangement with whom, its kind and state, packet deadlines
+and states, and when an answer was given. Sealed-sender routing is a later option.
+
+**Never stored in clear:**
+- the arrangement (its scope, windows, the two keys): each side's copy is sealed to that side's roster credential key;
+- a review packet: the card the helper decides from (never the raw request), signed by the owner's approval phone and
+  sealed to the helper's approval phone;
+- an answer: signed by the helper's approval phone and sealed to the owner's;
+- an invitation's link secret (only its SHA-256) and its proposed terms (sealed to the helper's approval phone).
+
+**Why a compromised server can't add, widen or answer for anyone:**
+- **Pinning:** an invitation is a commit-then-reveal over both accounts' owner keys and fresh nonces, and both phones
+  show the same six digits. A server that swaps a key must do so before it sees the other side's nonce, so its digits
+  are random; the owner's phone reveals for the first answer only.
+- **Membership:** an arrangement counts only with both owner-key signatures (the helper's, then the owner's over it and
+  the helper's signature), and a phone accepts a copy only when its own side names this account's current owner key.
+  A planted link, a wider scope or a swapped helper doesn't verify.
+- **Answers:** each one is bound to the arrangement, the packet, the request digest, the packet's nonce and its own
+  nonce, and names the signer's roster entry. The owner's phone verifies the helper's roster from the entry the code
+  pinned (each step signed by the owner key; never an older head than one it saw), requires the signer to be its
+  current primary (a viewer or a replaced phone never counts), and counts each packet once. Paused or ended (here, on
+  the owner's phone) means no answer counts, whatever time it claims.
+- **Changes** (pause, resume, end) are signed by the changer's owner key, name the arrangement and carry a sequence
+  that only moves forward; an unsigned end from the server only suspends.
+- **A new owner key** (a recovery, a reset) suspends the arrangement until the two compare a new code; a handover
+  verifies through the chain.
+- **Obligations are hard:** a co-signer's or guardian's slot is filled only by that person's verified answer; Auto,
+  Bypass and Overnight fill no slot of a Circle request; one person never fills two slots (a delegate who is also a
+  co-signer doesn't fill the owner's), and nobody shares control with themself. Either deny wins.
+- **Nothing runs on the server's word:** the owner's approval phone settles the votes and runs the request through
+  its own approval path, after its usual revalidation; an offline phone does so when it next syncs.
+- **Unknown widens review, never authority:** a request whose effects can't be read is inside every co-signer's,
+  guardian's and watcher's scope, and inside no delegate's.
+
+**Known limits:** the peer's latest roster entries come from the server; withholding a newer entry can only delay a
+handover's effect (the old primary's answers still count until the owner's phone sees it). Guardianship in Personal
+mode is cooperative: a ward can reset the account (the guardian is told) or use credentials directly; enforceable
+guardianship is the Family tenant (P7).
+
 ## The desktop app
 
 - It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which
@@ -566,8 +642,59 @@ an organization's member, which the phone and the desktop keep as a separate pro
   and only opens the app on that profile. A work profile's core gets no access to the phone's own data (contacts,
   calendar, texts), and on iOS keeps its own Google sign-ins.
 - **Device enrollment** records a P-256 key the phone proves it holds, the platform's attestations and posture.
-  Verifying attestations and gating decisions on posture come with O2.
-- **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there.
+  The server verifies Android key attestation and App Attest against pinned roots (O2); an org's policy can require a
+  verified attestation, a screen lock, no root or jailbreak, and minimum OS and app versions. A device that fails
+  may not decide, and its reviews go to others.
+- **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there. Approving a
+  pending admin change takes the approver's enrolled phone (a device signature), so a console session alone approves
+  nothing.
+
+### Decisions in Managed mode (O2)
+
+A work account's agents never reach a phone: their calls go to the org's **decision service**, which decides with the
+org's policy, and an **executor** runs what was decided with the org's own credentials.
+
+- **Keys, per tenant** (sealed by a KMS seam, `org::kms`; with the built-in `LocalKms` a master key file outside the
+  database):
+  - the **issuer key** signs the org's policy snapshots and its roster (members, roles, groups, enrolled device keys,
+    and whether each device may decide);
+  - the **decision service key** countersigns decisions and signs audit checkpoints and export heads;
+  - a **data key** seals request bodies, results and receipts at rest, bound to their request.
+- **Policy** is drafted in the console and activated by a two-person change, which needs the proposer's and a second
+  Security admin's device signatures (two different device keys); only then does the issuer key sign it. Every
+  decision names the snapshot hash it was made against.
+- **Evaluation** composes the org's rules (deny, review with named reviewers, permit) with the member's own policy,
+  which can only add asks and denies (a member's permits are dropped, and their matrix only makes cells stricter).
+  The always-ask floor and L3 are hard reviews; the org's cell review always applies when its matrix asks. With no
+  active policy, nothing is decided.
+- **Reviews** are answered on reviewers' enrolled phones: a P-256 signature over (org, request, digest, decision,
+  snapshot, time), from a device that is enrolled to this org, not revoked and passes the posture rule, by a person
+  the obligation names. The requester can't approve an org review (`exclude_requester`); one person counts once. The
+  phone recomputes the digest and builds what it shows from the request itself, so what it signs is what it shows.
+- **The executor** is a separate program and trust domain (`crates/reins-executor`), registered to one tenant with
+  its own Ed25519 key by a device-signed two-person change. It pins the org's issuer and decision keys out of band
+  (`reins-executor pin`) and, before acting on any job, checks the countersignature, the issuer-signed policy and
+  roster (at most 15 minutes old), that the request it would run has exactly the countersigned digest, every
+  reviewer's device signature, and its own re-evaluation of the request with the same engine; a newer, stricter
+  policy makes it stale. It refuses anything else and reports why in a signed receipt. It never runs a request twice.
+- **Leases.** A work daemon's repository credential is asked for like any request (judged by the repository's zone
+  and the org's rules), minted by the executor for exactly that repository id, sealed to a key only the daemon holds,
+  and lives 15 minutes. Removing a member revokes their leases at once, and the executor revokes the credential at
+  GitHub within its next pass.
+- **Audit.** Every decision, review, execution, lease, policy and executor change and admin action is an event in the
+  org's hash chain (O1's event table, kept as is), checkpointed and signed every 10 minutes. An export ends with a
+  signed head; `reins-audit verify` checks every hash, link and signature and that the head covers the last event,
+  and, given a checkpoint kept from before (an earlier export or a witness), that the chain wasn't rewritten or rolled
+  back since.
+- **Retention.** Request bodies are kept 0, 30 (default) or 365 days, set by a device-signed two-person change.
+
+What this doesn't do yet:
+- With `LocalKms`, the issuer key, the decision service and the database share a host: an attacker holding all
+  three can sign a policy. The split 08 R5 relies on (executing a non-compliant action needs the issuer key or an
+  executor) holds fully with an HSM or customer KMS that enforces the two-signature rule itself (O5).
+- Checkpoints aren't published to an external witness yet (O5), so detecting a rewrite needs a checkpoint someone
+  kept.
+- Play Integrity verdicts aren't verified (recorded only).
 
 ## Known gaps
 
