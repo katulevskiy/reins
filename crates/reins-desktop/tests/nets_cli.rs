@@ -28,7 +28,27 @@ fn net_run_rm_then_restore() {
     let work = dir.path().join("home/work");
     std::fs::create_dir_all(work.join("proj/src")).unwrap();
     std::fs::write(work.join("proj/src/main.rs"), "fn main() {}").unwrap();
-    let out = reins(dir.path(), &work, &["net", "run", "--plan", "plan01", "--", "rm", "-rf", "proj"]);
+    // The plan the hook writes: `net run` goes by it alone.
+    let nets = dir.path().join("home/nets");
+    let store = reins_desktop::nets::Store::at(&nets);
+    store
+        .begin(&reins_desktop::nets::PlanRecord {
+            id: "plan01".to_owned(),
+            at: reins_desktop::now_unix(),
+            programs: vec!["rm".to_owned()],
+            cwds: vec![std::fs::canonicalize(&work).unwrap().to_string_lossy().into_owned()],
+            ..reins_desktop::nets::PlanRecord::default()
+        })
+        .unwrap();
+    let nets = nets.to_str().unwrap();
+    // Without its plan, or for another program: nothing runs.
+    let out =
+        reins(dir.path(), &work, &["net", "run", "--plan", "nplan99", "--store", nets, "--", "rm", "-rf", "proj"]);
+    assert_eq!(out.status.code(), Some(125), "{}", text(&out));
+    let out = reins(dir.path(), &work, &["net", "run", "--plan", "plan01", "--store", nets, "--", "git", "status"]);
+    assert_eq!(out.status.code(), Some(125), "{}", text(&out));
+    assert!(work.join("proj").exists());
+    let out = reins(dir.path(), &work, &["net", "run", "--plan", "plan01", "--store", nets, "--", "rm", "-rf", "proj"]);
     assert!(out.status.success(), "{}", text(&out));
     assert!(!work.join("proj").exists());
     let out = reins(dir.path(), &work, &["net", "list"]);
@@ -37,9 +57,9 @@ fn net_run_rm_then_restore() {
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(std::fs::read_to_string(work.join("proj/src/main.rs")).unwrap(), "fn main() {}");
     // Only rm and git; a bad plan id runs nothing.
-    let out = reins(dir.path(), &work, &["net", "run", "--plan", "plan01", "--", "sh", "-c", "true"]);
+    let out = reins(dir.path(), &work, &["net", "run", "--plan", "plan01", "--store", nets, "--", "sh", "-c", "true"]);
     assert_eq!(out.status.code(), Some(125));
-    let out = reins(dir.path(), &work, &["net", "run", "--plan", "../x", "--", "rm", "-rf", "proj"]);
+    let out = reins(dir.path(), &work, &["net", "run", "--plan", "../x", "--store", nets, "--", "rm", "-rf", "proj"]);
     assert_eq!(out.status.code(), Some(125));
     assert!(work.join("proj").exists());
 }

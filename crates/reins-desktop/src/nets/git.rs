@@ -108,12 +108,20 @@ pub fn git(store: &Store, plan: &str, args: &[OsString], cwd: &Path, err: &mut d
         store.fail_plan(plan, "not a git command the net knows");
         return REFUSED;
     };
+    let mut words = words;
     let kept = match shape.net {
         GitNet::BranchDelete => branch_delete(store, plan, &shape, cwd),
         GitNet::ResetHard => return reset_hard(store, plan, &shape, &words, cwd, err),
         GitNet::WorktreeRemove => return worktree_remove(store, plan, &shape, &words, cwd, err),
         GitNet::Clean => return clean(store, plan, &shape, cwd, err),
-        GitNet::ForcePush => force_push(store, plan, &shape, cwd),
+        // The push is pinned to the tips it kept: its words, with a lease per destination after `push`.
+        // A push with its own lease keeps it (it already refuses a tip that moved); the backup is taken first either way.
+        GitNet::ForcePush => force_push(store, plan, &shape, cwd).map(|leases| {
+            if !shape.rest.iter().any(|a| a.starts_with("--force-with-lease")) {
+                let at = shape.globals.len() + 1;
+                words.splice(at..at, leases);
+            }
+        }),
     };
     if let Err(why) = kept {
         let _said = writeln!(
@@ -217,15 +225,39 @@ fn keep_before_reset(
         keep_ref(store, plan, &shape.globals, cwd, &stash, "stash", branch)?;
     }
     let top_globals = vec!["-C".to_owned(), top.to_string_lossy().into_owned()];
-    let untracked = read(&top_globals, cwd, &["ls-files", "-z", "--others"]).map(|t| names(&t)).unwrap_or_default();
     let mut items = Vec::new();
-    if untracked.is_empty() {
-        return Ok(items);
-    }
+    // What the reset writes over without git knowing it: a path the target tracks (or a folder above one) that is on
+    // disk but not in the index, ignored or not. Read from the target's list and the index, never by listing every
+    // untracked file (a `node_modules` would be walked for nothing).
     let tracked = read(&top_globals, cwd, &["ls-tree", "-r", "-z", "--name-only", target])
         .map(|t| names(&t))
         .ok_or("git ls-tree failed")?;
-    for f in untracked.iter().filter(|f| tracked.contains(f)) {
+    let index: std::collections::HashSet<String> = read(&top_globals, cwd, &["ls-files", "-z"])
+        .map(|t| names(&t))
+        .ok_or("git ls-files failed")?
+        .into_iter()
+        .collect();
+    let index_dirs: std::collections::HashSet<String> =
+        index.iter().flat_map(|f| f.match_indices('/').map(move |(i, _)| f[..i].to_owned())).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut untracked = Vec::new();
+    for t in &tracked {
+        // A folder above it is only in the way when it is not a folder on disk (a file or a link where git needs one).
+        let ancestors = t.match_indices('/').map(|(i, _)| (&t[..i], false)).chain(std::iter::once((t.as_str(), true)));
+        for (p, whole) in ancestors {
+            if !seen.insert(p.to_owned()) || index.contains(p) || index_dirs.contains(p) {
+                continue;
+            }
+            match std::fs::symlink_metadata(top.join(p)) {
+                Ok(m) if whole || !m.is_dir() => {
+                    untracked.push(p.to_owned());
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    for f in &untracked {
         match store.trash(plan, &top.join(f), None) {
             Ok(i) => items.push(i),
             Err(e) => {
@@ -281,23 +313,23 @@ fn worktree_remove(
             _ => 0,
         })
         .sum();
-    let Some(target) = operands(&shape.rest).get(1).map(|t| base(&shape.globals, cwd).join(t)) else {
-        return run_as_written(words, cwd);
-    };
-    let Ok(real) = std::fs::canonicalize(&target) else {
-        // Not there: git removes only its record, nothing on disk is lost.
-        return run_as_written(words, cwd);
+    let Some(arg) = operands(&shape.rest).get(1).map(|a| (*a).to_owned()) else {
+        return refuse(store, plan, err, "no worktree named");
     };
     let list = worktrees(&shape.globals, cwd);
-    let found =
-        list.iter().enumerate().find(|(_, w)| std::fs::canonicalize(&w.0).ok().as_deref() == Some(real.as_path()));
-    let Some((index, (_, head, branch, locked))) = found else {
-        // Not a worktree of this repository: git refuses it.
-        return run_as_written(words, cwd);
+    let Some(index) = resolve_worktree(&list, &base(&shape.globals, cwd), &arg) else {
+        // git would look further (or fail); the net only removes what it resolved itself.
+        return refuse(store, plan, err, &format!("{arg} is not a worktree Reins can find"));
     };
+    let (path, head, branch, locked) = &list[index];
     if index == 0 || (*locked && force < 2) {
+        // git refuses the main worktree, and a locked one without a second --force: nothing is lost.
         return run_as_written(words, cwd);
     }
+    let Ok(real) = std::fs::canonicalize(path) else {
+        // Its folder is gone already: git removes only its record, nothing on disk is lost.
+        return run_as_written(words, cwd);
+    };
     let info = WorktreeInfo {
         repo: list[0].0.clone(),
         head: head.clone(),
@@ -320,6 +352,31 @@ fn worktree_remove(
         let _back = store.restore_item(plan, &item);
     }
     code
+}
+
+/// Which of `list` (`worktree list --porcelain`, the main one first) `arg` names, as git reads it: the worktree at
+/// that path (from `base`), else the only one whose path ends with `/arg`. `None`: none, or more than one.
+fn resolve_worktree(list: &[(String, String, Option<String>, bool)], base: &Path, arg: &str) -> Option<usize> {
+    let target = base.join(arg);
+    let real = std::fs::canonicalize(&target).ok();
+    let lexical = reins_policy::effects::normalize(&target.to_string_lossy(), "/", "");
+    if let Some(i) = list.iter().position(|w| {
+        Path::new(&w.0) == Path::new(&lexical)
+            || real.as_deref().is_some_and(|r| std::fs::canonicalize(&w.0).ok().as_deref() == Some(r))
+    }) {
+        return Some(i);
+    }
+    let suffix = format!("/{}", arg.trim_end_matches('/'));
+    let ends: Vec<usize> =
+        list.iter().enumerate().skip(1).filter(|(_, w)| w.0.ends_with(&suffix)).map(|(i, _)| i).collect();
+    (ends.len() == 1).then(|| ends[0])
+}
+
+/// Runs nothing: says why, records the failure (the same command is asked without a net next time).
+fn refuse(store: &Store, plan: &str, err: &mut dyn Write, why: &str) -> u8 {
+    let _said = writeln!(err, "reins: {why}, so git was not run. Run the command again to be asked.");
+    store.fail_plan(plan, why);
+    REFUSED
 }
 
 /// A path as `git clean -n` prints it: plain, or C-quoted (`"a\tb"`).
@@ -430,11 +487,27 @@ fn clean(store: &Store, plan: &str, shape: &GitShape, cwd: &Path, err: &mut dyn 
     0
 }
 
-fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result<(), String> {
+/// Keeps what a force push would overwrite: for each destination branch, the remote's tip now, fetched from the push
+/// URL into a backup ref (by URL, so no remote-tracking ref moves and a bare `--force-with-lease` still means what it
+/// did). Returns the leases that pin the push to exactly those tips (`refs/heads/X:<oid>`, or `refs/heads/X:` for one
+/// that isn't there yet), so a tip that moves in between makes the push fail instead of going unkept.
+fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result<Vec<String>, String> {
     let ops = operands(&shape.rest);
     let Some((remote, specs)) = ops.split_first() else {
         return Err("no remote".to_owned());
     };
+    let url = match read(&shape.globals, cwd, &["remote", "get-url", "--push", "--all", remote]) {
+        Some(urls) => {
+            let urls: Vec<&str> = urls.lines().filter(|l| !l.trim().is_empty()).collect();
+            match urls.as_slice() {
+                [one] => (*one).to_owned(),
+                _ => return Err(format!("{remote} pushes to several places")),
+            }
+        }
+        // Not a configured remote: a URL or a path given as it is.
+        None => (*remote).to_owned(),
+    };
+    let mut leases = Vec::new();
     for spec in specs {
         let s = spec.trim_start_matches('+');
         let (src, dst) = s.split_once(':').unwrap_or((s, s));
@@ -445,23 +518,34 @@ fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result
             dst
         };
         let full = format!("refs/heads/{dst}");
-        let probe = git_in(&shape.globals, cwd)
-            .args(["ls-remote", "--exit-code", remote, &full])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| e.to_string())?;
-        match probe.code() {
-            // No such branch there yet: nothing to lose.
-            Some(2) => continue,
-            Some(0) => {}
-            _ => return Err(format!("couldn't read {dst} on {remote}")),
+        let tag = format!("refs/tags/{dst}");
+        let listed = read(&shape.globals, cwd, &["ls-remote", &url, &full, &tag])
+            .ok_or_else(|| format!("couldn't read {dst} on {remote}"))?;
+        let mut head = None;
+        for line in listed.lines() {
+            match line.split_once('\t') {
+                Some((oid, name)) if name == full => head = Some(oid.to_owned()),
+                // A bare name a tag there answers to too: git may update the tag, which the net doesn't keep.
+                Some((_, name)) if name == tag => return Err(format!("{dst} is also a tag on {remote}")),
+                _ => {}
+            }
         }
+        let Some(old) = head else {
+            // No such branch there yet: nothing to lose, and it must still not be there when the push lands.
+            leases.push(format!("--force-with-lease={full}:"));
+            continue;
+        };
         let backup = Store::backup_ref(plan);
-        read(&shape.globals, cwd, &["fetch", "--no-tags", "--quiet", remote, &format!("+{full}:{backup}")])
-            .ok_or_else(|| format!("couldn't fetch {dst} from {remote}"))?;
+        read(
+            &shape.globals,
+            cwd,
+            &["fetch", "--no-tags", "--no-write-fetch-head", "--quiet", &url, &format!("+{full}:{backup}")],
+        )
+        .ok_or_else(|| format!("couldn't fetch {dst} from {remote}"))?;
         let oid = read(&shape.globals, cwd, &["rev-parse", "--verify", &backup]).ok_or("the fetched tip is missing")?;
+        if oid != old {
+            return Err(format!("{dst} moved on {remote} while it was kept"));
+        }
         let repo = common_dir(&shape.globals, cwd).ok_or("not in a git repository")?;
         store
             .record_ref(
@@ -470,14 +554,15 @@ fn force_push(store: &Store, plan: &str, shape: &GitShape, cwd: &Path) -> Result
                     at: crate::now_unix(),
                     repo,
                     backup,
-                    oid,
+                    oid: oid.clone(),
                     what: "remote".to_owned(),
                     name: format!("{remote}/{dst}"),
                 },
             )
             .map_err(|e| e.to_string())?;
+        leases.push(format!("--force-with-lease={full}:{oid}"));
     }
-    Ok(())
+    Ok(leases)
 }
 
 /// A branch name that is free in `repo`: `name`, else `name-restored`, `name-restored-2`, …
@@ -536,7 +621,8 @@ pub fn restore_ref(plan: &str, r: &RefBackup) -> Result<String, String> {
 pub fn restore_worktree(store: &Store, plan: &str, item: &Item, wt: &WorktreeInfo) -> Result<String, String> {
     let dir = store.root().join(plan).join("items").join(&item.id);
     let data = dir.join("data");
-    let original = Path::new(&item.original);
+    let (original, _) = store.place_of(item)?;
+    let original = original.as_path();
     if std::fs::symlink_metadata(original).is_ok() {
         return Err(format!("{} is there again; move it away first", item.original));
     }

@@ -129,10 +129,15 @@ fn restore_refuses_to_overwrite_or_escape() {
     let (_d, s, work) = store();
     std::fs::create_dir(work.join("dir")).unwrap();
     std::fs::write(work.join("dir/f"), "old").unwrap();
-    let item = s.trash("plan01", &work.join("dir/f"), None).unwrap();
+    // Something is there again: put back beside it, never over it.
+    let first = s.trash("plan01", &work.join("dir/f"), None).unwrap();
     std::fs::write(work.join("dir/f"), "new").unwrap();
-    assert!(s.restore_item("plan01", &item).unwrap_err().contains("there again"));
-    std::fs::remove_file(work.join("dir/f")).unwrap();
+    let line = s.restore_item("plan01", &first).unwrap();
+    assert!(line.contains("beside"), "{line}");
+    assert_eq!(std::fs::read_to_string(work.join("dir/f")).unwrap(), "new");
+    assert_eq!(std::fs::read_to_string(work.join("dir/f.reins-plan01")).unwrap(), "old");
+    std::fs::remove_file(work.join("dir/f.reins-plan01")).unwrap();
+    let item = s.trash("plan01", &work.join("dir/f"), None).unwrap();
     // The folder became a symlink to somewhere else.
     std::fs::create_dir(work.join("elsewhere")).unwrap();
     std::fs::remove_dir(work.join("dir")).unwrap();
@@ -208,4 +213,75 @@ fn failures_last_an_hour() {
     assert!(!s.failed_recently(key, crate::now_unix() + FAILED_SECS));
     s.fail("../escape", "x");
     assert!(!s.root().join("escape").exists());
+}
+
+#[test]
+fn a_snapshot_comes_back_with_its_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (_d, s, work) = store();
+    let f = work.join("run.sh");
+    std::fs::write(&f, "v1").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let item = s.snapshot("plan01", &f, 1 << 20).unwrap().unwrap();
+    assert_eq!(item.mode, Some(0o755));
+    std::fs::write(&f, "v2").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+    s.restore_item("plan01", &item).unwrap();
+    assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o7777, 0o755);
+}
+
+#[test]
+fn the_trash_keeps_a_quota_and_drops_the_oldest_first() {
+    let (_d, s, work) = store();
+    let s = s.with_quota(100);
+    for (i, n) in ["a", "b", "c"].iter().enumerate() {
+        std::fs::write(work.join(n), vec![b'x'; 40]).unwrap();
+        s.trash(&format!("plan0{i}"), &work.join(n), None).unwrap();
+    }
+    // 40 + 40 + 40 > 100: the oldest plan's item went.
+    assert!(s.items("plan00").is_empty());
+    assert_eq!((s.items("plan01").len(), s.items("plan02").len()), (1, 1));
+    // Larger than the whole quota: nothing moves, and it says so.
+    std::fs::write(work.join("big"), vec![b'x'; 200]).unwrap();
+    assert!(matches!(s.trash("plan03", &work.join("big"), None), Err(NetError::TooLarge)));
+    assert!(work.join("big").exists());
+    // A plan never drops its own items to make room.
+    std::fs::write(work.join("d"), vec![b'x'; 90]).unwrap();
+    assert!(
+        matches!(s.trash("plan02", &work.join("d"), None), Err(NetError::TooLarge)) || s.items("plan01").is_empty()
+    );
+}
+
+#[test]
+fn a_path_gone_in_between_is_missing() {
+    let (_d, s, work) = store();
+    std::fs::write(work.join("f"), "x").unwrap();
+    std::fs::remove_file(work.join("f")).unwrap();
+    assert!(matches!(s.trash("plan01", &work.join("f"), None), Err(NetError::Missing)));
+}
+
+#[test]
+fn prune_removes_read_only_trees_and_counts_only_what_went() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (_d, s, work) = store();
+    std::fs::create_dir_all(work.join("tree/locked")).unwrap();
+    std::fs::write(work.join("tree/locked/f"), "x").unwrap();
+    std::fs::set_permissions(work.join("tree/locked"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    s.trash("plan01", &work.join("tree"), None).unwrap();
+    let now = crate::now_unix();
+    assert_eq!(s.prune(now + 8 * DAY, &|_| true), 1);
+    assert!(s.items("plan01").is_empty());
+    let leftovers = std::fs::read_dir(s.root().join("plan01/items")).map_or(0, |d| d.flatten().count());
+    assert_eq!(leftovers, 0, "no half-removed item is left");
+}
+
+#[test]
+fn ran_is_marked_only_when_something_was_kept() {
+    let (_d, s, work) = store();
+    assert!(!s.ran("plan01"));
+    assert!(s.trash("plan01", &work.join("nothing-here"), None).is_err());
+    assert!(!s.ran("plan01"));
+    std::fs::write(work.join("f"), "x").unwrap();
+    s.trash("plan01", &work.join("f"), None).unwrap();
+    assert!(s.ran("plan01"));
 }

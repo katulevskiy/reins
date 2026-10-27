@@ -40,7 +40,7 @@ pub enum NetError {
     Unsafe(String),
     #[error("it is not there")]
     Missing,
-    #[error("it is larger than a snapshot keeps")]
+    #[error("it is larger than the Reins trash keeps")]
     TooLarge,
     #[error("{0}")]
     Io(#[from] io::Error),
@@ -81,6 +81,12 @@ pub struct Item {
     pub what: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeInfo>,
+    /// Its permission bits (a snapshot is put back with them).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
+    /// How many bytes it keeps (the trash's quota counts them).
+    #[serde(default)]
+    pub bytes: u64,
 }
 
 /// A git backup ref.
@@ -116,6 +122,17 @@ pub struct PlanRecord {
     /// The Activity entry it belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
+    /// The programs `reins net run` may run for it (`rm`, `git`).
+    #[serde(default)]
+    pub programs: Vec<String>,
+    /// The folders it may run in (the request's, and the literal `cd` targets in it).
+    #[serde(default)]
+    pub cwds: Vec<String>,
+    /// The home folder and the scratch roots as the hook read them: what `reins net run` deletes for real.
+    #[serde(default)]
+    pub home: String,
+    #[serde(default)]
+    pub scratch: Vec<String>,
 }
 
 /// A plan's nets, for lists.
@@ -160,12 +177,78 @@ fn free_bytes(_path: &Path) -> Option<u64> {
     None
 }
 
+#[cfg(unix)]
+fn disk_bytes(path: &Path) -> Option<u64> {
+    let s = rustix::fs::statvfs(path).ok()?;
+    Some(s.f_blocks.saturating_mul(s.f_frsize))
+}
+
+#[cfg(not(unix))]
+fn disk_bytes(_path: &Path) -> Option<u64> {
+    None
+}
+
+#[cfg(unix)]
+fn mode_of(m: &std::fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt as _;
+    Some(m.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn mode_of(_m: &std::fs::Metadata) -> Option<u32> {
+    None
+}
+
+/// The bytes a path holds, its folders walked without following links (at most a million entries: past that, as
+/// many bytes as the walk saw, and the quota is checked on that).
+fn size_of(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(p) = stack.pop() {
+        seen += 1;
+        if seen > 1_000_000 {
+            break;
+        }
+        let Ok(m) = std::fs::symlink_metadata(&p) else {
+            continue;
+        };
+        total = total.saturating_add(m.len());
+        if m.is_dir() {
+            stack.extend(std::fs::read_dir(&p).into_iter().flatten().flatten().map(|e| e.path()));
+        }
+    }
+    total
+}
+
+/// Removes a folder even where its own permissions say no (a read-only folder in a trashed tree): the folders are made
+/// writable on the way down, then removed. Whether it is gone.
+pub(crate) fn remove_tree(path: &Path) -> bool {
+    if std::fs::remove_dir_all(path).is_ok() || std::fs::symlink_metadata(path).is_err() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(p) = stack.pop() {
+            if std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir()) {
+                let _made = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700));
+                stack.extend(std::fs::read_dir(&p).into_iter().flatten().flatten().map(|e| e.path()));
+            }
+        }
+    }
+    std::fs::remove_dir_all(path).is_ok()
+}
+
 /// The nets' store.
 #[derive(Clone, Debug)]
 pub struct Store {
     root: PathBuf,
     device_of: fn(&Path) -> Option<u64>,
     fault: Option<Fault>,
+    /// The most bytes the trash keeps; `None`: a tenth of its disk.
+    quota: Option<u64>,
 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -198,6 +281,7 @@ impl Store {
             root: root.to_path_buf(),
             device_of: device,
             fault: None,
+            quota: None,
         }
     }
 
@@ -221,6 +305,60 @@ impl Store {
         self
     }
 
+    /// A store that keeps at most `bytes`.
+    #[must_use]
+    pub fn with_quota(mut self, bytes: u64) -> Self {
+        self.quota = Some(bytes);
+        self
+    }
+
+    /// The most bytes the trash keeps: the configured quota, else a tenth of its disk.
+    #[must_use]
+    pub fn quota(&self) -> u64 {
+        self.quota.unwrap_or_else(|| disk_bytes(&self.real_root()).map_or(u64::MAX, |b| b / 10))
+    }
+
+    /// Makes room for `bytes` more in the trash, dropping the oldest items of other plans first. `Err`: it can't fit
+    /// (larger than the quota, or only `plan`'s own items would have to go).
+    fn make_room(&self, plan: &str, bytes: u64) -> Result<(), NetError> {
+        let quota = self.quota();
+        if bytes > quota {
+            return Err(NetError::TooLarge);
+        }
+        let mut all: Vec<(String, Item)> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| reins_policy::effects::nets::valid_plan_id(n))
+            .flat_map(|p| self.items(&p).into_iter().map(move |i| (p.clone(), i)))
+            .collect();
+        let mut used: u64 = all.iter().map(|(_, i)| i.bytes).sum();
+        all.sort_by_key(|(_, i)| i.at);
+        for (p, i) in all {
+            if used.saturating_add(bytes) <= quota {
+                break;
+            }
+            if p == plan {
+                continue;
+            }
+            if self.drop_item(&p, &i.id) {
+                used = used.saturating_sub(i.bytes);
+            }
+        }
+        if used.saturating_add(bytes) > quota {
+            return Err(NetError::TooLarge);
+        }
+        Ok(())
+    }
+
+    /// Removes one item (claimed first, so a restore at the same moment finds it gone, not half removed).
+    fn drop_item(&self, plan: &str, id: &str) -> bool {
+        let items = self.root.join(plan).join("items");
+        let claimed = items.join(format!(".{id}.pruning"));
+        std::fs::rename(items.join(id), &claimed).is_ok() && remove_tree(&claimed)
+    }
+
     /// A store where `fault` happens (tests).
     #[must_use]
     pub fn with_fault(mut self, fault: Fault) -> Self {
@@ -233,7 +371,8 @@ impl Store {
         &self.root
     }
 
-    fn ensure_root(&self) -> io::Result<PathBuf> {
+    /// Makes the store's folder (owner only) and returns where it really is.
+    pub(crate) fn ensure_root(&self) -> io::Result<PathBuf> {
         std::fs::create_dir_all(&self.root)?;
         #[cfg(unix)]
         {
@@ -367,6 +506,8 @@ impl Store {
         if dev.is_none() || dev != (self.device_of)(&root) {
             return Err(NetError::OtherDisk);
         }
+        let bytes = size_of(&real);
+        self.make_room(plan, bytes)?;
         let (id, dir) = self.new_item(plan)?;
         let item = Item {
             id,
@@ -376,6 +517,8 @@ impl Store {
             parent: parent.to_string_lossy().into_owned(),
             what: what_of(&meta).to_owned(),
             worktree,
+            mode: mode_of(&meta),
+            bytes,
         };
         let saved = serde_json::to_vec_pretty(&item)
             .map_err(|e| io::Error::other(e.to_string()))
@@ -386,10 +529,14 @@ impl Store {
             return Err(if e.raw_os_error() == Some(18) {
                 // EXDEV: a mount point in between.
                 NetError::OtherDisk
+            } else if e.kind() == io::ErrorKind::NotFound && std::fs::symlink_metadata(&real).is_err() {
+                // Removed by someone else in between: as rm finds it, missing.
+                NetError::Missing
             } else {
                 NetError::Io(e)
             });
         }
+        self.mark_ran(plan);
         Ok(item)
     }
 
@@ -419,6 +566,7 @@ impl Store {
             return Err(NetError::Unsafe("Reins keeps its trash there".to_owned()));
         }
         let parent = real.parent().map(Path::to_path_buf).unwrap_or_default();
+        self.make_room(plan, meta.len())?;
         let (id, dir) = self.new_item(plan)?;
         let item = Item {
             id,
@@ -428,6 +576,8 @@ impl Store {
             parent: parent.to_string_lossy().into_owned(),
             what: "file".to_owned(),
             worktree: None,
+            mode: mode_of(&meta),
+            bytes: meta.len(),
         };
         let saved = serde_json::to_vec_pretty(&item)
             .map_err(|e| io::Error::other(e.to_string()))
@@ -442,6 +592,7 @@ impl Store {
             let _gone = std::fs::remove_dir_all(&dir);
             return Err(e.into());
         }
+        self.mark_ran(plan);
         Ok(Some(item))
     }
 
@@ -457,6 +608,8 @@ impl Store {
         line.push(b'\n');
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("refs.jsonl"))?;
         io::Write::write_all(&mut f, &line)?;
+        drop(f);
+        self.mark_ran(plan);
         Ok(())
     }
 
@@ -571,33 +724,27 @@ impl Store {
     /// new snapshot of the same plan.
     pub fn restore_item(&self, plan: &str, item: &Item) -> Result<String, String> {
         let dir = self.plan_dir(plan).map_err(|e| e.to_string())?.join("items").join(&item.id);
-        let original = PathBuf::from(&item.original);
-        let parent = PathBuf::from(&item.parent);
-        let root = self.real_root();
-        if !plain_absolute(&original)
-            || !plain_absolute(&parent)
-            || original.parent() != Some(parent.as_path())
-            || !reins_policy::effects::nets::trash_safe(&item.original, &root.to_string_lossy())
-        {
-            return Err(format!("{} is not a place to restore to", item.original));
-        }
-        // The folder must still be where it really was (not a symlink to somewhere else now).
-        if !parent.exists() {
-            std::fs::create_dir_all(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        }
-        let real_parent = std::fs::canonicalize(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        if real_parent != parent {
-            return Err(format!("{} now leads somewhere else", parent.display()));
-        }
+        let (original, parent) = self.place_of(item)?;
         let data = dir.join("data");
         match item.kind {
             ItemKind::Trash => {
-                if std::fs::symlink_metadata(&original).is_ok() {
+                // Something is there again (a hard reset wrote the tracked file there): never over it, beside it.
+                let (to, beside) = if std::fs::symlink_metadata(&original).is_ok() {
+                    let name = original.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    (parent.join(format!("{name}.reins-{plan}")), true)
+                } else {
+                    (original, false)
+                };
+                if std::fs::symlink_metadata(&to).is_ok() {
                     return Err(format!("{} is there again; move it away first", item.original));
                 }
-                std::fs::rename(&data, &original).map_err(|e| format!("{}: {e}", item.original))?;
+                std::fs::rename(&data, &to).map_err(|e| format!("{}: {e}", item.original))?;
                 let _done = std::fs::remove_dir_all(&dir);
-                Ok(format!("Put back {}", item.original))
+                Ok(if beside {
+                    format!("Put back beside {} as {}", item.original, to.display())
+                } else {
+                    format!("Put back {}", item.original)
+                })
             }
             ItemKind::Snapshot => {
                 if std::fs::symlink_metadata(&original).is_ok_and(|m| !m.is_file()) {
@@ -609,11 +756,57 @@ impl Store {
                 let mut tmp = tempfile::NamedTempFile::new_in(&parent).map_err(|e| e.to_string())?;
                 let mut src = std::fs::File::open(&data).map_err(|e| e.to_string())?;
                 io::copy(&mut src, &mut tmp).map_err(|e| e.to_string())?;
-                tmp.persist(&original).map_err(|e| e.error.to_string())?;
+                let file = tmp.persist(&original).map_err(|e| e.error.to_string())?;
+                // The mode it had (a temporary file is the owner's only).
+                #[cfg(unix)]
+                if let Some(mode) = item.mode {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    file.set_permissions(std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+                }
+                drop(file);
                 let _done = std::fs::remove_dir_all(&dir);
                 Ok(format!("Put back the earlier {}", item.original))
             }
         }
+    }
+
+    /// Where `item` goes back: its original path and parent, checked. The path is absolute and plain, not in the trash,
+    /// and the parent is still where it really was (made again when it is gone, then checked; never a symlink to
+    /// somewhere else now).
+    pub fn place_of(&self, item: &Item) -> Result<(PathBuf, PathBuf), String> {
+        let original = PathBuf::from(&item.original);
+        let parent = PathBuf::from(&item.parent);
+        let root = self.real_root();
+        if !plain_absolute(&original)
+            || !plain_absolute(&parent)
+            || original.parent() != Some(parent.as_path())
+            || !reins_policy::effects::nets::trash_safe(&item.original, &root.to_string_lossy())
+        {
+            return Err(format!("{} is not a place to restore to", item.original));
+        }
+        if !parent.exists() {
+            std::fs::create_dir_all(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let real_parent = std::fs::canonicalize(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        if real_parent != parent {
+            return Err(format!("{} now leads somewhere else", parent.display()));
+        }
+        Ok((original, parent))
+    }
+
+    /// Marks `plan` as run: `reins net run` used it, so its net was applied (Activity says Netted only then).
+    pub fn mark_ran(&self, plan: &str) {
+        if let Ok(dir) = self.plan_dir(plan)
+            && !dir.join("ran").exists()
+        {
+            let _kept = self.write(&dir.join("ran"), crate::now_unix().to_string().as_bytes());
+        }
+    }
+
+    /// Whether `plan`'s net was applied: `reins net run` ran it, or (file tools) the hook took its copies.
+    #[must_use]
+    pub fn ran(&self, plan: &str) -> bool {
+        self.plan_dir(plan).is_ok_and(|d| d.join("ran").exists())
     }
 
     /// Marks `plan` restored.
@@ -672,15 +865,16 @@ impl Store {
             if !reins_policy::effects::nets::valid_plan_id(&name) {
                 continue;
             }
+            // Items an earlier prune claimed but couldn't remove (a read-only folder inside): again.
+            for f in std::fs::read_dir(e.path().join("items")).into_iter().flatten().flatten() {
+                let n = f.file_name().to_string_lossy().into_owned();
+                if n.starts_with('.') && n.ends_with(".pruning") && remove_tree(&f.path()) {
+                    gone += 1;
+                }
+            }
             for item in self.items(&name) {
-                if now - item.at >= TRASH_DAYS * DAY {
-                    let dir = e.path().join("items").join(&item.id);
-                    // Claimed first, so a restore at the same moment finds it gone, not half removed.
-                    let claimed = e.path().join("items").join(format!(".{}.pruning", item.id));
-                    if std::fs::rename(&dir, &claimed).is_ok() {
-                        let _gone = std::fs::remove_dir_all(&claimed);
-                        gone += 1;
-                    }
+                if now - item.at >= TRASH_DAYS * DAY && self.drop_item(&name, &item.id) {
+                    gone += 1;
                 }
             }
             let refs = self.refs(&name);
@@ -705,7 +899,7 @@ impl Store {
                 m.duration_since(std::time::UNIX_EPOCH).ok().and_then(|d| i64::try_from(d.as_secs()).ok())
             });
             if self.items(&name).is_empty() && self.refs(&name).is_empty() && born.is_none_or(|b| now - b >= DAY) {
-                let _gone = std::fs::remove_dir_all(e.path());
+                remove_tree(&e.path());
             }
         }
         gone

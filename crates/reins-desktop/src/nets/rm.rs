@@ -73,6 +73,14 @@ fn one(
     scratch: &Scratch<'_>,
     out: &mut dyn Write,
 ) -> Result<(), String> {
+    // An empty name names nothing: as GNU rm, not there (and fine with -f).
+    if op.is_empty() {
+        return if a.force {
+            Ok(())
+        } else {
+            Err("rm: cannot remove '': No such file or directory".to_owned())
+        };
+    }
     let trimmed = op.trim_end_matches('/');
     let last = trimmed.rsplit('/').next().unwrap_or(trimmed);
     if last == "." || last == ".." {
@@ -104,6 +112,10 @@ fn one(
         ));
     }
     let dir = meta.is_dir();
+    // `file/`: a trailing slash names a folder, and this is not one.
+    if op.ends_with('/') && !dir {
+        return Err(format!("rm: cannot remove '{op}': Not a directory"));
+    }
     if dir && !a.recursive {
         if !a.dir {
             return Err(format!("rm: cannot remove '{op}': Is a directory"));

@@ -1790,10 +1790,6 @@ impl Model {
                     Ok(_) => {
                         m.restored_nets.insert(plan);
                     }
-                    // Restored before (`reins net restore`): it shows as restored.
-                    Err(e) if e == "Already restored" => {
-                        m.restored_nets.insert(plan);
-                    }
                     Err(e) => m.notice = Some(format!("Not restored: {}", e.lines().next().unwrap_or_default())),
                 }
                 cx.notify();

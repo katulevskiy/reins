@@ -203,6 +203,9 @@ enum NetCmd {
     Run {
         #[arg(long)]
         plan: String,
+        /// The store the hook wrote the plan to.
+        #[arg(long)]
+        store: PathBuf,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1.., required = true)]
         argv: Vec<std::ffi::OsString>,
     },
@@ -1047,13 +1050,14 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
 /// `reins net …`. A netted command runs even when the config can't be read (with the default scratch folders).
 fn net(action: NetCmd) -> ExitCode {
     use reins_desktop::nets;
-    let config = Paths::from_env().ok().and_then(|p| Config::load(&p).ok()).unwrap_or_default();
+    // A netted command runs from its plan alone: no config, no environment.
     if let NetCmd::Run {
         plan,
+        store,
         argv,
     } = action
     {
-        return ExitCode::from(nets::run(&config, &plan, &argv));
+        return ExitCode::from(nets::run(&plan, &store, &argv));
     }
     let store = match nets::Store::open_default() {
         Ok(s) => s,

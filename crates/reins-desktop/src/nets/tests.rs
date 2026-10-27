@@ -58,7 +58,7 @@ fn rm_moves_into_the_trash_and_restore_brings_it_back() {
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert_eq!(std::fs::read_to_string(e.work.join("src/old/a.rs")).unwrap(), "fn a() {}");
     assert!(e.work.join("notes.md").exists());
-    assert_eq!(restore(&e.store, "plan01").unwrap_err(), "Already restored");
+    assert_eq!(restore(&e.store, "plan01").unwrap(), vec!["Already restored".to_owned()], "again: nothing changes");
 }
 
 #[test]
@@ -82,6 +82,27 @@ fn rm_follows_gnu_rm() {
     let (code, _, _) = rm_in(&e, "nope ok");
     assert_eq!(code, 1);
     assert!(!e.work.join("ok").exists());
+    // An empty name: not there (fine with -f); a trailing slash on a file: not a folder.
+    assert_eq!(rm_in(&e, "-f ''").0, 0);
+    std::fs::write(e.work.join("plain"), "x").unwrap();
+    let (code, _, err) = {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = rm::rm(
+            &e.store,
+            "plan01",
+            &[OsString::from("-f"), OsString::from("")],
+            &e.work,
+            &rm::Scratch(&no_scratch),
+            &mut out,
+            &mut err,
+        );
+        (code, out, String::from_utf8(err).unwrap())
+    };
+    assert_eq!((code, err.as_str()), (0, ""));
+    let (code, _, err) = rm_in(&e, "plain/");
+    assert_eq!(code, 1);
+    assert!(err.contains("Not a directory"), "{err}");
+    assert!(e.work.join("plain").exists());
     // Options after operands, as GNU rm reads them.
     std::fs::create_dir_all(e.work.join("late/x")).unwrap();
     assert_eq!(rm_in(&e, "late -r").0, 0);
@@ -241,6 +262,23 @@ fn worktree_remove_force_goes_to_the_trash_and_comes_back() {
 }
 
 #[test]
+fn a_worktree_named_by_its_ending_is_resolved_and_an_unknown_one_refused() {
+    let e = env();
+    let r = repo(&e);
+    let w = e.work.join("deep").join("wt-name");
+    std::fs::create_dir_all(w.parent().unwrap()).unwrap();
+    git(&r, &["worktree", "add", "-q", w.to_str().unwrap()]);
+    std::fs::write(w.join("untracked.txt"), "keep").unwrap();
+    // Not a path from here: git resolves it by the ending of the worktree's path; so does the net.
+    assert_eq!(net_git(&e, &r, "worktree remove --force wt-name").0, 0);
+    assert!(!w.exists());
+    assert_eq!(e.store.items("plan01").len(), 1, "kept, not removed un-netted");
+    // A name nothing resolves: nothing runs.
+    let (code, err) = net_git(&e, &r, "worktree remove --force no-such-tree");
+    assert_eq!(code, git::REFUSED, "{err}");
+}
+
+#[test]
 fn locked_or_main_worktrees_are_left_to_git() {
     let e = env();
     let r = repo(&e);
@@ -303,6 +341,49 @@ fn force_push_keeps_the_old_remote_tip() {
 }
 
 #[test]
+fn a_force_push_is_pinned_to_the_tip_it_kept() {
+    let e = env();
+    let r = repo(&e);
+    let bare = e.work.join("remote.git");
+    git(&e.work, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&r, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&r, &["push", "-q", "origin", "main:feat"]);
+    git(&r, &["fetch", "-q", "origin"]);
+    let tracking = git(&r, &["rev-parse", "refs/remotes/origin/feat"]);
+    // Someone else moves feat on the remote; our tracking ref doesn't know.
+    let other = e.work.join("other");
+    git(&e.work, &["clone", "-q", bare.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["checkout", "-q", "feat"]);
+    std::fs::write(other.join("theirs.txt"), "t").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-qm", "theirs"]);
+    git(&other, &["push", "-q", "origin", "feat"]);
+    let theirs = git(&other, &["rev-parse", "HEAD"]);
+    // A bare --force-with-lease still means "as my tracking ref says": the backup fetch must not move it.
+    let (code, _) = net_git(&e, &r, "push -q --force-with-lease origin main:feat");
+    assert_ne!(code, 0, "their commit is not overwritten");
+    assert_eq!(git(&r, &["rev-parse", "refs/remotes/origin/feat"]), tracking, "the tracking ref did not move");
+    assert_eq!(git(&e.work, &["--git-dir", bare.to_str().unwrap(), "rev-parse", "feat"]), theirs);
+    // A plain --force: kept, then pinned to the kept tip, so it lands.
+    assert_eq!(net_git(&e, &r, "push -q --force origin main:feat").0, 0);
+    assert!(e.store.refs("plan01").iter().any(|b| b.oid == theirs));
+}
+
+#[test]
+fn a_force_push_to_a_name_that_is_a_tag_there_runs_nothing() {
+    let e = env();
+    let r = repo(&e);
+    let bare = e.work.join("remote.git");
+    git(&e.work, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&r, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&r, &["tag", "v1"]);
+    git(&r, &["push", "-q", "origin", "v1"]);
+    let (code, err) = net_git(&e, &r, "push -q -f origin v1");
+    assert_eq!(code, git::REFUSED, "{err}");
+    assert!(err.contains("tag"), "{err}");
+}
+
+#[test]
 fn unknown_shapes_run_nothing() {
     let e = env();
     let r = repo(&e);
@@ -312,4 +393,22 @@ fn unknown_shapes_run_nothing() {
         assert!(err.contains("nothing was run"), "{err}");
     }
     assert_eq!(git(&r, &["branch", "--show-current"]), "main");
+}
+
+#[test]
+fn net_run_goes_by_its_plan() {
+    let e = env();
+    let now = crate::now_unix();
+    let plan = PlanRecord {
+        id: "plan02".to_owned(),
+        at: now,
+        programs: vec!["rm".to_owned()],
+        cwds: vec![e.work.to_string_lossy().into_owned()],
+        ..PlanRecord::default()
+    };
+    assert_eq!(refusal(Some(&plan), "rm", &e.work, now), None);
+    assert!(refusal(None, "rm", &e.work, now).is_some(), "no plan");
+    assert!(refusal(Some(&plan), "git", &e.work, now).is_some(), "another program");
+    assert!(refusal(Some(&plan), "rm", &e.work.join(".."), now).is_some(), "another folder");
+    assert!(refusal(Some(&plan), "rm", &e.work, now + PLAN_SECS + 1).is_some(), "too old");
 }

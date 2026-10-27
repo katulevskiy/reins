@@ -169,6 +169,10 @@ pub struct NetRecord {
     pub lines: Vec<String>,
     /// Unix seconds until which it can be restored (the trash's keeping time; refs last longer).
     pub until: i64,
+    /// The net was applied: it kept something (read from the store when the log is read, never written to it). Until
+    /// then Activity says the net was not applied.
+    #[serde(skip)]
+    pub ran: bool,
 }
 
 /// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
@@ -424,7 +428,13 @@ pub fn read(paths: &Paths, limit: usize, stale_after: i64) -> Vec<Entry> {
     let mut text = std::fs::read_to_string(PathBuf::from(old)).unwrap_or_default();
     text.push('\n');
     text.push_str(&std::fs::read_to_string(&file).unwrap_or_default());
-    parse(&text, limit, stale_after, crate::now_unix())
+    let mut entries = parse(&text, limit, stale_after, crate::now_unix());
+    // Whether each net was applied: the netted command really ran through the net (or the copies were taken).
+    let store = crate::nets::Store::open(paths);
+    for n in entries.iter_mut().filter_map(|e| e.nets.as_mut()) {
+        n.ran = store.ran(&n.plan);
+    }
+    entries
 }
 
 fn parse(text: &str, limit: usize, stale_after: i64, now: i64) -> Vec<Entry> {

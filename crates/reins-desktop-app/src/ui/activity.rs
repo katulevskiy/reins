@@ -809,6 +809,8 @@ impl Root {
 /// Where a safety net stands in Activity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NetState {
+    /// Planned, but the netted command never kept anything (it didn't run, or its net failed).
+    NotApplied,
     /// It can be restored.
     Restore,
     Restoring,
@@ -818,7 +820,9 @@ enum NetState {
 }
 
 fn net_state(net: &NetRecord, now: i64, restored: bool, restoring: bool) -> NetState {
-    if restored {
+    if !net.ran {
+        NetState::NotApplied
+    } else if restored {
         NetState::Restored
     } else if restoring {
         NetState::Restoring
@@ -842,6 +846,7 @@ impl Root {
             NetState::Restore | NetState::Restoring => "Restore",
             NetState::Restored => "Restored",
             NetState::Gone => "Kept copy gone",
+            NetState::NotApplied => "Nothing kept",
         };
         let glyph_for = if state == NetState::Restored {
             Glyph::Check
@@ -873,7 +878,11 @@ impl Root {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(pal.ink_2())
                     .child(glyph(Glyph::Undo, 14.0, pal.ink_2()))
-                    .child("Netted"),
+                    .child(if state == NetState::NotApplied {
+                        "Net not applied"
+                    } else {
+                        "Netted"
+                    }),
             )
             .child(
                 div()
@@ -1085,7 +1094,13 @@ mod tests {
             kinds: vec![reins_policy::effects::nets::NetKind::Trash],
             lines: vec!["Keeps 2 deleted paths in the Reins trash for 7 days".to_owned()],
             until: 1_000,
+            ran: true,
         };
+        let planned = NetRecord {
+            ran: false,
+            ..net.clone()
+        };
+        assert_eq!(net_state(&planned, 10, false, false), NetState::NotApplied, "planned is not netted");
         assert_eq!(net_state(&net, 10, false, false), NetState::Restore);
         assert_eq!(net_state(&net, 10, false, true), NetState::Restoring);
         assert_eq!(net_state(&net, 10, true, false), NetState::Restored);

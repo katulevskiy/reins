@@ -232,7 +232,12 @@ impl Daemon {
         let api = Arc::new(crate::api_proxy::ApiProxy::new(&config.api, Arc::clone(&phone), Arc::clone(&counts))?);
         let leases = Arc::new(crate::leases::LeaseCache::default());
         let secrets = Arc::new(crate::leases::SecretsService::new(Arc::clone(&leases), Arc::clone(&phone)));
-        let revocations = Box::pin(crate::leases::poll_revocations(leases, paths.clone(), Arc::clone(&identity)));
+        let revoked = crate::leases::poll_revocations(leases, paths.clone(), Arc::clone(&identity));
+        // The Reins trash is pruned here, never inside an agent's netted command.
+        let nets = crate::nets::prune_loop(paths.clone());
+        let revocations = Box::pin(async move {
+            tokio::join!(revoked, nets);
+        });
         let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
         let overview = {
             let started_at = crate::now_unix();

@@ -78,21 +78,31 @@ pub fn plan(config: &Config, paths: &crate::config::Paths, call: &HookCall, head
     let store = Store::open(paths);
     let cwd = call.cwd.clone().unwrap_or_default();
     let reins = std::env::current_exe().ok()?.to_str()?.to_owned();
-    let (config, action, head_owned) = (config.clone(), call.action.clone(), head.cloned());
+    let root = store.ensure_root().ok()?.to_str()?.to_owned();
+    let max_snapshot = config.nets.snapshot_max_bytes;
+    let (config_for, action, head_owned) = (config.clone(), call.action.clone(), head.cloned());
     let rewrites = rewrites(call.harness, call.event);
     let store_for = store.clone();
     let cwd_for = cwd.clone();
     let net = within_deadline(DEADLINE, move || {
         let env = |k: &str| std::env::var(k).ok();
-        let ctx = crate::consequences::context(&config, Some(&cwd_for), &env, head_owned.as_ref());
-        let facts = Facts(&store_for);
+        let ctx = crate::consequences::context(&config_for, Some(&cwd_for), &env, head_owned.as_ref());
+        let facts = Facts {
+            store: &store_for,
+            max_snapshot,
+        };
         match &action {
             Action::Command(c) if rewrites => {
                 if store_for.failed_recently(&failure_key(&cwd_for, c), crate::now_unix()) {
                     return None;
                 }
                 let id = format!("n{}", crate::server::random_token(9));
-                let plan = nets::plan_command(c, &ctx, &facts, &reins, &id)?;
+                let runner = nets::Runner {
+                    reins: &reins,
+                    plan: &id,
+                    store: &root,
+                };
+                let plan = nets::plan_command(c, &ctx, &facts, runner)?;
                 Some(HookNet {
                     rewritten: Some(plan.rewritten.clone()),
                     snapshots: Vec::new(),
@@ -123,6 +133,11 @@ pub fn plan(config: &Config, paths: &crate::config::Paths, call: &HookCall, head
         Action::Command(c) => c.clone(),
         _ => String::new(),
     };
+    // What `reins net run` goes by: the programs and folders the plan allows, and the scratch roots it deletes for
+    // real, as this hook read them (never the environment the command runs in).
+    let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+    let scratch: Vec<String> =
+        config.workspace.scratch.iter().map(|s| reins_policy::effects::normalize(s, "/", &home)).collect();
     store
         .begin(&PlanRecord {
             id: net.id.clone(),
@@ -132,6 +147,10 @@ pub fn plan(config: &Config, paths: &crate::config::Paths, call: &HookCall, head
             cwd,
             lines: net.plan.lines(),
             entry: None,
+            programs: net.plan.programs.clone(),
+            cwds: net.plan.cwds.clone(),
+            home,
+            scratch,
         })
         .ok()?;
     Some(net)
@@ -161,5 +180,6 @@ pub fn record(net: &HookNet) -> NetRecord {
         kinds: net.plan.kinds(),
         lines: net.plan.lines(),
         until: crate::now_unix() + super::store::TRASH_DAYS * 86_400,
+        ran: false,
     }
 }
