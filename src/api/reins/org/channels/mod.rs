@@ -44,6 +44,13 @@ pub fn install(c: &mut DbConnInner, org: &str, kind: ChannelKind, config: &Value
     if !ok {
         return Err(OrgError::Invalid("Fill in every field."));
     }
+    // A Teams bot is one org's: its tokens and its inbound activities find their org by its app id.
+    if kind == ChannelKind::Teams
+        && let Some(app) = config.get("app_id").and_then(Value::as_str)
+        && teams::bots(c)?.iter().any(|(o, b)| o != org && b.app_id == app.trim())
+    {
+        return Err(OrgError::Taken("That bot belongs to another organization."));
+    }
     let text = Zeroizing::new(config.to_string());
     let (key_id, sealed) = kms::seal_data(c, org, &aad(org, kind), text.as_bytes(), now)?;
     if store::q_channel_for_use(c, org, kind.as_str())?.is_none() {
@@ -465,5 +472,21 @@ mod tests {
         assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_none(), "one person isn't enough");
         change_answer_as(&mut c, &phones["kim"], "kim", &id, ReviewDecision::Approve, 303).unwrap();
         assert!(config(&mut c, "o1", ChannelKind::Slack, false).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_teams_bot_belongs_to_one_org() {
+        let mut c = db();
+        routed_org(&mut c);
+        crate::api::reins::org::testing::add_org(&mut c, "o2");
+        let bot = json!({"app_id": "bot-1", "app_secret": "s", "tenant_id": "t", "teams_app_id": "a"});
+        install(&mut c, "o1", ChannelKind::Teams, &bot, 300).unwrap();
+        // Off in o1, still o1's: another org can't register it.
+        assert_eq!(
+            install(&mut c, "o2", ChannelKind::Teams, &bot, 301),
+            Err(OrgError::Taken("That bot belongs to another organization."))
+        );
+        // o1 may re-install its own (a new secret, a service URL).
+        install(&mut c, "o1", ChannelKind::Teams, &bot, 302).unwrap();
     }
 }

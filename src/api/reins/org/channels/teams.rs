@@ -59,13 +59,46 @@ fn id_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= 100 && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'))
 }
 
-/// A connector host Microsoft runs (a `serviceUrl` from an activity is taken only for these).
+/// The Bot Framework connector hosts Teams uses (public, GCC, GCC High, DoD); a `serviceUrl` is taken only for these,
+/// exactly.
+pub const CONNECTOR_HOSTS: &[&str] = &[
+    "smba.trafficmanager.net",
+    "smba.infra.gcc.teams.microsoft.com",
+    "smba.infra.gov.teams.microsoft.us",
+    "smba.infra.dod.teams.microsoft.us",
+];
+
+/// A connector URL Microsoft runs: `https`, one of [`CONNECTOR_HOSTS`] exactly, no user or port.
 #[must_use]
 pub fn service_url_ok(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|u| {
         u.scheme() == "https"
-            && u.host_str().is_some_and(|h| h.ends_with(".trafficmanager.net") || h.ends_with(".botframework.com"))
+            && u.username().is_empty()
+            && u.port().is_none()
+            && u.host_str().is_some_and(|h| CONNECTOR_HOSTS.contains(&h))
     })
+}
+
+/// Text for an Adaptive Card `TextBlock`, its markdown made literal (no links, no emphasis, no lists).
+#[must_use]
+pub fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, ch) in text.chars().enumerate() {
+        if matches!(ch, '\\' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '`' | '~' | '>' | '<' | '|' | '!')
+            || (i == 0 && matches!(ch, '-' | '+'))
+        {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    // A number then a dot at the start would be a list.
+    if let Some(dot) = out.find('.')
+        && out[..dot].chars().all(|c| c.is_ascii_digit())
+        && dot > 0
+    {
+        out.insert(dot, '\\');
+    }
+    out
 }
 
 impl TeamsConfig {
@@ -110,7 +143,8 @@ pub struct Teams {
     bases: Bases,
 }
 
-/// (login base and app id, scope) → (token, expires at).
+/// (login base, tenant, app id, SHA-256 of the app secret, scope) → (token, expires at): one install's token never
+/// serves another's.
 type Tokens = HashMap<(String, String), (Zeroizing<String>, i64)>;
 
 static TOKENS: LazyLock<Mutex<Tokens>> = LazyLock::new(Mutex::default);
@@ -135,7 +169,9 @@ impl Teams {
 
     async fn token(&self, scope: &str) -> Result<Zeroizing<String>, String> {
         let now = now_unix();
-        let key = (format!("{}|{}", self.bases.login, self.cfg.app_id), scope.to_owned());
+        let secret = reins_proto::canon::hex32(&reins_proto::canon::sha256(self.cfg.app_secret.as_bytes()));
+        let key =
+            (format!("{}|{}|{}|{secret}", self.bases.login, self.cfg.tenant_id, self.cfg.app_id), scope.to_owned());
         if let Some((t, exp)) = TOKENS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key)
             && *exp > now
         {
@@ -174,7 +210,7 @@ impl Teams {
 #[must_use]
 pub fn card(msg: &Message, url: Option<&str>) -> Value {
     let mut body = vec![
-        json!({"type": "TextBlock", "text": msg.line, "wrap": true}),
+        json!({"type": "TextBlock", "text": plain(&msg.line), "wrap": true}),
         json!({"type": "TextBlock", "text": due_text(msg.due), "isSubtle": true, "spacing": "Small"}),
     ];
     let actions = match url.filter(|_| msg.web) {
@@ -188,8 +224,9 @@ pub fn card(msg: &Message, url: Option<&str>) -> Value {
            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json"})
 }
 
-fn activity(content: &Value, text: &str) -> Value {
-    json!({"type": "message", "text": text,
+/// A message with only the card (no `text`: nothing outside the card is rendered as markdown).
+fn activity(content: &Value) -> Value {
+    json!({"type": "message",
            "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": content}]})
 }
 
@@ -221,7 +258,7 @@ impl ApprovalChannel for Teams {
     }
 
     async fn post(&self, to: &str, msg: &Message, url: Option<&str>) -> Result<String, String> {
-        let body = activity(&card(msg, url), &msg.line);
+        let body = activity(&card(msg, url));
         let req = http()?.post(format!("{}/v3/conversations/{to}/activities", self.bases.connector)).json(&body);
         let (status, v) = self.send(req, BOT_SCOPE).await?;
         let id = v["id"].as_str().filter(|_| status.is_success()).ok_or_else(|| format!("Teams post: {status}"))?;
@@ -231,10 +268,10 @@ impl ApprovalChannel for Teams {
     async fn update(&self, external_ref: &str, outcome: &str) -> Result<(), String> {
         let (conv, id) = external_ref.rsplit_once('|').ok_or("bad reference")?;
         let content = json!({"type": "AdaptiveCard", "version": "1.4",
-                             "body": [{"type": "TextBlock", "text": outcome, "wrap": true}]});
+                             "body": [{"type": "TextBlock", "text": plain(outcome), "wrap": true}]});
         let req = http()?
             .put(format!("{}/v3/conversations/{conv}/activities/{id}", self.bases.connector))
-            .json(&activity(&content, outcome));
+            .json(&activity(&content));
         let (status, _) = self.send(req, BOT_SCOPE).await?;
         if status.is_success() {
             Ok(())
@@ -244,9 +281,10 @@ impl ApprovalChannel for Teams {
     }
 }
 
-/// Validates a Bot Framework token against `jwks` (the OpenID metadata's keys): RS256, issuer [`ISSUER`], audience
-/// one of `app_ids`, not expired. Returns the audience (the org's bot).
-pub fn validate_token(token: &str, jwks: &Value, app_ids: &[String]) -> Result<String, String> {
+/// Validates a Bot Framework token for `activity` against `jwks` (the OpenID metadata's keys): RS256, issuer
+/// [`ISSUER`], audience one of `app_ids`, not expired, a signing key endorsed for the activity's `channelId`, and a
+/// `serviceUrl` claim equal to the activity's. Returns the audience (the org's bot).
+pub fn validate_token(token: &str, jwks: &Value, app_ids: &[String], activity: &Value) -> Result<String, String> {
     use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
     if app_ids.is_empty() {
         return Err("no bot".to_owned());
@@ -261,12 +299,20 @@ pub fn validate_token(token: &str, jwks: &Value, app_ids: &[String]) -> Result<S
     let (Some(n), Some(e)) = (key["n"].as_str(), key["e"].as_str()) else {
         return Err("not an RSA key".to_owned());
     };
+    let channel = activity["channelId"].as_str().ok_or("no channel")?;
+    if !key["endorsements"].as_array().is_some_and(|e| e.iter().any(|x| x.as_str() == Some(channel))) {
+        return Err("key not endorsed for this channel".to_owned());
+    }
     let dk = DecodingKey::from_rsa_components(n, e).map_err(|e| e.to_string())?;
     let mut v = Validation::new(Algorithm::RS256);
     v.set_issuer(&[ISSUER]);
     v.set_audience(app_ids);
     v.leeway = 300;
     let data = decode::<Value>(token, &dk, &v).map_err(|e| e.to_string())?;
+    let claimed = data.claims["serviceUrl"].as_str().map(|u| u.trim_end_matches('/'));
+    if claimed != activity["serviceUrl"].as_str().map(|u| u.trim_end_matches('/')) {
+        return Err("serviceUrl doesn't match the token".to_owned());
+    }
     data.claims["aud"].as_str().map(str::to_owned).ok_or_else(|| "no audience".to_owned())
 }
 
@@ -314,9 +360,9 @@ pub fn routes() -> Vec<Route> {
 }
 
 /// The orgs' bots: (org, config).
-fn bots(c: &mut crate::db::DbConnInner) -> Result<Vec<(String, TeamsConfig)>, OrgError> {
+pub fn bots(c: &mut crate::db::DbConnInner) -> Result<Vec<(String, TeamsConfig)>, OrgError> {
     let mut out = Vec::new();
-    for row in store::q_channels_of_kind(c, "teams")? {
+    for row in store::q_installed_of_kind(c, "teams")? {
         if let Some(cfg) = super::config(c, &row.org_uuid, reins_proto::org::ChannelKind::Teams, true)?
             && let Some(cfg) = serde_json::from_str::<Value>(&cfg).ok().and_then(|v| TeamsConfig::from_value(&v))
         {
@@ -350,12 +396,17 @@ async fn messages(bearer: Bearer, data: Data<'_>, conn: DbConn) -> Status {
         return Status::InternalServerError;
     };
     let ids: Vec<String> = bots.iter().map(|(_, c)| c.app_id.clone()).collect();
-    let Ok(aud) = validate_token(&bearer.0, &keys, &ids) else {
+    let activity: Value = serde_json::from_slice(&body).unwrap_or_default();
+    let Ok(aud) = validate_token(&bearer.0, &keys, &ids, &activity) else {
         return Status::Unauthorized;
     };
-    let activity: Value = serde_json::from_slice(&body).unwrap_or_default();
+    // An app id is one org's (enforced at install): exactly one bot matches, or nothing changes.
+    let mut mine = bots.into_iter().filter(|(_, c)| c.app_id == aud);
+    let (Some(bot), None) = (mine.next(), mine.next()) else {
+        return Status::Ok;
+    };
     if let Some(url) = service_url_of(&activity)
-        && let Some((org, cfg)) = bots.into_iter().find(|(_, c)| c.app_id == aud)
+        && let (org, cfg) = bot
         && cfg.service_url.as_deref() != Some(url.as_str())
     {
         let v = json!({"app_id": cfg.app_id, "app_secret": cfg.app_secret.as_str(), "tenant_id": cfg.tenant_id,
@@ -470,35 +521,118 @@ mod tests {
         let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
         let pem = rsa.private_key_to_pem().unwrap();
         let b64 = data_encoding::BASE64URL_NOPAD;
-        let jwks = json!({"keys": [{"kty": "RSA", "kid": "k1", "n": b64.encode(&rsa.n().to_vec()),
-                                    "e": b64.encode(&rsa.e().to_vec())}]});
+        let key = |kid: &str, endorsed: &str| {
+            json!({"kty": "RSA", "kid": kid, "n": b64.encode(&rsa.n().to_vec()), "e": b64.encode(&rsa.e().to_vec()),
+                   "endorsements": [endorsed]})
+        };
+        let jwks = json!({"keys": [key("k1", "msteams"), key("k9", "skype")]});
         let now = now_unix();
-        let token = |iss: &str, aud: &str, exp: i64, kid: &str, key: &[u8]| {
+        let svc = "https://smba.trafficmanager.net/emea/";
+        let token = |iss: &str, aud: &str, exp: i64, kid: &str, key: &[u8], service: &str| {
             let mut h = Header::new(Algorithm::RS256);
             h.kid = Some(kid.to_owned());
-            let claims = json!({"iss": iss, "aud": aud, "exp": exp, "nbf": now - 10});
+            let claims = json!({"iss": iss, "aud": aud, "exp": exp, "nbf": now - 10, "serviceUrl": service});
             encode(&h, &claims, &EncodingKey::from_rsa_pem(key).unwrap()).unwrap()
         };
+        let good = |kid: &str| token(ISSUER, "bot-1", now + 600, kid, &pem, svc);
+        let act = json!({"type": "conversationUpdate", "channelId": "msteams", "serviceUrl": svc});
         let bots = vec!["bot-1".to_owned()];
-        assert_eq!(validate_token(&token(ISSUER, "bot-1", now + 600, "k1", &pem), &jwks, &bots).unwrap(), "bot-1");
+        assert_eq!(validate_token(&good("k1"), &jwks, &bots, &act).unwrap(), "bot-1");
         // Another issuer, another bot, expired, an unknown key, another signer: refused.
-        assert!(validate_token(&token("https://evil.example", "bot-1", now + 600, "k1", &pem), &jwks, &bots).is_err());
-        assert!(validate_token(&token(ISSUER, "bot-2", now + 600, "k1", &pem), &jwks, &bots).is_err());
-        assert!(validate_token(&token(ISSUER, "bot-1", now - 3600, "k1", &pem), &jwks, &bots).is_err());
-        assert!(validate_token(&token(ISSUER, "bot-1", now + 600, "k2", &pem), &jwks, &bots).is_err());
-        let other = openssl::rsa::Rsa::generate(2048).unwrap().private_key_to_pem().unwrap();
-        assert!(validate_token(&token(ISSUER, "bot-1", now + 600, "k1", &other), &jwks, &bots).is_err());
-        assert!(validate_token("not.a.jwt", &jwks, &bots).is_err());
-        assert!(validate_token(&token(ISSUER, "bot-1", now + 600, "k1", &pem), &jwks, &[]).is_err(), "no bot");
-        // Activities change nothing but a Microsoft serviceUrl.
-        assert_eq!(
-            service_url_of(
-                &json!({"type": "conversationUpdate", "serviceUrl": "https://smba.trafficmanager.net/emea/"})
+        let bad = [
+            token("https://evil.example", "bot-1", now + 600, "k1", &pem, svc),
+            token(ISSUER, "bot-2", now + 600, "k1", &pem, svc),
+            token(ISSUER, "bot-1", now - 3600, "k1", &pem, svc),
+            token(ISSUER, "bot-1", now + 600, "k2", &pem, svc),
+            token(
+                ISSUER,
+                "bot-1",
+                now + 600,
+                "k1",
+                &openssl::rsa::Rsa::generate(2048).unwrap().private_key_to_pem().unwrap(),
+                svc,
             ),
-            Some("https://smba.trafficmanager.net/emea".to_owned())
-        );
-        assert_eq!(service_url_of(&json!({"type": "conversationUpdate", "serviceUrl": "https://evil.example/"})), None);
-        let msg = json!({"type": "message", "text": "approve", "serviceUrl": "https://smba.trafficmanager.net/x"});
+            "not.a.jwt".to_owned(),
+        ];
+        for t in &bad {
+            assert!(validate_token(t, &jwks, &bots, &act).is_err());
+        }
+        assert!(validate_token(&good("k1"), &jwks, &[], &act).is_err(), "no bot");
+        // A key endorsed for another channel, or a serviceUrl the token doesn't carry: refused.
+        assert!(validate_token(&good("k9"), &jwks, &bots, &act).is_err(), "endorsement");
+        let moved = json!({"type": "conversationUpdate", "channelId": "msteams", "serviceUrl": "https://smba.trafficmanager.net/amer/"});
+        assert!(validate_token(&good("k1"), &jwks, &bots, &moved).is_err(), "serviceUrl claim");
+        // Activities change nothing but a Microsoft serviceUrl.
+        assert_eq!(service_url_of(&act), Some("https://smba.trafficmanager.net/emea".to_owned()));
+        let msg = json!({"type": "message", "text": "approve", "serviceUrl": svc});
         assert_eq!(service_url_of(&msg), None);
+    }
+
+    #[test]
+    fn only_exact_connector_hosts_are_kept() {
+        assert!(service_url_ok("https://smba.trafficmanager.net/teams/"));
+        assert!(service_url_ok("https://smba.infra.gcc.teams.microsoft.com/teams"));
+        for bad in [
+            "https://evil.trafficmanager.net/x",
+            "https://attacker.botframework.com/",
+            "http://smba.trafficmanager.net/teams",
+            "https://smba.trafficmanager.net:8443/teams",
+            "https://user@smba.trafficmanager.net/teams",
+            "https://smba.trafficmanager.net.evil.example/",
+        ] {
+            assert!(!service_url_ok(bad), "{bad}");
+        }
+        assert!(
+            TeamsConfig::from_value(&json!({"app_id": "b", "app_secret": "s", "tenant_id": "t", "teams_app_id": "a",
+                                                "service_url": "https://evil.trafficmanager.net/"}))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn card_text_is_literal() {
+        let line = "lee@acme.com · [Click here](https://evil.example) · **urgent** · 1. `x`";
+        let c = card(
+            &Message {
+                line: line.into(),
+                due: 0,
+                web: true,
+            },
+            None,
+        );
+        let text = c["body"][0]["text"].as_str().unwrap();
+        assert!(!text.contains("[Click here](") && text.contains("\\[Click here\\]\\("), "{text}");
+        assert!(text.contains("\\*\\*urgent\\*\\*"));
+        assert_eq!(plain("1. first"), "1\\. first");
+        assert_eq!(plain("- item"), "\\- item");
+        // Only the card is sent: no markdown `text` beside it.
+        assert!(activity(&c).get("text").is_none());
+    }
+
+    #[tokio::test]
+    async fn tokens_are_per_install() {
+        let (ms, teams) = microsoft().await;
+        Mock::given(method("POST"))
+            .and(path("/t-2/oauth2/v2.0/token"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"access_token": "tok-2", "expires_in": 3600})),
+            )
+            .mount(&ms)
+            .await;
+        // The same app id in another tenant (or with another secret) never reuses the first one's token.
+        let other = TeamsConfig::from_value(&json!({"app_id": "bot-1", "app_secret": "s2", "tenant_id": "t-2",
+                                                   "teams_app_id": "app-1"}))
+        .unwrap();
+        let other = Teams::with_bases(
+            other,
+            Bases {
+                login: ms.uri(),
+                graph: ms.uri(),
+                connector: ms.uri(),
+            },
+        );
+        assert_eq!(teams.token(BOT_SCOPE).await.unwrap().as_str(), "tok");
+        assert_eq!(other.token(BOT_SCOPE).await.unwrap().as_str(), "tok-2");
+        assert_eq!(teams.token(BOT_SCOPE).await.unwrap().as_str(), "tok", "cached for its own install");
     }
 }

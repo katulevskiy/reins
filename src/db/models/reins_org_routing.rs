@@ -403,6 +403,14 @@ pub fn q_channels_of_kind(c: &mut DbConnInner, kind: &str) -> QueryResult<Vec<Re
         .load(c)
 }
 
+/// Every org with an installed channel of `kind`, on or off (an app id may be one org's only).
+pub fn q_installed_of_kind(c: &mut DbConnInner, kind: &str) -> QueryResult<Vec<ReinsOrgChannel>> {
+    reins_org_channels::table
+        .filter(reins_org_channels::kind.eq(kind))
+        .filter(reins_org_channels::sealed.is_not_null())
+        .load(c)
+}
+
 pub fn q_channels(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<ChannelSummary>> {
     let rows: Vec<(String, bool, Option<i64>)> = reins_org_channels::table
         .filter(reins_org_channels::org_uuid.eq(org))
