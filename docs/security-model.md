@@ -657,8 +657,11 @@ service's stable id, never by what an agent writes or by a name someone else can
 - **Telegram:** a chat is its numeric id. Before the matrix reads a send, the phone resolves the chat it names (a
   handle, a title, an id) through Telegram exactly as the send would, and evaluates the chat that would receive it.
   The owner's own chat (Saved Messages) is Mine by the account's own id. A chat Telegram can't find is Outside and
-  isn't a question; a handle or a name is only a label. Facts kept by a handle before this move onto the id the
-  first time Telegram resolves it.
+  isn't a question; a handle or a name is only a label, and a title's label always carries its kind ("Mom
+  (group)") and never starts with `@`, so it can't pass for a handle. An automatic approval sends to the chat id it
+  was evaluated for, never to whatever the name resolves to by then. A fact kept by an `@handle` before ids is never
+  moved: when Telegram resolves that very handle (its username lookup, not a title), a question card for the chat's
+  id preselects the handle's zone and the owner confirms it; email and phone facts are never carried over.
 - **GitHub:** an owner the phone knows is kept by the account's numeric id (`#<id>`); the login is only its label.
   A request names logins, so the phone asks GitHub which account each login is now (cached for an hour) and matches
   by id: a login the owner gave up and someone else took is Outside. Without an answer (offline) it is Outside too.

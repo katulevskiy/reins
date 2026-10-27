@@ -821,7 +821,7 @@ pub(crate) mod tests {
     /// A lease of `user` issued at `issued`, whose request `executor` claimed, revoked since (queued upstream).
     fn queued(c: &mut DbConnInner, id: &str, executor: &str, created: i64, issued: i64) {
         let mut r = request("o1", &format!("or_{id}"), request_state::DONE);
-        r.kind = request_kind::LEASE.to_owned();
+        request_kind::LEASE.clone_into(&mut r.kind);
         r.claimed_by = Some(executor.to_owned());
         q_insert_request(c, &r).unwrap();
         let mut l = lease(id, "u1", lease_state::REVOKED, Some(issued));

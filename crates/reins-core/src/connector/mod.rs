@@ -124,6 +124,9 @@ pub struct Party {
     pub label: String,
     /// The connected account itself (Telegram's Saved Messages; the signed-in GitHub account).
     pub own: bool,
+    /// The handle (`@name`, lowercase) the service resolved `written` as, when it was one: only then may a fact kept
+    /// by that handle be offered for the id. A title or a display name never is.
+    pub handle: Option<String>,
 }
 
 #[async_trait::async_trait]

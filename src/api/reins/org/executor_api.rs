@@ -581,11 +581,11 @@ mod tests {
         let listed = |c: &mut DbConnInner, ex: &Exec| -> Vec<String> {
             q_revocations(c, &ex.me()).unwrap().into_iter().map(|v| v["lease"].as_str().unwrap().to_owned()).collect()
         };
-        assert_eq!(listed(&mut c, &e1), [l1.clone()]);
-        assert_eq!(listed(&mut c, &e2), [l2.clone()]);
+        assert_eq!(listed(&mut c, &e1), std::slice::from_ref(&l1));
+        assert_eq!(listed(&mut c, &e2), std::slice::from_ref(&l2));
         // Another executor can't say a lease it didn't issue was revoked upstream.
         assert!(!q_revoked(&mut c, &e2.me(), &l1, 111).unwrap());
-        assert_eq!(listed(&mut c, &e1), [l1.clone()]);
+        assert_eq!(listed(&mut c, &e1), std::slice::from_ref(&l1));
         assert!(q_revoked(&mut c, &e1.me(), &l1, 111).unwrap());
         assert!(listed(&mut c, &e1).is_empty());
     }

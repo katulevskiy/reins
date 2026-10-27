@@ -81,6 +81,9 @@ pub(crate) struct StoredQuestion {
     /// Answered or dismissed: never asked again.
     #[serde(default)]
     pub closed: bool,
+    /// The zone the card preselects (a fact kept by the chat's handle before ids: the owner confirms it for the id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<Zone>,
 }
 
 /// The section a fact is listed in.
@@ -252,6 +255,19 @@ pub(crate) struct Identified {
     pub request: RelayRequest,
     /// Login → GitHub account id, for the logins the request names that GitHub could tell.
     pub github_ids: BTreeMap<String, String>,
+    /// The Telegram chat id a send was resolved to (what an automatic approval sends to).
+    pub chat: Option<String>,
+}
+
+/// `request` as an automatic approval runs it: a Telegram send goes to the chat id it was evaluated for, so a name
+/// that resolves to another chat by then can't redirect it.
+pub(crate) fn pin_chat(request: &mut RelayRequest, chat: Option<&str>) {
+    if let (ToolCall::Connector(call), Some(id)) = (&mut request.call, chat)
+        && call.service == reins_proto::connector::TELEGRAM
+        && call.op == "send"
+    {
+        call.args.insert("chat".to_owned(), serde_json::Value::String(id.to_owned()));
+    }
 }
 
 /// A GitHub owner fact kept by its login (before ids), on github.com.
@@ -279,6 +295,7 @@ impl Engine {
         let mut out = Identified {
             request: request.clone(),
             github_ids: BTreeMap::new(),
+            chat: None,
         };
         if let (Some(tg), ToolCall::Connector(call)) = (telegram, &mut out.request.call)
             && call.service == reins_proto::connector::TELEGRAM
@@ -291,9 +308,10 @@ impl Engine {
         {
             match tg.party(&account, &written).await {
                 Ok(Some(party)) => {
-                    if let Err(e) = self.ap_learn_chat(&written, &party) {
+                    if let Err(e) = self.ap_learn_chat(&party, &request.connection_label, &request.id.0, now) {
                         log::warn!("Auto could not keep what Telegram said of a chat: {e}");
                     }
+                    out.chat = Some(party.id.clone());
                     call.args.insert("chat".to_owned(), serde_json::Value::String(party.id));
                 }
                 Ok(None) => {}
@@ -442,9 +460,17 @@ impl Engine {
         Ok(())
     }
 
-    /// What Telegram said of a chat a request named: the owner's own chat (Saved Messages) is Mine, by its id; a fact
-    /// kept by the handle the request used moves onto the id; the id gets the handle or the title as its label.
-    fn ap_learn_chat(&self, written: &str, party: &crate::connector::Party) -> Result<(), CoreError> {
+    /// What Telegram said of a chat a request named: the owner's own chat (Saved Messages) is Mine by its id, and the
+    /// id gets its label. A fact kept by the `@handle` the request named (before ids) is never moved silently: when
+    /// Telegram resolved that very handle, a question for the id preselects the handle's zone, and the owner confirms
+    /// it. Nothing else (a title, an address, a number) is ever carried over.
+    fn ap_learn_chat(
+        &self,
+        party: &crate::connector::Party,
+        connection_label: &str,
+        request_id: &str,
+        now: i64,
+    ) -> Result<(), CoreError> {
         let Some(id) = graph::key(&party.id) else {
             return Ok(());
         };
@@ -453,21 +479,47 @@ impl Engine {
         if party.own && snap.facts.get(FactKind::Chat, &id).is_none() {
             snap.facts.set(FactKind::Chat, &id, Zone::Mine);
         }
-        if let Some(handle) = graph::key(written).filter(|h| *h != id) {
-            for kind in [FactKind::Chat, FactKind::Person] {
-                if let Some(zone) = snap.facts.get(kind, &handle) {
-                    snap.facts.remove(kind, &handle);
-                    if snap.facts.get(FactKind::Chat, &id).is_none() {
-                        snap.facts.set(FactKind::Chat, &id, zone);
-                    }
-                }
-            }
-        }
         snap.facts.set_label(FactKind::Chat, &id, &party.label);
+        let old = party
+            .handle
+            .as_deref()
+            .filter(|h| h.starts_with('@') && snap.facts.get(FactKind::Chat, &id).is_none())
+            .and_then(|h| snap.facts.get(FactKind::Chat, h).or_else(|| snap.facts.get(FactKind::Person, h)));
         if snap.facts != before {
             self.ap_put_snapshot(&snap)?;
         }
+        if let Some(zone) = old {
+            self.ap_propose_question(FactKind::Chat, &id, zone, connection_label, request_id, now)?;
+        }
         Ok(())
+    }
+
+    /// A question for `kind`/`key` that preselects `zone` (once; one answered or dismissed isn't asked again).
+    fn ap_propose_question(
+        &self,
+        kind: FactKind,
+        key: &str,
+        zone: Zone,
+        connection_label: &str,
+        request_id: &str,
+        now: i64,
+    ) -> Result<(), CoreError> {
+        let mut qs = self.ap_questions()?;
+        if qs.iter().any(|q| q.kind == kind && q.key == key) {
+            return Ok(());
+        }
+        qs.push(StoredQuestion {
+            id: format!("{}:{key}", service_of(kind, key)),
+            kind,
+            key: key.to_owned(),
+            service: service_of(kind, key).to_owned(),
+            connection_label: connection_label.to_owned(),
+            request_id: Some(request_id.to_owned()),
+            at: now,
+            closed: false,
+            proposed: Some(zone),
+        });
+        self.ap_put_sealed(QUESTIONS_KEY, &qs)
     }
 
     /// What the matrix says of a request, with what it named that Auto doesn't know. `seen`: the owner approved its
@@ -540,6 +592,7 @@ impl Engine {
                     matrix::Why::Task(id) => Some(id.clone()),
                     _ => None,
                 }),
+                chat: None,
             },
             resolved.unknown,
         )))
@@ -880,6 +933,7 @@ impl Engine {
                 request_id: Some(request_id.to_owned()),
                 at: now,
                 closed: false,
+                proposed: None,
             });
             changed = true;
         }
@@ -940,7 +994,7 @@ impl Engine {
                 connection_label: q.connection_label,
                 request_id: q.request_id,
                 at: q.at,
-                proposed: ZoneChoice::Outside,
+                proposed: q.proposed.map_or(ZoneChoice::Outside, Into::into),
             })
             .collect();
         qs.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.id.cmp(&b.id)));

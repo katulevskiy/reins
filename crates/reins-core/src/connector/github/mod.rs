@@ -374,6 +374,7 @@ impl Connector for GitHub {
             id: id.to_string(),
             label: now.to_ascii_lowercase(),
             own,
+            handle: None,
         }))
     }
 

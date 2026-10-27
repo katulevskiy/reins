@@ -4248,6 +4248,8 @@ async fn held_execution_history_keeps_account_inspection_and_braking_available()
 mod decisions_v2 {
     use std::collections::BTreeMap;
 
+    use reins_proto::gmail::ToolCall;
+
     use super::*;
     use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
     use reins_policy::context::{FactKind, Zone};
@@ -4381,8 +4383,16 @@ mod decisions_v2 {
                     id: id.to_owned(),
                     label: label.to_owned(),
                     own,
+                    handle: None,
                 },
             );
+        }
+
+        /// `written` was resolved as a handle (Telegram's username lookup).
+        fn handle(&self, written: &str) {
+            if let Some(p) = self.known.lock().unwrap().get_mut(written) {
+                p.handle = Some(written.to_owned());
+            }
         }
     }
 
@@ -4413,51 +4423,74 @@ mod decisions_v2 {
         env.store().add_account("telegram", "+15550100", 1).unwrap();
         let engine_arc = env.core.engine();
         let engine = &*engine_arc;
-        // Before ids: the owner had zoned a handle.
+        // Before ids: the owner had zoned a handle, and an address.
         let mut snap = engine.ap_snapshot().unwrap();
         snap.facts.people.insert("@pal".to_owned(), Zone::Friends);
+        snap.facts.people.insert("pal@x.com".to_owned(), Zone::Friends);
         engine.ap_put_snapshot(&snap).unwrap();
-        let tg = Parties::new(
-            "telegram",
-            &[
-                ("@pal", "123456", "@pal", false),
-                ("Pal", "123456", "@pal", false),
-                ("me", "42", "Saved Messages", true),
-            ],
-        );
+        let tg = Parties::new("telegram", &[("me", "42", "Saved Messages", true)]);
+        tg.say("@pal", "123456", "@pal", false);
+        tg.handle("@pal");
+        // A group titled like the handle, reached by its title: another chat, labelled as a group.
+        tg.say("Pal", "-100777", "Pal (group)", false);
         let judge = |written: &str| {
             let r = request("r", OLD, tg_send(written));
             let tg = &tg;
             async move {
                 let id = engine.ap_identify_with(&r, unix_now(), Some(tg), None).await;
-                engine.ap_evaluate_identified(&id.request, &id.github_ids, false, unix_now(), false).unwrap().unwrap()
+                let (note, unknown) = engine
+                    .ap_evaluate_identified(&id.request, &id.github_ids, false, unix_now(), false)
+                    .unwrap()
+                    .unwrap();
+                (note, unknown, id)
             }
         };
-        // The handle's fact moved onto the chat's id; a name that reaches the same chat is the same party.
-        for written in ["@pal", "Pal"] {
-            let (note, unknown) = judge(written).await;
-            assert_eq!((note.zone, unknown.len()), (Zone::Friends, 0), "{written}");
-        }
-        let facts = engine.ap_snapshot().unwrap().facts;
-        assert_eq!(facts.chats.get("123456"), Some(&Zone::Friends));
-        assert_eq!(facts.people.get("@pal"), None, "kept by id now");
-        assert_eq!(facts.label(FactKind::Chat, "123456"), Some("@pal"));
-        // The owner's own chat (Saved Messages) is Mine, by the account's id.
-        let (note, _) = judge("me").await;
-        assert_eq!(note.zone, Zone::Mine);
-        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("42"), Some(&Zone::Mine));
-        // A chat Telegram can't find stays as written: Outside, and no question about a name.
-        let (note, unknown) = judge("Someone").await;
-        assert_eq!((note.zone, unknown.len()), (Zone::Outside, 0));
-        // A new chat is a question by its id, shown by its handle.
-        tg.say("@new", "777", "@new", false);
-        let (note, unknown) = judge("@new").await;
-        assert_eq!(note.zone, Zone::Outside);
-        engine.ap_note_unknowns(&unknown, "Claude", "r", unix_now()).unwrap();
-        let q = env.core.auto_questions().await.unwrap().into_iter().find(|q| q.id.ends_with(":777")).unwrap();
-        assert_eq!(q.key, "@new");
+        // The title reaches the group: Outside, nothing carried over, no question offering the handle's zone.
+        let (note, _, id) = judge("Pal").await;
+        assert_eq!((note.zone, id.chat.as_deref()), (Zone::Outside, Some("-100777")));
+        assert!(env.core.auto_questions().await.unwrap().iter().all(|q| q.proposed != ZoneChoice::Friends));
+        // The handle Telegram resolved: still Outside until the owner confirms, and the card offers the handle's zone.
+        let (note, _, id) = judge("@pal").await;
+        assert_eq!((note.zone, id.chat.as_deref()), (Zone::Outside, Some("123456")));
+        let q = env.core.auto_questions().await.unwrap().into_iter().find(|q| q.id.ends_with(":123456")).unwrap();
+        assert_eq!((q.key.as_str(), q.proposed), ("@pal", ZoneChoice::Friends));
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("123456"), None, "never moved silently");
         env.core.answer_auto_question(q.id, ZoneChoice::Friends, owner_yes()).await.unwrap();
-        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("777"), Some(&Zone::Friends));
+        assert_eq!(judge("@pal").await.0.zone, Zone::Friends);
+        // Other kinds of fact are never touched.
+        assert_eq!(engine.ap_snapshot().unwrap().facts.people.get("pal@x.com"), Some(&Zone::Friends));
+        // The owner's own chat (Saved Messages) is Mine, by the account's id.
+        assert_eq!(judge("me").await.0.zone, Zone::Mine);
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("42"), Some(&Zone::Mine));
+        // A chat Telegram can't find stays as written: Outside, no question about a name.
+        let (note, unknown, id) = judge("Someone").await;
+        assert_eq!((note.zone, unknown.len(), id.chat), (Zone::Outside, 0, None));
+    }
+
+    #[tokio::test]
+    async fn an_automatic_send_goes_to_the_chat_it_was_judged_for() {
+        // Judged for chat 123456 (what "Pal" resolved to then); by the time it runs, "Pal" may name another chat.
+        let mut r = request("r", OLD, tg_send("Pal"));
+        crate::autopilot::policy::pin_chat(&mut r, Some("123456"));
+        let ToolCall::Connector(call) = &r.call else {
+            panic!("a connector call")
+        };
+        assert_eq!(call.str_arg("chat"), Some("123456"));
+        assert_eq!(call.str_arg("text"), Some("hi"), "nothing else changes");
+        // Only a Telegram send is pinned.
+        let mut other = request("r", OLD, gh_issue("octo/x"));
+        crate::autopilot::policy::pin_chat(&mut other, Some("123456"));
+        let ToolCall::Connector(call) = &other.call else {
+            panic!("a connector call")
+        };
+        assert_eq!(call.str_arg("chat"), None);
+        // The note an Auto pass keeps names the chat it judged.
+        let env = env(false).await;
+        env.store().add_account("telegram", "+15550100", 1).unwrap();
+        let engine = env.core.engine();
+        let tg = Parties::new("telegram", &[("Pal", "123456", "Pal (user)", false)]);
+        let id = engine.ap_identify_with(&request("r", OLD, tg_send("Pal")), unix_now(), Some(&tg), None).await;
+        assert_eq!(id.chat.as_deref(), Some("123456"));
     }
 
     #[tokio::test]

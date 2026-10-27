@@ -1166,7 +1166,7 @@ mod tests {
         };
         let att = [Attestation {
             kind: AttestationKind::AndroidKeyAttestation,
-            data: a.chain.clone(),
+            data: a.chain,
         }];
         // Google lists serial numbers in lowercase hex without leading zeros.
         for (serial, status) in [(format!("{INTER_SERIAL:x}"), "REVOKED"), (format!("{LEAF_SERIAL:x}"), "SUSPENDED")] {

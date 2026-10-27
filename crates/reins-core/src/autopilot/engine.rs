@@ -1002,6 +1002,7 @@ impl Engine {
                     overnight_mode,
                 ) {
                     Ok(Some((mut note, unknown))) => {
+                        note.chat.clone_from(&identified.chat);
                         if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
                             log::warn!("Autopilot could not keep a question: {e}");
                         }
