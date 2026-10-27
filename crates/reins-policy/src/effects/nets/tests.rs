@@ -386,12 +386,26 @@ fn environment_the_command_sets_is_never_trusted() {
         "set -a; . ./env; rm -rf old",
         "set -ea; rm -rf old",
         "set -o allexport; rm -rf old",
+        "printf -vHOME %s /x; rm -rf old",
+        "printf -v x %s; rm -rf old",
+        "read -raHOME < f; rm -rf old",
+        "read -r -a GIT_DIR < f; rm -rf old",
+        "readarray -tPATH < f; rm -rf old",
+        "wait -p HOME; rm -rf old",
+        "wait -pXDG_STATE_HOME; rm -rf old",
+        "declare -n ref=HOME; ref=/x; rm -rf old",
+        "local -n r=GIT_DIR; rm -rf old",
+        "typeset -n r; rm -rf old",
+        "declare \"$n\"=/x; rm -rf old",
+        "export -n PATH; rm -rf old",
+        "readonly REINS_NETS_DIR; rm -rf old",
     ] {
         let p = plan(c);
         assert!(p.is_none(), "{c}: {p:?}");
     }
     assert!(plan("FOO=1 rm -rf old").is_some(), "other names are fine");
     assert!(plan("printf '%s' \"$x\"; set -e; rm -rf old").is_some(), "printf without -v, set -e");
+    assert!(plan("local d=\"$1\"; read -r line < f; rm -rf old").is_some(), "ordinary names are fine");
 }
 
 #[test]

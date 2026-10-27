@@ -468,28 +468,10 @@ fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
             }
         }
         Command::Simple(s) if s.assigns.iter().any(|(n, _)| sensitive(n)) => found = true,
-        // Other ways to set them: `read`/`mapfile`/`readarray` targets, `printf -v`, `unset`, `getopts`, and
-        // `set -a`/`set -o allexport` (every later assignment exported).
-        Command::Simple(s)
-            if {
-                let w: Vec<Option<String>> = s.words.iter().map(Word::literal).collect();
-                let args = || w.iter().skip(1).flatten();
-                match w.first().cloned().flatten().as_deref() {
-                    Some("read" | "mapfile" | "readarray" | "unset" | "getopts") => {
-                        args().any(|a| sensitive(a)) || w.iter().skip(1).any(Option::is_none)
-                    }
-                    Some("printf") => w
-                        .iter()
-                        .position(|a| a.as_deref() == Some("-v"))
-                        .is_some_and(|i| w.get(i + 1).is_none_or(|t| t.as_deref().is_none_or(&sensitive))),
-                    Some("set") => args()
-                        .any(|a| a == "allexport" || (a.starts_with('-') && !a.starts_with("--") && a.contains('a'))),
-                    _ => false,
-                }
-            } =>
-        {
-            found = true;
-        }
+        // Other ways to set them, read failing closed: builtins that set or rename variables (`read`, `mapfile`,
+        // `readarray`, `printf -v`, `wait -p`, `getopts`, `unset`, and `declare`/`local`/`typeset`/`export`/`readonly`
+        // with namerefs), and `set -a`/`set -o allexport` (every later assignment exported).
+        Command::Simple(s) if sets_variables(s, &sensitive) => found = true,
         Command::For {
             var,
             ..
@@ -516,6 +498,35 @@ fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
         _ => {}
     });
     found
+}
+
+/// Whether the simple command `s` may set a variable `sensitive` names, read failing closed:
+/// - `read`, `mapfile`, `readarray`, `wait`, `getopts`, `unset`: any word naming one (as a part of it too:
+///   `-raHOME`), or a word that isn't literal (a name computed at run time);
+/// - `printf`: any option word with `v` (`-v NAME`, `-vNAME`);
+/// - `declare`, `local`, `typeset`, `export`, `readonly`: any option with `n` (a nameref), or a name that is one or
+///   isn't literal;
+/// - `set`: `-a` in any option group, or `allexport`.
+fn sets_variables(s: &Simple, sensitive: &dyn Fn(&str) -> bool) -> bool {
+    let Some(Some(program)) = s.words.first().map(Word::literal) else {
+        return false;
+    };
+    let words: Vec<Option<String>> = s.words.iter().skip(1).map(Word::literal).collect();
+    let names_one = |w: &str| ["HOME", "PATH", "REINS_", "XDG_", "GIT_"].iter().any(|n| w.contains(n)) || sensitive(w);
+    let option = |w: &str| w.starts_with('-') && !w.starts_with("--") && w.len() > 1;
+    match program.as_str() {
+        "read" | "mapfile" | "readarray" | "wait" | "getopts" | "unset" => {
+            words.iter().any(|w| w.as_deref().is_none_or(names_one))
+        }
+        "printf" => words.iter().flatten().any(|w| option(w) && w.contains('v')),
+        "declare" | "local" | "typeset" | "export" | "readonly" => s.words.iter().skip(1).any(|w| {
+            let text = w.display();
+            let name = text.split('=').next().unwrap_or_default();
+            (option(&text) && text.contains('n')) || name.starts_with('$') || name.contains("$(") || names_one(name)
+        }),
+        "set" => words.iter().flatten().any(|w| w == "allexport" || (option(w) && w.contains('a'))),
+        _ => false,
+    }
 }
 
 /// Places in `text` where `word` stands alone as a token: after the start, a blank, `;&|(){}!` or a backtick, and
