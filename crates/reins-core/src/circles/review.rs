@@ -567,7 +567,7 @@ impl Engine {
         }
         touched.dedup();
         for id in touched {
-            self.circle_settle(session, me, &id).await;
+            Box::pin(self.circle_settle(session, me, &id)).await;
         }
         Ok(())
     }
@@ -610,9 +610,13 @@ impl Engine {
 
     /// Settles a hold: denies, runs (through the owner's own approval path), or refreshes the card.
     pub(crate) async fn circle_settle(&self, session: &Session, me: &Me, id: &str) {
-        let Some(hold) = self.circle_hold(id) else {
+        // Any hold, also one whose parts were all dropped (the owner ended the arrangement after tapping Approve).
+        let Some(hold) = self.circle_state(&me.slot).ok().and_then(|s| s.holds.into_iter().find(|h| h.id == id)) else {
             return;
         };
+        if hold.outcome.is_some() && !hold.reviews() {
+            return;
+        }
         if self.store.pending_item(id, unix_now()).ok().flatten().is_none() {
             return;
         }
@@ -638,7 +642,7 @@ impl Engine {
                     return;
                 };
                 let decision = Decision::new("circle", None).by_circle(note.clone());
-                let (result, _) = deciding(decision, self.deny_claimed_with(id, Some(note))).await;
+                let (result, _) = deciding(decision, Box::pin(self.deny_claimed_with(id, Some(note)))).await;
                 if let Err(e) = result {
                     log::warn!("a Circle denial could not be answered: {e}");
                 }
@@ -664,10 +668,14 @@ impl Engine {
                     log::warn!("Circle state: {e}");
                     return;
                 }
-                let decision = Decision::new("circle", None).by_circle(line);
+                let decision = if who.is_empty() {
+                    Decision::new("", None)
+                } else {
+                    Decision::new("circle", None).by_circle(line)
+                };
                 let (result, _) = deciding(
                     decision,
-                    self.approve_claimed(id, choice, crate::authorization::AuthorizationSource::OwnerReview),
+                    Box::pin(self.approve_claimed(id, choice, crate::authorization::AuthorizationSource::OwnerReview)),
                 )
                 .await;
                 if let Err(e) = result {
@@ -721,7 +729,7 @@ impl Engine {
                 }) {
                     log::warn!("Circle state: {e}");
                 }
-                self.circle_settle(session, me, &hold.id).await;
+                Box::pin(self.circle_settle(session, me, &hold.id)).await;
             } else if hold.parts.iter().any(|p| !p.sent && !p.lapsed) {
                 if let Err(e) = self.circle_send(session, &hold.id).await {
                     log::info!("Circle packets: {e}");
@@ -730,7 +738,9 @@ impl Engine {
         }
     }
 
-    /// An arrangement was paused or ended by its owner: what it held lapses now (and settles).
+    /// An arrangement was paused or ended: a delegate's or a co-signer's part of what it held is dropped (the owner
+    /// decides alone; it is the owner's account), a guardian's part lapses (denied: a ward ending a guardianship never
+    /// approves what waits, 08 R7). Then each settles.
     pub(crate) async fn circle_release(&self, session: &Session, me: &Me, link: &str) {
         let Ok(state) = self.circle_state(&me.slot) else {
             return;
@@ -743,9 +753,13 @@ impl Engine {
             .collect();
         if let Err(e) = self.with_circles(&me.slot, |s| {
             for h in &mut s.holds {
-                for p in h.parts.iter_mut().filter(|p| p.arrangement == link && p.vote.is_none()) {
-                    p.lapsed = true;
+                for p in h.parts.iter_mut().filter(|p| p.arrangement == link && p.kind == CircleKind::Guardian) {
+                    if p.vote != Some(Vote::Deny) {
+                        p.vote = None;
+                        p.lapsed = true;
+                    }
                 }
+                h.parts.retain(|p| p.arrangement != link || p.kind == CircleKind::Guardian);
             }
             for r in s.reviews.iter_mut().filter(|r| r.link == link && r.state == CircleReviewState::Waiting) {
                 r.state = CircleReviewState::Withdrawn;
@@ -755,7 +769,7 @@ impl Engine {
             log::warn!("Circle state: {e}");
         }
         for id in ids {
-            self.circle_settle(session, me, &id).await;
+            Box::pin(self.circle_settle(session, me, &id)).await;
         }
     }
 

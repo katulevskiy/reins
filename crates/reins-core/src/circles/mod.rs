@@ -460,13 +460,13 @@ impl Engine {
         let me = self.circle_me(session).await?;
         self.circle_invites_poll(session, &me).await;
         self.circle_links_sync(session, &me).await?;
-        if let Err(e) = self.circle_take_answers(session, &me).await {
+        if let Err(e) = Box::pin(self.circle_take_answers(session, &me)).await {
             log::warn!("Circle answers: {e}");
         }
         if let Err(e) = self.circle_take_inbox(session, &me).await {
             log::warn!("Circle reviews: {e}");
         }
-        self.circle_expire(session, &me).await;
+        Box::pin(self.circle_expire(session, &me)).await;
         Ok(())
     }
 
@@ -565,7 +565,7 @@ impl Engine {
         })?;
         // Requests this arrangement held: its packets are gone (withdrawn by the server); settle what waits on them.
         if to != LinkState::Active {
-            self.circle_release(&session, &me, link_id).await;
+            Box::pin(self.circle_release(&session, &me, link_id)).await;
         }
         self.notifier.circle_changed(CircleEvent::Changed);
         Ok(())
