@@ -383,9 +383,6 @@ pub struct SuggestionView {
 /// What Autopilot knew about an activity entry (spec §8).
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct AutopilotNote {
-    /// The request it was about ("Ask me next time" takes it).
-    #[uniffi(default)]
-    pub request_id: String,
     /// The mode the request was decided or evaluated in.
     pub mode: AutopilotMode,
     /// What Autopilot did, or would have done.
@@ -406,6 +403,9 @@ pub struct AutopilotNote {
     /// What the matrix decided, or would have decided in shadow (Decisions v2).
     #[uniffi(default)]
     pub matrix: Option<MatrixView>,
+    /// The request it was about ("Ask me next time" takes it).
+    #[uniffi(default)]
+    pub request_id: String,
 }
 
 /// A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
