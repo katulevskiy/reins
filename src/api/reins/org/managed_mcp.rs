@@ -112,7 +112,7 @@ pub async fn post(
         return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {name}"), None)));
     }
     let (org, connection_id, user) = (org.to_owned(), connection.uuid.clone(), connection.user_uuid.to_string());
-    let request_id = match tools::parse_invocation_with(&name, &arguments, &[]) {
+    let request_id = match managed_invocation(&name, &arguments) {
         Err(ToolArgError::UnknownTool(t)) => {
             return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {t}"), None)));
         }
@@ -284,5 +284,26 @@ mod wait_tests {
         assert_eq!(status["status"], "pending_review");
         // An error ends the wait.
         assert!(wait_final("or_w3", deadline, async || { Err(OrgError::NotFound) }).await.is_err());
+    }
+}
+
+/// [`tools::parse_invocation_with`] for a managed connection, except `reins_get_result`: an org request's id
+/// (`or_<uuid>`) is not a personal ticket's (`rt_<request>`, P4), so it is read as given, up to 64 characters.
+fn managed_invocation(name: &str, arguments: &Value) -> Result<ToolInvocation, ToolArgError> {
+    if name != "reins_get_result" {
+        return tools::parse_invocation_with(name, arguments, &[]);
+    }
+    let invalid = |m: &str| Err(ToolArgError::Invalid(m.to_owned()));
+    let Some(args) = arguments.as_object() else {
+        return invalid("Arguments must be an object.");
+    };
+    if args.keys().any(|k| k != "request_id") {
+        return invalid("Only `request_id` is accepted.");
+    }
+    match args.get("request_id").and_then(Value::as_str) {
+        Some(id) if !id.is_empty() && id.len() <= 64 => {
+            Ok(ToolInvocation::GetResult(reins_proto::ids::RequestId(id.to_owned())))
+        }
+        _ => invalid("`request_id` is not valid."),
     }
 }
