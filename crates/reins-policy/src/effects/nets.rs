@@ -278,6 +278,89 @@ fn strip(script: &mut Script, reins: &str, plan: &str) -> Vec<Simple> {
     stripped
 }
 
+/// Whether `script` may give `word` another meaning: a function of that name, or `alias`/`unalias`/`enable`/`hash`
+/// anywhere (an alias or a disabled builtin would make the command word run something else than the program).
+fn shadowed(script: &Script, word: &str) -> bool {
+    fn in_command(c: &Command, word: &str, found: &mut bool) {
+        if let Command::Function {
+            name,
+            ..
+        } = c
+            && name == word
+        {
+            *found = true;
+        }
+    }
+    // Functions sit in the tree as commands: look at every one, nested ones included.
+    fn walk(s: &Script, word: &str, found: &mut bool) {
+        for ao in &s.0 {
+            for p in &ao.pipelines {
+                for c in &p.commands {
+                    in_command(c, word, found);
+                    match c {
+                        Command::Subshell(b, _) | Command::Group(b, _) => walk(b, word, found),
+                        Command::If {
+                            branches,
+                            otherwise,
+                            ..
+                        } => {
+                            for (a, b) in branches {
+                                walk(a, word, found);
+                                walk(b, word, found);
+                            }
+                            if let Some(o) = otherwise {
+                                walk(o, word, found);
+                            }
+                        }
+                        Command::For {
+                            body,
+                            ..
+                        } => walk(body, word, found),
+                        Command::While {
+                            cond,
+                            body,
+                            ..
+                        } => {
+                            walk(cond, word, found);
+                            walk(body, word, found);
+                        }
+                        Command::Case {
+                            arms,
+                            ..
+                        } => {
+                            for (_, b) in arms {
+                                walk(b, word, found);
+                            }
+                        }
+                        Command::Function {
+                            body,
+                            ..
+                        } => {
+                            if let Command::Group(b, _) | Command::Subshell(b, _) = body.as_ref() {
+                                walk(b, word, found);
+                            }
+                        }
+                        Command::Simple(_) => {}
+                    }
+                }
+            }
+        }
+    }
+    let mut found = false;
+    let mut copy = script.clone();
+    walk(script, word, &mut found);
+    each_simple(&mut copy, &mut |s: &mut Simple| {
+        if s.words
+            .first()
+            .and_then(Word::literal)
+            .is_some_and(|w| matches!(w.as_str(), "alias" | "unalias" | "enable" | "hash"))
+        {
+            found = true;
+        }
+    });
+    found
+}
+
 /// Places in `text` where `word` stands alone as a token: after the start, a blank, `;&|(){}!` or a backtick, and
 /// before the end, a blank or `;&|)`. Candidates only: the proof decides.
 fn candidates(text: &str, word: &str) -> Vec<usize> {
@@ -361,7 +444,7 @@ pub fn rewrite(
         return None;
     }
     let original = ast::parse(command);
-    if !original.complete {
+    if !original.complete || shadowed(&original.script, word) {
         return None;
     }
     let pre = prefix(reins, plan);

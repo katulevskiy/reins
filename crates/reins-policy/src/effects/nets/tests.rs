@@ -57,6 +57,10 @@ fn only_command_words_are_rewritten() {
         "sh -c 'rm -rf old'",
         "find . -name x -exec rm -rf {} +",
         "grep -r rm .",
+        "rm() { echo kept; }; rm -rf old",
+        "function rm { echo kept; }; rm -rf old",
+        "alias rm='echo'; rm -rf old",
+        "enable -n echo; rm -rf old",
     ] {
         let p = plan(c);
         assert!(p.as_ref().is_none_or(|p| !p.rewritten.contains("-- rm -rf old") || c.starts_with("rm")), "{c}: {p:?}");

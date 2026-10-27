@@ -358,7 +358,8 @@ impl Store {
             }
         })?;
         let root = self.ensure_root()?;
-        let real_s = real.to_string_lossy().into_owned();
+        // A name that is not text could not be put back exactly.
+        let real_s = real.to_str().ok_or_else(|| NetError::Unsafe("a name that is not text".to_owned()))?.to_owned();
         if !reins_policy::effects::nets::trash_safe(&real_s, &root.to_string_lossy()) {
             return Err(NetError::Unsafe("Reins keeps its trash there".to_owned()));
         }
@@ -413,7 +414,7 @@ impl Store {
             return Err(io::Error::new(io::ErrorKind::StorageFull, "not enough space to keep a copy").into());
         }
         let root = self.ensure_root()?;
-        let real_s = real.to_string_lossy().into_owned();
+        let real_s = real.to_str().ok_or_else(|| NetError::Unsafe("a name that is not text".to_owned()))?.to_owned();
         if !reins_policy::effects::nets::trash_safe(&real_s, &root.to_string_lossy()) {
             return Err(NetError::Unsafe("Reins keeps its trash there".to_owned()));
         }
