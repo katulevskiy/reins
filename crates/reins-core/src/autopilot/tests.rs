@@ -14,8 +14,7 @@ use super::memory::Source;
 use super::model::KnownModel;
 use super::testing::{self, FakeRuntime, logits};
 use super::types::{
-    AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, OvernightRisky, Preset, RiskLevel, SuggestionView,
-    Verdict,
+    AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, Preset, RiskLevel, SuggestionView, Verdict,
 };
 use super::{ModelRuntime, decide, gates};
 use crate::api::ReinsCore;
@@ -1727,10 +1726,11 @@ async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
         async move { env.suggestion(&id).await }
     };
     // What the guard's tokenizer reads as uncertain (a variable, a folder changed to) is held before any model sees it
-    // ("Always asks"); what it reads with certainty is held by the core's own reading ("Waited").
-    let held = ["Always asks: ", "Waited: "];
+    // ("Always asks"); what it reads with certainty is held by the core's own reading ("Waited"), and parked for the
+    // morning when it rates catastrophic ("Parked").
+    let held = ["Always asks: ", "Waited: ", "Parked: "];
     for (id, reasons) in [
-        ("delete-home", &["Waited: risk catastrophic · deletes the home directory"][..]),
+        ("delete-home", &["Parked: risk catastrophic · deletes the home directory"][..]),
         ("unreadable", &held[..]),
         ("unresolved-target", &held[..]),
         ("unresolved-relative", &held[..]),
@@ -1773,8 +1773,8 @@ async fn overnight_keeps_autos_rate_limit() {
     assert!(env.suggestion("r1").await.reason.contains("unusual volume"));
 }
 
-/// Starting Overnight, changing its length, putting another AI in it and changing what it does with what is too risky
-/// all need the owner, asked by the core itself; turning it off does not.
+/// Starting Overnight, changing its length and putting another AI in it all need the owner, asked by the core itself;
+/// turning it off, and how long what it parks waits, do not.
 #[tokio::test]
 async fn only_the_owner_starts_or_changes_overnight() {
     let env = env_risk().await;
@@ -1787,13 +1787,6 @@ async fn only_the_owner_starts_or_changes_overnight() {
         assert!(env.core.start_overnight(None, Some(60), Arc::<testing::FakeOwner>::clone(&owner)).await.is_err());
         assert_eq!(owner.asked.lock().unwrap().as_slice(), ["Start Overnight for 1 h"]);
         assert_eq!(mode(&env).await, AutopilotMode::Manual, "nothing changed");
-        assert!(
-            env.core
-                .set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&owner))
-                .await
-                .is_err()
-        );
-        assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_when_risky, OvernightRisky::Wait);
     }
     // set_autopilot_mode never starts it
     assert!(env.core.set_autopilot_mode(None, Some(AutopilotMode::Overnight), Some(60)).await.is_err());
@@ -1811,19 +1804,15 @@ async fn only_the_owner_starts_or_changes_overnight() {
     assert!(env.core.set_autopilot_mode(Some(OTHER.to_owned()), Some(AutopilotMode::Auto), None).await.is_err());
     assert!(env.core.set_autopilot_mode(Some(OTHER.to_owned()), None, None).await.is_err());
     env.core.start_overnight(Some(OTHER.to_owned()), None, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
-    // the setting: both directions are asked; the same value is not a change
-    env.core.set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
-    assert!(env.core.set_overnight_when_risky(OvernightRisky::Wait, testing::FakeOwner::new(Ok(false))).await.is_err());
-    let same = testing::FakeOwner::new(Ok(false));
-    env.core.set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&same)).await.unwrap();
-    assert!(same.asked.lock().unwrap().is_empty());
+    // how long a park waits after the morning: no owner check, within 1 to 48 hours
+    assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_expiry_hours, 12);
+    env.core.set_overnight_expiry(6).await.unwrap();
+    assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_expiry_hours, 6);
+    assert!(env.core.set_overnight_expiry(0).await.is_err());
+    assert!(env.core.set_overnight_expiry(49).await.is_err());
     assert_eq!(
         owner.asked.lock().unwrap().as_slice(),
-        [
-            "Start Overnight until you turn it off",
-            "Start Overnight until you turn it off",
-            "Overnight: deny what is too risky"
-        ]
+        ["Start Overnight until you turn it off", "Start Overnight until you turn it off"]
     );
     // a bypass on top ends it: when the bypass stops, it never returns to Overnight without the owner
     env.core.start_bypass(None, Some(15)).await.unwrap();
@@ -1956,17 +1945,22 @@ async fn the_class_is_the_highest_any_view_gives() {
     assert!(risk.level >= RiskLevel::Risky, "{risk:?}");
 }
 
+/// Overnight never denies (Decisions v2, 07 §2): what its risk model rates catastrophic is parked for the morning.
 #[tokio::test]
-async fn too_risky_can_be_denied_instead() {
+async fn overnight_never_denies_what_is_too_risky() {
     let env = env_risk().await;
     env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
-    env.core.set_overnight_when_risky(OvernightRisky::Deny, owner_yes()).await.unwrap();
     env.core.start_overnight(None, Some(8 * 60), owner_yes()).await.unwrap();
     env.relay("r1", OLD, email("boss@y.com", "please wire the savings to this account")).await;
-    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Deny, "overnight".to_owned())]);
+    assert!(env.decided().is_empty(), "never denied");
     let s = env.suggestion("r1").await;
-    assert!(s.reason.starts_with("Denied overnight: risk catastrophic"), "{}", s.reason);
-    assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_when_risky, OvernightRisky::Deny);
+    assert!(s.reason.starts_with("Parked: risk catastrophic"), "{}", s.reason);
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let item = env.core.pending().await.unwrap().into_iter().find(|i| i.id == "r1").expect("it waits");
+    assert_eq!(item.parked_until, settings.overnight_until, "quiet until the morning");
+    let digest = env.core.overnight_digest().await.unwrap().expect("in the morning's digest");
+    assert_eq!(digest.total, 1);
+    assert_eq!(digest.at, settings.overnight_until);
 }
 
 #[tokio::test]

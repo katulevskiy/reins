@@ -132,6 +132,21 @@ pub struct PendingItem {
     /// An Instant request the reviewer can move to later (`decide_later`).
     #[uniffi(default)]
     pub can_defer: bool,
+    /// Parked by Overnight for the morning (Decisions v2, 01 §11): no notification and no reminder before then; the
+    /// morning digest (`overnight_digest`) covers it.
+    #[uniffi(default)]
+    pub parked_until: Option<i64>,
+    /// The task its agent was working on when it was parked or asked (the digest and the inbox group by it).
+    #[uniffi(default)]
+    pub task_id: Option<String>,
+    #[uniffi(default)]
+    pub task_title: Option<String>,
+    /// "Approve all" may cover it: what the matrix asked is soft and below L3 (03 §5.2: batch never crosses L3).
+    #[uniffi(default)]
+    pub batchable: bool,
+    /// An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
+    #[uniffi(default)]
+    pub task_proposal: Option<crate::autopilot::TaskView>,
 }
 
 /// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.

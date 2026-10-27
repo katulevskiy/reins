@@ -245,7 +245,7 @@ impl Engine {
     }
 
     /// Tells the app an item changed (a ticket's deadline, a question, an answer).
-    fn notifier_refresh(&self, id: &str) {
+    pub(crate) fn notifier_refresh(&self, id: &str) {
         if let Ok(Some(row)) = self.store.pending_item(id, unix_now())
             && let Ok(parked) = serde_json::from_slice::<crate::views::ParkedRequest>(&row.payload)
         {
@@ -466,6 +466,10 @@ impl Engine {
             return;
         };
         for row in rows.into_iter().filter(|r| r.kind == crate::types::PendingKind::Request) {
+            // What Overnight parked becomes a ticket with the morning's window (`ap_park_waiting`), not this one.
+            if matches!(self.store.ap_suggestion(&row.id), Ok(Some(s)) if s.parked.is_some()) {
+                continue;
+            }
             let overdue = row.created_at.saturating_add(window) <= now;
             if overdue
                 && matches!(self.store.ticket(&row.id), Ok(None))
@@ -478,6 +482,17 @@ impl Engine {
 
     /// Later: an Instant request becomes a ticket; the agent is told at once and carries on.
     pub(crate) async fn decide_later(&self, id: &str) -> Result<(), CoreError> {
+        self.decide_later_for(id, None, None).await
+    }
+
+    /// [`Self::decide_later`] with a window (`None`: the server's default) and a note the agent is told (Overnight:
+    /// "Parked until morning").
+    pub(crate) async fn decide_later_for(
+        &self,
+        id: &str,
+        window_secs: Option<u64>,
+        note: Option<&str>,
+    ) -> Result<(), CoreError> {
         self.require_decider()?;
         if self.store.ticket(id)?.is_some() {
             return Ok(());
@@ -489,8 +504,8 @@ impl Engine {
         let (_, parked) = self.parked(id)?;
         let session = self.session()?;
         let mut local = Self::local_for(&self.as_relayed(&parked.request)?);
-        let event = self.sign_event(&local, TicketState::Deferred, |_| {})?;
-        let status = self.post_events(&session, id, vec![event], None).await?;
+        let event = self.sign_event(&local, TicketState::Deferred, |e| e.note = note.map(str::to_owned))?;
+        let status = self.post_events(&session, id, vec![event], window_secs).await?;
         if status.ticket != ticket_of(&reins_proto::ids::RequestId(id.to_owned())) {
             // The same request already waits as a ticket: this card joined it.
             self.store.mark_handled(id, unix_now())?;

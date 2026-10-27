@@ -11,10 +11,95 @@
 //!   rate limit and Overnight's valves).
 //!
 //! Anything else is a [`Hold`], with its reason. The engine refuses an Overnight approval without a proof for that
-//! very request (`Engine::ap_conclude`).
+//! very request (`Engine::ap_conclude`). That gate decides only until Auto's setup is done; after it, Overnight is the
+//! matrix's (Decisions v2, 01 §11).
+//!
+//! Overnight never denies (07 §2): whatever it doesn't run is **parked** for the morning, a Deferred ticket whose window
+//! runs [`DEFAULT_EXPIRY_HOURS`] past the morning ([`park_deadline`]), and the owner gets one digest ([`digest`]).
 
 use super::risk::Outcome;
-use super::types::Verdict;
+use super::types::{DigestGroup, OvernightDigest, Verdict};
+
+/// How long a parked request waits past the morning, by default (01 §11), and the bounds of the owner's setting.
+pub const DEFAULT_EXPIRY_HOURS: u32 = 12;
+pub const MIN_EXPIRY_HOURS: u32 = 1;
+pub const MAX_EXPIRY_HOURS: u32 = 48;
+/// What the agent is told of a park (the ticket's note).
+pub const PARKED_NOTE: &str = "Parked until morning";
+
+/// The morning a request parked at `now` waits for (`overnight_until`, when the Overnight has an end still to come,
+/// else now: the owner sees it when they open Reins), and its deadline, `expiry_secs` later, within the ticket windows
+/// (60 s to 7 days from now).
+#[must_use]
+pub fn park_deadline(overnight_until: Option<i64>, now: i64, expiry_secs: i64) -> (i64, i64) {
+    let morning = overnight_until.filter(|u| *u != i64::MAX && *u > now).unwrap_or(now);
+    let max = i64::try_from(reins_proto::ticket::DEFERRED_MAX_SECS).unwrap_or(604_800);
+    let deadline = morning.saturating_add(expiry_secs).clamp(now + 60, now.saturating_add(max));
+    (morning.min(deadline), deadline)
+}
+
+/// One parked request, as the digest groups it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParkedItem {
+    pub request_id: String,
+    pub connection_id: String,
+    pub connection_label: String,
+    pub task_id: Option<String>,
+    pub task_title: Option<String>,
+    pub until: i64,
+    pub created_at: i64,
+    pub batchable: bool,
+}
+
+/// The morning digest of `items` at `now`: grouped by agent and task, oldest first; `None` when nothing waits.
+#[must_use]
+pub fn digest(items: &[ParkedItem], now: i64) -> Option<OvernightDigest> {
+    if items.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<&ParkedItem> = items.iter().collect();
+    sorted.sort_by_key(|i| (i.created_at, i.request_id.clone()));
+    let mut groups: Vec<DigestGroup> = Vec::new();
+    for i in sorted {
+        match groups.iter_mut().find(|g| g.connection_id == i.connection_id && g.task_id == i.task_id) {
+            Some(g) => {
+                g.request_ids.push(i.request_id.clone());
+                g.batchable += u32::from(i.batchable);
+            }
+            None => groups.push(DigestGroup {
+                connection_id: i.connection_id.clone(),
+                connection_label: i.connection_label.clone(),
+                task_id: i.task_id.clone(),
+                task_title: i.task_title.clone(),
+                request_ids: vec![i.request_id.clone()],
+                batchable: u32::from(i.batchable),
+            }),
+        }
+    }
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    let body = groups
+        .iter()
+        .map(|g| {
+            let who = if g.connection_label.is_empty() {
+                "an AI"
+            } else {
+                g.connection_label.as_str()
+            };
+            match &g.task_title {
+                Some(t) => format!("{} from {who} ({t})", g.request_ids.len()),
+                None => format!("{} from {who}", g.request_ids.len()),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(OvernightDigest {
+        at: items.iter().map(|i| i.until).filter(|u| *u > now).min(),
+        total,
+        title: format!("{total} waiting"),
+        body,
+        groups,
+    })
+}
 
 /// That Overnight may approve one request. Its fields are private: only [`gate`] makes one.
 #[derive(Debug, PartialEq)]
@@ -174,6 +259,56 @@ pub(crate) fn gate(r: &Request<'_>) -> Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parked(id: &str, conn: &str, task: Option<&str>, at: i64, batchable: bool) -> ParkedItem {
+        ParkedItem {
+            request_id: id.to_owned(),
+            connection_id: conn.to_owned(),
+            connection_label: if conn == "c1" {
+                "Claude Code"
+            } else {
+                "ChatGPT"
+            }
+            .to_owned(),
+            task_id: task.map(str::to_owned),
+            task_title: task.map(|_| "Fix CI".to_owned()),
+            until: 10_000,
+            created_at: at,
+            batchable,
+        }
+    }
+
+    #[test]
+    fn park_window_clamps() {
+        // Until a morning 8 h away, 12 h after it.
+        assert_eq!(park_deadline(Some(28_800), 0, 43_200), (28_800, 72_000));
+        // No end (until turned off), or one already past: from now.
+        assert_eq!(park_deadline(Some(i64::MAX), 100, 43_200), (100, 43_300));
+        assert_eq!(park_deadline(None, 100, 43_200), (100, 43_300));
+        assert_eq!(park_deadline(Some(50), 100, 43_200), (100, 43_300));
+        // Never less than a minute, never more than 7 days.
+        assert_eq!(park_deadline(None, 0, 0).1, 60);
+        assert_eq!(park_deadline(Some(30 * 86_400), 0, 43_200).1, 7 * 86_400);
+    }
+
+    #[test]
+    fn digest_groups_by_agent_and_task() {
+        let items = [
+            parked("r1", "c1", Some("t1"), 1, true),
+            parked("r2", "c2", None, 2, false),
+            parked("r3", "c1", Some("t1"), 3, false),
+        ];
+        let d = digest(&items, 0).unwrap();
+        assert_eq!(d.total, 3);
+        assert_eq!(d.title, "3 waiting");
+        assert_eq!(d.body, "2 from Claude Code (Fix CI), 1 from ChatGPT");
+        assert_eq!(d.groups.len(), 2);
+        assert_eq!(d.groups[0].request_ids, vec!["r1", "r3"]);
+        assert_eq!(d.groups[0].batchable, 1);
+        assert_eq!(d.at, Some(10_000));
+        assert_eq!(digest(&items, 20_000).unwrap().at, None, "the morning came: shown when opened");
+        assert_eq!(digest(&[], 0), None, "nothing waits, nothing to tell");
+    }
 
     const CALM: [f32; 4] = [0.9, 0.05, 0.04, 0.01];
 

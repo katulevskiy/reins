@@ -60,9 +60,9 @@ pub mod work_session;
 pub use api::ReinsCore;
 pub use autopilot::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
-    ConnectionAutopilot, DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus,
-    ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset, ProfileView, RiskLevel, RiskView,
-    SuggestionView, ThresholdReplay, Verdict,
+    ConnectionAutopilot, DigestGroup, DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus,
+    ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightDigest, Preset, ProfileView, RiskLevel, RiskView,
+    SuggestionView, TaskView, ThresholdReplay, Verdict,
 };
 pub use connector::LoginProgress;
 pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceEvent, SmsMessage, SmsThread};

@@ -239,12 +239,15 @@ impl Engine {
         request: &RelayRequest,
         seen: bool,
         now: i64,
+        overnight: bool,
     ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
         let Some(reading) = request_analysis(request).map_err(CoreError::invalid)? else {
             return Ok(None);
         };
         let analysis = reading.analysis;
-        let snap = self.ap_snapshot()?;
+        let mut snap = self.ap_snapshot()?;
+        // The live tasks are part of what the request is evaluated against (and of the snapshot's hash).
+        self.ap_tasks_into(&mut snap, now);
         let resolved = graph::request_zone(
             &analysis,
             &snap.facts,
@@ -261,7 +264,7 @@ impl Engine {
                 connection: &request.connection_id.0,
                 seen_resource: seen,
                 now,
-                overnight: false,
+                overnight,
             },
             &snap,
         );
@@ -280,6 +283,10 @@ impl Engine {
                 kinds,
                 resource: resolved.resource,
                 by_rule,
+                by_task: e.why.iter().find_map(|w| match w {
+                    matrix::Why::Task(id) => Some(id.clone()),
+                    _ => None,
+                }),
             },
             resolved.unknown,
         )))

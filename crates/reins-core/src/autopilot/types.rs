@@ -19,11 +19,9 @@ pub enum AutopilotMode {
     /// kind are few, and only what the risk model calls clearly benign), and denies what it is sure about where it
     /// learned to; the rest waits.
     Auto,
-    /// For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
-    /// always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
-    /// waits for the user (catastrophic ones are denied instead with `OvernightRisky::Deny`). Needs a model with the risk
-    /// output; without one it decides like Auto. Runs until turned off or until `overnight_until`, then returns to the
-    /// mode it interrupted.
+    /// "Auto while you're away" (Decisions v2, 01 §11): what Auto would ask is parked for the morning (a ticket: the
+    /// agent carries on), people are stricter and the owner's own L1 work is looser. It never denies (only explicit
+    /// rules do). Runs until turned off or until `overnight_until`, then returns to the mode it interrupted.
     Overnight,
     /// Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
     /// user turns it off).
@@ -66,33 +64,6 @@ impl AutopilotMode {
             "lockdown" => Self::Lockdown,
             _ => return None,
         })
-    }
-}
-
-/// What Overnight does with a request its risk model rates catastrophic.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
-pub enum OvernightRisky {
-    /// It waits for the user (the default).
-    #[default]
-    Wait,
-    /// It is denied at once.
-    Deny,
-}
-
-impl OvernightRisky {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Wait => "wait",
-            Self::Deny => "deny",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "wait" => Some(Self::Wait),
-            "deny" => Some(Self::Deny),
-            _ => None,
-        }
     }
 }
 
@@ -191,8 +162,9 @@ pub struct AutopilotSettings {
     /// When the global Overnight started.
     #[uniffi(default)]
     pub overnight_since: Option<i64>,
-    /// What Overnight does with what its risk model rates catastrophic.
-    pub overnight_when_risky: OvernightRisky,
+    /// How long a parked request waits after the morning before it expires, not approved (1 to 48 h; 12 by default).
+    #[uniffi(default = 12)]
+    pub overnight_expiry_hours: u32,
     /// The profile of every connection that has none of its own.
     pub default_profile_id: String,
     /// Download the model on Wi-Fi only (the app's download job honours it).
@@ -694,4 +666,70 @@ pub struct MatrixView {
     pub line: String,
     /// Recorded only: something else decided.
     pub shadow: bool,
+}
+
+/// The morning digest of what Overnight parked (01 §11): one notification at `at`, grouped by agent and task.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct OvernightDigest {
+    /// When to show it: the earliest morning of what waits that is still to come; `None` once it came (the app shows
+    /// the digest when opened instead of notifying).
+    pub at: Option<i64>,
+    pub total: u32,
+    /// "3 waiting".
+    pub title: String,
+    /// "1 from Claude Code (Fix CI), 2 from ChatGPT".
+    pub body: String,
+    pub groups: Vec<DigestGroup>,
+}
+
+/// What one agent parked under one task (or none).
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct DigestGroup {
+    pub connection_id: String,
+    pub connection_label: String,
+    pub task_id: Option<String>,
+    pub task_title: Option<String>,
+    /// Oldest first.
+    pub request_ids: Vec<String>,
+    /// How many of them "Approve all" covers (not hard, not L3); the rest are decided one by one.
+    pub batchable: u32,
+}
+
+/// A task (01 §12): an envelope inside which Auto may do more for one agent, up to a ceiling, for a while. Also the
+/// draft the owner starts or narrows. Lists name what is inside; an empty list bounds nothing, except `people`: empty
+/// means nobody.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct TaskView {
+    /// Empty in a draft.
+    pub id: String,
+    pub connection_id: String,
+    pub connection_label: String,
+    pub title: String,
+    /// The agent's words (a proposal): shown as the agent's, never read for policy.
+    pub reason: Option<String>,
+    /// `owner/name` or `owner/*`.
+    pub repos: Vec<String>,
+    /// Branch globs: `fix/*`.
+    pub branches: Vec<String>,
+    /// Absolute folders.
+    pub paths: Vec<String>,
+    /// Addresses, ids or `@domain`.
+    pub people: Vec<String>,
+    /// Kinds of effect ("git_push", "git_ref_delete", "file_write", "message", ...); empty: any.
+    pub operations: Vec<String>,
+    /// The highest level it makes Auto: 0 undoable, 1 recoverable, 2 reaches people.
+    pub ceiling: u8,
+    /// Uses it may make Auto; `None`: no limit.
+    pub budget: Option<u32>,
+    pub uses_left: Option<u32>,
+    pub started_at: i64,
+    /// When it ends (in a draft: `started_at` + its length).
+    pub ends_at: i64,
+    pub ended_at: Option<i64>,
+    /// "agent" | "you" | "overnight"
+    pub started_by: String,
+    /// What ran under it: decided Auto by it, asked, parked.
+    pub auto: u32,
+    pub asked: u32,
+    pub parked: u32,
 }

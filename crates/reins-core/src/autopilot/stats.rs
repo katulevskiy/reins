@@ -127,6 +127,8 @@ mod tests {
             }),
             risk: None,
             matrix: None,
+            task: None,
+            parked: None,
         }
     }
 

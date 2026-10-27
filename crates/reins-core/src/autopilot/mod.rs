@@ -20,6 +20,7 @@ pub mod memory;
 pub mod model;
 pub mod modes;
 pub(crate) mod overnight;
+pub(crate) mod parking;
 pub mod policy;
 pub mod risk;
 pub mod runtime;
@@ -27,6 +28,7 @@ pub mod sequence;
 pub mod situation;
 pub mod stats;
 pub mod store;
+pub(crate) mod tasks;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
@@ -38,7 +40,8 @@ pub(crate) use engine::{activity_note, suggestion_line};
 pub use runtime::{DownloadProgress, ModelRuntime};
 pub use types::{
     AutoDecisionView, AutoQuestion, AutoSetup, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings,
-    AutopilotStats, CellChoice, ClassView, ConnectionAutopilot, FactChoice, MatrixRowView, MatrixView, ModelInput,
-    ModelOutput, ModelState, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset,
-    ProfileView, RiskLevel, RiskView, SuggestionView, ThresholdReplay, Verdict, WorldItem, ZoneChoice,
+    AutopilotStats, CellChoice, ClassView, ConnectionAutopilot, DigestGroup, FactChoice, MatrixRowView, MatrixView,
+    ModelInput, ModelOutput, ModelState, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME,
+    OvernightDigest, Preset, ProfileView, RiskLevel, RiskView, SuggestionView, TaskView, ThresholdReplay, Verdict,
+    WorldItem, ZoneChoice,
 };

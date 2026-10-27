@@ -46,6 +46,13 @@ pub fn owner_only(service: &str, op: &str) -> bool {
     service == DESKTOP && (op == AUTOPILOT_MODE_OP || op == AUTOPILOT_CORRECT_OP)
 }
 
+/// What no automatic mode decides, Bypass included: a change of Autopilot from a computer ([`owner_only`]), and a task
+/// an agent proposes (it loosens policy: 02 §1, an agent proposes and only a principal decides).
+#[must_use]
+pub fn owners_alone(service: &str, op: &str) -> bool {
+    owner_only(service, op) || (service == reins_proto::connector::TASKS && reins_proto::connector::tasks::proposes(op))
+}
+
 /// The change a `desktop_autopilot_mode` call asks for, read from the call (which the phone checked against its
 /// tool description).
 pub fn mode_change(call: &ConnectorCall) -> Result<ModeChange, CoreError> {
