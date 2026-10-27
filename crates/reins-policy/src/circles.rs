@@ -33,22 +33,26 @@ fn zone_name(zone: Zone) -> String {
     serde_json::to_value(zone).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
 }
 
-/// Whether `scope` covers the request. Each non-empty list must hold the request's value. A request whose effects
-/// couldn't be read (certainty `None`, or an `unknown` effect) is inside every effect filter: unknown never widens what
-/// escapes review.
+/// Whether `scope` covers the request. Each non-empty list must hold the request's value.
+///
+/// Unknown always widens an obligation's reach, never narrows it: a request whose effects couldn't be read
+/// (certainty `None`, or an `unknown` effect) has a guessed kind, zone and level, so it is inside every effect, zone and
+/// level filter (it counts as L3 anywhere). The connection and the account are known facts and still filter.
 #[must_use]
 pub fn scope_matches(scope: &Scope, input: &Input<'_>) -> bool {
     let unreadable = input.certainty == Certainty::None || input.kinds.contains(&EffectKind::Unknown);
-    if !scope.effects.is_empty() && !unreadable && !input.kinds.iter().any(|k| scope.effects.contains(&kind_name(*k))) {
-        return false;
-    }
-    if !scope.zones.is_empty() && !scope.zones.contains(&zone_name(input.zone)) {
-        return false;
-    }
-    if let Some(min) = scope.min_level
-        && (input.level as u8) < min
-    {
-        return false;
+    if !unreadable {
+        if !scope.effects.is_empty() && !input.kinds.iter().any(|k| scope.effects.contains(&kind_name(*k))) {
+            return false;
+        }
+        if !scope.zones.is_empty() && !scope.zones.contains(&zone_name(input.zone)) {
+            return false;
+        }
+        if let Some(min) = scope.min_level
+            && (input.level as u8) < min
+        {
+            return false;
+        }
     }
     if !scope.connections.is_empty() && !scope.connections.iter().any(|c| c == input.connection) {
         return false;
@@ -339,7 +343,28 @@ mod tests {
         i.certainty = Certainty::None;
         assert!(scope_matches(&s, &i));
         assert!(scope_matches(&s, &input(&[EffectKind::Unknown])));
-        // The other filters still apply.
+        // A level or zone guessed for an unreadable request never takes it out of scope: it counts as L3, anywhere.
+        let high = Scope {
+            min_level: Some(3),
+            ..Scope::default()
+        };
+        let mut none = input(&[EffectKind::Message]);
+        none.certainty = Certainty::None;
+        none.level = Level::L0;
+        assert!(scope_matches(&high, &none));
+        let outside = Scope {
+            zones: vec!["outside".to_owned()],
+            ..Scope::default()
+        };
+        let mut unknown = input(&[EffectKind::Unknown]);
+        unknown.zone = Zone::Mine;
+        assert!(scope_matches(&outside, &unknown));
+        // A readable request is still filtered by its level and zone.
+        let mut known = input(&[EffectKind::Message]);
+        known.zone = Zone::Mine;
+        assert!(!scope_matches(&outside, &known));
+        assert!(!scope_matches(&high, &known));
+        // The known facts (connection, account) still apply.
         let mut other = input(&[EffectKind::Unknown]);
         other.connection = "c9";
         assert!(!scope_matches(&s, &other));
