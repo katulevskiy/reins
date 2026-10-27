@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/logo.svg" width="96" alt="Reins logo: an origami R"></p>
+<p align="center"><img src="docs/assets/reins-logo-r.png" width="96" alt="Reins logo: an origami R"></p>
 
 <h1 align="center">Reins</h1>
 
