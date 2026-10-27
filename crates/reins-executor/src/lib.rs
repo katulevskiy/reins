@@ -25,7 +25,7 @@ pub use client::Client;
 pub use config::{ExecutorConfig, ExecutorMode, Pins};
 pub use run::{Context, RunStats, run, run_once};
 pub use seal::{Opener, seal};
-pub use verify::{Refusal, Verified, verify_job};
+pub use verify::{HeldStep, Refusal, Verified, verify_job};
 
 #[cfg(test)]
 pub(crate) mod testkit;

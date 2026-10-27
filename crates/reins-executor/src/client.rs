@@ -166,6 +166,11 @@ impl Client {
         self.get_json(&format!("/policy/{hash}")).await
     }
 
+    /// `GET /rollouts`: the issuer-signed steps of the org's open and recently finished policy rollouts (O4).
+    pub async fn rollouts(&self) -> Result<Vec<Envelope>, String> {
+        self.get_json("/rollouts").await
+    }
+
     /// `GET /roster`.
     pub async fn roster(&self) -> Result<Envelope, String> {
         self.get_json("/roster").await

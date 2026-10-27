@@ -385,6 +385,9 @@ impl AdminAction {
             }
             | Self::SetTwoPerson {
                 ..
+            }
+            | Self::BindPolicyRepo {
+                ..
             } => Capability::SetUpOrg,
             Self::RemoveMember {
                 ..
@@ -413,9 +416,6 @@ impl AdminAction {
             | Self::SetGithubReader {
                 ..
             } => Capability::ManageConnections,
-            Self::BindPolicyRepo {
-                ..
-            } => Capability::SetUpOrg,
         }
     }
 

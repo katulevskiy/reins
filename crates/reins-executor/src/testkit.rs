@@ -212,6 +212,29 @@ impl Fixture {
         }
     }
 
+    /// A rollout `id` from `stable` to `candidate` (pilot `pilot`, then 25%, then everyone; a minute's dwell) activated
+    /// at `at`: every step signed by the issuer (seq 1..=3, the rollback 4).
+    pub fn rollout_steps(&self, id: &str, stable: &str, candidate: &str, pilot: &[&str], at: i64) -> Vec<Envelope> {
+        use reins_proto::rollout::{Rollout, RolloutPlan, Stage};
+        let plan = RolloutPlan {
+            stages: vec![
+                Stage::Pilot {
+                    members: pilot.iter().map(|m| (*m).to_owned()).collect(),
+                },
+                Stage::Percent(25),
+                Stage::All,
+            ],
+            dwell_secs: 60,
+            ..RolloutPlan::default()
+        };
+        Rollout::steps(ORG, id, 1, stable, candidate, &plan, at)
+            .iter()
+            .map(|r| {
+                sign_env(EnvelopeKind::Rollout, ORG, "iss-1", &self.issuer, &serde_json::from_str(&r.body()).unwrap())
+            })
+            .collect()
+    }
+
     pub fn countersign(&self, record: &DecisionRecord) -> Envelope {
         sign_env(EnvelopeKind::Decision, &record.org, "dec-1", &self.decision, &serde_json::to_value(record).unwrap())
     }

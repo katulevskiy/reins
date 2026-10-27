@@ -21,7 +21,7 @@ use crate::config::{ExecutorConfig, MAX_ROSTER_AGE_SECS, Pins};
 use crate::connectors::{Connector, GithubApp, GoogleWorkspace};
 use crate::leases::LeaseStore;
 use crate::seal::seal;
-use crate::verify::{Refusal, Verified, verify_job_with};
+use crate::verify::{HeldStep, Refusal, Verified, verify_job_with};
 
 /// How often [`run`] polls.
 pub const POLL: Duration = Duration::from_secs(2);
@@ -128,6 +128,9 @@ pub struct Context {
     pub leases: LeaseStore,
     pub done: DoneLog,
     policies: Mutex<HashMap<String, Envelope>>,
+    /// Every issuer-signed rollout step seen, with when it was first seen: a step the server stops sending still
+    /// counts (it can't take one back).
+    rollouts: Mutex<Vec<HeldStep>>,
 }
 
 impl Context {
@@ -147,6 +150,7 @@ impl Context {
             github: None,
             google: None,
             policies: Mutex::new(HashMap::new()),
+            rollouts: Mutex::new(Vec::new()),
         })
     }
 
@@ -202,6 +206,35 @@ impl Context {
     }
 }
 
+/// Most rollout steps held (old ones go first).
+const MAX_HELD_STEPS: usize = 2_000;
+
+impl Context {
+    /// Adds the issuer-signed rollout steps in `envs` not held yet, first seen `now`.
+    pub fn hold_rollouts(&self, envs: Vec<Envelope>, now: i64) {
+        let mut held = self.rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for env in envs {
+            let signed = env.kind == reins_proto::managed::EnvelopeKind::Rollout
+                && env.org == self.pins.org
+                && verify_envelope(&env, std::slice::from_ref(&self.pins.issuer));
+            if signed && !held.iter().any(|h| h.envelope == env) {
+                held.push(HeldStep {
+                    envelope: env,
+                    seen_at: now,
+                });
+            }
+        }
+        let excess = held.len().saturating_sub(MAX_HELD_STEPS);
+        held.drain(..excess);
+    }
+
+    /// The rollout steps held.
+    #[must_use]
+    pub fn held_rollouts(&self) -> Vec<HeldStep> {
+        self.rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+}
+
 /// What one pass did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunStats {
@@ -242,6 +275,8 @@ pub async fn run(ctx: &Context) {
 
 async fn run_jobs(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
     let roster = ctx.client.roster().await?;
+    // Refreshed with the roster, before any job: a decision is judged against every stage published so far.
+    ctx.hold_rollouts(ctx.client.rollouts().await?, crate::now());
     let jobs = ctx.client.claim().await?;
     stats.claimed = jobs.len();
     for job in jobs {
@@ -309,7 +344,8 @@ async fn verify(ctx: &Context, roster: &Envelope, job: &Job) -> Result<Verified,
     let claimed: DecisionRecord = job.decision.parse().map_err(|_| Refusal::BadCountersig)?;
     let policy = ctx.policy(&claimed.snapshot).await.map_err(|_| Refusal::UnsignedPolicy)?;
     let current = ctx.policy(&job.current_policy).await.map_err(|_| Refusal::UnsignedPolicy)?;
-    verify_job_with(job, &ctx.pins, &policy, &current, roster, crate::now(), ctx.max_roster_age_secs)
+    let held = ctx.held_rollouts();
+    verify_job_with(job, &ctx.pins, &policy, &current, roster, &held, crate::now(), ctx.max_roster_age_secs)
 }
 
 async fn decide_and_act(ctx: &Context, roster: &Envelope, job: &Job, stats: &mut RunStats) -> Receipt {
@@ -439,6 +475,11 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/reins/org-exec/roster"))
             .respond_with(ok(serde_json::to_value(f.roster_env()).unwrap()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/reins/org-exec/rollouts"))
+            .respond_with(ok(serde_json::json!([])))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
