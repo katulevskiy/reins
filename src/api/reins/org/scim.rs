@@ -309,17 +309,14 @@ pub fn apply(c: &mut DbConnInner, action: &DirAction, now: i64) -> Result<Vec<Re
             name,
             ..
         } => {
-            match group_by_external(c, org, group_id)? {
-                Some(uuid) => {
-                    diesel::update(groups::table.filter(groups::uuid.eq(&uuid)))
-                        .set((groups::name.eq(name), groups::revision_date.eq(chrono::Utc::now().naive_utc())))
-                        .execute(c)?;
-                }
-                None => {
-                    let g = Group::new(org.to_owned().into(), name.clone(), false, Some(group_id.clone()));
-                    diesel::insert_into(groups::table).values(&g).execute(c)?;
-                    event(c, org, "group.provisioned", None, Some(g.uuid.as_ref()), &json!({"name": name}), now)?;
-                }
+            if let Some(uuid) = group_by_external(c, org, group_id)? {
+                diesel::update(groups::table.filter(groups::uuid.eq(&uuid)))
+                    .set((groups::name.eq(name), groups::revision_date.eq(chrono::Utc::now().naive_utc())))
+                    .execute(c)?;
+            } else {
+                let g = Group::new(org.to_owned().into(), name.clone(), false, Some(group_id.clone()));
+                diesel::insert_into(groups::table).values(&g).execute(c)?;
+                event(c, org, "group.provisioned", None, Some(g.uuid.as_ref()), &json!({"name": name}), now)?;
             }
             Ok(Vec::new())
         }
@@ -429,8 +426,8 @@ fn upsert_user(
     }
     let existing: Option<String> =
         users::table.filter(users::email.eq(email)).select(users::uuid).first(c).optional()?;
-    match existing {
-        Some(user) => match (reins_org::q_membership(c, org, &user)?, reins_org::q_member_state(c, org, &user)?) {
+    if let Some(user) = existing {
+        match (reins_org::q_membership(c, org, &user)?, reins_org::q_member_state(c, org, &user)?) {
             // A member who joined before the directory (the creator, a Team-era member): link them.
             (Some(m), Some(st)) if st.is_active() && m.external_id.is_none() => {
                 diesel::update(users_organizations::table.filter(users_organizations::uuid.eq(m.uuid.to_string())))
@@ -444,20 +441,19 @@ fn upsert_user(
                 // to this org.
                 info!("Directory sync: org {org} provisions an address that has another account; left alone");
             }
-        },
-        None => {
-            let mut stub = User::new(email, name.map(str::to_owned));
-            stub.verified_at = None;
-            diesel::insert_into(users::table).values(&stub).execute(c)?;
-            let invited: i64 = invitations::table.filter(invitations::email.eq(email)).count().get_result(c)?;
-            if invited == 0 {
-                diesel::insert_into(invitations::table).values(&Invitation::new(email)).execute(c)?;
-            }
-            let mut m = Membership::new(stub.uuid.clone(), org.to_owned().into(), None);
-            m.external_id = Some(user_id.to_owned());
-            reins_org::q_add_member(c, &m, None, now)?;
-            event(c, org, "member.provisioned", None, Some(m.uuid.as_ref()), &json!({}), now)?;
         }
+    } else {
+        let mut stub = User::new(email, name.map(str::to_owned));
+        stub.verified_at = None;
+        diesel::insert_into(users::table).values(&stub).execute(c)?;
+        let invited: i64 = invitations::table.filter(invitations::email.eq(email)).count().get_result(c)?;
+        if invited == 0 {
+            diesel::insert_into(invitations::table).values(&Invitation::new(email)).execute(c)?;
+        }
+        let mut m = Membership::new(stub.uuid.clone(), org.to_owned().into(), None);
+        m.external_id = Some(user_id.to_owned());
+        reins_org::q_add_member(c, &m, None, now)?;
+        event(c, org, "member.provisioned", None, Some(m.uuid.as_ref()), &json!({}), now)?;
     }
     Ok(Vec::new())
 }

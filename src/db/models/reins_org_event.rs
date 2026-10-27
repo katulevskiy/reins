@@ -86,8 +86,8 @@ pub fn q_events(c: &mut DbConnInner, org: &str, before: Option<i64>, limit: i64)
 #[must_use]
 pub fn verify_chain(events: &[ReinsOrgEvent]) -> bool {
     let mut prev = GENESIS_HASH.to_owned();
-    for (i, e) in events.iter().enumerate() {
-        if e.seq != i as i64 + 1 || e.prev_hash != prev || event_hash(&e.fields(), &e.prev_hash) != e.hash {
+    for (expected, e) in (1_i64..).zip(events) {
+        if e.seq != expected || e.prev_hash != prev || event_hash(&e.fields(), &e.prev_hash) != e.hash {
             return false;
         }
         prev.clone_from(&e.hash);
@@ -111,9 +111,9 @@ mod tests {
     #[test]
     fn events_chain_and_tampering_shows() {
         let mut c = test_db();
-        for (i, kind) in ["org.created", "domain.added", "domain.verified"].into_iter().enumerate() {
-            let seq = append(&mut c, "o1", kind, Some("u1"), None, &json!({"n": i}), 10 + i as i64).unwrap();
-            assert_eq!(seq, i as i64 + 1);
+        for (i, kind) in (0_i64..).zip(["org.created", "domain.added", "domain.verified"]) {
+            let seq = append(&mut c, "o1", kind, Some("u1"), None, &json!({"n": i}), 10 + i).unwrap();
+            assert_eq!(seq, i + 1);
         }
         let events = oldest_first(&mut c, "o1");
         assert!(verify_chain(&events));

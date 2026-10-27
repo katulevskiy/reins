@@ -239,8 +239,7 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
     let workos = user.workos.clone().unwrap_or_default();
     // GitHub's answer: only a definite active membership counts as a member. "Not a member" and "unknown" both refuse
     // this sign-in, and neither removes anyone here (removal is the directory's, an admin's or a confirmed sync's).
-    let mut github_member = None;
-    if org.identity == IdentityKind::GithubOrg
+    let github_member = if org.identity == IdentityKind::GithubOrg
         && workos.method.as_deref() == Some("GitHubOAuth")
         && let (Some(token), Some(gh_org)) =
             (workos.provider_token.as_deref(), github_org_of(&org.org_uuid, conn).await)
@@ -249,8 +248,10 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         if answer == super::github::GithubAnswer::Unknown {
             warn!("GitHub membership check for org {}: no definite answer", org.org_uuid);
         }
-        github_member = Some(answer.is_member());
-    }
+        Some(answer.is_member())
+    } else {
+        None
+    };
     let facts = SignInFacts {
         method: workos.method.as_deref(),
         organization_id: workos.organization_id.as_deref(),
@@ -361,7 +362,7 @@ mod tests {
             let err = decide(Some(&o), MEMBER, &bad).unwrap_err();
             assert!(err.contains("Acme manages this account"), "{err}");
         }
-        let mut unbound = o.clone();
+        let mut unbound = o;
         unbound.workos_org_id = None;
         assert!(decide(Some(&unbound), MEMBER, &via("SSO", None)).is_err());
     }

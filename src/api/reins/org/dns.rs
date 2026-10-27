@@ -82,7 +82,7 @@ static RESOLVER: LazyLock<Arc<dyn TxtResolver>> = LazyLock::new(|| {
         );
         return Arc::new(FileTxt(path.into()));
     }
-    match TokioResolver::builder(TokioRuntimeProvider::default()).and_then(|b| b.build()) {
+    match TokioResolver::builder(TokioRuntimeProvider::default()).and_then(hickory_resolver::ResolverBuilder::build) {
         Ok(r) => Arc::new(HickoryTxt(r)),
         Err(e) => {
             error!("No DNS resolver for domain verification: {e:?}");

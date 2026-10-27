@@ -403,7 +403,7 @@ fn apply(
             github_org,
         } => {
             let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
-            tenant.identity = identity.as_str().to_owned();
+            identity.as_str().clone_into(&mut tenant.identity);
             let sso = *identity == IdentityKind::Sso;
             tenant.workos_org_id = workos_org_id.clone().filter(|_| *identity != IdentityKind::None);
             tenant.directory_id = directory_id.clone().filter(|_| sso && tenant.tier().scim());
@@ -415,7 +415,7 @@ fn apply(
             tier,
         } => {
             let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
-            tenant.tier = tier.as_str().to_owned();
+            tier.as_str().clone_into(&mut tenant.tier);
             if !tier.scim() {
                 tenant.directory_id = None;
             }

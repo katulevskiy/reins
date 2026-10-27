@@ -2,6 +2,13 @@
 //! (`design/next`): paper and ink, one violet accent, Sora with system fallbacks, JetBrains Mono for record values,
 //! short copy, real icons drawn inline (Material Symbols paths), never emoji.
 
+#![allow(
+    clippy::format_collect,
+    clippy::format_in_format_args,
+    clippy::format_push_string,
+    reason = "small server-rendered pages: building them as readable format strings beats saving allocations"
+)]
+
 use reins_proto::org::{AdminAction, IdentityKind, Role, Subject, Tier};
 
 use crate::api::reins::pages::escape_html as e;
@@ -97,7 +104,7 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
         };
         let nav = match f.org {
             Some((id, _)) => [
-                tab(Tab::Home, format!("{up}"), "Orgs"),
+                tab(Tab::Home, up.to_owned(), "Orgs"),
                 tab(Tab::Overview, format!("{up}{}", e(id)), "Overview"),
                 tab(Tab::Members, format!("{up}{}/members", e(id)), "Members"),
                 tab(Tab::Events, format!("{up}{}/events", e(id)), "Events"),
@@ -728,8 +735,8 @@ mod tests {
                 can_reject: true,
             }],
             can_set_up: true,
-            names: [("m2".to_owned(), "<script>lee</script>".to_owned())].into_iter().collect(),
-            roles: [("m2".to_owned(), vec![Role::SecurityAdmin])].into_iter().collect(),
+            names: std::iter::once(("m2".to_owned(), "<script>lee</script>".to_owned())).collect(),
+            roles: std::iter::once(("m2".to_owned(), vec![Role::SecurityAdmin])).collect(),
         }
     }
 

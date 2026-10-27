@@ -700,6 +700,7 @@ pub fn q_cut_off_user(c: &mut DbConnInner, user: &str) -> QueryResult<CutOff> {
 /// Ends `user`'s membership in `org` with `new_state`: out of every group and without its own role grants (unless
 /// `keep_roles`: a kept last owner), and, for an admin's removal, unlinked from the directory (`clear_external`), so
 /// the directory can't bring it back. The membership row stays, as the org's record that this account was its member.
+#[allow(clippy::too_many_arguments, reason = "one membership's whole ending, in one call every path shares")]
 pub fn q_end_membership(
     c: &mut DbConnInner,
     org: &str,

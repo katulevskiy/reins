@@ -161,7 +161,7 @@ pub fn q_deprovision(
             "enrolled_devices": enrolled_devices,
             "connections": cut.connections,
             "sso_sessions": cut.sso_sessions.len(),
-            "db_ms": started.elapsed().as_millis() as u64,
+            "db_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),
         now,
     )?;
@@ -424,7 +424,7 @@ mod tests {
     async fn the_ticket_hook_is_called_once() {
         let mut c = setup();
         let hook = Arc::new(Counting(AtomicU32::new(0)));
-        let dyn_hook: Arc<dyn TicketHook> = hook.clone();
+        let dyn_hook: Arc<dyn TicketHook> = Arc::<Counting>::clone(&hook);
         set_ticket_hook(dyn_hook);
         let r = q_deprovision(&mut c, "o1", "u1", Reason::AdminRemoval, None, 5).unwrap().unwrap();
         let outcome = finish(r, None).await;

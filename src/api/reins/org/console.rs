@@ -299,9 +299,8 @@ fn login(cookies: &CookieJar<'_>, secure: Secure) -> Redirect {
         s.pending = Some((state.clone(), verifier));
     }
     put_cookie(cookies, sid, secure.https);
-    let mut url = match url::Url::parse(&format!("{}/identity/connect/authorize", CONFIG.domain())) {
-        Ok(u) => u,
-        Err(_) => return to_home(),
+    let Ok(mut url) = url::Url::parse(&format!("{}/identity/connect/authorize", CONFIG.domain())) else {
+        return to_home();
     };
     url.query_pairs_mut()
         .append_pair("client_id", CONSOLE_CLIENT)
@@ -365,14 +364,14 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
     }
     let decision = match super::gate::check(&user_infos, Some(&user), &conn).await {
         Ok(d) => d,
-        Err(e) => return refused(&e.message().to_owned()),
+        Err(e) => return refused(e.message()),
     };
     if let Err(e) = crate::sso_workos::check_passkey(
         &user_infos,
         crate::sso_workos::passkeys_required(),
         decision.through_org_identity(),
     ) {
-        return refused(&e.message().to_owned());
+        return refused(e.message());
     }
     // A new session id once signed in.
     let now = now_unix();
@@ -412,6 +411,7 @@ struct CsrfOnly {
 
 #[post("/reins/org/logout", data = "<form>")]
 fn logout(form: Form<CsrfOnly>, cookies: &CookieJar<'_>) -> Redirect {
+    let form = form.into_inner();
     if let Some(s) = signed(cookies, now_unix())
         && check_csrf(&s, &form.csrf)
     {
@@ -576,8 +576,8 @@ async fn add_domain(org: &str, form: Form<DomainForm>, cookies: &CookieJar<'_>, 
         return to_home();
     };
     if check_csrf(&s, &form.csrf) {
-        let (o, u, d, now) = (org.to_owned(), s.user.clone(), form.domain.clone(), now_unix());
-        match run(&conn, move |c| tenant::add_domain(c, &o, &d, &u, now)).await {
+        let (org_id, user, domain, now) = (org.to_owned(), s.user.clone(), form.domain.clone(), now_unix());
+        match run(&conn, move |c| tenant::add_domain(c, &org_id, &domain, &user, now)).await {
             Ok(_) => flash(&s.sid, "Added. Publish the TXT record, then Verify.", false),
             Err(e) => flash(&s.sid, e.message(), true),
         }

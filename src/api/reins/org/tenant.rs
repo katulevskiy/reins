@@ -264,7 +264,7 @@ mod tests {
     async fn verification_needs_the_exact_record() {
         let token = "abc";
         let want = record_value(token);
-        assert!(records_match(&[want.clone()], token));
+        assert!(records_match(std::slice::from_ref(&want), token));
         assert!(records_match(&["v=spf1 -all".to_owned(), format!(" {want} ")], token));
         assert!(!records_match(&[record_value("other")], token));
         assert!(!records_match(&[format!("x {want}")], token));

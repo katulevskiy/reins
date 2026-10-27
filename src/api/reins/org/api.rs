@@ -40,9 +40,12 @@ pub fn routes() -> Vec<Route> {
 }
 
 /// Challenges by (account, device): one at a time each.
-static CHALLENGES: LazyLock<Mutex<HashMap<(String, String), (String, i64)>>> = LazyLock::new(Mutex::default);
+/// (account, device) -> (challenge, until).
+type Challenges = HashMap<(String, String), (String, i64)>;
 
-fn challenges() -> std::sync::MutexGuard<'static, HashMap<(String, String), (String, i64)>> {
+static CHALLENGES: LazyLock<Mutex<Challenges>> = LazyLock::new(Mutex::default);
+
+fn challenges() -> std::sync::MutexGuard<'static, Challenges> {
     CHALLENGES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
