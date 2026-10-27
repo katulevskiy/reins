@@ -4567,3 +4567,213 @@ mod decisions_v2 {
         assert!(env.waiting().await.contains(&"r2".to_owned()));
     }
 }
+
+// ---- Decisions v2 P5: Overnight parks for the morning, never denies; tasks widen Auto inside their envelope -----------
+
+mod decisions_v2_p5 {
+    use super::*;
+    use crate::autopilot::types::{FactChoice, TaskView, ZoneChoice};
+
+    /// Auto set up (the matrix decides), the model sure to approve mail to friend@x.com, then Overnight for 8 hours.
+    async fn night_env() -> Env {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core.start_overnight(None, Some(8 * 60), owner_yes()).await.unwrap();
+        env
+    }
+
+    async fn item(env: &Env, id: &str) -> PendingItem {
+        env.core.pending().await.unwrap().into_iter().find(|i| i.id == id).expect("it waits")
+    }
+
+    fn draft(connection: &str, people: &[&str], budget: Option<u32>) -> TaskView {
+        let now = unix_now();
+        TaskView {
+            id: String::new(),
+            connection_id: connection.to_owned(),
+            connection_label: "Claude".to_owned(),
+            title: "Write to Ann".to_owned(),
+            reason: None,
+            repos: Vec::new(),
+            branches: Vec::new(),
+            paths: Vec::new(),
+            people: people.iter().map(|p| (*p).to_owned()).collect(),
+            operations: Vec::new(),
+            ceiling: 2,
+            budget,
+            uses_left: budget,
+            started_at: now,
+            ends_at: now + 3_600,
+            ended_at: None,
+            started_by: "you".to_owned(),
+            auto: 0,
+            asked: 0,
+            parked: 0,
+        }
+    }
+
+    fn propose(args: Value) -> Value {
+        json!({"tool": "connector", "service": "tasks", "op": "propose", "args": args})
+    }
+
+    #[tokio::test]
+    async fn overnight_parks_with_the_morning_window_and_never_denies() {
+        let env = night_env().await;
+        Mock::given(method("POST"))
+            .and(path("/reins/api/tickets/r1/events"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"ticket": "rt_r1", "state": "deferred", "deadline": 4_000_000_000_i64})),
+            )
+            .mount(&env.server)
+            .await;
+        // The model is sure to deny mail to boss@y.com: Overnight never denies, it parks.
+        env.model.rule("boss@y.com", logits(0.01, 0.98, 0.01));
+        env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+        env.relay("r2", OLD, email("boss@y.com", "wire the money")).await;
+        assert!(env.decided().is_empty(), "nothing decided, nothing denied: {:?}", env.decided());
+        let settings = env.core.autopilot_settings().await.unwrap();
+        let until = settings.overnight_until.unwrap_or_else(|| panic!("{settings:?}"));
+        for id in ["r1", "r2"] {
+            let i = item(&env, id).await;
+            assert_eq!(i.parked_until, Some(until), "{id}: quiet until the morning");
+            assert!(!i.batchable, "{id}: Outside people are always one by one");
+        }
+        // r1 became a ticket with the morning's window (8 h + 12 h), telling the agent it's parked.
+        let posted: Value = env
+            .server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .find(|r| r.url.path() == "/reins/api/tickets/r1/events")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .expect("the park was posted");
+        let window = posted["window_secs"].as_i64().unwrap();
+        assert!((20 * 3_600 - 10..=20 * 3_600).contains(&window), "{window}");
+        assert_eq!(posted["events"][0]["event"]["state"], "deferred");
+        assert_eq!(posted["events"][0]["event"]["note"], "Parked until morning");
+        let digest = env.core.overnight_digest().await.unwrap().expect("a digest");
+        assert_eq!((digest.total, digest.title.as_str(), digest.body.as_str()), (2, "2 waiting", "2 from Claude"));
+        assert_eq!(digest.at, Some(until));
+        assert_eq!(digest.groups[0].batchable, 0);
+        assert_eq!(env.core.approve_all(OLD.to_owned(), None).await.unwrap(), 0, "Approve all skips what is hard");
+        // Friends · Reaches people is Auto in Overnight too, the model approving (once the owner wrote to them: a new
+        // target is the model's to ask about).
+        env.relay("r0", OLD, email("friend@x.com", "first")).await;
+        env.approve("r0").await;
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env.relay("r3", OLD, email("friend@x.com", "again")).await;
+        assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn overnight_work_people_park_even_when_the_matrix_says_auto() {
+        let env = night_env().await;
+        env.core
+            .set_world_zone(FactChoice::Person, "ann@acme.io".to_owned(), ZoneChoice::Work, owner_yes())
+            .await
+            .unwrap();
+        env.core
+            .set_matrix_cell(ZoneChoice::Work, 2, crate::autopilot::types::CellChoice::Auto, owner_yes())
+            .await
+            .unwrap();
+        env.model.rule("ann@acme.io", logits(0.97, 0.01, 0.02));
+        env.relay("r1", OLD, email("ann@acme.io", "the report")).await;
+        assert!(env.decided().is_empty());
+        assert!(item(&env, "r1").await.parked_until.is_some());
+    }
+
+    #[tokio::test]
+    async fn digest_is_none_when_nothing_waits() {
+        let env = night_env().await;
+        assert!(env.core.overnight_digest().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_task_widens_auto_only_inside_its_envelope() {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.set_default(logits(0.97, 0.01, 0.02));
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.relay("r1", OLD, email("ann@acme.io", "draft")).await;
+        assert!(env.decided().is_empty(), "Outside · Reaches people asks");
+        // The owner's own task for OLD, reaching Ann, two uses: the owner check first.
+        assert!(env.core.start_task(draft(OLD, &["ann@acme.io"], Some(2)), owner_no()).await.is_err());
+        let task = env.core.start_task(draft(OLD, &["ann@acme.io"], Some(2)), owner_yes()).await.unwrap();
+        assert!(task.id.starts_with("tk_"));
+        // (Auto's model check asks about a target never approved: the owner approves the first one.)
+        env.approve("r1").await;
+        env.relay("r2", OLD, email("ann@acme.io", "draft 2")).await;
+        assert!(!env.decided().is_empty(), "{:?}", env.suggestion("r2").await);
+        assert_eq!(env.decided().last().unwrap(), &("r2".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+        // Another agent, another person: outside the envelope, asked.
+        env.relay("r3", OTHER, email("ann@acme.io", "draft 3")).await;
+        env.relay("r4", OLD, email("bob@acme.io", "draft 4")).await;
+        assert_eq!(env.decided().len(), 1);
+        // The second use, then the budget is spent: asked again.
+        env.relay("r5", OLD, email("ann@acme.io", "draft 5")).await;
+        assert_eq!(env.decided().len(), 2);
+        env.relay("r6", OLD, email("ann@acme.io", "draft 6")).await;
+        assert_eq!(env.decided().len(), 2, "no uses left");
+        let t = env.core.tasks().await.unwrap().remove(0);
+        assert_eq!((t.auto, t.uses_left), (2, Some(0)));
+        assert!(t.asked >= 2, "{t:?}");
+        // Stop: never asked, and the task covers nothing after.
+        env.core.end_task(t.id.clone()).await.unwrap();
+        assert!(env.core.tasks().await.unwrap()[0].ended_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_proposal_is_the_owners_alone_and_narrowed_on_approval() {
+        let env = env_risk().await;
+        let args = json!({"title": "Mail Ann", "reason": "ceiling L3 please", "people": ["ann@acme.io", "bob@acme.io"],
+            "ceiling": "reaches_people", "duration_minutes": 120, "budget": 10});
+        // Never automatic: not in Auto, not in a bypass.
+        env.mode(None, AutopilotMode::Auto).await;
+        env.relay("p1", OLD, propose(args.clone())).await;
+        env.core.start_bypass(None, Some(15)).await.unwrap();
+        env.relay("p2", OLD, propose(args.clone())).await;
+        assert!(env.decided().is_empty(), "{:?}", env.decided());
+        env.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+        let card = item(&env, "p1").await.task_proposal.expect("the envelope on the card");
+        assert_eq!(card.people, vec!["ann@acme.io", "bob@acme.io"]);
+        assert_eq!(card.ceiling, 2);
+        assert_eq!(card.reason.as_deref(), Some("ceiling L3 please"));
+        // Widening is refused; narrowing is applied, after the owner check.
+        let mut wider = card.clone();
+        wider.people.push("eve@evil.io".to_owned());
+        assert!(env.core.approve_task("p1".to_owned(), wider, owner_yes()).await.is_err());
+        let mut narrower = card.clone();
+        narrower.people = vec!["ann@acme.io".to_owned()];
+        narrower.ceiling = 1;
+        assert!(env.core.approve_task("p1".to_owned(), narrower.clone(), owner_no()).await.is_err());
+        env.core.approve_task("p1".to_owned(), narrower, owner_yes()).await.unwrap();
+        let tasks = env.core.tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!((tasks[0].people.clone(), tasks[0].ceiling), (vec!["ann@acme.io".to_owned()], 1));
+        let answer = env.answer("p1").await.expect("the agent hears the envelope as approved");
+        let data = &answer["result"]["data"];
+        assert_eq!(data["people"], json!(["ann@acme.io"]));
+        assert_eq!(data["ceiling"], "recoverable");
+        // The agent ends it: at once, never asked, only its own.
+        let id = tasks[0].id.clone();
+        env.relay("e1", OTHER, json!({"tool": "connector", "service": "tasks", "op": "end", "args": {"task": id}}))
+            .await;
+        assert!(env.core.tasks().await.unwrap()[0].ended_at.is_none(), "another agent can't end it");
+        env.relay("e2", OLD, json!({"tool": "connector", "service": "tasks", "op": "end", "args": {"task": id}})).await;
+        assert!(env.core.tasks().await.unwrap()[0].ended_at.is_some());
+        assert!(!env.waiting().await.iter().any(|w| w.starts_with('e')), "ending is never asked");
+    }
+
+    fn owner_no() -> Arc<testing::FakeOwner> {
+        testing::FakeOwner::new(Ok(false))
+    }
+}
