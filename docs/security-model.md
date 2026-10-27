@@ -527,8 +527,59 @@ an organization's member, which the phone and the desktop keep as a separate pro
   and only opens the app on that profile. A work profile's core gets no access to the phone's own data (contacts,
   calendar, texts), and on iOS keeps its own Google sign-ins.
 - **Device enrollment** records a P-256 key the phone proves it holds, the platform's attestations and posture.
-  Verifying attestations and gating decisions on posture come with O2.
-- **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there.
+  The server verifies Android key attestation and App Attest against pinned roots (O2); an org's policy can require a
+  verified attestation, a screen lock, no root or jailbreak, and minimum OS and app versions. A device that fails
+  may not decide, and its reviews go to others.
+- **The admin console** has no two-step sign-in yet; accounts with two-factor sign-in are refused there. Approving a
+  pending admin change takes the approver's enrolled phone (a device signature), so a console session alone approves
+  nothing.
+
+### Decisions in Managed mode (O2)
+
+A work account's agents never reach a phone: their calls go to the org's **decision service**, which decides with the
+org's policy, and an **executor** runs what was decided with the org's own credentials.
+
+- **Keys, per tenant** (sealed by a KMS seam, `org::kms`; with the built-in `LocalKms` a master key file outside the
+  database):
+  - the **issuer key** signs the org's policy snapshots and its roster (members, roles, groups, enrolled device keys,
+    and whether each device may decide);
+  - the **decision service key** countersigns decisions and signs audit checkpoints and export heads;
+  - a **data key** seals request bodies, results and receipts at rest, bound to their request.
+- **Policy** is drafted in the console and activated by a two-person change, which needs the proposer's and a second
+  Security admin's device signatures (two different device keys); only then does the issuer key sign it. Every
+  decision names the snapshot hash it was made against.
+- **Evaluation** composes the org's rules (deny, review with named reviewers, permit) with the member's own policy,
+  which can only add asks and denies (a member's permits are dropped, and their matrix only makes cells stricter).
+  The always-ask floor and L3 are hard reviews; the org's cell review always applies when its matrix asks. With no
+  active policy, nothing is decided.
+- **Reviews** are answered on reviewers' enrolled phones: a P-256 signature over (org, request, digest, decision,
+  snapshot, time), from a device that is enrolled to this org, not revoked and passes the posture rule, by a person
+  the obligation names. The requester can't approve an org review (`exclude_requester`); one person counts once. The
+  phone recomputes the digest and builds what it shows from the request itself, so what it signs is what it shows.
+- **The executor** is a separate program and trust domain (`crates/reins-executor`), registered to one tenant with
+  its own Ed25519 key by a device-signed two-person change. It pins the org's issuer and decision keys out of band
+  (`reins-executor pin`) and, before acting on any job, checks the countersignature, the issuer-signed policy and
+  roster (at most 15 minutes old), that the request it would run has exactly the countersigned digest, every
+  reviewer's device signature, and its own re-evaluation of the request with the same engine; a newer, stricter
+  policy makes it stale. It refuses anything else and reports why in a signed receipt. It never runs a request twice.
+- **Leases.** A work daemon's repository credential is asked for like any request (judged by the repository's zone
+  and the org's rules), minted by the executor for exactly that repository id, sealed to a key only the daemon holds,
+  and lives 15 minutes. Removing a member revokes their leases at once, and the executor revokes the credential at
+  GitHub within its next pass.
+- **Audit.** Every decision, review, execution, lease, policy and executor change and admin action is an event in the
+  org's hash chain (O1's event table, kept as is), checkpointed and signed every 10 minutes. An export ends with a
+  signed head; `reins-audit verify` checks every hash, link and signature and that the head covers the last event,
+  and, given a checkpoint kept from before (an earlier export or a witness), that the chain wasn't rewritten or rolled
+  back since.
+- **Retention.** Request bodies are kept 0, 30 (default) or 365 days, set by a device-signed two-person change.
+
+What this doesn't do yet:
+- With `LocalKms`, the issuer key, the decision service and the database share a host: an attacker holding all
+  three can sign a policy. The split 08 R5 relies on (executing a non-compliant action needs the issuer key or an
+  executor) holds fully with an HSM or customer KMS that enforces the two-signature rule itself (O5).
+- Checkpoints aren't published to an external witness yet (O5), so detecting a rewrite needs a checkpoint someone
+  kept.
+- Play Integrity verdicts aren't verified (recorded only).
 
 ## Known gaps
 
