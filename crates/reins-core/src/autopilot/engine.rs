@@ -4,7 +4,7 @@
 //! The pass never loses a request: whatever goes wrong, the item waits for the user like before Autopilot existed,
 //! and what went wrong is kept with it (the activity entry of the user's decision shows it).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -673,18 +673,87 @@ impl Engine {
                 // Nothing was decided: the item waits, as it would without Autopilot; under a bypass it is tried
                 // again by the next pass, and nobody is told it waits.
                 log::warn!("Autopilot could not evaluate a request: {e}");
-                let bypassed = self
-                    .ap_subject(&row)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|s| self.ap_mode_for(&s.connection_id, now).ok() == Some(AutopilotMode::Bypass));
-                if !bypassed && let Some(mut item) = self.ap_pending_item(&row) {
+                let subject = self.ap_subject(&row).ok().flatten();
+                let mode = subject.as_ref().and_then(|s| self.ap_mode_for(&s.connection_id, now).ok());
+                if mode == Some(AutopilotMode::Bypass) {
+                    continue;
+                }
+                // Kept as evaluated, so that it is listed for the owner (`ap_needs_owner`) and stays the owner's: what
+                // the owner was told about is never decided later by a pass that tries again.
+                let kept = subject.as_ref().is_some_and(|subject| {
+                    let reason = "Autopilot could not look at this; it waits for you".to_owned();
+                    let s = Self::ap_asks(subject, mode.unwrap_or(AutopilotMode::Manual), now, reason, None);
+                    self.ap_wait(subject, &s).is_ok()
+                });
+                if !kept && let Some(mut item) = self.ap_pending_item(&row) {
                     self.names().item(&mut item);
                     self.notifier.item_pending(item);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Whether a parked item waits for its owner now, rather than for an automatic decider that has still to look at
+    /// it. `evaluated`: the items the pass already looked at ([`crate::store::Store::ap_evaluated`]).
+    ///
+    /// A pairing and another phone are only ever the owner's. A request or an upload the pass looked at and left
+    /// parked waits for the owner (a decided one is no longer parked): the pass told the app so. One it has not looked
+    /// at yet waits for the owner only where nothing would decide it: in Manual (where Autopilot only suggests), or on
+    /// a phone that decides nothing. Under a bypass, Lockdown, Auto or Overnight it is the pass's first, so the owner is
+    /// never shown what a mode then decides. Anything that cannot be read is the owner's.
+    pub(crate) fn ap_needs_owner(&self, row: &PendingRow, evaluated: &HashSet<String>, now: i64) -> bool {
+        if matches!(row.kind, PendingKind::Pairing | PendingKind::Join)
+            || evaluated.contains(&row.id)
+            || !self.decides()
+        {
+            return true;
+        }
+        let connection_id = match row.kind {
+            PendingKind::Request => {
+                serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| p.request.connection_id.0)
+            }
+            PendingKind::Blob => serde_json::from_slice::<BlobInfo>(&row.payload).ok().map(|b| b.connection_id.0),
+            PendingKind::Pairing | PendingKind::Join => None,
+        };
+        let Some(connection_id) = connection_id else {
+            return true;
+        };
+        !matches!(
+            self.ap_mode_for(&connection_id, now),
+            Ok(AutopilotMode::Bypass | AutopilotMode::Lockdown | AutopilotMode::Auto | AutopilotMode::Overnight)
+        )
+    }
+
+    /// An evaluation that leaves the item to its owner, for `reason` (`floor`: it always asks).
+    fn ap_asks(subject: &Subject, mode: AutopilotMode, now: i64, reason: String, floor: Option<String>) -> Suggestion {
+        Suggestion {
+            request_id: subject.id.clone(),
+            at: now,
+            kind: match subject.kind {
+                PendingKind::Blob => "blob",
+                _ => "request",
+            }
+            .to_owned(),
+            connection_id: subject.connection_id.clone(),
+            connection_label: subject.connection_label.clone(),
+            mode,
+            profile_id: String::new(),
+            profile_name: String::new(),
+            class_key: subject.described.class_key.clone(),
+            label: subject.described.label.clone(),
+            target_key: String::new(),
+            s_facts: String::new(),
+            s_full: String::new(),
+            novel: false,
+            floor,
+            judged: None,
+            verdict: Verdict::Ask,
+            reason,
+            decided: None,
+            risk: None,
+            deletes: false,
+        }
     }
 
     /// The pending-list entry of a parked row.
@@ -841,6 +910,14 @@ impl Engine {
             return Ok(());
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
+        if super::desktop::owner_only(&subject.item.service, &subject.item.op) {
+            // A change of Autopilot asked from a computer is the owner's alone, in every mode (`ap_conclude` holds to
+            // it too). Told at once, before anything that needs the model: where the model cannot run, it would
+            // otherwise sit unjudged, unseen by its owner, until a pass that can.
+            let s =
+                Self::ap_asks(&subject, mode, now, format!("Always asks: {OWNER_ONLY}"), Some(OWNER_ONLY.to_owned()));
+            return self.ap_wait(&subject, &s);
+        }
         if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
             let parked: ParkedRequest =
                 serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
@@ -851,29 +928,7 @@ impl Engine {
                     .authorization_execute(&parked.request, crate::authorization::AuthorizationSource::Automatic)
                     .err()
                     .map_or_else(|| "Account policy requires review".to_owned(), |e| e.to_string());
-                let suggestion = Suggestion {
-                    request_id: subject.id.clone(),
-                    at: now,
-                    kind: "request".to_owned(),
-                    connection_id: subject.connection_id.clone(),
-                    connection_label: subject.connection_label.clone(),
-                    mode,
-                    profile_id: String::new(),
-                    profile_name: String::new(),
-                    class_key: subject.described.class_key.clone(),
-                    label: subject.described.label.clone(),
-                    target_key: String::new(),
-                    s_facts: String::new(),
-                    s_full: String::new(),
-                    novel: false,
-                    floor: Some(reason.clone()),
-                    judged: None,
-                    verdict: Verdict::Ask,
-                    reason,
-                    decided: None,
-                    risk: None,
-                    deletes: false,
-                };
+                let suggestion = Self::ap_asks(&subject, mode, now, reason.clone(), Some(reason));
                 return self.ap_wait(&subject, &suggestion);
             }
         }

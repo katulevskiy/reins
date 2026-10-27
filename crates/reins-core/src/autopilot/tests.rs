@@ -87,11 +87,27 @@ struct Notes {
     /// When set, `item_pending` does not return until it is released. The pass (and its lock) stays held, so a test
     /// can watch a download finish while a decision is still in progress.
     hold_pending: Mutex<Option<Arc<PendingHold>>>,
+    /// When set, every call reads the core's list of what waits for the owner, as the apps do on each of them (they
+    /// refresh), and keeps every id it ever listed in `listed`.
+    watch: Mutex<Option<std::sync::Weak<ReinsCore>>>,
+    listed: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl Notes {
+    /// What the apps would read now, in the middle of a pass.
+    fn look(&self) {
+        let core = self.watch.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade);
+        if let Some(core) = core {
+            let ids = core.engine().pending().unwrap().into_iter().map(|i| i.id);
+            self.listed.lock().unwrap().extend(ids);
+        }
+    }
 }
 
 impl Notifier for Notes {
     fn item_pending(&self, item: PendingItem) {
         self.pending.lock().unwrap().push(item);
+        self.look();
         let hold = self.hold_pending.lock().unwrap().as_ref().map(Arc::clone);
         if let Some(hold) = hold {
             // The decision that arms this runs on its own thread. Waiting here keeps the pass lock and leaves the
@@ -100,10 +116,13 @@ impl Notifier for Notes {
         }
     }
 
-    fn item_resolved(&self, _id: String) {}
+    fn item_resolved(&self, _id: String) {
+        self.look();
+    }
 
     fn auto_decided(&self, decision: AutoDecisionView) {
         self.decided.lock().unwrap().push(decision);
+        self.look();
     }
 
     fn autopilot_changed(&self, event: AutopilotEvent) {
@@ -295,6 +314,26 @@ impl Env {
 
     async fn waiting(&self) -> Vec<String> {
         self.core.pending().await.unwrap().into_iter().map(|i| i.id).collect()
+    }
+
+    /// What a mode has still to look at (never shown to the owner).
+    async fn deciding(&self) -> Vec<String> {
+        self.core.deciding().await.unwrap().into_iter().map(|i| i.id).collect()
+    }
+
+    /// From now on, every call to the notifier reads what waits for the owner, as the apps do (`Notes::look`).
+    fn watch(&self) {
+        *self.notes.watch.lock().unwrap() = Some(Arc::downgrade(&self.core));
+    }
+
+    /// Every id the owner's list ever held while watched.
+    fn listed(&self) -> std::collections::BTreeSet<String> {
+        self.notes.listed.lock().unwrap().clone()
+    }
+
+    /// The ids the owner was told about (`item_pending`).
+    fn told(&self) -> std::collections::BTreeSet<String> {
+        self.notes.pending.lock().unwrap().iter().map(|i| i.id.clone()).collect()
     }
 
     fn decided(&self) -> Vec<(String, Verdict, String)> {
@@ -771,9 +810,10 @@ async fn a_push_parked_without_the_model_is_judged_by_the_next_pass() {
     let relayed = serde_json::to_value(request("r1", OLD, email("friend@x.com", "hi"))).unwrap();
     mount(&env.server, "GET", "/reins/api/requests/r1", 200, relayed).await;
 
-    // The notification extension parks it: listed, not judged, nothing sent.
+    // The notification extension parks it: not judged, nothing sent, and not the owner's yet (Auto looks first).
     env.core.handle_push_deferring_autopilot("req".to_owned(), "r1".to_owned()).await.unwrap();
-    assert_eq!(env.waiting().await, ["r1"]);
+    assert!(env.waiting().await.is_empty());
+    assert_eq!(env.deciding().await, ["r1"]);
     assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none());
     assert_eq!(env.sent().await, 0);
 
@@ -781,6 +821,7 @@ async fn a_push_parked_without_the_model_is_judged_by_the_next_pass() {
     env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
     let s = env.suggestion("r1").await;
     assert!(s.judged && !s.reason.contains("could not judge"), "{s:?}");
+    assert_eq!(env.waiting().await, ["r1"], "left to the owner now");
 }
 
 #[tokio::test]
@@ -1116,7 +1157,10 @@ async fn in_the_background_a_push_does_not_load_the_model() {
 
     env.core.set_background(true);
     env.core.handle_push("req".to_owned(), "r1".to_owned()).await.unwrap();
-    assert_eq!(env.waiting().await, ["r1"]);
+    // Auto has still to judge it: parked, but not the owner's yet (never an ask Auto may then decide).
+    assert!(env.waiting().await.is_empty());
+    assert_eq!(env.deciding().await, ["r1"]);
+    assert!(env.notes.pending.lock().unwrap().is_empty(), "the owner was not told");
     assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none(), "left for the pass in front");
     assert_eq!(env.model.loads.load(Ordering::SeqCst), 0, "the model was not loaded");
     assert_eq!(env.sent().await, 0);
@@ -1125,6 +1169,7 @@ async fn in_the_background_a_push_does_not_load_the_model() {
     env.core.set_background(false);
     env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
     assert!(env.suggestion("r1").await.judged);
+    assert!(env.deciding().await.is_empty());
     let loads = env.model.loads.load(Ordering::SeqCst);
     assert!(loads > 0);
 
@@ -1162,6 +1207,167 @@ async fn without_the_model_a_bypass_still_answers_and_the_rest_waits_unjudged() 
     assert_eq!(env.waiting().await, ["r1"]);
     assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none(), "left for the app to judge");
     assert_eq!(env.model.seen.lock().unwrap().len(), 0, "the model was not run");
+}
+
+// ---- only what needs the owner reaches the owner -----------------------------------------------------------------
+
+/// The apps read the owner's list whenever the core tells them something (an item waits, one was decided), even in the
+/// middle of a pass. A request a mode decides must never be in it, not even for the moment between its arrival and its
+/// turn in the pass: that would put an ask on the owner's screen that the mode then answers.
+async fn nothing_decided_is_listed(env: &Env, requests: Vec<(&str, &str, Value)>) {
+    env.watch();
+    let relayed: Vec<Value> =
+        requests.into_iter().map(|(id, conn, call)| serde_json::to_value(request(id, conn, call)).unwrap()).collect();
+    // All at once, as a sync brings them: every one is parked before the pass looks at the first.
+    env.deliver(json!({"requests": relayed, "pairings": []})).await;
+    let decided: std::collections::BTreeSet<String> = env.decided().into_iter().map(|(id, _, _)| id).collect();
+    let listed = env.listed();
+    assert!(!decided.is_empty(), "the mode decided something");
+    let shown: Vec<&String> = listed.intersection(&decided).collect();
+    assert!(shown.is_empty(), "shown to the owner, then decided by the mode: {shown:?}");
+    assert!(env.deciding().await.is_empty(), "the pass looked at everything");
+    // What waits was told, and is listed.
+    for id in env.waiting().await {
+        assert!(env.told().contains(&id), "{id} waits without the owner being told");
+    }
+}
+
+#[tokio::test]
+async fn a_request_a_bypass_approves_is_never_listed_for_the_owner() {
+    let env = env(false).await;
+    env.core.start_bypass(None, None).await.unwrap();
+    nothing_decided_is_listed(
+        &env,
+        vec![
+            ("r1", OLD, email("friend@x.com", "one")),
+            ("r2", OLD, grant()),
+            ("r3", OTHER, email("friend@x.com", "two")),
+            ("r4", OLD, json!({"tool": "list_accounts", "service": "gmail", "ask_for_more": false})),
+        ],
+    )
+    .await;
+    assert_eq!(env.decided().len(), 4);
+    assert!(env.listed().is_empty() && env.told().is_empty(), "the owner saw nothing");
+}
+
+#[tokio::test]
+async fn a_request_lockdown_denies_is_never_listed_for_the_owner() {
+    let env = env(false).await;
+    env.mode(None, AutopilotMode::Lockdown).await;
+    nothing_decided_is_listed(
+        &env,
+        vec![("r1", OLD, email("friend@x.com", "one")), ("r2", OLD, grant()), ("r3", OTHER, email("a@b.c", "x"))],
+    )
+    .await;
+    assert!(env.decided().iter().all(|(_, v, by)| *v == Verdict::Deny && by == "lockdown"));
+    assert!(env.listed().is_empty() && env.told().is_empty(), "the owner saw nothing");
+}
+
+/// Auto and Overnight over the decision table's requests (what each approves, denies or leaves to the owner): what they
+/// decide is never listed, what they leave is listed and told.
+#[tokio::test]
+async fn what_auto_or_overnight_decides_is_never_listed_and_what_it_leaves_is() {
+    for mode in [AutopilotMode::Auto, AutopilotMode::Overnight] {
+        let (env, requests) = decision_setup(mode).await;
+        nothing_decided_is_listed(&env, requests).await;
+        let waiting = env.waiting().await;
+        assert!(!waiting.is_empty(), "{mode:?} left some to the owner");
+        for id in &waiting {
+            assert!(env.listed().contains(id), "{mode:?}: {id} waits for the owner and is listed");
+        }
+        assert!(env.decided().iter().any(|(_, v, _)| *v == Verdict::Approve), "{mode:?} approved some");
+        assert!(env.decided().iter().any(|(_, v, _)| *v == Verdict::Deny), "{mode:?} denied some");
+    }
+}
+
+/// An ask the account's policy keeps for its owner reaches the owner in every mode, a bypass included, and is never
+/// held back as "deciding".
+#[tokio::test]
+async fn an_ask_the_policy_keeps_for_the_owner_is_listed_in_every_mode() {
+    use reins_proto::authorization::{PolicyEffect, ReviewRequirement};
+    for mode in [AutopilotMode::Manual, AutopilotMode::Auto, AutopilotMode::Bypass, AutopilotMode::Overnight] {
+        let env = env_risk().await;
+        let owner = env.core.engine().authorization_policies().unwrap().owner;
+        let review = PolicyEffect::RequireReview {
+            requirements: vec![ReviewRequirement {
+                role_id: "owner".to_owned(),
+                quorum: 1,
+                distinct_humans_group: None,
+                exclude_requester: false,
+            }],
+        };
+        env.core
+            .engine()
+            .save_authorization_policy(0, account_send_policy(&owner, review), owner_yes().as_ref())
+            .await
+            .unwrap();
+        env.mode(None, mode).await;
+        env.watch();
+        env.deliver(
+            json!({"requests": [serde_json::to_value(request("held", OLD, email("friend@x.com", "hi"))).unwrap()],
+            "pairings": []}),
+        )
+        .await;
+        assert_eq!(env.waiting().await, ["held"], "{mode:?}");
+        assert!(env.told().contains("held") && env.listed().contains("held"), "{mode:?}");
+        assert!(env.deciding().await.is_empty(), "{mode:?}");
+        assert!(env.decided().is_empty(), "{mode:?}");
+    }
+}
+
+/// Where the model cannot run (the iOS notification extension), Auto's requests wait for a pass that can: never listed
+/// for the owner meanwhile. What no mode decides is listed at once: an ask the policy keeps for the owner, and anything
+/// in Manual.
+#[tokio::test]
+async fn without_the_model_autos_requests_are_deciding_and_the_owners_are_listed() {
+    use reins_proto::authorization::{PolicyEffect, ReviewRequirement};
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.mode(Some(OTHER), AutopilotMode::Manual).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let review = PolicyEffect::RequireReview {
+        requirements: vec![ReviewRequirement {
+            role_id: "owner".to_owned(),
+            quorum: 1,
+            distinct_humans_group: None,
+            exclude_requester: false,
+        }],
+    };
+    env.core
+        .engine()
+        .save_authorization_policy(0, account_send_policy(&owner, review), owner_yes().as_ref())
+        .await
+        .unwrap();
+    for (id, conn, call) in
+        [("auto", OLD, grant()), ("held", OLD, email("friend@x.com", "hi")), ("manual", OTHER, grant())]
+    {
+        let body = serde_json::to_value(request(id, conn, call)).unwrap();
+        mount(&env.server, "GET", &format!("/reins/api/requests/{id}"), 200, body).await;
+        env.core.handle_push_deferring_autopilot("req".to_owned(), id.to_owned()).await.unwrap();
+    }
+    let mut waiting = env.waiting().await;
+    waiting.sort();
+    assert_eq!(waiting, ["held", "manual"]);
+    assert_eq!(env.deciding().await, ["auto"]);
+    assert!(env.told().contains("held"), "the policy's ask is told at once");
+    // The app's pass judges it (a permission always asks in Auto): now it is the owner's.
+    env.deliver(json!({"requests": [], "pairings": []})).await;
+    assert!(env.waiting().await.contains(&"auto".to_owned()));
+    assert!(env.deciding().await.is_empty());
+    assert!(env.told().contains("auto"));
+}
+
+/// A bypass starting while asks wait answers them; meanwhile they are not the owner's anymore.
+#[tokio::test]
+async fn a_bypass_that_starts_takes_what_waits_off_the_owners_list() {
+    let env = env(false).await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    assert_eq!(env.waiting().await, ["r1"]);
+    env.watch();
+    env.core.start_bypass(None, None).await.unwrap();
+    assert!(env.waiting().await.is_empty());
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())]);
+    assert!(!env.listed().contains("r1"), "not listed while the bypass took it");
 }
 
 impl Env {
@@ -1403,6 +1609,30 @@ async fn known_and_unlocked(env: &Env) {
 
 /// How each request of the decision table ended: "approve", "deny" or "wait".
 async fn decision_table(mode: AutopilotMode) -> (std::collections::BTreeMap<String, String>, Env) {
+    let (env, requests) = decision_setup(mode).await;
+    for (id, conn, call) in requests {
+        env.relay(id, conn, call).await;
+    }
+    let decided = env.decided();
+    let waiting = env.waiting().await;
+    let mut out = std::collections::BTreeMap::new();
+    for id in env.store().ap_suggestions_since(0).unwrap().into_iter().map(|x| x.request_id) {
+        if id.starts_with("seed") {
+            continue;
+        }
+        let end = match decided.iter().find(|(d, _, _)| *d == id) {
+            Some((_, Verdict::Approve, _)) => "approve",
+            Some((_, Verdict::Deny, _)) => "deny",
+            _ if waiting.contains(&id) => "wait",
+            _ => "gone",
+        };
+        out.insert(id, end.to_owned());
+    }
+    (out, env)
+}
+
+/// The decision table's phone (what was approved before, what is unlocked, `mode` set last) and its requests.
+async fn decision_setup(mode: AutopilotMode) -> (Env, Vec<(&'static str, &'static str, Value)>) {
     let env = env_risk().await;
     let key = desktop_key(&env);
     known_and_unlocked(&env).await;
@@ -1446,25 +1676,7 @@ async fn decision_table(mode: AutopilotMode) -> (std::collections::BTreeMap<Stri
         // rated catastrophic by the model, in a kind unlocked by hand: Auto's severe veto holds it too
         ("catastrophic", OLD, email("friend@x.com", "wire the savings")),
     ];
-    for (id, conn, call) in requests {
-        env.relay(id, conn, call).await;
-    }
-    let decided = env.decided();
-    let waiting = env.waiting().await;
-    let mut out = std::collections::BTreeMap::new();
-    for id in env.store().ap_suggestions_since(0).unwrap().into_iter().map(|x| x.request_id) {
-        if id.starts_with("seed") {
-            continue;
-        }
-        let end = match decided.iter().find(|(d, _, _)| *d == id) {
-            Some((_, Verdict::Approve, _)) => "approve",
-            Some((_, Verdict::Deny, _)) => "deny",
-            _ if waiting.contains(&id) => "wait",
-            _ => "gone",
-        };
-        out.insert(id, end.to_owned());
-    }
-    (out, env)
+    (env, requests)
 }
 
 /// Overnight is never looser than Auto except on the hard floor it may weigh, and only for a request a verified model

@@ -866,7 +866,8 @@ impl ReinsCore {
         .await
     }
 
-    /// Items parked for the user, newest first.
+    /// What waits for the owner, newest first: the only items an app presents, notifies, counts or badges. What a
+    /// bypass, Lockdown, Auto or Overnight has still to look at is not here (see `deciding`).
     pub async fn pending(&self) -> Result<Vec<PendingItem>, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
@@ -874,6 +875,21 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.pending() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Parked requests and uploads an automatic decider (a bypass, Lockdown, Auto, Overnight) has still to look at,
+    /// newest first: never an ask for the owner. The notification extension, which cannot run the model, words the
+    /// notification of such a push from it ("open Reins to let Autopilot decide") instead of an ask.
+    pub async fn deciding(&self) -> Result<Vec<PendingItem>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.deciding() }).await;
             runtime.finish(&engine, result)
         })
         .await

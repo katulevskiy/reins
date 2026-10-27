@@ -18,6 +18,9 @@ final class AppNotifier: Notifier, @unchecked Sendable {
 
     func itemPending(item: PendingItem) {
         Task { @MainActor in
+            // It waits for the owner: whatever the extension said about it before it knew ("Something is waiting",
+            // "Autopilot has still to decide") gives way to the ask itself.
+            self.withdraw(item.id, keeping: item.id)
             guard let model else { return }
             if model.isActive {
                 await model.refreshPending()
@@ -36,14 +39,19 @@ final class AppNotifier: Notifier, @unchecked Sendable {
         // Answered here, on another device, by a grant or by its time running out: its notification has nothing left
         // to offer.
         let ids = [id, Self.decisionId(id)]
-        center.removeDeliveredNotifications(withIdentifiers: [id])
+        withdraw(id)
         center.removePendingNotificationRequests(withIdentifiers: ids)
         Task { @MainActor in await self.model?.refreshPending() }
     }
 
     func autoDecided(decision: AutoDecisionView) {
+        // Decided without the owner: nothing about it may stay actionable. Its ask (posted while it waited, before a
+        // bypass or Lockdown started) and the extension's texts go; only the decision itself is posted below.
+        withdraw(decision.requestId)
         Task { @MainActor in
             guard let model else { return }
+            // An ask open on it closes, and a list read a moment ago does not bring it back.
+            model.decidedAutomatically(decision.requestId)
             if model.isActive {
                 await model.refreshPending()
                 // In front the list changes before the user's eyes; a quiet sound says why. Never the request chime.
@@ -134,6 +142,18 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             settings: settings(),
             silent: false
         ))
+    }
+
+    /// Takes away every delivered notification about item `id`, by its identifier or the item it names (the
+    /// extension's are filed under the push's own identifier), but `keeping`.
+    func withdraw(_ id: String, keeping: String? = nil) {
+        if id != keeping { center.removeDeliveredNotifications(withIdentifiers: [id]) }
+        center.getDeliveredNotifications { delivered in
+            let about = NotificationSweep.about(id, delivered: delivered.map { n in
+                (n.request.identifier, n.request.content.userInfo[NotificationKey.id] as? String)
+            }, keeping: keeping)
+            if !about.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: about) }
+        }
     }
 
     func post(_ id: String, _ content: UNNotificationContent) {
