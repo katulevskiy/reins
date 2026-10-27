@@ -314,10 +314,20 @@ struct TaskProposalCard: View {
                         chips(field, values)
                     }
                 }
-                HStack(spacing: 6) {
-                    ceilingMenu
-                    lengthMenu
-                    if more || proposal.budget != nil { budgetMenu }
+                // The ceiling is never cut ("Up to: Reaches people"): it takes a line of its own when the row is full.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        ceilingMenu
+                        lengthMenu
+                        if more || proposal.budget != nil { budgetMenu }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        ceilingMenu
+                        HStack(spacing: 6) {
+                            lengthMenu
+                            if more || proposal.budget != nil { budgetMenu }
+                        }
+                    }
                 }
                 if let error {
                     Text(error).font(RFont.sans(13.5, .medium)).foregroundStyle(Palette.onField).lineLimit(3)
