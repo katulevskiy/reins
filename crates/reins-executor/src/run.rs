@@ -219,6 +219,9 @@ pub struct RunStats {
 /// One pass: refresh the roster, claim, verify, act, receipt, then revocations.
 pub async fn run_once(ctx: &Context) -> Result<RunStats, String> {
     let mut stats = RunStats::default();
+    // Leases past their end first, before any job and without the server: an executor back from being offline revokes
+    // the tokens that outlived their lease (GitHub keeps an installation token alive for an hour) before anything else.
+    revoke_expired(ctx, &mut stats).await;
     let jobs = run_jobs(ctx, &mut stats).await;
     // Revocations run every pass, whatever happened to the jobs.
     let revoked = revocations(ctx, &mut stats).await;
@@ -383,14 +386,16 @@ async fn revoke_lease(ctx: &Context, lease: &str) -> Result<usize, String> {
     Ok(held.len())
 }
 
-async fn revocations(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
-    // Expired leases first, without waiting for the server.
+async fn revoke_expired(ctx: &Context, stats: &mut RunStats) {
     for lease in ctx.leases.expired(crate::now()) {
         match revoke_lease(ctx, &lease).await {
             Ok(n) => stats.revoked += n,
             Err(e) => log::warn!("revoking expired lease {lease}: {e}"),
         }
     }
+}
+
+async fn revocations(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
     for r in ctx.client.revocations().await? {
         if !ctx.leases.knows(&r.lease) {
             // Not one this executor issued: it has nothing to revoke, and must not say it did.

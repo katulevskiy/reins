@@ -49,6 +49,8 @@ pub enum Refusal {
     },
     #[error("the decision expired")]
     Expired,
+    #[error("the lease ended before it was minted")]
+    LeaseEnded,
     #[error("the member's policy is not signed by one of their devices")]
     UnsignedMemberPolicy,
     #[error("the policy changed since the decision: {0}")]
@@ -136,6 +138,11 @@ pub fn verify_job_with(
         return Err(Refusal::DigestMismatch);
     }
     check_lease(job, &record)?;
+    // A lease is minted only while it lasts: GitHub's installation tokens live an hour whatever is asked, so one minted
+    // for a lease that already ended would outlive it by up to that.
+    if job.lease.as_ref().is_some_and(|l| now >= l.expires_at) {
+        return Err(Refusal::LeaseEnded);
+    }
     // 6. The member's own policy.
     let requester = roster.member(&record.member).ok_or(Refusal::UnsignedRoster)?;
     let member_policy = member_policy(job, &record, requester)?;
@@ -602,6 +609,16 @@ mod tests {
         let mut job = f.auto_job();
         redecide(&f, &mut job, |r| r.valid_until = now() - 1);
         assert_eq!(check(&f, &job), Err(Refusal::Expired));
+    }
+
+    #[test]
+    fn a_lease_past_its_end_is_not_minted() {
+        let f = Fixture::new();
+        let mut job = f.lease_job("BOX");
+        let ended = now() - 1;
+        job.lease.as_mut().unwrap().expires_at = ended;
+        redecide(&f, &mut job, |r| r.lease.as_mut().unwrap().expires_at = ended);
+        assert_eq!(check(&f, &job), Err(Refusal::LeaseEnded));
     }
 
     #[test]
