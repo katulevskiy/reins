@@ -45,6 +45,7 @@ enum PushReceiver {
         if Task.isCancelled { return .newData }
         // In the background this reads only what waits (`AppModel.inBackground`); the rest when the app is opened.
         await model.refreshPending()
+        if payload.circle != nil { await model.refreshCircles() }
         return .newData
     }
 }

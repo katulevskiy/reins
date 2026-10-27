@@ -144,6 +144,13 @@ final class AppModel {
     private(set) var autoQuestions: [AutoQuestion] = []
     /// Auto's setup is open (`AutoSetupScreen`): picking Auto for every AI before it was done guides through it first.
     var autoSetupOpen = false
+    /// Circles: other accounts' requests waiting for this phone, and those settled lately ("For others").
+    private(set) var circleReviews: [CircleReviewView] = []
+    /// Circles: what this account was told as a watcher (no buttons).
+    private(set) var circleNotices: [CircleNoticeView] = []
+    /// Bumped whenever the core says something in Circles changed (a person, an invitation): Settings › Circles reads
+    /// its list again.
+    private(set) var circleTick = 0
     private(set) var seenActivityId: Int64 = 0
     /// The server said another phone became the approval device.
     /// `-demoReplaced` (screenshots): the demo as if another phone had become the approval device.
@@ -390,6 +397,8 @@ final class AppModel {
         autopilot = nil
         autoQuestions = []
         autoSetupOpen = false
+        circleReviews = []
+        circleNotices = []
         sheet = nil
         paths = [:]
         section = .activity
@@ -592,6 +601,8 @@ final class AppModel {
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
             async let questionsRead = core.autoQuestions()
+            async let reviewsRead = core.circleReviews(refresh: false)
+            async let noticesRead = core.circleNotices()
             let newPending = AskGate.waiting(try await pendingRead, decided: autoDecided)
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
@@ -601,6 +612,9 @@ final class AppModel {
             let newStarting = try? await startingRead
             // Questions are extra: a list that cannot be read keeps the last one.
             let newQuestions = try? await questionsRead
+            // Circles too: an account without them (or a read that fails) keeps the last lists.
+            let newReviews = try? await reviewsRead
+            let newNotices = try? await noticesRead
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 // Read before a change shown ahead of the core: read once more instead.
@@ -613,6 +627,8 @@ final class AppModel {
             if grants != newGrants { grants = newGrants }
             if startingPolicy != newStarting { startingPolicy = newStarting }
             if let newQuestions, autoQuestions != newQuestions { autoQuestions = newQuestions }
+            if let newReviews, circleReviews != newReviews { setCircleReviews(newReviews) }
+            if let newNotices, circleNotices != newNotices { circleNotices = newNotices }
             if accounts != newAccounts { accounts = newAccounts }
             if services != newServices { services = newServices }
             if mcpServers != newServers { setMcpServers(newServers) }
@@ -718,6 +734,66 @@ final class AppModel {
     /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
     /// what is too risky: the same check as a bypass's.
     var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
+
+    // MARK: Circles
+
+    /// Called with the reviews whenever they change (the notifications of those no longer waiting go).
+    @ObservationIgnored var onCircleReviewsChanged: (([CircleReviewView]) -> Void)?
+
+    private func setCircleReviews(_ list: [CircleReviewView]) {
+        circleReviews = list
+        onCircleReviewsChanged?(list)
+    }
+
+    /// Reads "For others" again: `fromServer` asks the server for news first.
+    func refreshCircles(fromServer: Bool = false) async {
+        let epoch = accountEpoch
+        let core = self.core
+        async let reviewsRead = core.circleReviews(refresh: fromServer)
+        async let noticesRead = core.circleNotices()
+        let reviews = try? await reviewsRead
+        let notices = try? await noticesRead
+        guard epoch == accountEpoch else { return }
+        if let reviews, reviews != circleReviews { setCircleReviews(reviews) }
+        if let notices, notices != circleNotices { circleNotices = notices }
+    }
+
+    /// Something in Circles changed (the core said so): the lists, the owner's cards and Settings › Circles read again,
+    /// quietly.
+    func circlesChanged() async {
+        circleTick &+= 1
+        await refreshCircles()
+        await refreshPending()
+    }
+
+    /// Answers another account's request. Approving asks for Face ID, Touch ID or the passcode first (the helper's
+    /// decision is signed by this phone); denying is one tap, with an optional note. nil when it went through, else what
+    /// to say.
+    func answerCircle(_ review: CircleReviewView, approve: Bool, note: String? = nil) async -> String? {
+        if approve {
+            let who = CircleLogic.name(review.person)
+            switch await OwnerPrompt.confirm(self, reason: "Approve for \(who): \(untrusted(review.title))") {
+            case .confirmed: break
+            case .cancelled: return nil
+            case .unavailable:
+                feedback.play(.error)
+                return OwnerPrompt.unavailableMessage
+            }
+        }
+        let epoch = accountEpoch
+        do {
+            try await core.circleAnswer(reviewId: review.id, approve: approve, note: approve ? nil : CircleLogic.note(note))
+            guard epoch == accountEpoch else { return nil }
+            feedback.play(approve ? .approved : .denied)
+            await refreshCircles()
+            return nil
+        } catch {
+            guard epoch == accountEpoch else { return nil }
+            feedback.play(.error)
+            await refreshCircles()
+            return decisionErrorMessage(error)
+        }
+    }
 
     // MARK: Auto's questions
 

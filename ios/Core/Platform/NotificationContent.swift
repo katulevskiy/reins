@@ -29,6 +29,9 @@ enum NotificationCategory: String, CaseIterable {
     case grant
     /// This phone's role, Autopilot pausing itself.
     case status
+    /// Circles: another account's request waits for this phone ("Sam: purchase $42 waiting"), or a guardianship ended.
+    /// No action: a tap opens Reins, where "For others" answers it.
+    case circle
 
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
@@ -38,6 +41,7 @@ enum NotificationCategory: String, CaseIterable {
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
         case .status: "Open Reins to see more"
+        case .circle: NotificationText.circleHidden
         }
     }
 
@@ -48,6 +52,7 @@ enum NotificationCategory: String, CaseIterable {
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
+        case .circle: "circles"
         }
         return WorkProfiles.thread(base)
     }
@@ -209,6 +214,29 @@ enum NotificationText {
 
     /// A request Autopilot has still to decide, which needs the app (its model runs there only).
     static let decidingBody = "Open Reins so Autopilot can decide"
+
+    /// A Circle notification's lock-screen text while previews are hidden.
+    static let circleHidden = "Someone needs your answer"
+
+    /// A Circle push the extension could not read: "Reins", and that someone needs an answer.
+    static let circleGenericBody = "Someone in your Circle needs your answer"
+
+    /// Under a review's title: what it is about and when it is due ("Lego set · amazon.com", "Due in 3 h").
+    static func circleBody(_ r: CircleReviewView, now: Int64) -> String {
+        [untrusted(r.subtitle), CircleLogic.due(r.deadline, now: now)].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// A guardianship that ended or needs a new invitation, as the guardian is told (08 R7).
+    static func circleAlertTitle(_ p: CirclePerson) -> String { CircleLogic.name(p.peer) }
+
+    static func circleAlertBody(_ p: CirclePerson) -> String {
+        switch p.state {
+        case .ended: "\(CircleLogic.roleName(p.role)) ended"
+        case .suspended: "Their phone changed. Invite them again."
+        case .paused: "\(CircleLogic.roleName(p.role)) paused"
+        case .active: "\(CircleLogic.roleName(p.role)) changed"
+        }
+    }
 }
 
 /// Builds notification content; the app (`AppNotifier`, `GrantReminders`) and the notification extension use the same
@@ -251,6 +279,46 @@ enum NotificationContent {
         return c
     }
 
+    /// Another account's request waits for this phone (04 §6.2): "Sam: purchase $42 waiting". No action: answering
+    /// is done in the app, with the card in front.
+    static func circleReview(
+        _ r: CircleReviewView, settings: FeedbackSettings, now: Int64 = Int64(Date().timeIntervalSince1970)
+    ) -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.title = CircleLogic.notificationTitle(r)
+        c.body = NotificationText.circleBody(r, now: now)
+        c.categoryIdentifier = NotificationCategory.circle.rawValue
+        c.threadIdentifier = NotificationCategory.circle.thread
+        c.interruptionLevel = .timeSensitive
+        c.relevanceScore = 0.9
+        c.sound = NotificationSoundFile.sound(NotificationSoundFile.request, .requests, settings)
+        c.userInfo = circleInfo(reviewId(r.id))
+        return c
+    }
+
+    /// A guardianship ended (or its other side's phone changed): the guardian is told at once.
+    static func circleAlert(_ p: CirclePerson, settings: FeedbackSettings) -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.title = NotificationText.circleAlertTitle(p)
+        c.body = NotificationText.circleAlertBody(p)
+        c.categoryIdentifier = NotificationCategory.circle.rawValue
+        c.threadIdentifier = NotificationCategory.circle.thread
+        c.interruptionLevel = .active
+        c.relevanceScore = 0.5
+        c.sound = NotificationSoundFile.sound(NotificationSoundFile.attention, .alerts, settings)
+        c.userInfo = circleInfo("alert:\(p.linkId)")
+        return c
+    }
+
+    /// A Circle notification's `userInfo`: what it is about as the push names it (`review:<id>`, `alert:<link>`, so the
+    /// extension's and the app's match), and the tap's destination.
+    static func circleInfo(_ pushId: String) -> [String: Any] {
+        [NotificationKey.kind: "circle", NotificationKey.id: pushId, NotificationKey.link: DeepLink.home.url.absoluteString]
+    }
+
+    /// The push id of a review's notification.
+    static func reviewId(_ id: String) -> String { "review:\(id)" }
+
     /// What Autopilot (or a bypass, or Lockdown) decided by itself: approvals are listed and never heard, denials
     /// get the soft click.
     static func decision(_ d: AutoDecisionView, settings: FeedbackSettings) -> UNMutableNotificationContent {
@@ -287,7 +355,8 @@ enum NotificationContent {
         if c.title.isEmpty { c.title = NotificationText.genericTitle }
         if c.body.isEmpty { c.body = NotificationText.genericBody }
         let kind = payload?.itemKind.map(NotificationCategory.init) ?? .request
-        let category: NotificationCategory = kind == .request ? .arriving : kind
+        let category: NotificationCategory = payload?.circle != nil ? .circle : kind == .request ? .arriving : kind
+        if category == .circle, c.body == NotificationText.genericBody { c.body = NotificationText.circleGenericBody }
         c.categoryIdentifier = category.rawValue
         c.threadIdentifier = category.thread
         c.interruptionLevel = .timeSensitive
@@ -417,6 +486,17 @@ enum NotificationSweep {
     /// The delivered notifications about item `id` (by their identifier or the item they name), but `keeping`.
     static func about(_ id: String, delivered: [(identifier: String, item: String?)], keeping: String? = nil) -> [String] {
         delivered.filter { ($0.identifier == id || $0.item == id) && $0.identifier != keeping }.map(\.identifier)
+    }
+}
+
+/// Which delivered Circle notifications have nothing left to offer.
+enum CircleSweep {
+    /// A review's notification once the review is known settled (`settled`), or is not among those waiting a minute
+    /// after it came (the app may not have read it yet). A guardianship's notice is never swept.
+    static func isSettled(info: [AnyHashable: Any], date: Date, waiting: Set<String>, settled: Set<String>, now: Date) -> Bool {
+        guard let raw = info[NotificationKey.id] as? String, let push = CirclePush(raw), push.wake == .review else { return false }
+        if settled.contains(push.id) { return true }
+        return !waiting.contains(push.id) && date < now.addingTimeInterval(-NotificationSweep.unreadGrace)
     }
 }
 

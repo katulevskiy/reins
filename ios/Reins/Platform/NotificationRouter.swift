@@ -35,6 +35,13 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             self?.dropStale(keeping: Set(list.map(\.id)))
             TicketReminders.sync(list)
         }
+        let circles = model.onCircleReviewsChanged
+        model.onCircleReviewsChanged = { [weak self] list in
+            circles?(list)
+            self?.dropSettledCircles(
+                waiting: Set(list.filter { $0.state == .waiting }.map(\.id)), settled: Set(list.filter { $0.state != .waiting }.map(\.id))
+            )
+        }
         let signedIn = model.onSignedIn
         // The `-demo` build asks only when told to (`-askNotifications`): the prompt would cover every screenshot.
         let ask = !model.demo
@@ -101,6 +108,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             category(.autopilot, [report]),
             category(.grant),
             category(.status),
+            // Another account's request: answered in the app, with its card in front, never from the notification.
+            category(.circle),
         ]
     }
 
@@ -138,6 +147,20 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Takes away "Sam: purchase $42 waiting" once that review no longer waits (answered here, settled by the owner's
+    /// side, expired). A guardianship's notice stays until it is looked at.
+    private func dropSettledCircles(waiting: Set<String>, settled: Set<String>) {
+        center.getDeliveredNotifications { delivered in
+            let now = Date()
+            let settled = delivered.filter { n in
+                let content = n.request.content
+                guard content.categoryIdentifier == NotificationCategory.circle.rawValue else { return false }
+                return CircleSweep.isSettled(info: content.userInfo, date: n.date, waiting: waiting, settled: settled, now: now)
+            }.map(\.request.identifier)
+            if !settled.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: settled) }
+        }
+    }
+
     // MARK: Delivery
 
     /// In front, items pop up in the app with the in-app chime instead of a banner (the push still makes the app
@@ -167,6 +190,22 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                         }
                     }
                     completionHandler([])
+                case .circle:
+                    // Another profile's push: shown as it came, never fetched by this core.
+                    if payload != nil, !WorkProfiles.belongsHere(notification.request.content.userInfo, remote: true) {
+                        completionHandler([.banner, .list])
+                        return
+                    }
+                    // In front, "For others" shows it (the core's `circleChanged` chimes); the app fetches what the push
+                    // announced.
+                    if let payload, payload.circle != nil, let host = self.host {
+                        Task {
+                            guard let model = await host.ready() else { return }
+                            try? await model.core.handlePush(kind: payload.kind, id: payload.id)
+                            await model.refreshCircles()
+                        }
+                    }
+                    completionHandler([])
                 case .status:
                     completionHandler([.banner, .list])
                 case .autopilot, .grant, .deciding, nil:
@@ -188,6 +227,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let link = (info[NotificationKey.link] as? String).flatMap(URL.init(string:)).flatMap(DeepLink.init(url:))
         let payload = PushPayload(userInfo: info)
         let note = (response as? UNTextInputNotificationResponse)?.userText
+        let circle = info[NotificationKey.kind] as? String == "circle"
         let owner = WorkProfiles.owner(of: info, remote: remote)
         Task { @MainActor in
             // Another profile's notification is never acted on by this core: a tap opens the app on its profile, an
@@ -200,12 +240,12 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                 completionHandler()
                 return
             }
-            await self.respond(action: action, link: link ?? payload?.link, payload: payload, remote: remote, note: note)
+            await self.respond(action: action, link: link ?? payload?.link, payload: payload, remote: remote, note: note, circle: circle)
             completionHandler()
         }
     }
 
-    private func respond(action: String, link: DeepLink?, payload: PushPayload?, remote: Bool, note: String?) async {
+    private func respond(action: String, link: DeepLink?, payload: PushPayload?, remote: Bool, note: String?, circle: Bool = false) async {
         guard let model = await host?.ready() else { return }
         switch action {
         case UNNotificationDismissActionIdentifier:
@@ -223,9 +263,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             guard let link else { return }
             await waitForSession(model)
             // The extension may have left the item for the app to fetch.
-            if remote, let payload, payload.itemKind != nil {
+            if remote, let payload, payload.itemKind != nil || payload.circle != nil {
                 try? await model.core.handlePush(kind: payload.kind, id: payload.id)
             }
+            // A Circle notification opens Activity, with "For others" read again.
+            if circle { await model.refreshCircles() }
             await model.handle(link)
         }
     }

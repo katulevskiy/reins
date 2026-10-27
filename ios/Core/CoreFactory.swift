@@ -122,4 +122,5 @@ final class SilentNotifier: Notifier, @unchecked Sendable {
     func itemResolved(id: String) {}
     func autoDecided(decision: AutoDecisionView) {}
     func autopilotChanged(event: AutopilotEvent) {}
+    func circleChanged(event: CircleEvent) {}
 }

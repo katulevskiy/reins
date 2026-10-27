@@ -104,6 +104,19 @@ final class ScreenSnapshotTests: XCTestCase {
         try await shoot("settings", MainShell())
     }
 
+    /// Settings › Circles: who helps (a co-signer, a paused delegate) and whom this account helps.
+    func testCircles() async throws {
+        try await start(circles: true)
+        model.show(.circles, in: .settings)
+        try await shoot("circles", MainShell())
+    }
+
+    /// Activity with Circles: a card that needs a co-signer too, and "For others" under what waits.
+    func testForOthers() async throws {
+        try await start(circles: true)
+        try await shoot("activity-for-others", MainShell())
+    }
+
     #if DEBUG
     /// Next-System: the kit, one board-sized page after another (`system-1`, `system-2`, ...), scrolled down a screen
     /// at a time. One tall image would pass the renderer's texture limit and come out blank.
@@ -125,8 +138,8 @@ final class ScreenSnapshotTests: XCTestCase {
     // MARK: Rendering
 
     /// The demo account, signed in, with its data loaded and the clocks stopped at the moment it was seeded.
-    private func start(quiet: Bool = false) async throws {
-        core = DemoReinsCore(signedIn: true, syncCap: 0.3, quiet: quiet)
+    private func start(quiet: Bool = false, circles: Bool = false) async throws {
+        core = DemoReinsCore(signedIn: true, syncCap: 0.3, quiet: quiet, circles: circles)
         Timers.frozenNow = TimeInterval(DemoReinsCore.now())
         // Recovery was set up long ago, as `-demo` assumes (DemoCore.make).
         AppGroup.defaults.set(true, forKey: RecoveryRecord.key(server: DemoData.server, code: DemoData.recoveryCode))

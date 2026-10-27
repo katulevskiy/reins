@@ -42,6 +42,8 @@ enum Route: Hashable {
     case wallpaper
     /// Settings > Devices: the account's phones (sign out a lost one) and computers.
     case devices
+    /// Settings > Circles: who helps with this account, and whom it helps.
+    case circles
     /// Integrations > Password vault > Open the vault.
     case vault
     /// Vault > Add: what kind of item.

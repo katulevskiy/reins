@@ -136,6 +136,7 @@ struct ActivityScreen: View {
             .accessibilityContainer("activityList")
             .refreshable {
                 await model.refreshPending()
+                await model.refreshCircles(fromServer: true)
                 feedback.play(.refresh)
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
@@ -331,7 +332,7 @@ struct ActivityScreen: View {
 
     /// Browsing: what waits (or what to connect, or the open art), then the river.
     @ViewBuilder private func browse(wallpaper: Bool) -> some View {
-        if model.connections.isEmpty && model.pending.isEmpty && shownDays.isEmpty {
+        if model.connections.isEmpty && model.pending.isEmpty && shownDays.isEmpty && model.circleReviews.isEmpty && model.circleNotices.isEmpty {
             // A new account: nothing can ask yet, so offer the ways to connect something, low over the art.
             NewAccountActivity(connectComputer: { model.openSheet(.connectComputer) }, connectAi: copyAddress)
                 .padding(.top, wallpaper ? 337 : 120)
@@ -374,6 +375,18 @@ struct ActivityScreen: View {
                     .padding(.top, 8)
                     .padding(.bottom, wallpaper ? 0 : 4)
                     .animation(Motion.of(.smooth(duration: 0.25), reduce: reduceMotion), value: waiting.flatMap { $0.items.map(\.id) })
+            }
+            // Other accounts' requests waiting for this phone (Circles), under the owner's own.
+            let forOthers = CircleLogic.groups(model.circleReviews)
+            let settled = CircleLogic.settled(model.circleReviews, limit: 5)
+            if !forOthers.isEmpty || !settled.isEmpty {
+                ForOthers(groups: forOthers, settled: settled)
+                    .padding(.top, 8)
+                    .padding(.bottom, wallpaper ? 0 : 4)
+                    .animation(Motion.of(.smooth(duration: 0.25), reduce: reduceMotion), value: model.circleReviews.map(\.id))
+            }
+            if !model.circleNotices.isEmpty {
+                CircleNotices(notices: CircleLogic.notices(model.circleNotices, limit: 5))
             }
             river(wallpaper: wallpaper)
         }
