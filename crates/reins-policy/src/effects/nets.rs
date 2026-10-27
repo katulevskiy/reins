@@ -160,7 +160,7 @@ fn each_in_word(w: &mut Word, f: &mut dyn FnMut(&mut Simple)) {
     for part in &mut w.0 {
         match part {
             Part::CmdSub(s) | Part::ProcSub(s) => each_simple(s, f),
-            Part::Default(_, w) => each_in_word(w, f),
+            Part::Default(_, w) | Part::Op(_, w) => each_in_word(w, f),
             Part::Brace(alts) => {
                 for a in alts {
                     each_in_word(a, f);
@@ -169,6 +169,7 @@ fn each_in_word(w: &mut Word, f: &mut dyn FnMut(&mut Simple)) {
             Part::Lit(_)
             | Part::Quoted(_)
             | Part::Var(_)
+            | Part::Split(_)
             | Part::Param(_)
             | Part::Arith(_)
             | Part::Glob(_)
@@ -294,11 +295,12 @@ fn visit_word(w: &Word, f: &mut dyn FnMut(&Command)) {
     for part in &w.0 {
         match part {
             Part::CmdSub(s) | Part::ProcSub(s) => visit_script(s, f),
-            Part::Default(_, w) => visit_word(w, f),
+            Part::Default(_, w) | Part::Op(_, w) => visit_word(w, f),
             Part::Brace(alts) => alts.iter().for_each(|a| visit_word(a, f)),
             Part::Lit(_)
             | Part::Quoted(_)
             | Part::Var(_)
+            | Part::Split(_)
             | Part::Param(_)
             | Part::Arith(_)
             | Part::Glob(_)
