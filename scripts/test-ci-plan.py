@@ -73,6 +73,7 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(run(["ios/Reins/App/ReinsApp.swift"]), {"ios"})
         self.assertEqual(run(["scripts/ios-ui-plan.py"]), {"ios"})
         self.assertEqual(run(["scripts/build-android-native.sh"]), {"android"})
+        self.assertEqual(run(["scripts/android-trust-smoke.sh"]), {"android"})
         # The iOS workflows a pull request's iOS job shares the core and the runner setup with.
         for workflow in ("ios.yml", "ios-core.yml", "ios-job.yml"):
             self.assertEqual(run([f".github/workflows/{workflow}"]), {"ios"}, workflow)
