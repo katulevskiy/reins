@@ -521,6 +521,10 @@ give that word another meaning are never rewritten:
 - `eval` or `source`;
 - a command word that isn't literal.
 
+Only the commands up to the first one off the allowlist are netted. What follows them runs after them, can't change
+them, and keeps its own level. Among them, a variable is allowed only when it is a one-letter name the script itself
+set to plain text before, and a `for` loop only when it goes over plain words.
+
 A net that can't be made deletes nothing and leaves the request at its own level.
 
 `reins net run` is bound to the hook's plan:
@@ -529,7 +533,8 @@ A net that can't be made deletes nothing and leaves the request at its own level
 - it runs only the planned programs, in the planned folders, within 12 hours;
 - it deletes for real only the scratch roots the hook recorded.
 
-Commands that set `HOME`, `PATH`, `XDG_*`, `GIT_*` or `REINS_*` are never netted.
+Nothing before a netted command may set `HOME`, `PATH`, `XDG_*`, `GIT_*` or `REINS_*`: only one-letter names, which no
+shell, git or Reins reads.
 
 Activity says Netted only once something was really kept. The trash keeps at most a tenth of its disk, oldest first.
 
