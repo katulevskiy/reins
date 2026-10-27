@@ -79,6 +79,34 @@ pub struct ProfileRegistry {
     stored: Mutex<Stored>,
 }
 
+/// The longest profile label.
+pub const MAX_LABEL: usize = 40;
+
+/// Characters that change how text reads without being seen: bidi controls and isolates, zero-width and other
+/// invisible format characters, tag characters.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
+/// An org's name as a work profile's label (the badge on cards, the switcher, pairing): what the org typed, without
+/// control, bidi or invisible characters, single-spaced, at most [`MAX_LABEL`] characters, and never anything that
+/// reads as the Personal profile (then `Work`).
+#[must_use]
+pub fn profile_label(raw: &str) -> String {
+    let visible: String = raw.chars().filter(|c| !c.is_control() && !invisible(*c)).collect();
+    let label: String = visible.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_LABEL).collect();
+    let letters: String = label.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    if letters.is_empty() || letters == "personal" {
+        "Work".to_owned()
+    } else {
+        label
+    }
+}
+
 impl ProfileRegistry {
     fn path(&self) -> PathBuf {
         self.base.join(FILE)
@@ -229,7 +257,7 @@ impl ProfileRegistry {
         email: String,
     ) -> Result<AccountProfile, CoreError> {
         let email = email.trim().to_lowercase();
-        let org_name = crate::text::truncate_chars(&crate::text::one_line(org_name.trim()), 64);
+        let org_name = profile_label(&org_name);
         if org_id.trim().is_empty() || email.is_empty() {
             return Err(CoreError::invalid("A work profile needs its organization and email"));
         }
@@ -353,6 +381,20 @@ mod tests {
             add(&r, &format!("other{i}"), "X", "x@x.io", "https://s").unwrap();
         }
         assert!(r.begin_managed("https://s".into()).is_err());
+    }
+
+    #[test]
+    fn org_names_are_shown_clean() {
+        assert_eq!(profile_label("  Acme \n Corp  "), "Acme Corp");
+        assert_eq!(profile_label("Ac\u{202E}me\u{200B}"), "Acme");
+        assert_eq!(profile_label("\u{2066}Acme\u{2069}"), "Acme");
+        assert_eq!(profile_label(&"a".repeat(64)).chars().count(), MAX_LABEL);
+        for personal in ["Personal", "personal", " PERSONAL ", "Per\u{200B}sonal", "per-sonal", "", "\u{202E}"] {
+            assert_eq!(profile_label(personal), "Work", "{personal:?}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let r = registry(dir.path());
+        assert_eq!(add(&r, "o", "Personal", "dana@acme.com", "https://s").unwrap().label, "Work");
     }
 
     #[test]

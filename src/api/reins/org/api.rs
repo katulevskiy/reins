@@ -173,6 +173,10 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     if !signature_ok(&request.device_key, &request.signature, &request.challenge) {
         return Err(api_err(Status::Forbidden, "bad_signature", "The device key did not sign the challenge"));
     }
+    // What each attestation must vouch for (`reins_proto::org::attestation_binding`): kept with them, for O2's
+    // verifier to check against the platform's signed data.
+    let key_der = data_encoding::BASE64.decode(request.device_key.trim().as_bytes()).unwrap_or_default();
+    let binding = data_encoding::HEXLOWER.encode(&reins_proto::org::attestation_binding(&request.challenge, &key_der));
     let row = ReinsOrgDevice {
         org_uuid: org.clone(),
         user_uuid: user.clone(),
@@ -180,7 +184,7 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
         key_algorithm: request.key_algorithm.clone(),
         public_key: request.device_key.clone(),
         hardware: request.hardware,
-        attestations: serde_json::to_string(&request.attestations).unwrap_or_else(|_| "[]".to_owned()),
+        attestations: json!({"binding": binding, "items": request.attestations}).to_string(),
         posture: serde_json::to_string(&request.posture).unwrap_or_else(|_| "{}".to_owned()),
         posture_at: now,
         enrolled_at: now,
@@ -188,7 +192,7 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     };
     let kinds: Vec<_> = request.attestations.iter().map(|a| a.kind).collect();
     let detail = json!({"device": device, "hardware": request.hardware, "attestations": kinds,
-                        "posture": posture_summary(&request.posture)});
+                        "attestation_binding": binding, "posture": posture_summary(&request.posture)});
     let enrolled = conn
         .run(move |c| -> Result<bool, super::OrgError> {
             use diesel::Connection;

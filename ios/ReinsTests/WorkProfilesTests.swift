@@ -71,7 +71,11 @@ private struct FakeKeys: DeviceKeys {
         XCTAssertEqual(data, Data("reins/org-enroll/v1\nchallenge-1".utf8))
         return Data([0x30, 0x44])
     }
-    func attest(challenge: Data) async -> Data? { Data("attested".utf8) }
+    func attest(clientDataHash: Data) async -> (keyId: String, attestation: Data)? {
+        // Bound to the key and the enrollment (`reins_proto::org::attestation_binding`).
+        XCTAssertEqual(clientDataHash, WorkProfiles.attestationBinding(challenge: "challenge-1", deviceKey: Data([0x30, 0x59])))
+        return ("key-id", Data("attested".utf8))
+    }
 }
 
 final class WorkProfilesTests: XCTestCase {
@@ -96,6 +100,20 @@ final class WorkProfilesTests: XCTestCase {
 
     func testTheEnrollmentMessageIsTheProtocols() {
         XCTAssertEqual(WorkProfiles.enrollmentMessage(challenge: "abc"), Data("reins/org-enroll/v1\nabc".utf8))
+    }
+
+    func testAttestationsAreBoundToTheEnrolledKey() {
+        // The vector `reins_proto::org` pins.
+        let binding = WorkProfiles.attestationBinding(challenge: "challenge-1", deviceKey: Data([0x30, 0x59]))
+        XCTAssertEqual(binding.map { String(format: "%02x", $0) }.joined(),
+                       "1dc1c8bb30a580b9a299e73e68abe5ee7907fd2b53d3d7af42ac4e530aee873e")
+        XCTAssertNotEqual(binding, WorkProfiles.attestationBinding(challenge: "challenge-1", deviceKey: Data([0x30, 0x5a])))
+    }
+
+    func testOrgLabelsAreShownAsUntrustedNames() {
+        var p = FakeRegistry.profile("work-1", .managed, "Acme")
+        p.label = "Acme\u{202E}lanosreP"
+        XCTAssertFalse(WorkProfiles.of(p).label.contains("\u{202E}"))
     }
 }
 

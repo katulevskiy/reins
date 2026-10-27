@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The profiles on this phone (Decisions v2 O1, 06 §2): the Personal account and a Managed work profile per
@@ -28,8 +29,21 @@ enum WorkProfiles {
     nonisolated(unsafe) static var hasWork = false
 
     static func of(_ p: AccountProfile) -> Active {
-        Active(id: p.id, label: p.label, managed: p.kind == .managed, threadPrefix: p.channelPrefix, keyAlias: p.keyAlias)
+        Active(id: p.id, label: label(p), managed: p.kind == .managed, threadPrefix: p.channelPrefix, keyAlias: p.keyAlias)
     }
+
+    /// A profile's label as shown anywhere: the org typed it, so it goes through `untrustedName` (the core already
+    /// stripped control, bidi and invisible characters and kept it to 40).
+    static func label(_ p: AccountProfile) -> String { untrustedName(p.label, limit: 40) }
+
+    /// What an attestation of this enrollment vouches for (`reins_proto::org::attestation_binding`): SHA-256 of the
+    /// enrollment message followed by the enrolled key (SPKI DER). App Attest's client data hash.
+    static func attestationBinding(challenge: String, deviceKey: Data) -> Data {
+        Data(SHA256.hash(data: enrollmentMessage(challenge: challenge) + deviceKey))
+    }
+
+    /// The Keychain account of a work profile's App Attest key id (kept for later assertions).
+    static func appAttestKeyTag(profileId: String) -> String { "com.reins2fa.app.app-attest.\(profileId)" }
 
     /// The Keychain account that wraps a profile's data key.
     static func keychainAccount(keyAlias: String) -> String {

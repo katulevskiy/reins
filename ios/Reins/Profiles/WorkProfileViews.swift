@@ -33,7 +33,8 @@ struct ProfilesSection: View {
                         Button {
                             if !current { ProfileSwitch.switchTo(p.id) }
                         } label: {
-                            TileRow(p.label, glyph: p.kind == .managed ? .briefcase : .person, value: current ? "In use" : (p.email ?? ""))
+                            TileRow(WorkProfiles.label(p), glyph: p.kind == .managed ? .briefcase : .person,
+                                    value: current ? "In use" : untrustedName(p.email ?? "", limit: 64))
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("profile:\(p.id)")

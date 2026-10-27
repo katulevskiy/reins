@@ -38,7 +38,11 @@ object WorkProfiles {
     /** Whether this phone has a work profile (then pairing says which profile an agent joins). */
     @Volatile var hasWork: Boolean = false
 
-    fun of(p: AccountProfile) = Active(p.id, p.label, p.kind == ProfileKind.MANAGED, p.channelPrefix, p.keyAlias)
+    fun of(p: AccountProfile) = Active(p.id, label(p), p.kind == ProfileKind.MANAGED, p.channelPrefix, p.keyAlias)
+
+    /** A profile's label as shown anywhere: the org typed it, so it goes through `untrustedName` (the core already
+     *  stripped control, bidi and invisible characters and kept it to 40). */
+    fun label(p: AccountProfile): String = dev.reins.android.ui.common.untrustedName(p.label, 40)
 
     /** The Keystore alias that wraps a profile's data key: today's for Personal, its own for each work profile. */
     fun dekAlias(keyAlias: String): String = if (keyAlias.isEmpty()) DEK_ALIAS else "$DEK_ALIAS.$keyAlias"

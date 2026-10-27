@@ -22,8 +22,8 @@ protocol DeviceKeys: Sendable {
     func create(profileId: String) throws -> (publicKey: Data, hardware: Bool)
     /// ECDSA P-256 SHA-256 (DER) of `data`.
     func sign(profileId: String, data: Data) throws -> Data
-    /// App Attest of `challenge` (CBOR), nil when the platform can't.
-    func attest(challenge: Data) async -> Data?
+    /// App Attest over `clientDataHash` (CBOR), and the App Attest key id; nil when the platform can't.
+    func attest(clientDataHash: Data) async -> (keyId: String, attestation: Data)?
 }
 
 /// The Secure Enclave when the phone has one (else a software P-256 key), kept in the Keychain; App Attest.
@@ -53,12 +53,12 @@ final class EnclaveDeviceKeys: DeviceKeys, @unchecked Sendable {
         throw ForeignError.Failed(reason: "no device key")
     }
 
-    func attest(challenge: Data) async -> Data? {
+    func attest(clientDataHash: Data) async -> (keyId: String, attestation: Data)? {
         let service = DCAppAttestService.shared
         guard service.isSupported else { return nil }
         do {
             let keyId = try await service.generateKey()
-            return try await service.attestKey(keyId, clientDataHash: Data(SHA256.hash(data: challenge)))
+            return (keyId, try await service.attestKey(keyId, clientDataHash: clientDataHash))
         } catch {
             return nil
         }
@@ -66,7 +66,7 @@ final class EnclaveDeviceKeys: DeviceKeys, @unchecked Sendable {
 }
 
 /// The org device key's private part, kept in this device's Keychain (never synced).
-private enum KeyItem {
+enum KeyItem {
     static func save(_ data: Data, tag: String) {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -181,7 +181,11 @@ final class AddWorkAccount {
             let challenge = try await core.orgChallenge()
             let key = try keys.create(profileId: profileId)
             let signature = try keys.sign(profileId: profileId, data: WorkProfiles.enrollmentMessage(challenge: challenge))
-            let attestation = await keys.attest(challenge: Data(challenge.utf8))
+            // App Attest vouches for this enrollment of this key, not just the challenge.
+            let binding = WorkProfiles.attestationBinding(challenge: challenge, deviceKey: key.publicKey)
+            let attested = await keys.attest(clientDataHash: binding)
+            if let attested { KeyItem.save(Data(attested.keyId.utf8), tag: WorkProfiles.appAttestKeyTag(profileId: profileId)) }
+            let attestation = attested?.attestation
             let input = EnrollInput(
                 deviceKey: key.publicKey.base64EncodedString(),
                 signature: signature.base64EncodedString(),

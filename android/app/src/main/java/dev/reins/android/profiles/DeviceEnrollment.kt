@@ -100,11 +100,14 @@ object Posture {
     )
 }
 
-/** The enrollment for [challenge]: a fresh org device key for [profileId], its signature over the challenge, the
- *  key attestation chain, and the posture. */
+/**
+ * The enrollment for [challenge]: a fresh org device key for [profileId], its signature over the challenge, the
+ * key attestation chain, and the posture. The attestation's challenge is the enrollment message: the chain's leaf
+ * certifies this very key (the binding O2's verifier checks with `reins_proto::org::attestation_binding`'s inputs).
+ */
 fun enrollment(keys: DeviceKeys, profileId: String, challenge: String, posture: PostureInput): EnrollInput {
     val alias = WorkProfiles.orgKeyAlias(profileId)
-    val key = keys.create(alias, challenge.toByteArray())
+    val key = keys.create(alias, WorkProfiles.enrollmentMessage(challenge))
     val signature = keys.sign(alias, WorkProfiles.enrollmentMessage(challenge))
     return EnrollInput(
         deviceKey = key.publicKey,

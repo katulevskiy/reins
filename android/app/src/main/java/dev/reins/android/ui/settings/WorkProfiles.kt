@@ -67,10 +67,10 @@ fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit
         profiles.forEach { p ->
             val managed = p.kind == ProfileKind.MANAGED
             SetRow(
-                p.label,
+                WorkProfiles.label(p),
                 if (managed) Glyph.Briefcase else Glyph.Person,
                 Modifier.testTag("profile:${p.id}"),
-                value = if (p.id == active) "In use" else p.email,
+                value = if (p.id == active) "In use" else p.email?.let { dev.reins.android.ui.common.untrustedName(it) },
                 chevron = p.id != active,
             ) {
                 if (p.id != active && activity != null) ProfileSwitch.switchTo(activity, container.profiles, p.id)
@@ -203,8 +203,9 @@ fun AddWorkAccountScreen(viewModel: AddWorkAccountViewModel, onBack: () -> Unit)
                     ) { viewModel.start(domain) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
                 }
                 is AddWorkStep.Added -> {
-                    Banner(if (step.enrolled) "${step.profile.label} added. This phone is enrolled." else "${step.profile.label} added.")
-                    SignalButton("Switch to ${step.profile.label}", Modifier.fillMaxWidth().testTag("switchToWork"), glyph = Glyph.Briefcase) {
+                    val label = WorkProfiles.label(step.profile)
+                    Banner(if (step.enrolled) "$label added. This phone is enrolled." else "$label added.")
+                    SignalButton("Switch to $label", Modifier.fillMaxWidth().testTag("switchToWork"), glyph = Glyph.Briefcase) {
                         (context as? Activity)?.let { ProfileSwitch.switchTo(it, viewModel.registry, step.profile.id) }
                     }
                 }

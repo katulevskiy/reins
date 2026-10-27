@@ -135,6 +135,12 @@ class WorkProfileFlowTest : FlowHarness() {
     }
 
     @Test
+    fun `org names are shown as untrusted names`() {
+        val p = FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme\u202Elanosrep", "o1")
+        assertFalse(WorkProfiles.of(p).label.contains('\u202E'))
+    }
+
+    @Test
     fun `a work profile posts to its own channels, grouped under the org`() {
         val manager = context.getSystemService(NotificationManager::class.java)
         val personalId = AppNotifier.channelId(AppNotifier.Kind.Approvals, sound = true, vibrate = true)
@@ -155,7 +161,7 @@ class WorkProfileFlowTest : FlowHarness() {
         assertEquals(true, Posture.rooted("release-keys") { it == "/system/xbin/su" })
         val posture = PostureInput(true, "Android", "16", false, "1.0")
         val input = enrollment(keys, "work-1", "challenge-1", posture)
-        assertEquals(listOf("challenge-1"), keys.challenges)
+        assertEquals(listOf("reins/org-enroll/v1\nchallenge-1"), keys.challenges)
         assertEquals("reins/org-enroll/v1\nchallenge-1", String(keys.signed.single()))
         assertEquals(Base64.encodeToString(byteArrayOf(0x30, 0x44), Base64.NO_WRAP), input.signature)
         assertEquals(AttestationKindInput.ANDROID_KEY_ATTESTATION, input.attestations.single().kind)

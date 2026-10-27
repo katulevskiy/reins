@@ -470,6 +470,16 @@ pub fn enrollment_message(challenge: &str) -> Vec<u8> {
     m
 }
 
+/// What a platform attestation of an enrollment vouches for (App Attest's client data hash; Android's key attestation
+/// challenge): SHA-256 of [`enrollment_message`] of the challenge followed by the enrolled key (SPKI DER). So an
+/// attestation made for one key can't be replayed for another, and O2's verifier checks it against the recorded key.
+#[must_use]
+pub fn attestation_binding(challenge: &str, device_key_der: &[u8]) -> [u8; 32] {
+    let mut m = enrollment_message(challenge);
+    m.extend_from_slice(device_key_der);
+    crate::canon::sha256(&m)
+}
+
 /// The only key algorithm enrolled in O1.
 pub const KEY_P256: &str = "p256";
 
@@ -847,6 +857,18 @@ mod tests {
         for bad in ["/home/dana/repo", "C:/repo", "file:///repo", "../repo", "", "ftp://github.com/acme/api"] {
             assert_eq!(Remote::parse(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn attestations_are_bound_to_the_enrolled_key() {
+        let a = attestation_binding("ch", &[1, 2, 3]);
+        assert_ne!(a, attestation_binding("ch", &[1, 2, 4]));
+        assert_ne!(a, attestation_binding("other", &[1, 2, 3]));
+        // The vector the phones' own tests pin.
+        assert_eq!(
+            crate::canon::hex32(&attestation_binding("challenge-1", &[0x30, 0x59])),
+            crate::canon::hex32(&crate::canon::sha256(b"reins/org-enroll/v1\nchallenge-1\x30\x59"))
+        );
     }
 
     #[test]
