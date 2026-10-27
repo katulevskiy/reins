@@ -27,14 +27,14 @@ pub enum PostureFail {
 
 /// Compares dotted versions numerically (`17.4 < 17.10`); a part that isn't a number compares as 0.
 #[must_use]
-pub fn compare_versions(a: &str, b: &str) -> Ordering {
+pub fn compare_versions(version: &str, other: &str) -> Ordering {
     let parts = |s: &str| -> Vec<u64> {
         s.trim()
             .split(['.', '-', ' '])
             .map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
             .collect()
     };
-    let (x, y) = (parts(a), parts(b));
+    let (x, y) = (parts(version), parts(other));
     for i in 0..x.len().max(y.len()) {
         match x.get(i).unwrap_or(&0).cmp(y.get(i).unwrap_or(&0)) {
             Ordering::Equal => {}

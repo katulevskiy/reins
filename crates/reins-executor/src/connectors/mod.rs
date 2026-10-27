@@ -196,6 +196,7 @@ pub(crate) fn format_rfc3339(t: i64) -> String {
 
 /// Test support (a fixed test-only RSA key), for this crate's tests and the end-to-end suite.
 #[cfg(any(test, feature = "testing"))]
+#[allow(clippy::must_use_candidate, clippy::missing_panics_doc, reason = "test support")]
 pub mod testing {
     use ring::signature::RsaKeyPair;
 

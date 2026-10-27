@@ -282,39 +282,39 @@ pub fn q_receipt(c: &mut DbConnInner, ex: &Executor, env: &Envelope, now: i64) -
                     "reason": r.reason, "receipt_sig": env.sig}),
             now,
         )?;
-        if row.kind == request_kind::LEASE {
-            if let Some(lease) = reins_org_request::q_lease_of_request(c, &ex.org, &r.request)? {
-                let sealed = r.result.get("sealed").and_then(Value::as_str);
-                let expires = r.result.get("expires_at").and_then(Value::as_i64).unwrap_or(lease.expires_at);
-                match (r.status, sealed) {
-                    (ReceiptStatus::Succeeded, Some(sealed)) => {
-                        // Never past what the decision bound.
-                        let until = expires.min(lease.expires_at);
-                        if reins_org_request::q_set_lease_issued(c, &ex.org, &lease.uuid, sealed, until, now)? {
-                            audit::record(
-                                c,
-                                &ex.org,
-                                audit::kinds::LEASE_ISSUED,
-                                Some(&lease.user_uuid),
-                                Some(&lease.uuid),
-                                &json!({"repo": lease.repo, "access": lease.access, "expires_at": until,
-                                        "request": r.request, "executor": ex.id}),
-                                now,
-                            )?;
-                        } else {
-                            // Revoked meanwhile (deprovisioning): the minted credential must be revoked upstream.
-                            reins_org_request::q_mark_issued_after_revocation(c, &ex.org, &lease.uuid, now)?;
-                        }
-                    }
-                    _ => {
-                        reins_org_request::q_set_lease_state(
+        if row.kind == request_kind::LEASE
+            && let Some(lease) = reins_org_request::q_lease_of_request(c, &ex.org, &r.request)?
+        {
+            let sealed = r.result.get("sealed").and_then(Value::as_str);
+            let expires = r.result.get("expires_at").and_then(Value::as_i64).unwrap_or(lease.expires_at);
+            match (r.status, sealed) {
+                (ReceiptStatus::Succeeded, Some(sealed)) => {
+                    // Never past what the decision bound.
+                    let until = expires.min(lease.expires_at);
+                    if reins_org_request::q_set_lease_issued(c, &ex.org, &lease.uuid, sealed, until, now)? {
+                        audit::record(
                             c,
                             &ex.org,
-                            &lease.uuid,
-                            &[reins_org_request::lease_state::PENDING],
-                            reins_org_request::lease_state::DENIED,
+                            audit::kinds::LEASE_ISSUED,
+                            Some(&lease.user_uuid),
+                            Some(&lease.uuid),
+                            &json!({"repo": lease.repo, "access": lease.access, "expires_at": until,
+                                        "request": r.request, "executor": ex.id}),
+                            now,
                         )?;
+                    } else {
+                        // Revoked meanwhile (deprovisioning): the minted credential must be revoked upstream.
+                        reins_org_request::q_mark_issued_after_revocation(c, &ex.org, &lease.uuid, now)?;
                     }
+                }
+                _ => {
+                    reins_org_request::q_set_lease_state(
+                        c,
+                        &ex.org,
+                        &lease.uuid,
+                        &[reins_org_request::lease_state::PENDING],
+                        reins_org_request::lease_state::DENIED,
+                    )?;
                 }
             }
         }

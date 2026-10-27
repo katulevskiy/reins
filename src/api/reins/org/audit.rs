@@ -177,16 +177,16 @@ pub fn export(
 ) -> Result<String, OrgError> {
     kms::signing_key(c, org, KeyPurpose::Decision, now)?;
     let mut out: Vec<String> = Vec::new();
-    let mut after = 0;
-    let mut last: Option<(i64, String)> = None;
-    if let Some(seq) = from {
-        let anchor = reins_org_exec::q_checkpoint(c, org, seq)?.ok_or(OrgError::NotFound)?;
-        let env: Envelope = serde_json::from_str(&anchor.envelope)
-            .map_err(|e| OrgError::Internal(format!("stored checkpoint: {e}")))?;
-        out.push(line(&ExportLine::Checkpoint(env)));
-        after = seq;
-        last = Some((anchor.seq, anchor.hash));
-    }
+    let (mut after, mut last) = match from {
+        Some(seq) => {
+            let anchor = reins_org_exec::q_checkpoint(c, org, seq)?.ok_or(OrgError::NotFound)?;
+            let env: Envelope = serde_json::from_str(&anchor.envelope)
+                .map_err(|e| OrgError::Internal(format!("stored checkpoint: {e}")))?;
+            out.push(line(&ExportLine::Checkpoint(env)));
+            (seq, Some((anchor.seq, anchor.hash)))
+        }
+        None => (0, None),
+    };
     let mut checkpoints = reins_org_exec::q_checkpoints(c, org, after)?.into_iter().peekable();
     loop {
         let page = reins_org_event::q_events_from(c, org, after, PAGE)?;

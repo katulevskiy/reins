@@ -122,7 +122,7 @@ pub fn q_insert_policy(c: &mut DbConnInner, row: &ReinsOrgPolicy) -> QueryResult
 /// never more than one active policy, and a failed activation leaves the current one active.
 pub fn q_activate(c: &mut DbConnInner, org: &str, revision: i64, envelope: &str, at: i64) -> QueryResult<bool> {
     let done = c.transaction(|c| {
-        if !q_policy(c, org, revision)?.is_some_and(|p| p.state == policy_state::DRAFT) {
+        if q_policy(c, org, revision)?.is_none_or(|p| p.state != policy_state::DRAFT) {
             return Err(diesel::result::Error::RollbackTransaction);
         }
         diesel::update(

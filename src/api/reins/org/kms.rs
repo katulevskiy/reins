@@ -158,7 +158,7 @@ pub fn kms() -> Result<Arc<dyn Kms>, OrgError> {
     let local: Arc<dyn Kms> =
         Arc::new(LocalKms::from_file(&CONFIG.reins_org_kms_key_file()).map_err(OrgError::Internal)?);
     let mut slot = KMS.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(slot.get_or_insert(local).clone())
+    Ok(Arc::clone(slot.get_or_insert(local)))
 }
 
 /// Replaces the KMS (tests).
@@ -201,7 +201,7 @@ fn new_key_id(purpose: KeyPurpose) -> String {
 
 /// `org`'s signing key for `purpose` (issuer or decision), created on first use (`key.created` in audit).
 pub fn signing_key(c: &mut DbConnInner, org: &str, purpose: KeyPurpose, now: i64) -> Result<OrgSigner, OrgError> {
-    debug_assert!(purpose != KeyPurpose::Data);
+    debug_assert_ne!(purpose, KeyPurpose::Data);
     let kms = kms()?;
     if let Some(row) = reins_org_keys::q_key(c, org, purpose.as_str())? {
         let pkcs8 = kms.open(&key_aad(org, purpose, &row.key_id), &row.sealed).map_err(OrgError::Internal)?;

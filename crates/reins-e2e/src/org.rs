@@ -13,6 +13,12 @@ use crate::{Phone, Server};
 pub const WEBHOOK_SECRET: &str = "whsec_orgs";
 
 /// A browser that keeps cookies and follows redirects by hand (the console signs in through several hosts).
+impl Default for Browser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Browser {
     http: reqwest::Client,
     cookies: HashMap<String, String>,

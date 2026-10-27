@@ -57,8 +57,11 @@ fn posture_rule(c: &mut DbConnInner, org: &str) -> Result<PostureRule, OrgError>
     Ok(super::policy::active(c, org)?.map_or_else(PostureRule::default, |(p, _): (OrgPolicy, _)| p.posture))
 }
 
+/// A member's groups and roles.
+type Standing = (Vec<String>, Vec<Role>);
+
 /// `user`'s groups and roles in `org`, if an active member.
-fn standing(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<(Vec<String>, Vec<Role>)>, OrgError> {
+fn standing(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<Standing>, OrgError> {
     let Some(m) = member_of(c, org, user)? else {
         return Ok(None);
     };

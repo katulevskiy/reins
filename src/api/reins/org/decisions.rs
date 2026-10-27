@@ -468,7 +468,7 @@ pub fn status(c: &mut DbConnInner, org: &str, connection: &str, id: &str, now: i
             "next": "Approved; your organization's executor is running it. Call reins_get_result again in a few seconds."}),
         st::DONE => {
             let r = receipt_of(c, org, &row)?;
-            json!({"status": "done", "ticket": row.uuid, "result": r.map(|r| r.result).unwrap_or(Value::Null)})
+            json!({"status": "done", "ticket": row.uuid, "result": r.map_or(Value::Null, |r| r.result)})
         }
         st::DENIED => json!({"status": "denied", "ticket": row.uuid,
                              "reason": trace["explain"].as_str().filter(|s| !s.is_empty()).unwrap_or("Not approved.")}),

@@ -1,3 +1,5 @@
+#![allow(clippy::format_collect, reason = "pages are built from rows, as in console_pages")]
+
 //! The console's O2 pages (HTML): the org policy, recent decisions with the 05 §10 basics, the audit chain and its
 //! export, executors and retention. Same look and rules as [`super::console_pages`]: every value escaped, no script.
 
@@ -136,7 +138,8 @@ fn duration(secs: i64) -> String {
 
 pub fn requests(frame: &Frame<'_>, rows: &[RequestRow], c: &Counts) -> String {
     let ask_rate = if c.total > 0 {
-        format!("{:.1}%", c.reviewed as f64 * 100.0 / c.total as f64)
+        let tenths = c.reviewed * 1000 / c.total;
+        format!("{}.{}%", tenths / 10, tenths % 10)
     } else {
         "—".to_owned()
     };

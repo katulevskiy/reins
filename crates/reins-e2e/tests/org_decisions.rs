@@ -169,7 +169,6 @@ fn tamper_body(server: &Server, org: &str, request: &str, tool: &str, args: &Val
     assert_eq!(n, 1);
 }
 
-
 async fn enroll(phone: Phone) -> Member {
     let challenge = phone.core.org_challenge().await.unwrap();
     let (input, key) = enrollment_with_key(&challenge);
@@ -191,7 +190,7 @@ fn verify_export(
 }
 
 fn head_of(text: &str) -> Checkpoint {
-    let last = text.lines().filter(|l| !l.trim().is_empty()).last().unwrap();
+    let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap();
     let ExportLine::Head(env) = serde_json::from_str(last).unwrap() else {
         panic!("the export ends with its head")
     };
@@ -371,7 +370,7 @@ async fn an_org_decides_reviews_executes_audits_and_revokes() {
     // It runs on its own, every 300 ms, unless paused.
     let paused = Arc::new(AtomicBool::new(false));
     let runner = {
-        let (ctx, paused) = (ctx.clone(), paused.clone());
+        let (ctx, paused) = (Arc::clone(&ctx), Arc::clone(&paused));
         tokio::spawn(async move {
             loop {
                 if !paused.load(Ordering::SeqCst) {
@@ -524,9 +523,9 @@ async fn an_org_decides_reviews_executes_audits_and_revokes() {
         assert!(started.elapsed() < Duration::from_secs(60), "the lease outlived deprovisioning");
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    let state: String =
+    let lease_state: String =
         db(&server).query_row("SELECT state FROM reins_org_leases WHERE uuid = ?1", [&lease_id], |r| r.get(0)).unwrap();
-    assert_eq!(state, "revoked");
+    assert_eq!(lease_state, "revoked");
     let again = http
         .post(server.url("/reins/api/org/leases"))
         .bearer_auth(&ai.access)

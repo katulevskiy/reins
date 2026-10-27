@@ -76,7 +76,9 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
 }
 
 /// org → (content hash without the time, issued at, envelope).
-static CACHE: LazyLock<Mutex<HashMap<String, (String, i64, Envelope)>>> = LazyLock::new(Mutex::default);
+type Cache = HashMap<String, (String, i64, Envelope)>;
+
+static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Mutex::default);
 
 fn content_hash(r: &Roster) -> String {
     let mut timeless = r.clone();

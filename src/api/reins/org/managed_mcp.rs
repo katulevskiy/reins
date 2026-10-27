@@ -111,7 +111,7 @@ pub async fn post(
         Err(ToolArgError::Invalid(m)) => return reply(tool_error(&m)),
         Ok(ToolInvocation::GetResult(r)) => r.0,
         Ok(ToolInvocation::Relay(..)) => {
-            let (o, u, cid, label, n, args, now) = (
+            let (o, member, cid, label, tool, args, now) = (
                 org.clone(),
                 user.clone(),
                 connection_id.clone(),
@@ -120,7 +120,8 @@ pub async fn post(
                 arguments.clone(),
                 now_unix(),
             );
-            let submitted = conn.run(move |c| decisions::submit(c, &o, &u, &cid, &label, &n, &args, None, now)).await;
+            let submitted =
+                conn.run(move |c| decisions::submit(c, &o, &member, &cid, &label, &tool, &args, None, now)).await;
             match submitted {
                 Ok(s) => {
                     super::reviews::notify(pool, &s.notify, &s.id);
@@ -155,14 +156,14 @@ pub async fn post(
         }
     };
     let deadline = Instant::now() + Duration::from_secs(CONFIG.reins_relay_wait_secs());
-    let poll = || {
+    let fetch = || {
         let (o, cid, rid) = (org.clone(), connection_id.clone(), request_id.clone());
         async move {
             let conn = pool.get().await.map_err(|e| OrgError::Internal(format!("{e:?}")))?;
             conn.run(move |c| decisions::status(c, &o, &cid, &rid, now_unix())).await
         }
     };
-    match wait_final(&request_id, deadline, poll).await {
+    match wait_final(&request_id, deadline, fetch).await {
         Ok(status) => reply(render(&status)),
         Err(OrgError::NotFound) => reply(tool_error("No such request on this connection.")),
         Err(e) => reply(tool_error(e.message())),
