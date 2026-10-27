@@ -87,7 +87,8 @@ SUITE_INPUTS: dict[str, list[str]] = {
     "desktop-macos": [],
     # The job runs scripts/install.ps1 against the test build.
     "desktop-windows": ["scripts/install.ps1"],
-    "android": ["android/**", "scripts/build-android-native.sh", "scripts/check-android-apk.py"],
+    "android": ["android/**", "scripts/build-android-native.sh", "scripts/check-android-apk.py",
+                "scripts/android-trust-smoke.sh"],
     # ios.yml and the workflows it shares the core with: a pull request that changes them runs its iOS job.
     "ios": ["ios/**", "scripts/ios-ui-plan.py", ".github/workflows/ios.yml", ".github/workflows/ios-core.yml",
             ".github/workflows/ios-job.yml"],
