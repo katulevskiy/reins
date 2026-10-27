@@ -447,6 +447,11 @@ impl Engine {
         if self.legacy_mail_grants_unavailable(&parked.request).unwrap_or(true) {
             item.quick = false;
         }
+        item.ticket = self.ticket_view(&parked.request.id.0);
+        if let Some(ticket) = &item.ticket {
+            item.wait_until = Some(ticket.deadline);
+        }
+        item.can_defer = item.ticket.is_none();
         item
     }
 

@@ -243,6 +243,7 @@ fn refusal_text(r: &Refusal) -> String {
     match r {
         Refusal::Denied(m) => format!("denied on your phone: {m}"),
         Refusal::Waiting(m) | Refusal::Unavailable(m) => m.clone(),
+        Refusal::Parked(p) => p.message.clone(),
     }
 }
 

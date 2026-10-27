@@ -8,7 +8,8 @@ use crate::{CoreError, PendingKind};
 /// The server forgets pending requests and pairings after 600 s (contracts §A).
 pub const PENDING_TTL_SECS: i64 = 600;
 /// Answered ids are remembered this long so duplicates are ignored.
-pub const HANDLED_RETENTION_SECS: i64 = 86_400;
+/// Longer than the longest ticket window (7 days), so a ticket's answer is never mistaken for a new request.
+pub const HANDLED_RETENTION_SECS: i64 = 8 * 86_400;
 
 /// A parked item with its decrypted payload (JSON written by the handler).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,8 +75,8 @@ impl Store {
         let conn = self.lock()?;
         conn.execute(
             "DELETE FROM pending WHERE (CASE WHEN created_at BETWEEN parked_at - 86400 AND parked_at THEN created_at \
-             ELSE parked_at END) <= ?1",
-            params![now - PENDING_TTL_SECS],
+             ELSE parked_at END) <= ?1 AND id NOT IN (SELECT id FROM tickets WHERE deadline > ?2)",
+            params![now - PENDING_TTL_SECS, now],
         )?;
         let mut stmt =
             conn.prepare("SELECT id, kind, created_at, parked_at, payload FROM pending ORDER BY created_at DESC, id")?;
@@ -122,6 +123,12 @@ impl Store {
 
     pub fn delete_all_pending(&self) -> Result<(), CoreError> {
         self.lock()?.execute("DELETE FROM pending", [])?;
+        Ok(())
+    }
+
+    /// Forgets that `id` was answered: an approved ticket is run again when an agent collects it.
+    pub(crate) fn forget_handled(&self, id: &str) -> Result<(), CoreError> {
+        self.lock()?.execute("DELETE FROM handled WHERE id = ?1", params![id])?;
         Ok(())
     }
 

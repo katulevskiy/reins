@@ -17,6 +17,7 @@ import dev.reins.android.feedback.FeedbackStore
 import dev.reins.android.platform.AppNotifier
 import dev.reins.android.platform.BypassEndWorker
 import dev.reins.android.platform.GrantReminders
+import dev.reins.android.platform.TicketReminders
 import dev.reins.android.platform.FirebaseSupport
 import dev.reins.android.platform.GoogleAuthorizer
 import dev.reins.android.platform.KeystoreKeyWrapper
@@ -384,6 +385,26 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /**
+     * Like [answerInBackground], for a step after which [id] still waits (Later, Why?): its card goes now and it comes
+     * back as the core lists it then (under "Waiting for you"), or as it was if [work] failed.
+     */
+    fun keepWaitingInBackground(id: String, failed: String, work: suspend () -> Unit) {
+        state.removePending(id)
+        appScope.launch {
+            try {
+                work()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                feedback.play(dev.reins.android.feedback.Event.Error)
+                state.flash("$failed: ${e.userMessage()}")
+            }
+            state.restorePending(id)
+            refreshPending()
+        }
+    }
+
     /** Approval sheets read ahead, so that they open without a spinner. */
     val approvalViews = dev.reins.android.ui.approval.ApprovalViews()
 
@@ -460,7 +481,10 @@ class AppContainer(private val context: Context) {
                 questions.await()?.let(state::setAutoQuestions)
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
-                    if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded, profile)
+                    if (state.isCurrent(epoch)) {
+                        GrantReminders.sync(context, loaded, profile)
+                        TicketReminders.sync(context, waiting, profile)
+                    }
                 }
             }
         } catch (e: CoreException) {
@@ -714,6 +738,7 @@ class AppContainer(private val context: Context) {
         withContext(Dispatchers.IO) {
             deviceStatus.clear()
             GrantReminders.sync(context, emptyList(), profile)
+            TicketReminders.sync(context, emptyList(), profile)
             BypassEndWorker.schedule(context, null)
             notifier.showBypass(null)
             notifier.showOvernight(null)

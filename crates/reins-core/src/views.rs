@@ -285,6 +285,8 @@ pub fn request_subtitle(parked: &ParkedRequest) -> String {
 pub fn request_item(parked: &ParkedRequest) -> PendingItem {
     let view = approval_view(parked);
     PendingItem {
+        ticket: None,
+        can_defer: false,
         kind: PendingKind::Request,
         id: parked.request.id.0.clone(),
         title: request_title(parked),
@@ -361,6 +363,8 @@ pub fn clean_pairing(mut p: PairingRequest) -> PairingRequest {
 
 pub fn pairing_item(p: &PairingRequest) -> PendingItem {
     PendingItem {
+        ticket: None,
+        can_defer: false,
         kind: PendingKind::Pairing,
         id: p.id.0.clone(),
         title: format!("Connect {} to Reins?", p.client_name),

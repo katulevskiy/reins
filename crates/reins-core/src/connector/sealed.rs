@@ -85,6 +85,8 @@ mod tests {
             v: 1,
             nonce: "n".to_owned(),
             approved: true,
+            digest: None,
+            expires_at: None,
         };
         let sealed = seal(*secret.public_key().as_bytes(), &answer).unwrap();
         let bytes = BASE64URL_NOPAD.decode(sealed.as_bytes()).unwrap();

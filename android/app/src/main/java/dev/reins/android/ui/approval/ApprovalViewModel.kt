@@ -26,6 +26,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 
 data class ApprovalUi(
@@ -355,5 +358,48 @@ class ApprovalViewModel(
         container.feedback.play(Event.Denied)
         container.answerInBackground(requestId, "Not denied") { container.core.deny(requestId) }
         _ui.update { it.copy(finished = true) }
+    }
+
+    /** Deny with a note the agent receives ("Use the staging bucket"); an empty note is none. */
+    fun deny(note: String) {
+        if (_ui.value.readOnly) return
+        if (_ui.value.busy) return
+        val text = note.trim().ifEmpty { null }
+        container.feedback.play(Event.Denied)
+        container.answerInBackground(requestId, "Not denied") { container.core.denyWithNote(requestId, text) }
+        _ui.update { it.copy(finished = true) }
+    }
+
+    /** The waiting item this screen is about (its ticket, whether it can wait), from the list. */
+    fun pendingItem(): dev.reins.core.PendingItem? = container.state.pending.value.firstOrNull { it.id == requestId }
+
+    /** [pendingItem], kept up to date while the screen is open. */
+    val item: StateFlow<dev.reins.core.PendingItem?> = container.state.pending
+        .map { list -> list.firstOrNull { it.id == requestId } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, pendingItem())
+
+    /** Later: the agent is told at once and carries on; the request waits under "Waiting for you". */
+    fun decideLater() {
+        if (_ui.value.readOnly) return
+        if (_ui.value.busy) return
+        container.feedback.play(Event.Selection)
+        container.keepWaitingInBackground(requestId, "Not moved") { container.core.decideLater(requestId) }
+        _ui.update { it.copy(finished = true) }
+    }
+
+    /** "Why?": asks the agent; the request waits for its answer under "Waiting for you". */
+    fun askWhy(question: String) {
+        if (_ui.value.readOnly) return
+        if (_ui.value.busy) return
+        val text = question.trim()
+        if (text.isEmpty()) return
+        container.feedback.play(Event.Selection)
+        container.keepWaitingInBackground(requestId, "Not sent") { container.core.askWhy(requestId, text.take(WHY_MAX)) }
+        _ui.update { it.copy(finished = true) }
+    }
+
+    companion object {
+        /** The core takes up to 500 characters of a question. */
+        const val WHY_MAX = 500
     }
 }

@@ -10,6 +10,8 @@ import Foundation
 /// works after two polls, `-demoJoinDenied` refuses; resetting the vault starts it over as a new account).
 /// `-demoJoin` has another phone ask this one for the keys.
 /// `-demoQuiet`: nothing waits (Activity's pond and its mood line).
+/// `-demoTickets`: some requests are tickets under "Waiting for you" (one asked Why? and answered, one stale) and the
+/// rest offer Later.
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 /// `-demoAutoSetup`: Auto's setup is not done yet, so picking Auto guides through it first. `-demoQuestions`: Auto
@@ -256,6 +258,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.syncedPush = git
             s.syncedFails = args.contains("-demoSyncedPushFails")
         }
+        if args.contains("-demoTickets") { Self.seedTickets(&s, now: now) }
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -907,6 +910,84 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: the agent's note goes with the denial (the demo has no agent to give it to).
+    func denyWithNote(requestId: String, note: String?) async throws {
+        try await deny(requestId: requestId)
+    }
+
+    /// As the core: an Instant request becomes a ticket, due at the default deferred window's end.
+    func decideLater(requestId: String) async throws {
+        try await latency()
+        try locked { s in
+            guard let i = s.pending.firstIndex(where: { $0.id == requestId }) else { throw CoreError.NotFound }
+            guard s.pending[i].ticket == nil else { return }
+            let now = Self.now()
+            Self.makeTicket(&s.pending[i], state: "deferred", deferredAt: now, deadline: now + Self.deferredWindow)
+            s.pendingVersion += 1
+        }
+    }
+
+    /// As the core: the question goes to the agent and the request waits as a ticket. The demo's agent answers a few
+    /// seconds later.
+    func askWhy(requestId: String, question: String) async throws {
+        try await latency()
+        let asked = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !asked.isEmpty else { throw CoreError.Invalid(reason: "The question is empty.") }
+        try locked { s in
+            guard let i = s.pending.firstIndex(where: { $0.id == requestId }) else { throw CoreError.NotFound }
+            let now = Self.now()
+            if s.pending[i].ticket == nil {
+                Self.makeTicket(&s.pending[i], state: "needs_info", deferredAt: now, deadline: now + Self.deferredWindow)
+            }
+            s.pending[i].ticket?.state = "needs_info"
+            s.pending[i].ticket?.question = String(asked.prefix(500))
+            s.pending[i].ticket?.agentReply = nil
+            s.pendingVersion += 1
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            self?.locked { s in
+                guard let i = s.pending.firstIndex(where: { $0.id == requestId }), s.pending[i].ticket?.question != nil else { return }
+                s.pending[i].ticket?.state = "deferred"
+                s.pending[i].ticket?.agentReply = "It is the release checklist the team asked for this morning."
+                s.pendingVersion += 1
+            }
+        }
+    }
+
+    /// The deferred window's default (4 h).
+    static let deferredWindow: Int64 = 4 * 3_600
+
+    private static func makeTicket(_ item: inout PendingItem, state: String, deferredAt: Int64, deadline: Int64) {
+        item.ticket = TicketView(
+            ticket: "rt_demo\(item.id)", state: state, deferredAt: deferredAt, deadline: deadline, question: nil, agentReply: nil, stale: nil
+        )
+        item.waitUntil = deadline
+        item.canDefer = false
+    }
+
+    /// `-demoTickets`: three Cursor and notes-bot requests became tickets (two of one kind, one asked about and
+    /// answered, one stale); everything else that asks can be moved to later.
+    private static func seedTickets(_ s: inout State, now: Int64) {
+        for i in s.pending.indices where s.pending[i].kind == .request {
+            switch s.pending[i].id {
+            case "req30":
+                makeTicket(&s.pending[i], state: "deferred", deferredAt: now - 3_600, deadline: now + 3 * 3_600)
+                s.pending[i].quick = true
+            case "req32":
+                makeTicket(&s.pending[i], state: "deferred", deferredAt: now - 3 * 3_600 - 1_200, deadline: now + 40 * 60)
+                s.pending[i].quick = true
+                s.pending[i].ticket?.question = "What is this issue for?"
+                s.pending[i].ticket?.agentReply = "Tracking the flaky login test we saw in CI today."
+            case "req4":
+                makeTicket(&s.pending[i], state: "stale", deferredAt: now - 2 * 3_600, deadline: now + 20 * 3_600)
+                s.pending[i].ticket?.stale = "2 more emails arrived since you looked"
+            default:
+                s.pending[i].canDefer = true
+            }
+        }
+    }
+
     func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
@@ -1231,6 +1312,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     ]
 
     func devices() async throws -> [DeviceView] { locked { $0.devices } }
+
+    /// This phone's signing key as agents and the desktop app pin it: twelve digits in three groups.
+    static let signingKey = "4821 9930 1274"
+
+    func signingKeyFingerprint() async throws -> String {
+        guard locked({ $0.session }) != nil else { throw CoreError.NotLoggedIn }
+        return Self.signingKey
+    }
 
     func signOutDevice(deviceId: String, codeOrPassword: String) async throws {
         try locked { s in

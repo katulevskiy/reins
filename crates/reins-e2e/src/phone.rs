@@ -225,6 +225,17 @@ impl Phone {
         }
     }
 
+    /// The sends that reached the fake Gmail.
+    pub async fn sent_emails(&self) -> Vec<wiremock::Request> {
+        self.gmail
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.url.path() == "/users/me/messages/send")
+            .collect()
+    }
+
     pub async fn accept_sends(&self) {
         Mock::given(method("POST"))
             .and(path("/users/me/messages/send"))

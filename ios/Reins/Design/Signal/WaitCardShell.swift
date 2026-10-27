@@ -32,6 +32,61 @@ struct WaitCardShell<Avatar: View, Timer: View, Actions: View>: View {
     }
 }
 
+/// Later on a waiting card (`decideLater`): the request moves to "Waiting for you" and the agent carries on. Round, in
+/// the field's wash, beside the other buttons; the full width with its word at accessibility sizes.
+struct LaterButton: View {
+    var wide = false
+    var action: () -> Void
+
+    var body: some View {
+        if wide {
+            Button(action: action) {
+                Label { Text("Later") } icon: { Image(systemName: "clock.arrow.circlepath") }
+            }
+            .buttonStyle(SignalButtonStyle(.onFieldWash, size: .small))
+            .accessibilityIdentifier("later")
+        } else {
+            Button(action: action) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Palette.onField)
+                    .frame(width: 42, height: 42)
+                    .background(Palette.onFieldWash, in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PressDimsStyle())
+            .accessibilityLabel("Later")
+            .accessibilityIdentifier("later")
+        }
+    }
+}
+
+/// A waiting card's buttons with Later after them when `later` is given: on the same row, or under them at
+/// accessibility sizes.
+struct WithLater<Buttons: View>: View {
+    var later: (() -> Void)?
+    @ViewBuilder var buttons: Buttons
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        if let later {
+            if typeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    buttons
+                    LaterButton(wide: true, action: later)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    buttons
+                    LaterButton(action: later)
+                }
+            }
+        } else {
+            buttons
+        }
+    }
+}
+
 /// Autopilot's pick, the first button on a waiting card.
 enum AutopilotPick: Equatable {
     /// "Allow · 97%": white, with the approve glyph.

@@ -15,9 +15,10 @@ enum AskGate {
         return read.filter { !gone.contains($0.id) }
     }
 
-    /// The item to pop up by itself: the first one that waits for the owner and has not popped up before.
+    /// The item to pop up by itself: the first one that waits for the owner and has not popped up before. Never a
+    /// ticket: nobody waits on it, it waits under "Waiting for you" (and one moved there with Later stays there).
     static func next(_ waiting: [PendingItem], presented: Set<String>) -> PendingItem? {
-        waiting.first { !presented.contains($0.id) }
+        waiting.first { $0.ticket == nil && !presented.contains($0.id) }
     }
 
     /// Whether the sheet open on `open` is the ask a mode or Autopilot just decided (`decided`): it closes.

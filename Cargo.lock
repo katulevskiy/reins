@@ -11339,6 +11339,7 @@ dependencies = [
  "chrono-tz",
  "cookie",
  "cookie_store",
+ "crypto_box",
  "dashmap",
  "data-encoding",
  "data-url",

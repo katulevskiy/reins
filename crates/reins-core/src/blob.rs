@@ -417,6 +417,8 @@ pub fn blob_view(info: &BlobInfo) -> BlobView {
 pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
     let view = blob_view(info);
     PendingItem {
+        ticket: None,
+        can_defer: false,
         kind: PendingKind::Blob,
         id: view.id.clone(),
         title: format!("{} wants to share a file: {}", view.connection_label, view.name),

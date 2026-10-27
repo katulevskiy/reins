@@ -41,6 +41,12 @@ pub fn heard_of(answer: &CallAnswer) -> Heard {
     match &answer.status {
         CallStatus::Answered(_) => heard.decided = answer.decided.clone().map(Attribution::from),
         CallStatus::Pending | CallStatus::Offline => heard.leaning = answer.suggestion.as_ref().map(Lean::from),
+        CallStatus::Deferred {
+            ..
+        }
+        | CallStatus::Closed {
+            ..
+        } => {}
     }
     heard
 }

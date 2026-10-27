@@ -677,7 +677,10 @@ async fn a_legacy_account_is_unaffected() {
     let tokens = server.connect_ai(&phone, "leo@example.com", Some("Claude")).await;
     assert_eq!(phone.get("/roster").await.1, json!({"entries": []}));
     // The poll looks as it always did.
-    assert_eq!(phone.get("/pending?wait=0").await.1, json!({"requests": [], "pairings": []}));
+    assert_eq!(
+        phone.get("/pending?wait=0").await.1,
+        json!({"requests": [], "pairings": [], "instant_window_secs": 120})
+    );
     // The account state is written as before.
     let (status, body) = phone.put("/account-state", &json!({"revision": 0, "ciphertext": "c2VhbGVk"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");

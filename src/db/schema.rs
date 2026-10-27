@@ -587,6 +587,64 @@ table! {
     }
 }
 
+table! {
+    reins_tickets (id) {
+        id -> Text,
+        user_uuid -> Text,
+        connection_uuid -> Text,
+        connection_label -> Text,
+        state -> Text,
+        digest -> Text,
+        execution -> Text,
+        on_expiry -> Text,
+        finish -> Text,
+        created_at -> BigInt,
+        deferred_at -> BigInt,
+        deadline -> BigInt,
+        window_secs -> BigInt,
+        escalated -> Bool,
+        approved_at -> Nullable<BigInt>,
+        valid_secs -> BigInt,
+        sealed_body -> Text,
+        question -> Nullable<Text>,
+        sealed_reply -> Nullable<Text>,
+        note -> Nullable<Text>,
+        result -> Nullable<Text>,
+        stale -> Nullable<Text>,
+        delivered -> Bool,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_ticket_events (ticket_id, seq) {
+        ticket_id -> Text,
+        seq -> Integer,
+        state -> Text,
+        signed -> Bool,
+        event -> Text,
+        created_at -> BigInt,
+    }
+}
+
+table! {
+    reins_device_keys (user_uuid) {
+        user_uuid -> Text,
+        device_uuid -> Text,
+        sign_pub -> Text,
+        box_pub -> Text,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_callbacks (connection_uuid) {
+        connection_uuid -> Text,
+        url -> Text,
+        verified_at -> BigInt,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

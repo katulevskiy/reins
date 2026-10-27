@@ -29,6 +29,7 @@ struct ConnectionDetailScreen: View {
                     ConnectionInfoGroup(connection: connection, profiles: profiles, activeGrants: activeGrants(connection.id)) {
                         await loadProfiles()
                     }
+                    SigningKeyMore()
                     DisconnectRow(connection: connection)
                 }
                 .sheet(isPresented: $naming) {
@@ -419,6 +420,61 @@ private struct ConnectionInfoGroup: View {
                 self.error = error.userMessage
             }
             await model.refreshAutopilot()
+        }
+    }
+}
+
+/// "More", closed at first: this phone's signing key, which agents and the desktop app pin to check what it signs. The
+/// same for every connection; read when opened. One mono row, its (?) beside it.
+private struct SigningKeyMore: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+    @State private var open = false
+    @State private var key: String?
+    @State private var failed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.smooth) { open.toggle() }
+                feedback.play(.expand(open))
+            } label: {
+                HStack {
+                    Text("More").font(RFont.sans(15, .medium))
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .foregroundStyle(Palette.violet)
+                .padding(.horizontal, 24)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("connectionMore")
+            .accessibilityValue(open ? "Open" : "Closed")
+            if open {
+                FlatGroup {
+                    HStack(spacing: 8) {
+                        TileRow("Signing key", glyph: .fingerprint, value: key ?? (failed ? "Unavailable" : "…"), mono: key != nil, chevron: false)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("signingKey")
+                        HelpDot(id: "signingKey", text: SettingsText.signingKeyHelp, size: 28)
+                    }
+                    .padding(.horizontal, -14)
+                }
+                .transition(.opacity)
+                .task { await load() }
+            }
+        }
+    }
+
+    private func load() async {
+        guard key == nil else { return }
+        do {
+            key = SettingsText.signingKey(try await model.core.signingKeyFingerprint())
+            failed = key == nil
+        } catch {
+            failed = true
         }
     }
 }

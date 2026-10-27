@@ -2,6 +2,7 @@ package dev.reins.android.ui.approval
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -85,6 +86,11 @@ internal fun Dock(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
                 envWiderLabel(view, ui.draft)?.let { EnvScopeNote(it) }
                 Segments(view, ui, viewModel)
             }
+        }
+        // Later, Why? and a note with a denial (Decisions v2); a permission or a payment has none of them.
+        if (view.kind != ApprovalKind.GRANT && view.purchase == null) {
+            val item by viewModel.item.collectAsStateWithLifecycle()
+            TicketActions(item, ui.busy, viewModel)
         }
         Buttons(view, ui, viewModel, authenticator)
     }

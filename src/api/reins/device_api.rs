@@ -324,7 +324,34 @@ async fn put_device(
         updated_at: now_unix(),
         key_hash: key.hash().map(str::to_owned),
     };
+    let published =
+        super::ticket_routes::published_keys(registration.sign_pub.as_deref(), registration.box_pub.as_deref());
+    // With phone roles the primary's keys are the roster's (owner-signed): a device may not publish others.
+    if let Some((sign_pub, box_pub)) = &published
+        && let Some(current) = super::roles::chain(&headers.user.uuid.to_string(), &conn).await?.last()
+        && (current.primary.sign_pub != *sign_pub || current.primary.box_pub != *box_pub)
+    {
+        return Err(bad_request("These keys are not the roster's primary's"));
+    }
+    let known = super::tickets::device_keys(&headers.user.uuid.to_string(), &conn).await;
     let previous = row.replace(&conn).await.map_err(|e| internal(&e))?;
+    let new_keys =
+        published.as_ref().is_some_and(|(s, b)| known.as_ref().is_some_and(|k| k.sign_pub != *s || k.box_pub != *b));
+    if new_keys || previous.as_ref().is_some_and(|p| !is_caller(p, &headers, &key)) {
+        // What was sealed to the old phone can never be opened: its tickets close, saying why.
+        super::tickets::close_for_new_device(&headers.user.uuid.to_string(), &conn).await;
+    }
+    // Deferred decisions: what parked requests are sealed to, and what the device's ticket events are checked with.
+    if let Some((sign_pub, box_pub)) = published {
+        let keys = crate::db::models::ReinsDeviceKeys {
+            user_uuid: headers.user.uuid.to_string(),
+            device_uuid: headers.device.uuid.to_string(),
+            sign_pub,
+            box_pub,
+            updated_at: now_unix(),
+        };
+        keys.save(&conn).await.map_err(|e| internal(&e))?;
+    }
     let replaced = previous.filter(|p| !is_caller(p, &headers, &key));
     // Not to this phone itself (the same push token: it lost its device key and proved itself again).
     if let Some(old) = replaced.as_ref().filter(|old| old.fcm_token != row.fcm_token) {
@@ -392,13 +419,25 @@ async fn get_pending(
     if roster {
         super::live::log_head(&user, &conn).await?;
     }
+    // Tickets the device has not seen yet end the long-poll at once (they need the database, the wait does not).
+    let tickets_waiting = !crate::db::models::ReinsTicket::undelivered(&user, &conn).await.is_empty()
+        || !HUB.tickets.collects_of(&user, now_unix()).is_empty();
     // Never hold a pooled DB connection during a long-poll.
     drop(conn);
     let _poll = super::limits::DEVICE_POLLS
         .try_enter(&headers.device.uuid.to_string())
         .ok_or_else(|| too_many_running("too many long-polls of this device are open"))?;
-    let wait = Duration::from_secs(u64::from(clamp_wait(wait.as_deref())));
+    let wait = if tickets_waiting {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(u64::from(clamp_wait(wait.as_deref())))
+    };
     let mut pending = HUB.pending(&user, wait, roster.then(|| log.unwrap_or(u64::MAX))).await;
+    {
+        let conn = pool.get().await.map_err(|e| internal(&e))?;
+        pending.tickets = super::tickets::for_phone(&user, &conn).await;
+    }
+    pending.instant_window_secs = Some(super::tickets::instant_window().as_secs());
     if crate::sso_workos::enabled() {
         // Carry the authoritative email with the existing poll; no extra mobile profile requests are needed.
         // Reacquire only after the wait so a change during a long-poll appears in that response.
@@ -429,6 +468,7 @@ async fn post_request_response(
     headers: Headers,
     key: DeviceKey,
     conn: DbConn,
+    pool: &State<DbPool>,
 ) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
     let user = user_key(&headers);
@@ -441,9 +481,23 @@ async fn post_request_response(
         let answer = super::roles::open_signed_answer(&user, AnswerKind::Request, id, &body, &entries)?;
         parse_versioned(&answer)?
     };
-    HUB.relay
-        .answer_decided(&user, &RequestId::from(id), response.outcome, response.decided)
-        .map_err(|e| answer_error(&e))?;
+    let request_id = RequestId::from(id);
+    let answered = if HUB.relay.unanswered(&user, &request_id).is_none()
+        && let Some(conn) = pool.get().await.ok()
+        && crate::db::models::ReinsTicket::find_for_user(id, &user, &conn).await.is_some()
+    {
+        // A request that became a ticket: its signed transitions, then the outcome.
+        return super::tickets::answer(&user, id, response, &conn)
+            .await
+            .map(|()| {
+                HUB.live.bump(&user);
+                Status::NoContent
+            })
+            .map_err(|e| super::ticket_routes::ticket_error(&e));
+    } else {
+        HUB.relay.answer_decided(&user, &request_id, response.outcome, response.decided)
+    };
+    answered.map_err(|e| answer_error(&e))?;
     HUB.live.bump(&user);
     Ok(Status::NoContent)
 }

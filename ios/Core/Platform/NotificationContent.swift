@@ -9,6 +9,9 @@ enum NotificationCategory: String, CaseIterable {
     /// A routine request waits (`PendingItem.quick`): "Deny" and "Approve" from the notification. Never one that is
     /// asked every time; the core refuses `approveQuick` for those anyway.
     case quickRequest
+    /// A request that became a ticket waits under "Waiting for you" (the agent carries on): it arrives quietly unless
+    /// little time is left, and its reminders say so. "Deny" and "Deny with note" from the notification, a tap opens it.
+    case waiting
     /// A new AI connection waits.
     case pairing
     /// A file an AI uploaded waits.
@@ -30,7 +33,7 @@ enum NotificationCategory: String, CaseIterable {
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
         switch self {
-        case .request, .quickRequest, .pairing, .blob, .join, .arriving: NotificationText.genericBody
+        case .request, .quickRequest, .waiting, .pairing, .blob, .join, .arriving: NotificationText.genericBody
         case .deciding: NotificationText.decidingBody
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
@@ -41,7 +44,7 @@ enum NotificationCategory: String, CaseIterable {
     /// The thread notifications of this category join: the active profile's own (`WorkProfiles.thread`).
     var thread: String {
         let base = switch self {
-        case .request, .quickRequest, .pairing, .blob, .join, .arriving, .deciding: "requests"
+        case .request, .quickRequest, .waiting, .pairing, .blob, .join, .arriving, .deciding: "requests"
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
@@ -58,6 +61,14 @@ enum NotificationCategory: String, CaseIterable {
         }
     }
 
+    /// The category of a waiting item's notification: a ticket's own, a routine request's with Approve beside Deny;
+    /// what is asked every time only opens.
+    static func of(_ item: PendingItem) -> NotificationCategory {
+        guard item.kind == .request else { return NotificationCategory(item.kind) }
+        if item.ticket != nil { return .waiting }
+        return item.quick ? .quickRequest : .request
+    }
+
     init(_ kind: PendingKind) {
         switch kind {
         case .request: self = .request
@@ -71,6 +82,8 @@ enum NotificationCategory: String, CaseIterable {
 /// Action identifiers of the categories.
 enum NotificationAction {
     static let deny = "deny"
+    /// "Deny with note" (`waiting`): a text input whose words reach the agent with the denial.
+    static let denyNote = "denyNote"
     static let approve = "approve"
     static let report = "report"
 }
@@ -202,10 +215,11 @@ enum NotificationText {
 /// so a push and a local notification for the same item look alike.
 enum NotificationContent {
     /// An item that waits for the user.
-    static func pending(_ item: PendingItem, settings: FeedbackSettings) -> UNMutableNotificationContent {
+    static func pending(
+        _ item: PendingItem, settings: FeedbackSettings, now: Int64 = Int64(Date().timeIntervalSince1970)
+    ) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
-        // Routine requests get Approve beside Deny; what is asked every time only opens.
-        let category: NotificationCategory = item.kind == .request && item.quick ? .quickRequest : NotificationCategory(item.kind)
+        let category = NotificationCategory.of(item)
         c.title = NotificationText.title(item)
         c.body = NotificationText.body(item)
         c.categoryIdentifier = category.rawValue
@@ -213,6 +227,16 @@ enum NotificationContent {
         c.interruptionLevel = .timeSensitive
         c.relevanceScore = item.kind == .request ? 1 : 0.9
         c.sound = NotificationSoundFile.sound(NotificationSoundFile.request, .requests, settings)
+        if let ticket = item.ticket {
+            // Nobody waits on it: quiet (no sound, no buzz) unless less than an hour is left.
+            let urgent = TicketText.urgent(deadline: ticket.deadline, now: now)
+            c.body = [c.body, TicketText.due(deadline: ticket.deadline, now: now), TicketText.agentSays(ticket).map { "\(TicketText.agentSaysLabel): \($0)" } ?? ""]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            c.interruptionLevel = urgent ? .timeSensitive : .active
+            c.relevanceScore = urgent ? 0.9 : 0.5
+            if !urgent { c.sound = nil }
+        }
         let kind: Snapshot.Item.Kind = switch item.kind {
         case .request: .request
         case .pairing: .pairing
@@ -370,7 +394,7 @@ enum PushOutcome {
 enum NotificationSweep {
     /// The categories of notifications about one item that the sweep looks at (another phone's ask is left alone).
     static let itemCategories: Set<String> = Set(
-        [NotificationCategory.request, .quickRequest, .pairing, .blob, .arriving, .deciding].map(\.rawValue)
+        [NotificationCategory.request, .quickRequest, .waiting, .pairing, .blob, .arriving, .deciding].map(\.rawValue)
     )
 
     /// How long a push the extension could not read is left alone for the app to fetch it.

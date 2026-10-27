@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Schedule
 import dev.reins.android.design.ButtonSize
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.Field
@@ -121,6 +122,8 @@ fun WaitingStack(
     onReview: (PendingItem) -> Unit,
     onAnswer: suspend (Burst, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** Later: the request becomes a ticket and moves under "Waiting for you" (offered when it can wait). */
+    onLater: (PendingItem) -> Unit = {},
 ) {
     val reduce = LocalReduceMotion.current
     // A card answered elsewhere (its button, the sheet, another device) folds away; a flicked one has already left.
@@ -148,6 +151,7 @@ fun WaitingStack(
                             onReview = onReview,
                             onFlown = { flown += card.key },
                             onAnswer = onAnswer,
+                            onLater = onLater,
                         )
                     }
                 }
@@ -207,6 +211,7 @@ private fun StackCard(
     onReview: (PendingItem) -> Unit,
     onFlown: () -> Unit,
     onAnswer: suspend (Burst, Boolean) -> Unit,
+    onLater: (PendingItem) -> Unit,
 ) {
     val reduce = LocalReduceMotion.current
     val feedback = LocalFeedback.current
@@ -300,7 +305,7 @@ private fun StackCard(
             .then(if (flickable) Modifier.draggable(drag, Orientation.Horizontal, onDragStopped = { v -> settle(v) }) else Modifier),
         propagateMinConstraints = true,
     ) {
-        CardFace(card, details, showContent = top, action = action, onReview = { onReview(card.first) }) { approve ->
+        CardFace(card, details, showContent = top, action = action, onReview = { onReview(card.first) }, onLater = { onLater(card.first) }) { approve ->
             // Answered by its button: it folds in place when it leaves the list, and the river takes it.
             scope.launch { onAnswer(burst, approve) }
         }
@@ -351,6 +356,7 @@ private fun CardFace(
     showContent: Boolean,
     action: WaitAction,
     onReview: () -> Unit,
+    onLater: () -> Unit = {},
     onAnswer: (Boolean) -> Unit,
 ) {
     val c = LocalColors.current
@@ -467,6 +473,19 @@ private fun CardFace(
                 size = ButtonSize.Small,
                 onClick = onReview,
             )
+            // Later (Decisions v2): an Instant request the server can park; the agent carries on.
+            if (one && first.kind == PendingKind.REQUEST && first.canDefer && first.ticket == null) {
+                SignalButton(
+                    "Later",
+                    Modifier.testTag("later:${first.id}"),
+                    style = ButtonStyle.OnFieldWash,
+                    size = ButtonSize.Small,
+                    leading = {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Schedule, null, Modifier.size(18.dp), tint = c.onField)
+                    },
+                    onClick = onLater,
+                )
+            }
         }
     }
 }

@@ -3,6 +3,21 @@ import XCTest
 
 /// What Settings, a connection's page and sign-in say and allow.
 final class SettingsTextTests: XCTestCase {
+    func testTheSigningKeyIsTwelveDigitsInThreeGroups() async throws {
+        XCTAssertEqual(SettingsText.signingKey("4821 9930 1274"), "4821 9930 1274", "as the core groups it")
+        XCTAssertEqual(SettingsText.signingKey("482199301274"), "4821 9930 1274")
+        XCTAssertEqual(SettingsText.signingKey(" 4821  9930\n1274 "), "4821 9930 1274")
+        XCTAssertNil(SettingsText.signingKey("4821 9930 127"), "too short")
+        XCTAssertNil(SettingsText.signingKey("4821 9930 12745"), "too long")
+        XCTAssertNil(SettingsText.signingKey("4821 99A0 1274"))
+        XCTAssertNil(SettingsText.signingKey("４８２１ ９９３０ １２７４"), "only ASCII digits")
+        XCTAssertNil(SettingsText.signingKey(""))
+        XCTAssertEqual(SettingsText.signingKeyHelp, "Agents and your computer use this to check what this phone signs.")
+        // The demo core names one, signed in only.
+        let demo = try await DemoReinsCore().signingKeyFingerprint()
+        XCTAssertEqual(SettingsText.signingKey(demo), demo)
+    }
+
     func testTheSoundsRowSaysWhatIsOn() {
         var s = FeedbackSettings()
         XCTAssertEqual(SettingsText.soundsValue(s), "On")

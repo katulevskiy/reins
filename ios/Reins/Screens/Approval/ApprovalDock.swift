@@ -37,6 +37,10 @@ struct ApprovalDock: View {
                 if let wider = ApprovalWords.secretsWider(view, vm.draft) { SecretsCommandNote(command: wider) }
                 if ax { DockMenu(vm: vm, view: view) } else { DockSegments(vm: vm, view: view) }
             }
+            // Later, Why? and a denial with a note, for a request that waits here.
+            if !vm.readOnly, let item = model.pending.first(where: { $0.id == view.requestId }), item.kind == .request {
+                TicketDockRow(vm: vm, item: item)
+            }
             if ax {
                 VStack(spacing: 10) {
                     approve

@@ -46,6 +46,10 @@ enum ApprovalPage: Hashable {
 /// What slides up over the approval screen.
 enum ApprovalOverlay: String, Identifiable {
     case remember, autopilot, grant
+    /// "Why?": a question to the agent.
+    case why
+    /// Deny with a note to the agent.
+    case denyNote
     var id: String { rawValue }
 }
 
@@ -118,6 +122,8 @@ private struct ApprovalScreen: View {
                         }
                     }
                 case .grant: GrantSheet(vm: vm, view: view)
+                case .why: WhySheet(vm: vm)
+                case .denyNote: DenyNoteSheet(vm: vm, view: view)
                 }
             }
             .environment(model)
