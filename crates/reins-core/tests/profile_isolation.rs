@@ -195,6 +195,17 @@ async fn the_enrollment_carries_only_the_work_account() {
 }
 
 #[tokio::test]
+async fn work_accounts_are_offered_only_where_the_server_has_organizations() {
+    let (server, _org) = server().await;
+    let (_base, _registry, personal, _work) = two_profiles(&server).await;
+    // The mock has no console: no organizations.
+    assert!(!personal.orgs_offered(server.uri()).await.unwrap());
+    Mock::given(method("GET")).and(path("/reins/org")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    assert!(personal.orgs_offered(server.uri()).await.unwrap());
+    assert!(!personal.orgs_offered("http://127.0.0.1:9".to_owned()).await.unwrap());
+}
+
+#[tokio::test]
 async fn activity_and_accounts_never_cross_profiles() {
     let (server, _org) = server().await;
     let (_base, _registry, personal, work) = two_profiles(&server).await;

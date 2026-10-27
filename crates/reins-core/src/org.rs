@@ -157,6 +157,15 @@ impl Engine {
         api_call!(&session, |api| api.org_posture(&p)).map_err(org_error)
     }
 
+    /// Whether `server_url` offers organizations (its admin console answers): only then does Settings offer "Add work
+    /// account". A server that can't be reached offers none.
+    pub async fn orgs_offered(&self, server_url: &str) -> Result<bool, CoreError> {
+        let server = crate::http::ServerUrl::parse(server_url)?;
+        let response =
+            self.http.get(server.join("/reins/org")).timeout(std::time::Duration::from_secs(10)).send().await;
+        Ok(response.is_ok_and(|r| r.status().is_success()))
+    }
+
     /// Starts an "Add work account" sign-in: like `sso_begin`, sent to the org that verified `domain`.
     pub fn sso_begin_work(&self, server_url: &str, domain: &str) -> Result<crate::types::SsoStart, CoreError> {
         let server = crate::http::ServerUrl::parse(server_url)?;

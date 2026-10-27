@@ -667,6 +667,7 @@ class FakeCore : ReinsCoreInterface {
         sessionThrows = 0
         ssoBegins.clear()
         org = null
+        orgsOffered = false
         ssoBeginWorks.clear()
         enrollments.clear()
         postures.clear()
@@ -712,6 +713,11 @@ class FakeCore : ReinsCoreInterface {
     }
 
     override suspend fun orgMembership(): dev.reins.core.OrgView? = org
+
+    /** Whether the server offers organizations ("Add work account"). */
+    @Volatile var orgsOffered = false
+
+    override suspend fun orgsOffered(serverUrl: String): Boolean = orgsOffered
 
     override suspend fun orgChallenge(): String = org?.let { "challenge-1" } ?: throw CoreException.NotFound()
 

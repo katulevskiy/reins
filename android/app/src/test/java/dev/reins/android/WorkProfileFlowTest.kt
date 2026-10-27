@@ -24,6 +24,7 @@ import dev.reins.core.ProfileKind
 import dev.reins.core.ProfileRegistryInterface
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -197,6 +198,19 @@ class WorkProfileFlowTest : FlowHarness() {
         assertEquals(1, registry.list().size)
         assertEquals(1, registry.removed.size)
         assertTrue(work.enrollments.isEmpty())
+    }
+
+    @Test
+    fun `settings offers a work account only where the server has organizations`() {
+        launch()
+        tap("tabSettings")
+        awaitTag("devicesRow")
+        assertFalse(has("addWorkAccount"))
+        closeApp()
+        FakeCore.shared.orgsOffered = true
+        launch()
+        tap("tabSettings")
+        awaitTag("addWorkAccount")
     }
 
     private fun waitFor(condition: () -> Boolean) {

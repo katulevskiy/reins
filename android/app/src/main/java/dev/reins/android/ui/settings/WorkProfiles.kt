@@ -48,13 +48,20 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Settings → Profiles: Personal and each work profile, the active one marked; tapping another switches to it. */
+/**
+ * Settings → Profiles: Personal and each work profile, the active one marked; tapping another switches to it. Shown
+ * only where the server has organizations, or the phone already has a work profile.
+ */
 @Composable
-fun ProfilesGroup(container: AppContainer, onAddWork: () -> Unit) {
+fun ProfilesGroup(container: AppContainer, server: String, onAddWork: () -> Unit) {
     val activity = LocalContext.current as? Activity
     val profiles by produceState(emptyList<AccountProfile>(), container) {
         value = withContext(Dispatchers.IO) { runCatching { container.profiles.list() }.getOrDefault(emptyList()) }
     }
+    val offered by produceState(false, server) {
+        value = runCatching { container.core.orgsOffered(server) }.getOrDefault(false)
+    }
+    if (!offered && profiles.none { it.kind == ProfileKind.MANAGED }) return
     val active = WorkProfiles.active.id
     SettingsGroup(header = "Profiles", glyph = Glyph.Person) {
         profiles.forEach { p ->
