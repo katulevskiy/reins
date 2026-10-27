@@ -129,6 +129,10 @@ fn member_state(server: &Server, email: &str) -> Option<String> {
         .ok()
 }
 
+fn user_exists(server: &Server, email: &str) -> bool {
+    db(server).query_row("SELECT COUNT(*) FROM users WHERE email = ?1", [email], |r| r.get::<_, i64>(0)).unwrap() > 0
+}
+
 fn devices_of(server: &Server, email: &str) -> i64 {
     db(server)
         .query_row(
@@ -327,11 +331,15 @@ async fn a_pilot_org_is_provisioned_and_deprovisioned_end_to_end() {
     workos.emit("dsync.user.deleted", dir_user("directory_user_lee", "lee@acme.com", "inactive"));
     let started = Instant::now();
     webhook(&server, &json!({"id": "wh_2", "event": "dsync.user.deleted"})).await;
+    // Deprovisioned at once; the account the directory deleted is then erased by the same sync pass, so a poll may
+    // only ever see it gone.
     let took = wait_for("deprovisioning", Duration::from_secs(60), || {
-        devices_of(&server, "lee@acme.com") == 0
-            && member_state(&server, "lee@acme.com").as_deref() == Some("deprovisioned_by_directory")
+        !user_exists(&server, "lee@acme.com")
+            || devices_of(&server, "lee@acme.com") == 0
+                && member_state(&server, "lee@acme.com").as_deref() == Some("deprovisioned_by_directory")
     })
     .await;
+    wait_for("erasure", Duration::from_secs(60) - took, || !user_exists(&server, "lee@acme.com")).await;
     assert!(started.elapsed() < Duration::from_secs(60), "deprovisioning took {took:?}");
     assert!(lee_phone.core.org_membership().await.is_err(), "the phone's session is gone");
 
