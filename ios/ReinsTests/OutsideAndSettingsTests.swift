@@ -162,6 +162,16 @@ final class OutsideAndSettingsTests: XCTestCase {
         XCTAssertGreaterThan(Int(bottom.0), 0x80, "the photo's light bottom, not the dark paper")
     }
 
+    func testAnEffectAlwaysFadesItsFootIntoThePaper() throws {
+        for effect in WallpaperEffect.allCases where effect != .original {
+            let art = try XCTUnwrap(WallpaperRender.render(try photo(), effect: effect, fade: 0, dark: true, size: CGSize(width: 78, height: 100)))
+            let bottom = try pixel(art, 40, 99)
+            let paper = WallpaperRender.paper(dark: true)
+            XCTAssertLessThanOrEqual(abs(Int(bottom.0) - Int(paper.r)), 3, "\(effect) ends on the paper, not a hard line")
+            XCTAssertLessThanOrEqual(abs(Int(bottom.2) - Int(paper.b)), 3, "\(effect)")
+        }
+    }
+
     // MARK: Wallpaper: image, effect and fade apart
 
     private func scratchDefaults() throws -> UserDefaults {
@@ -232,7 +242,7 @@ final class OutsideAndSettingsTests: XCTestCase {
 
     func testTheCacheNamesEverythingThatChangesTheArt() {
         let base = WallpaperArt(choice: WallpaperChoice(image: .halo, effect: .dither, fade: 0.2), dark: true)
-        XCTAssertEqual(base.key, "dark_halo_dither_f20")
+        XCTAssertEqual(base.key, "dark_halo_dither_f20_r2")
         let keys: Set<String> = [
             base.key,
             WallpaperArt(choice: WallpaperChoice(image: .ruins, effect: .dither, fade: 0.2), dark: true).key,
