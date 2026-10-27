@@ -237,6 +237,11 @@ impl Engine {
             return self.approve_mcp(&session, request_id, &parked, &choice, now, source).await;
         }
         if matches!(parked.kind(), ApprovalKind::Fetch | ApprovalKind::Write) {
+            // An automatic approval runs the request it evaluated: a Telegram send to the chat id it was judged for.
+            if source == crate::authorization::AuthorizationSource::Automatic {
+                let chat = self.store.ap_suggestion(request_id)?.and_then(|s| s.matrix).and_then(|m| m.chat);
+                crate::autopilot::policy::pin_chat(&mut parked.request, chat.as_deref());
+            }
             let scope = self.blob_scope();
             return crate::blob::within(
                 scope,

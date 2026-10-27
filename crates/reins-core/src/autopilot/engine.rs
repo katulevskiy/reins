@@ -1006,8 +1006,17 @@ impl Engine {
             PendingKind::Request => {
                 let parked: ParkedRequest =
                     serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
-                match self.ap_evaluate(&parked.request, !novel, now, overnight_mode) {
+                // Its parties by the services' ids (a Telegram chat as a send would reach it, GitHub accounts).
+                let identified = self.ap_identify(&parked.request, now).await;
+                match self.ap_evaluate_identified(
+                    &identified.request,
+                    &identified.github_ids,
+                    !novel,
+                    now,
+                    overnight_mode,
+                ) {
                     Ok(Some((mut note, unknown))) => {
+                        note.chat.clone_from(&identified.chat);
                         if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
                             log::warn!("Autopilot could not keep a question: {e}");
                         }

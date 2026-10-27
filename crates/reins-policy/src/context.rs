@@ -95,7 +95,35 @@ pub struct Facts {
     pub domains: BTreeMap<String, Zone>,
     pub people: BTreeMap<String, Zone>,
     pub hosts: BTreeMap<String, Zone>,
+    /// Chats by id: a Telegram chat's numeric id (negative for a group or channel), never its name or handle.
     pub chats: BTreeMap<String, Zone>,
+    /// What a fact keyed by an id is shown as (`owner:#583231` → `dkat`, `chat:123456` → `@pal`). A label decides
+    /// nothing: it is only how the owner recognises the fact. Not written when empty, so facts without labels (an
+    /// org's signed policy) serialize, and hash, as before.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// For this evaluation only: what GitHub says each login a request names is now (login → stable account id).
+    /// Owner facts kept by id (`#<id>`) match only through it. Never stored, never hashed.
+    #[serde(skip)]
+    pub github_ids: BTreeMap<String, String>,
+}
+
+/// The fact key of a GitHub account by its stable id.
+#[must_use]
+pub fn github_owner_key(id: &str) -> String {
+    format!("#{id}")
+}
+
+fn label_key(kind: FactKind, key: &str) -> String {
+    let kind = match kind {
+        FactKind::Owner => "owner",
+        FactKind::Repo => "repo",
+        FactKind::Domain => "domain",
+        FactKind::Person => "person",
+        FactKind::Host => "host",
+        FactKind::Chat => "chat",
+    };
+    format!("{kind}:{key}")
 }
 
 /// The longest key kept (an email address can't be longer).
@@ -122,11 +150,42 @@ impl Facts {
         true
     }
 
-    /// Forgets a fact.
+    /// Forgets a fact (and its label).
     pub fn remove(&mut self, kind: FactKind, raw: &str) {
         if let Some(k) = key(raw) {
             self.map_mut(kind).remove(&k);
+            self.labels.remove(&label_key(kind, &k));
         }
+    }
+
+    /// Records `zone` for the GitHub account with the stable id `id` (digits), shown as `login`.
+    pub fn set_github_owner(&mut self, id: &str, login: &str, zone: Zone) -> bool {
+        if id.is_empty() || id.len() > 20 || !id.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        let k = github_owner_key(id);
+        self.owners.insert(k.clone(), zone);
+        self.set_label(FactKind::Owner, &k, login);
+        true
+    }
+
+    /// Sets what the fact `kind`/`key` is shown as.
+    pub fn set_label(&mut self, kind: FactKind, key: &str, label: &str) {
+        let label: String = label.chars().filter(|c| !c.is_control()).take(80).collect();
+        if !label.trim().is_empty() {
+            self.labels.insert(label_key(kind, key), label);
+        }
+    }
+
+    /// What the fact `kind`/`key` is shown as, if it has a label.
+    #[must_use]
+    pub fn label(&self, kind: FactKind, key: &str) -> Option<&str> {
+        self.labels.get(&label_key(kind, key)).map(String::as_str)
+    }
+
+    /// Whether an owner fact kept by id is labelled `login` (the owner already gave that account a zone).
+    fn labels_owner(&self, login: &str) -> bool {
+        self.labels.iter().any(|(k, v)| k.starts_with("owner:#") && v.eq_ignore_ascii_case(login))
     }
 
     /// The zone recorded for `kind`/`raw`, if any.
@@ -279,8 +338,19 @@ pub fn repo_zone(facts: &Facts, repo: &RepoRef) -> (Zone, Option<Unknown>) {
         return (*z, None);
     }
     let owner = repo.owner_key();
+    // A GitHub account the owner zoned by its stable id: only when GitHub says the login is that account now.
+    if repo.host == GITHUB
+        && let Some(id) = facts.github_ids.get(&repo.owner)
+        && let Some(z) = facts.owners.get(&github_owner_key(id))
+    {
+        return (*z, None);
+    }
     match facts.owners.get(&owner) {
         Some(z) => (*z, None),
+        // Named by the facts (by id), but not resolved now: Outside, without asking again.
+        None if repo.host == GITHUB && !facts.github_ids.contains_key(&repo.owner) && facts.labels_owner(&owner) => {
+            (Zone::Outside, None)
+        }
         None => (
             Zone::Outside,
             Some(Unknown {
@@ -343,6 +413,12 @@ fn chat_id(s: &str) -> bool {
     }
 }
 
+/// A Telegram chat's id: digits, negative for a group or a channel.
+fn telegram_id(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty() && digits.len() <= 20 && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The zone of one party a message reaches.
 #[must_use]
 pub fn party_zone(facts: &Facts, channel: &Channel, party: &str) -> (Zone, Option<Unknown>) {
@@ -375,8 +451,20 @@ pub fn party_zone(facts: &Facts, channel: &Channel, party: &str) -> (Zone, Optio
                 None => unknown(FactKind::Person, None),
             }
         }
-        // Telegram and texts: by id only (the owner's own chat too, which they answer once as Mine).
-        Channel::Telegram | Channel::Sms => {
+        // Telegram: by the chat's numeric id only. The phone resolves what an agent wrote (a handle, a name) to the id
+        // of the chat a send would reach, and knows the owner's own chat (Saved Messages) by the account's id; anything
+        // still unresolved is Outside, and isn't a question.
+        Channel::Telegram => {
+            let Some(k) = key(party).filter(|k| telegram_id(k)) else {
+                return (Zone::Outside, None);
+            };
+            if let Some(z) = facts.chats.get(&k).or_else(|| facts.people.get(&k)) {
+                return (*z, None);
+            }
+            unknown(FactKind::Chat, Some(k))
+        }
+        // Texts: by number.
+        Channel::Sms => {
             let Some(k) = key(party).filter(|k| chat_id(k)) else {
                 return (Zone::Outside, None);
             };
@@ -979,6 +1067,78 @@ mod tests {
         f.set(FactKind::Chat, "123456", Zone::Mine);
         assert_eq!(request_zone(&tg("123456"), &f, &Base::default()).zone, Zone::Mine);
         assert_eq!(request_zone(&tg("@pal"), &f, &Base::default()).zone, Zone::Outside);
+    }
+
+    #[test]
+    fn telegram_parties_are_their_numeric_ids() {
+        let mut f = facts();
+        let tg = |to: &str| analyze_tool("telegram_send", &json!({ "chat": to }));
+        // A handle or a name (what an agent writes) is never a fact: the phone resolves it to the chat's id first.
+        f.people.insert("@pal".to_owned(), Zone::Friends);
+        f.chats.insert("@pal".to_owned(), Zone::Friends);
+        for written in ["@pal", "Pal", "+15550100"] {
+            let r = request_zone(&tg(written), &f, &Base::default());
+            assert_eq!(r.zone, Zone::Outside, "{written}");
+            assert!(r.unknown.is_empty(), "only an id is a question: {written}");
+        }
+        // Ids: a user's, and a group's (negative).
+        for id in ["123456", "-1001234567890"] {
+            let r = request_zone(&tg(id), &f, &Base::default());
+            assert_eq!(
+                r.unknown,
+                [Unknown {
+                    kind: FactKind::Chat,
+                    key: id.to_owned()
+                }],
+                "{id}"
+            );
+            f.set(FactKind::Chat, id, Zone::Friends);
+            assert_eq!(request_zone(&tg(id), &f, &Base::default()).zone, Zone::Friends, "{id}");
+        }
+        // Texts keep phone numbers as their parties.
+        f.set(FactKind::Person, "+15550100", Zone::Friends);
+        let sms = analyze_tool("sms_send", &json!({ "to": "+15550100", "text": "hi" }));
+        assert_eq!(request_zone(&sms, &f, &Base::default()).zone, Zone::Friends);
+    }
+
+    #[test]
+    fn github_owners_are_known_by_their_stable_id() {
+        let push = |repo: &str| analyze_tool("github_create_issue", &json!({ "repo": repo, "title": "x" }));
+        let base = Base {
+            bare_host: Some(GITHUB),
+            ..Base::default()
+        };
+        let mut f = Facts::default();
+        f.set_github_owner("583231", "dkat", Zone::Mine);
+        assert_eq!(f.owners.get("#583231"), Some(&Zone::Mine));
+        assert_eq!(f.label(FactKind::Owner, "#583231"), Some("dkat"));
+        // GitHub says who `dkat` is now: the same account → Mine.
+        f.github_ids.insert("dkat".to_owned(), "583231".to_owned());
+        assert_eq!(request_zone(&push("dkat/reins"), &f, &base).zone, Zone::Mine);
+        // The login now belongs to someone else (the owner renamed theirs): Outside, whatever the label says.
+        f.github_ids.insert("dkat".to_owned(), "999".to_owned());
+        let r = request_zone(&push("dkat/reins"), &f, &base);
+        assert_eq!(r.zone, Zone::Outside);
+        assert_eq!(
+            r.unknown,
+            [Unknown {
+                kind: FactKind::Owner,
+                key: "dkat".to_owned()
+            }]
+        );
+        // Not resolved (offline): Outside, and not asked again about an owner the facts name.
+        f.github_ids.clear();
+        let r = request_zone(&push("dkat/reins"), &f, &base);
+        assert_eq!((r.zone, r.unknown.len()), (Zone::Outside, 0));
+        // The resolutions are what this request was evaluated with, not part of the policy.
+        let mut g = f.clone();
+        g.github_ids.insert("dkat".to_owned(), "583231".to_owned());
+        assert_eq!(serde_json::to_string(&f).unwrap(), serde_json::to_string(&g).unwrap());
+        // Facts written before labels existed hash as before (an org's signed policy keeps its hash).
+        assert_eq!(
+            serde_json::to_string(&Facts::default()).unwrap(),
+            r#"{"owners":{},"repos":{},"own_addresses":[],"domains":{},"people":{},"hosts":{},"chats":{}}"#
+        );
     }
 
     #[test]

@@ -218,6 +218,10 @@ pub struct MatrixNote {
     /// The task whose envelope made it Auto (a use is spent before it runs).
     #[serde(default)]
     pub by_task: Option<String>,
+    /// The Telegram chat (its id) this was evaluated for: an automatic approval sends to exactly that chat, never to
+    /// whatever the name it was written with resolves to later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
 }
 
 /// A stored profile with its id.
