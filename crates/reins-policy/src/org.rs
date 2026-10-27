@@ -574,9 +574,9 @@ fn obligations_of(why: &[Why], org: &OrgPolicy) -> Vec<Obligation> {
             Why::Floor(_) => add("floor".to_owned(), ReviewSpec::owner()),
             Why::Level3 => add("level3".to_owned(), ReviewSpec::owner()),
             Why::Unreadable => add("unreadable".to_owned(), ReviewSpec::owner()),
-            Why::Cell | Why::FirstTime => add("cell".to_owned(), org.cell_review.clone()),
-            // Overnight's stricter rule for people asks the cell's reviewers; a task's envelope is a permit.
-            Why::Overnight => add("cell".to_owned(), org.cell_review.clone()),
+            // Overnight's stricter rule for people asks the cell's reviewers too (Managed never parks).
+            Why::Cell | Why::FirstTime | Why::Overnight => add("cell".to_owned(), org.cell_review.clone()),
+            // A task's envelope is a permit.
             Why::Permit(_) | Why::Task(_) => {}
         }
     }

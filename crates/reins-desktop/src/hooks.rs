@@ -963,8 +963,7 @@ pub async fn run(
         None
     };
     let guarded = question_in(&call, &config.guard, head.as_ref()).is_some();
-    let mut matrix_asks = false;
-    if let Some((summary, shadow)) = &decided {
+    let matrix_asks = if let Some((summary, shadow)) = &decided {
         if shadow.outcome == reins_policy::matrix::Outcome::Deny {
             let reason = format!("Reins: not allowed: {}", shadow.line);
             let mut entry = Entry::new(kind, &action_line(&call))
@@ -977,8 +976,10 @@ pub async fn run(
             let (out, code) = render_with(&call, &Verdict::Deny(reason), &news);
             return (out, code, None);
         }
-        matrix_asks = shadow.outcome.reviews();
-    }
+        shadow.outcome.reviews()
+    } else {
+        false
+    };
     // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
     if !guarded && !matrix_asks {
         let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
