@@ -27,8 +27,6 @@ struct ActivityScreen: View {
     @State private var searchOpen = false
     /// How tall the warn fields above the header are (0 with none).
     @State private var warningsHeight: CGFloat = 0
-    /// How far the river has scrolled, for the wallpaper (read there only, so scrolling never redraws the page).
-    @State private var scroll = ScrollTracker()
     /// Something has scrolled under the pinned header (its glass shows).
     @State private var headerScrolled = false
     /// The river's days, from the core's stamps of every entry; nil until read (the days of what is loaded until then).
@@ -141,7 +139,6 @@ struct ActivityScreen: View {
                 feedback.play(.refresh)
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
-                scroll.y = y
                 if (y > 1) != headerScrolled { headerScrolled = y > 1 }
                 atTop = y < 24
                 let far = y > 900
@@ -200,8 +197,9 @@ struct ActivityScreen: View {
         .background {
             ZStack {
                 Palette.paper.ignoresSafeArea()
-                // The art scrolls away with the page (the rows' glass follows it through `Backdrop`).
-                if wallpaper { WallpaperLayer(scroll: scroll).transition(.opacity) }
+                // The art stays put behind everything; only the river and its panes scroll over it (their glass
+                // samples the same fixed art through `Backdrop`).
+                if wallpaper { WallpaperLayer().transition(.opacity) }
             }
         }
         .foldOverlay(model.fold)
