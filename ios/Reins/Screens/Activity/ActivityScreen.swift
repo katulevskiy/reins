@@ -751,23 +751,34 @@ private struct NewMarker: View {
 struct SyncNoticeRow: View {
     var text: String
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var scheme
 
+    /// A raised card, never plain text on the art: radius 26, solid raised paper (a hairline ring in light), 16 / 14 pt
+    /// inside, a 34 pt violet-tinted glyph tile, 15 pt text and an ink OK (as Android's notice card).
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
         HStack(spacing: 12) {
-            GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.violet)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Palette.violet.opacity(0.13))
+                .frame(width: 34, height: 34)
+                .overlay { GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.violet) }
+                .accessibilityHidden(true)
             Text(text)
-                .font(RFont.sans(14))
+                .font(RFont.sans(15))
                 .foregroundStyle(Palette.ink)
-                .lineLimit(3)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("OK") { Task { await model.dismissSyncNotice() } }
-                .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                .buttonStyle(SignalButtonStyle(.inverse, size: .small, fill: false))
                 .fixedSize()
         }
-        .padding(.top, 14)
-        .padding(.bottom, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Palette.paperRaised, in: shape)
+        .overlay { if scheme == .light { shape.strokeBorder(Palette.rule, lineWidth: 1) } }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("syncNoticeBanner")
     }
