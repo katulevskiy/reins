@@ -59,7 +59,7 @@ pub struct ReinsTicket {
     pub question: Option<String>,
     /// The agent's answer to it, sealed to the approval device's box key (base64url).
     pub sealed_reply: Option<String>,
-    /// The reviewer's note to the agent (a denial).
+    /// The reviewer's note to the agent (a denial), or the phone's own note on a park ("Parked until morning").
     pub note: Option<String>,
     /// A write's minimal result (JSON).
     pub result: Option<String>,
@@ -373,7 +373,7 @@ fn q_save_callback(c: &mut DbConnInner, row: &ReinsCallback) -> QueryResult<()> 
 }
 
 #[cfg(all(test, sqlite))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::db::models::reins_device::test_db;
 
