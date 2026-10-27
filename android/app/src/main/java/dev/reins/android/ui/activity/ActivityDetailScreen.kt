@@ -181,7 +181,8 @@ fun ActivityDetailScreen(
                   androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
                     AskedSections(entry, includeCommand = false)
                     if (entry.grantId != null || entry.autopilot != null) {
-                        val requestId = shown.requestId.takeIf { it.isNotBlank() }
+                        val requestId = entry.autopilot?.requestId?.takeIf { it.isNotBlank() }
+                            ?: shown.requestId.takeIf { it.isNotBlank() }
                         val askNext: (() -> Unit)? = if (requestId != null && entry.decidedBy == "autopilot" && entry.autopilot?.matrix != null) {
                             {
                                 askingNext = true
