@@ -3548,6 +3548,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func orgChallenge() async throws  -> String
     
     /**
+     * Confirms (`approve`) or refuses web passkey `id` with the enrolled key's `signature` over
+     * `org_passkey_confirm_message(org, id, spki_hash, created_at, at)`. Refusing revokes it.
+     */
+    func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String) async throws 
+    
+    /**
      * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
      */
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws 
@@ -3562,6 +3568,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The signed-in account's organization (a work profile's); `None` for a Personal account.
      */
     func orgMembership() async throws  -> OrgView?
+    
+    /**
+     * The web passkeys this member registered in the browser (a work profile's), confirmed or not; empty for a
+     * Personal account. Confirm one by signing `org_passkey_confirm_message(...)` with the enrolled key, then
+     * `org_confirm_passkey`.
+     */
+    func orgPasskeys() async throws  -> [OrgPasskeyView]
     
     /**
      * Reports the enrolled device's posture now (at start-up and when it changes).
@@ -6255,6 +6268,26 @@ open func orgChallenge()async throws  -> String  {
 }
     
     /**
+     * Confirms (`approve`) or refuses web passkey `id` with the enrolled key's `signature` over
+     * `org_passkey_confirm_message(org, id, spki_hash, created_at, at)`. Refusing revokes it.
+     */
+open func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_confirm_passkey(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
      */
 open func orgDecide(id: String, approve: Bool, at: Int64, signature: String)async throws   {
@@ -6308,6 +6341,27 @@ open func orgMembership()async throws  -> OrgView?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeOrgView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The web passkeys this member registered in the browser (a work profile's), confirmed or not; empty for a
+     * Personal account. Confirm one by signing `org_passkey_confirm_message(...)` with the enrolled key, then
+     * `org_confirm_passkey`.
+     */
+open func orgPasskeys()async throws  -> [OrgPasskeyView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_passkeys(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeOrgPasskeyView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -17684,6 +17738,94 @@ public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> Rus
 
 
 /**
+ * A web passkey the member registered in the browser, as the phone shows and signs it. The fingerprint is built
+ * here from the key hash the confirmation signs, so what the member compares is what they vouch for.
+ */
+public struct OrgPasskeyView: Equatable, Hashable {
+    public var credentialId: String
+    /**
+     * When it was registered (Unix seconds): the confirmation signs it as `registered_at`.
+     */
+    public var createdAt: Int64
+    public var confirmed: Bool
+    /**
+     * SHA-256 (hex) of the key's SPKI.
+     */
+    public var spkiHash: String
+    /**
+     * `abcd-ef01`: the first 8 hex digits of `spki_hash`, as the console shows it.
+     */
+    public var fingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(credentialId: String, 
+        /**
+         * When it was registered (Unix seconds): the confirmation signs it as `registered_at`.
+         */createdAt: Int64, confirmed: Bool, 
+        /**
+         * SHA-256 (hex) of the key's SPKI.
+         */spkiHash: String, 
+        /**
+         * `abcd-ef01`: the first 8 hex digits of `spki_hash`, as the console shows it.
+         */fingerprint: String) {
+        self.credentialId = credentialId
+        self.createdAt = createdAt
+        self.confirmed = confirmed
+        self.spkiHash = spkiHash
+        self.fingerprint = fingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrgPasskeyView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgPasskeyView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgPasskeyView {
+        return
+            try OrgPasskeyView(
+                credentialId: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                confirmed: FfiConverterBool.read(from: &buf), 
+                spkiHash: FfiConverterString.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrgPasskeyView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.credentialId, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterBool.write(value.confirmed, into: &buf)
+        FfiConverterString.write(value.spkiHash, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgPasskeyView_lift(_ buf: RustBuffer) throws -> OrgPasskeyView {
+    return try FfiConverterTypeOrgPasskeyView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgPasskeyView_lower(_ value: OrgPasskeyView) -> RustBuffer {
+    return FfiConverterTypeOrgPasskeyView.lower(value)
+}
+
+
+/**
  * One review waiting for this member, as the phone shows and signs it. `lines` are built on the phone from what
  * the digest covers, never taken from the server.
  */
@@ -17723,6 +17865,26 @@ public struct OrgReviewView: Equatable, Hashable {
      * Your own: your request, or your change to confirm.
      */
     public var own: Bool
+    /**
+     * Who else must still decide, one line per waiting obligation ("On-call: payments", "2 of Finance").
+     */
+    public var needs: [String]
+    /**
+     * Approvals so far ("1 of 2"); empty when one approval decides.
+     */
+    public var progress: String
+    /**
+     * Where an escalation took it ("Escalated to Security admin").
+     */
+    public var step: String?
+    /**
+     * Breaks quiet hours.
+     */
+    public var urgent: Bool
+    /**
+     * The agent's reason, when it gave one (the agent's words, untrusted).
+     */
+    public var reason: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17747,7 +17909,22 @@ public struct OrgReviewView: Equatable, Hashable {
          */snapshot: String, expiresAt: Int64, 
         /**
          * Your own: your request, or your change to confirm.
-         */own: Bool) {
+         */own: Bool, 
+        /**
+         * Who else must still decide, one line per waiting obligation ("On-call: payments", "2 of Finance").
+         */needs: [String], 
+        /**
+         * Approvals so far ("1 of 2"); empty when one approval decides.
+         */progress: String, 
+        /**
+         * Where an escalation took it ("Escalated to Security admin").
+         */step: String?, 
+        /**
+         * Breaks quiet hours.
+         */urgent: Bool, 
+        /**
+         * The agent's reason, when it gave one (the agent's words, untrusted).
+         */reason: String?) {
         self.id = id
         self.kind = kind
         self.orgName = orgName
@@ -17762,6 +17939,11 @@ public struct OrgReviewView: Equatable, Hashable {
         self.snapshot = snapshot
         self.expiresAt = expiresAt
         self.own = own
+        self.needs = needs
+        self.progress = progress
+        self.step = step
+        self.urgent = urgent
+        self.reason = reason
     }
 
     
@@ -17793,7 +17975,12 @@ public struct FfiConverterTypeOrgReviewView: FfiConverterRustBuffer {
                 digest: FfiConverterString.read(from: &buf), 
                 snapshot: FfiConverterString.read(from: &buf), 
                 expiresAt: FfiConverterInt64.read(from: &buf), 
-                own: FfiConverterBool.read(from: &buf)
+                own: FfiConverterBool.read(from: &buf), 
+                needs: FfiConverterSequenceString.read(from: &buf), 
+                progress: FfiConverterString.read(from: &buf), 
+                step: FfiConverterOptionString.read(from: &buf), 
+                urgent: FfiConverterBool.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -17812,6 +17999,11 @@ public struct FfiConverterTypeOrgReviewView: FfiConverterRustBuffer {
         FfiConverterString.write(value.snapshot, into: &buf)
         FfiConverterInt64.write(value.expiresAt, into: &buf)
         FfiConverterBool.write(value.own, into: &buf)
+        FfiConverterSequenceString.write(value.needs, into: &buf)
+        FfiConverterString.write(value.progress, into: &buf)
+        FfiConverterOptionString.write(value.step, into: &buf)
+        FfiConverterBool.write(value.urgent, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
     }
 }
 
@@ -18435,6 +18627,11 @@ public struct PendingItem: Equatable, Hashable {
      * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
      */
     public var circle: CircleProgress?
+    /**
+     * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
+     * this, not `parked_until`).
+     */
+    public var parked: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18495,7 +18692,11 @@ public struct PendingItem: Equatable, Hashable {
          */taskProposal: TaskView? = nil, 
         /**
          * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
-         */circle: CircleProgress? = nil) {
+         */circle: CircleProgress? = nil, 
+        /**
+         * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
+         * this, not `parked_until`).
+         */parked: Bool = false) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -18522,6 +18723,7 @@ public struct PendingItem: Equatable, Hashable {
         self.batchable = batchable
         self.taskProposal = taskProposal
         self.circle = circle
+        self.parked = parked
     }
 
     
@@ -18565,7 +18767,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 taskTitle: FfiConverterOptionString.read(from: &buf), 
                 batchable: FfiConverterBool.read(from: &buf), 
                 taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf), 
-                circle: FfiConverterOptionTypeCircleProgress.read(from: &buf)
+                circle: FfiConverterOptionTypeCircleProgress.read(from: &buf), 
+                parked: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -18596,6 +18799,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterBool.write(value.batchable, into: &buf)
         FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
         FfiConverterOptionTypeCircleProgress.write(value.circle, into: &buf)
+        FfiConverterBool.write(value.parked, into: &buf)
     }
 }
 
@@ -19579,7 +19783,7 @@ public func FfiConverterTypeProposalView_lower(_ value: ProposalView) -> RustBuf
 
 
 /**
- * What the user picked on the purchase screen.
+ * What the user picked on the purchase screen (kept with a Circle hold until the others approved).
  */
 public struct PurchaseChoice: Equatable, Hashable {
     /**
@@ -22375,6 +22579,16 @@ public struct TaskView: Equatable, Hashable {
     public var auto: UInt32
     public var asked: UInt32
     public var parked: UInt32
+    /**
+     * The owner chose that it covers any repository, folder, person and kind (shown as "Any"); otherwise it must
+     * name at least one of them.
+     */
+    public var any: Bool
+    /**
+     * The ceiling the agent asked for. A proposal's `ceiling` starts at the default for its repositories (01 §12: L2
+     * only when every one is the owner's) and the owner may raise it up to this.
+     */
+    public var requestedCeiling: UInt8
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -22414,7 +22628,15 @@ public struct TaskView: Equatable, Hashable {
          */startedBy: String, 
         /**
          * What ran under it: decided Auto by it, asked, parked.
-         */auto: UInt32, asked: UInt32, parked: UInt32) {
+         */auto: UInt32, asked: UInt32, parked: UInt32, 
+        /**
+         * The owner chose that it covers any repository, folder, person and kind (shown as "Any"); otherwise it must
+         * name at least one of them.
+         */any: Bool = false, 
+        /**
+         * The ceiling the agent asked for. A proposal's `ceiling` starts at the default for its repositories (01 §12: L2
+         * only when every one is the owner's) and the owner may raise it up to this.
+         */requestedCeiling: UInt8 = UInt8(0)) {
         self.id = id
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -22435,6 +22657,8 @@ public struct TaskView: Equatable, Hashable {
         self.auto = auto
         self.asked = asked
         self.parked = parked
+        self.any = any
+        self.requestedCeiling = requestedCeiling
     }
 
     
@@ -22472,7 +22696,9 @@ public struct FfiConverterTypeTaskView: FfiConverterRustBuffer {
                 startedBy: FfiConverterString.read(from: &buf), 
                 auto: FfiConverterUInt32.read(from: &buf), 
                 asked: FfiConverterUInt32.read(from: &buf), 
-                parked: FfiConverterUInt32.read(from: &buf)
+                parked: FfiConverterUInt32.read(from: &buf), 
+                any: FfiConverterBool.read(from: &buf), 
+                requestedCeiling: FfiConverterUInt8.read(from: &buf)
         )
     }
 
@@ -22497,6 +22723,8 @@ public struct FfiConverterTypeTaskView: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.auto, into: &buf)
         FfiConverterUInt32.write(value.asked, into: &buf)
         FfiConverterUInt32.write(value.parked, into: &buf)
+        FfiConverterBool.write(value.any, into: &buf)
+        FfiConverterUInt8.write(value.requestedCeiling, into: &buf)
     }
 }
 
@@ -30918,6 +31146,31 @@ fileprivate struct FfiConverterSequenceTypeNeighbourView: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeOrgPasskeyView: FfiConverterRustBuffer {
+    typealias SwiftType = [OrgPasskeyView]
+
+    public static func write(_ value: [OrgPasskeyView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeOrgPasskeyView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [OrgPasskeyView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [OrgPasskeyView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeOrgPasskeyView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeOrgReviewView: FfiConverterRustBuffer {
     typealias SwiftType = [OrgReviewView]
 
@@ -31993,6 +32246,23 @@ public func orgMemberPolicyMessage(orgId: String, member: String, version: UInt6
 })
 }
 /**
+ * The bytes the enrolled device key signs to confirm (or refuse) a web passkey as the member's own
+ * (`reins_proto::managed::passkey_confirm_message`): `spki_hash` and `registered_at` are the listed passkey's
+ * (`OrgPasskeyView::spki_hash`, `created_at`), `at` the signing time (Unix seconds).
+ */
+public func orgPasskeyConfirmMessage(orgId: String, credentialId: String, spkiHash: String, registeredAt: Int64, at: Int64) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_passkey_confirm_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(credentialId),
+        FfiConverterString.lower(spkiHash),
+        FfiConverterInt64.lower(registeredAt),
+        FfiConverterInt64.lower(at),uniffiCallStatus
+    )
+})
+}
+/**
  * The bytes the enrolled device key signs to answer an org review (`reins_proto::managed::review_message`):
  * approve or deny, and `Propose` to confirm your own admin change. `org_id` is the work account's org.
  */
@@ -32036,6 +32306,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_member_policy_message() != 56035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_passkey_confirm_message() != 12152) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_review_message() != 16415) {
@@ -32365,6 +32638,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_org_confirm_passkey() != 24593) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_org_decide() != 11544) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -32372,6 +32648,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_org_membership() != 16935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_passkeys() != 3622) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {

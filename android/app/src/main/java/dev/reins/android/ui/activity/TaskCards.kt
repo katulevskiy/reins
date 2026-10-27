@@ -102,8 +102,8 @@ fun ceilingLabel(level: UByte): String = when (level.toInt()) {
     else -> "Reaches people"
 }
 
-/** The ceilings the owner may pick: the proposed one and lower (never higher, never L3). */
-fun ceilingChoices(proposed: UByte): List<UByte> = (0..minOf(proposed.toInt(), 2)).map { it.toUByte() }
+/** The ceilings the owner may pick: up to what the agent asked (the card starts at the default), never L3. */
+fun ceilingChoices(requested: UByte): List<UByte> = (0..minOf(requested.toInt(), 2)).map { it.toUByte() }
 
 private val LENGTHS = listOf(15L * 60, 3_600L, 4 * 3_600L, 8 * 3_600L, 24 * 3_600L)
 
@@ -197,7 +197,7 @@ private fun TaskProposalCard(item: PendingItem, onApprove: (TaskView) -> Unit, o
         }
         Labelled("Up to") {
             Segmented(
-                ceilingChoices(proposal.ceiling),
+                ceilingChoices(maxOf(proposal.requestedCeiling, proposal.ceiling)),
                 draft.ceiling,
                 ::ceilingLabel,
                 Modifier.testTag("taskCeiling:${item.id}"),

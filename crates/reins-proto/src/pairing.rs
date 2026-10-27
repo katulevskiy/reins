@@ -81,6 +81,9 @@ pub enum PushKind {
     /// Something of a Circle concerns this phone (the id is a packet's, an invitation's or a link's): a review for
     /// another account, an answer, an invitation's next step. Fetch `GET /reins/api/circles/*`.
     Circle,
+    /// O3: a web passkey this member registered waits for their enrolled phone's confirmation (the id is the
+    /// credential's). Fetch `GET /reins/api/org/passkeys`.
+    OrgPasskey,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.

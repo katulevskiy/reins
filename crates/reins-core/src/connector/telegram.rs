@@ -6,7 +6,7 @@ use std::sync::Arc;
 use reins_proto::connector::{ConnectorCall, TELEGRAM};
 use serde_json::{Map, json};
 
-use super::{Connector, Item, LoginProgress, Preview, looks_like_code};
+use super::{Connector, Item, LoginProgress, Party, Preview, looks_like_code};
 use crate::types::GmailStatus;
 use crate::{CoreError, text};
 
@@ -26,6 +26,8 @@ pub struct Chat {
     /// The last message, one line.
     pub last: String,
     pub date: i64,
+    /// The account's own chat (Saved Messages).
+    pub is_self: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -129,10 +131,47 @@ impl Telegram {
     }
 }
 
+/// What a chat is shown as on a question card or in the setup: its `@username` when it has one; else its title with
+/// its kind, never starting with `@` (a group titled "@mom" can't pass for a handle).
+fn party_label(chat: &Chat) -> String {
+    if chat.is_self {
+        return "Saved Messages".to_owned();
+    }
+    if let Some(u) = chat.username.as_deref().filter(|u| !u.is_empty()) {
+        return format!("@{u}");
+    }
+    let title = text::one_line(&chat.title);
+    let title = title.trim_start_matches(|c: char| c == '@' || c.is_whitespace());
+    let title = if title.is_empty() {
+        "(no name)"
+    } else {
+        title
+    };
+    format!("{title} ({})", chat.kind)
+}
+
 #[async_trait::async_trait]
 impl Connector for Telegram {
     fn service(&self) -> &'static str {
         TELEGRAM
+    }
+
+    /// The chat a send to `written` would reach (resolved exactly as [`Connector::perform`] resolves it), by its id.
+    async fn party(&self, account: &str, written: &str) -> Result<Option<Party>, CoreError> {
+        let chat = match self.resolve(account, written).await {
+            Ok(chat) => chat,
+            Err(CoreError::Service {
+                ..
+            }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok(Some(Party {
+            label: party_label(&chat),
+            own: chat.is_self,
+            // Only an `@username` goes through Telegram's username lookup (`resolve`); a title never names a handle.
+            handle: written.trim().starts_with('@').then(|| written.trim().to_ascii_lowercase()),
+            id: chat.id,
+        }))
     }
 
     async fn fetch(&self, account: &str, call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {
@@ -235,5 +274,83 @@ impl Connector for Telegram {
 
     async fn login_password(&self, password: &str) -> Result<String, CoreError> {
         self.backend.submit_password(password).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Dialogs(Vec<Chat>);
+
+    #[async_trait::async_trait]
+    impl TelegramBackend for Dialogs {
+        async fn dialogs(&self, _: &str, _: usize) -> Result<Vec<Chat>, CoreError> {
+            Ok(self.0.clone())
+        }
+        async fn resolve_username(&self, _: &str, username: &str) -> Result<Option<Chat>, CoreError> {
+            Ok(self.0.iter().find(|c| c.username.as_deref() == Some(username)).cloned())
+        }
+        async fn messages(&self, _: &str, _: &Chat, _: usize) -> Result<Vec<Msg>, CoreError> {
+            Ok(Vec::new())
+        }
+        async fn search(&self, _: &str, _: Option<&Chat>, _: &str, _: usize) -> Result<Vec<Msg>, CoreError> {
+            Ok(Vec::new())
+        }
+        async fn send(&self, _: &str, _: &Chat, _: &str, _: Option<i32>) -> Result<i64, CoreError> {
+            Ok(1)
+        }
+        async fn status(&self, _: &str) -> GmailStatus {
+            GmailStatus::Ready
+        }
+        async fn request_code(&self, _: &str) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn submit_code(&self, _: &str) -> Result<LoginProgress, CoreError> {
+            Err(CoreError::invalid("no"))
+        }
+        async fn submit_password(&self, _: &str) -> Result<String, CoreError> {
+            Err(CoreError::invalid("no"))
+        }
+        async fn sign_out(&self, _: &str) -> Result<(), CoreError> {
+            Ok(())
+        }
+    }
+
+    fn chat(id: &str, title: &str, kind: &str, username: Option<&str>, is_self: bool) -> Chat {
+        Chat {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            kind: kind.to_owned(),
+            username: username.map(str::to_owned),
+            is_self,
+            ..Chat::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_party_is_its_chat_id_and_a_title_never_looks_like_a_handle() {
+        let tg = Telegram::new(Arc::new(Dialogs(vec![
+            chat("123", "Mom", "user", Some("mom"), false),
+            chat("-100777", "@mom", "group", None, false),
+            chat("42", "Dana", "user", None, true),
+        ])));
+        // A handle: resolved by Telegram's username lookup, and named as such.
+        let p = tg.party("+1", "@mom").await.unwrap().unwrap();
+        assert_eq!((p.id.as_str(), p.label.as_str(), p.handle.as_deref()), ("123", "@mom", Some("@mom")));
+        // A group titled like that handle, reached by its exact title or its id: its own id, labelled as a group, and
+        // no handle (a fact kept by "@mom" is never offered for it).
+        for written in ["-100777"] {
+            let p = tg.party("+1", written).await.unwrap().unwrap();
+            assert_eq!((p.id.as_str(), p.handle), ("-100777", None), "{written}");
+            assert_eq!(p.label, "mom (group)");
+            assert!(!p.label.starts_with('@'));
+        }
+        // The account's own chat.
+        let p = tg.party("+1", "42").await.unwrap().unwrap();
+        assert!(p.own);
+        assert_eq!(p.label, "Saved Messages");
+        // Nothing found: no party.
+        assert_eq!(tg.party("+1", "Nobody").await.unwrap(), None);
     }
 }

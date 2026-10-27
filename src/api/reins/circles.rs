@@ -390,6 +390,16 @@ async fn post_challenge(
         return Err(bad_request("This is your own invitation"));
     }
     if !may_move(&invite.state, InviteState::Challenged) {
+        // The same helper sending the same challenge again (its first answer was lost): already taken.
+        let again = invite.helper_uuid.as_deref() == Some(user.as_str())
+            && steps(&invite).challenge.is_some_and(|c| {
+                c.helper_pub == challenge.helper_pub
+                    && c.helper_epoch == challenge.helper_epoch
+                    && c.nonce == challenge.nonce
+            });
+        if again {
+            return Ok(Status::NoContent);
+        }
         return Err(conflict("Someone already answered this invitation"));
     }
     let (helper_pub, epoch) = roster_head(&user, &conn).await?;
@@ -524,10 +534,6 @@ async fn post_activate(
         return Err(bad_request("This arrangement exists already"));
     }
     let now = now_unix();
-    InviteState::Active.as_str().clone_into(&mut invite.state);
-    invite.link_id = Some(activate.link.clone());
-    invite.updated_at = now;
-    advance(&invite, InviteState::Accepted.as_str(), &conn).await?;
     let link = ReinsCircleLink {
         id: activate.link,
         owner_uuid: invite.owner_uuid.clone(),
@@ -541,7 +547,18 @@ async fn post_activate(
         updated_at: now,
         effective_at: None,
     };
+    // The link first, then the invitation: an invitation marked active always has its link (a failed insert leaves
+    // it accepted, to activate again); a lost race to activate removes the link it made.
     link.insert(&conn).await.map_err(|e| internal(&e))?;
+    InviteState::Active.as_str().clone_into(&mut invite.state);
+    invite.link_id = Some(link.id.clone());
+    invite.updated_at = now;
+    if let Err(e) = advance(&invite, InviteState::Accepted.as_str(), &conn).await {
+        if let Err(d) = ReinsCircleLink::delete(&link.id, &conn).await {
+            warn!("Reins: a Circle link of a lost activation could not be removed: {d:?}");
+        }
+        return Err(e);
+    }
     wake(&helper, &link.id, Wake::News, &conn, pool.inner()).await;
     Ok(Status::NoContent)
 }
@@ -788,6 +805,9 @@ async fn post_packet(
 ) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
     let user = user_key(&headers);
+    if let Err(wait) = super::limits::CIRCLE_PACKETS.check(&user) {
+        return Err(rate_limited("too many Circle reviews", wait));
+    }
     let new: NewPacket = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
     let now = now_unix();
     new.validate(now).map_err(|e| bad_request(e.to_string()))?;
@@ -845,17 +865,20 @@ async fn delete_packet(id: &str, headers: Headers, key: DeviceKey, conn: DbConn)
     Ok(Status::NoContent)
 }
 
-#[get("/reins/api/circles/inbox?<since>")]
+/// One page of the helper's packets: waiting ones first (oldest first), then those that changed since `since` (a day by
+/// default); `offset` pages on ([`reins_circle::INBOX_PAGE`] a page).
+#[get("/reins/api/circles/inbox?<since>&<offset>")]
 async fn get_inbox(
     since: Option<i64>,
+    offset: Option<i64>,
     headers: Headers,
     key: DeviceKey,
     conn: DbConn,
 ) -> PhoneResult<Json<Vec<InboxItem>>> {
     require_approval_device(&headers, &key, &conn).await?;
     let user = user_key(&headers);
-    let since = since.unwrap_or_else(|| now_unix() - 7 * 86_400);
-    let rows = ReinsCirclePacket::inbox(&user, since, &conn).await;
+    let since = since.unwrap_or_else(|| now_unix() - 86_400);
+    let rows = ReinsCirclePacket::inbox(&user, since, offset.unwrap_or(0).max(0), &conn).await;
     let fresh: Vec<String> = rows.iter().filter(|p| !p.delivered).map(|p| p.id.clone()).collect();
     if !fresh.is_empty() {
         ReinsCirclePacket::mark_delivered(&user, fresh, &conn).await.map_err(|e| internal(&e))?;
@@ -1047,6 +1070,23 @@ pub async fn end_all_for(user: &str, conn: &DbConn, pool: &DbPool) {
             };
             wake(&peer, &link.id, Wake::News, conn, pool).await;
         }
+    }
+}
+
+/// `user`'s owner key changed (a recovery): its peers are told quietly; their phones verify the roster themselves and
+/// suspend the arrangement. A guardian is alerted by the roster notice the append wrote (`guardian_notices`, 08 R7),
+/// so it hears once.
+pub async fn owner_key_changed(user: &str, conn: &DbConn, pool: &DbPool) {
+    for link in ReinsCircleLink::for_user(user, conn).await {
+        if link.state == LinkState::Ended.as_str() {
+            continue;
+        }
+        let peer = if link.owner_uuid == user {
+            link.helper_uuid.clone()
+        } else {
+            link.owner_uuid.clone()
+        };
+        wake(&peer, &link.id, Wake::News, conn, pool).await;
     }
 }
 

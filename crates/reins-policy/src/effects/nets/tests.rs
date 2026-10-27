@@ -106,15 +106,34 @@ fn only_plain_allowlisted_scripts_are_netted() {
         "rm -rf \"$(pwd)/old\"",
         "rm -rf \"$D\"",
         "X=1 rm -rf old",
-        "x=1; rm -rf old",
         "let HOME=1; rm -rf old",
+        // assignments to names longer than a letter, of values that are computed, or that may not run
+        "xy=1; rm -rf old",
+        "PATH=/x; rm -rf old",
+        "IFS=/; rm -rf old",
+        "x=$(pwd); rm -rf \"$x\"/old",
+        "x=$HOME; rm -rf \"$x\"/old",
+        "x=*; rm -rf $x",
+        "x='a b'; rm -rf $x",
+        "cd sub && x=old; rm -rf \"$x\"",
+        "true | x=old; rm -rf \"$x\"",
+        "x=old & rm -rf \"$x\"",
+        "rm -rf \"$x\"; x=old",
         "(( HOME = 1 )); rm -rf old",
         "rm -rf old$((1))",
         // compound commands, functions, subshells, substitutions
         "{ rm -rf old; }",
         "(rm -rf old)",
         "if true; then rm -rf old; fi",
-        "for d in a b c; do rm -rf \"$d\"; done",
+        "for d in *; do rm -rf \"$d\"; done",
+        "for d in \"$@\"; do rm -rf \"$d\"; done",
+        "for d; do rm -rf \"$d\"; done",
+        "for dd in a b; do rm -rf \"$dd\"; done",
+        "for HOME in a b; do rm -rf old; done",
+        "for d in a b; do rm -rf \"$d\"; rm() { :; }; done",
+        "for d in a b; do x=$d; rm -rf \"$x\"; done",
+        "x=a; for d in b c; do rm -rf \"$x\"; x=$d; done",
+        "while true; do rm -rf old; done",
         "clean() { rm -rf \"$1\"; }; clean a",
         "x=$(rm -rfv old)",
         "rm -rf old <(true)",
@@ -162,6 +181,17 @@ fn only_plain_allowlisted_scripts_are_netted() {
         assert!(p.is_none(), "{c}: {p:?}");
     }
     assert!(plan("echo done; rm -rf old ./*.tmp; ls ~/x").is_some(), "plain words, and globs in rm, are fine");
+    // A one-letter variable the script surely set, and a loop over plain values.
+    for c in [
+        "x=old; rm -rf \"$x\"",
+        "B=~/Documents/dev/notes; rm -rf $B/old; mkdir -p $B/old",
+        "x=old && rm -rf ${x}",
+        "for d in a b c; do rm -rf \"$d\"; done",
+        "for d in a b; do [ -d \"$d\" ] && rm -rf \"$d\" && echo \"removed $d\"; done; ls",
+    ] {
+        let p = plan(c);
+        assert!(p.as_ref().is_some_and(|p| p.after.level == Level::L1), "{c}: {p:?}");
+    }
     // Any literal external program, with plain words.
     assert!(plan("cargo build -p x && rm -rf old && python3 tools/x.py --flag ~/y && /usr/bin/du -sh out").is_some());
 }
@@ -294,9 +324,12 @@ fn git_nets_are_planned() {
     let p = plan_command(cmd, &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.rewritten.matches("net run").count(), 3, "{}", p.rewritten);
     assert!(p.before.level == Level::L3 && p.after.level <= Level::L1, "{p:?}");
-    // The same in a loop (`$w`): not netted.
+    // The same in a loop (`$w`) over plain names: netted when each is a linked worktree.
     let looped = "for w in a b; do git worktree remove --force ~/Documents/dev/$w; done";
-    assert!(plan_command(looped, &c, &disk(), RUNNER).is_none());
+    let p = plan_command(looped, &c, &disk(), RUNNER).expect("a net");
+    assert_eq!(p.netted_paths, vec!["/home/me/Documents/dev/a".to_owned(), "/home/me/Documents/dev/b".to_owned()]);
+    let one_not = "for w in a nope; do git worktree remove --force ~/Documents/dev/$w; done";
+    assert!(plan_command(one_not, &c, &disk(), RUNNER).is_none());
     // Not a shape: untouched.
     assert!(plan_command("git worktree remove ../w", &c, &disk(), RUNNER).is_none());
 }
@@ -489,4 +522,45 @@ fn only_files_a_snapshot_can_copy_are_netted() {
     }
     let c = ctx("/home/me/Documents/dev/notes");
     assert!(plan_files(&["/home/me/notes/big.iso"], &c, &NoCopies).is_none());
+}
+
+/// Only the leading top-level commands that pass the allowlist are netted. What follows them runs once they are done
+/// (or, after `&`, in a shell they no longer share), so it can't change what they run: anything may be there, nothing
+/// in it is netted, and it keeps its own level.
+#[test]
+fn only_the_leading_plain_commands_are_netted() {
+    let p = plan("rm -rf old; export PATH=$HOME/bin:$PATH && cargo fmt -- --check").expect("a net");
+    assert_eq!(p.rewritten, format!("{}rm -rf old; export PATH=$HOME/bin:$PATH && cargo fmt -- --check", pre()));
+    assert_eq!(p.after.level, Level::L1, "{p:?}");
+    // A function defined after the delete can't reach it.
+    assert!(plan("rm -rf old; rm() { :; }; time make").is_some());
+    // A delete after the allowlisted part is not netted, and keeps its level.
+    let p = plan("rm -rf old; eval \"$X\"; rm -rf other").expect("a net");
+    assert_eq!(p.rewritten.matches("net run").count(), 1, "{}", p.rewritten);
+    assert_eq!(p.netted_paths, vec!["/home/me/Documents/dev/notes/old".to_owned()]);
+    let p = plan("rm -rf old; f() { :; }; rm -rf other").expect("a net");
+    assert_eq!(p.after.level, Level::L3, "{p:?}");
+    // Anything off the allowlist before or beside the delete: no net at all.
+    for c in [
+        "export X=1; rm -rf old",
+        "rm() { :; }; rm -rf old",
+        "rm -rf old && eval x",
+        "time rm -rf old; ls",
+        "for d in a; do rm() { :; }; done; rm -rf old",
+    ] {
+        let p = plan(c);
+        assert!(p.is_none(), "{c}: {p:?}");
+    }
+}
+
+/// A `cd` to a folder under `~` is where the plan's commands may run.
+#[test]
+fn a_cd_under_home_is_a_plan_folder() {
+    let p = plan("cd ~/Documents/dev/notes/sub && rm -rf a").expect("a net");
+    assert!(p.cwds.contains(&"/home/me/Documents/dev/notes/sub".to_owned()), "{:?}", p.cwds);
+    // A quoted or escaped `~` is a folder named `~`, not the home folder.
+    for c in ["cd '~/Documents/dev/notes/sub' && rm -rf a", "cd \\~/Documents/dev/notes/sub && rm -rf a"] {
+        let p = plan(c).expect("a net");
+        assert!(!p.cwds.contains(&"/home/me/Documents/dev/notes/sub".to_owned()), "{c}: {:?}", p.cwds);
+    }
 }

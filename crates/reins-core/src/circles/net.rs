@@ -105,8 +105,9 @@ impl PhoneApi<'_> {
         Self::send(self.request(Method::DELETE, &format!("/circles/packets/{id}"))).await.map(drop)
     }
 
-    pub(crate) async fn circle_inbox(&self) -> Result<Vec<InboxItem>, ApiFailure> {
-        Self::json(self.request(Method::GET, "/circles/inbox")).await
+    /// One page (`offset`) of the packets addressed to this account, waiting ones first.
+    pub(crate) async fn circle_inbox(&self, offset: usize) -> Result<Vec<InboxItem>, ApiFailure> {
+        Self::json(self.request(Method::GET, &format!("/circles/inbox?offset={offset}"))).await
     }
 
     pub(crate) async fn circle_answer(&self, id: &str, answer: &NewAnswer) -> Result<(), ApiFailure> {

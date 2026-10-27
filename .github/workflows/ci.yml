@@ -108,6 +108,7 @@ jobs:
       - run: python3 scripts/test-ci-plan.py
       - run: python3 scripts/test-ci-admit.py
       - run: python3 scripts/test-ci-reuse.py
+      - run: python3 scripts/test-ci-cancel-closed.py
       - run: python3 scripts/test-prune-caches.py
       - run: python3 scripts/test-ios-ui-plan.py
       - name: Conflict markers and shell syntax
@@ -533,14 +534,8 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: >-
-            cd android && ./gradlew --no-daemon --console=plain --no-configuration-cache connectedFullReleaseAndroidTest
-            -Preins.prebuiltNativeDir="$GITHUB_WORKSPACE/native"
-            -Preins.testBuildType=release -Preins.secureScreens=false
-            -Preins.testRunner=dev.reins.android.TrustTestRunner
-            -Preins.releaseKeystore="$RUNNER_TEMP/trust-test.keystore"
-            -Preins.releaseKeystorePassword=android -Preins.releaseKeyAlias=androiddebugkey
-            -Pandroid.testInstrumentationRunnerArguments.class=dev.reins.android.TrustReleaseTest
+          # Retries a failed run once: one of its tests is a known emulator flake (quarantined there, with the numbers).
+          script: bash scripts/android-trust-smoke.sh
       - name: Require the regression test to execute
         run: |
           python3 - <<'PY'

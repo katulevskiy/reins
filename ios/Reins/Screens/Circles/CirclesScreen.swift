@@ -86,7 +86,8 @@ struct CirclesScreen: View {
         } footer: {
             if vm.available == true {
                 QuietFooter {
-                    RatioRow(spacing: 10, ratio: 1) {
+                    // "Add someone" is the longer label: the wider button, as in the join and enrol sheets.
+                    RatioRow(spacing: 10, ratio: 1 / 1.35) {
                         Button {
                             joining = true
                             feedback.play(.open)

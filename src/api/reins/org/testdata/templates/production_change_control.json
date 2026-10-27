@@ -1,0 +1,103 @@
+[
+  {
+    "id": "tpl.production_change_control.1",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "infra",
+        "git_push"
+      ],
+      "resource": "acme/prod-*",
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Production: on-call approves.",
+    "review": {
+      "reviewers": {
+        "on_call": {
+          "alias": "payments"
+        }
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 14400,
+      "urgent": true
+    }
+  },
+  {
+    "id": "tpl.production_change_control.2",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "infra",
+        "git_push"
+      ],
+      "resource": "acme/prod-*",
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Production: a second engineer approves.",
+    "review": {
+      "reviewers": {
+        "group": "eng"
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 14400,
+      "urgent": true
+    }
+  },
+  {
+    "id": "tpl.production_change_control.3",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "infra",
+        "git_push"
+      ],
+      "resource": "acme/prod-*",
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Outside change windows: Security approves too.",
+    "review": {
+      "reviewers": {
+        "group": "sec"
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 14400
+    },
+    "outside_hours": [
+      {
+        "days": [
+          "Mon",
+          "Tue",
+          "Wed",
+          "Thu"
+        ],
+        "start": "09:00",
+        "end": "17:00",
+        "tz": "Europe/Berlin"
+      }
+    ]
+  }
+]

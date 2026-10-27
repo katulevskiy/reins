@@ -12,7 +12,6 @@ import android.media.AudioAttributes
 import android.net.Uri
 import dev.reins.android.ui.activity.field
 import dev.reins.android.ui.activity.pendingTone
-import dev.reins.android.ui.activity.parked
 import dev.reins.android.ui.activity.pressing
 import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
@@ -138,7 +137,8 @@ class AppNotifier(
         val nowSeconds = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
         // Parked by Overnight for the morning (Decisions v2, 01 §11): parking never notifies, in front or not. The one
         // morning summary ([OvernightDigest]) covers it.
-        if (item.parked(nowSeconds)) return
+        // `parked`, not the morning time: an Overnight without an end parks until now.
+        if (item.parked) return
         // A ticket can wait: it arrives quietly unless less than an hour is left (Decisions v2, 03 §5.2).
         val quiet = item.ticket?.let { !it.pressing(nowSeconds) } ?: false
         // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
@@ -595,7 +595,16 @@ class AppNotifier(
      * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
      * channel; tapping opens that profile's reviews. Says nothing of the review itself.
      */
-    fun orgReview(target: WorkProfiles.Active, reviewId: String) {
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) = orgAction(target, reviewId, "A review waits for you.")
+
+    /**
+     * A web passkey the member added in the browser waits for this phone's confirmation (O3): notified like a review,
+     * opening the same screen, where its card shows the fingerprint.
+     */
+    fun orgPasskey(target: WorkProfiles.Active, credentialId: String) =
+        orgAction(target, credentialId, "Confirm your new passkey.")
+
+    private fun orgAction(target: WorkProfiles.Active, reviewId: String, text: String) {
         onChanged()
         if (!manager.areNotificationsEnabled()) return
         val open = PendingIntent.getActivity(
@@ -613,7 +622,7 @@ class AppNotifier(
         val notification = Notification.Builder(context, channel(context, Kind.Approvals, settings(), silent = false, profile = target))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (target.managed) target.label else "Reins")
-            .setContentText("A review waits for you.")
+            .setContentText(text)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setContentIntent(open)

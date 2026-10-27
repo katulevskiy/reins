@@ -30,6 +30,7 @@ use tokio::sync::watch;
 use super::{
     OrgError, audit,
     kms::{self, KeyPurpose},
+    routing,
 };
 use crate::db::{
     DbConnInner,
@@ -45,6 +46,11 @@ pub const VALID_SECS: i64 = 24 * 3600;
 pub const STUCK_SECS: i64 = 300;
 /// How long an issued lease lives.
 pub const LEASE_SECS: i64 = 900;
+/// Open requests (under review, approved, or running) one connection may have at once (03 §8: request flooding).
+pub const MAX_OPEN_PER_CONNECTION: i64 = 50;
+/// What an agent is told beyond [`MAX_OPEN_PER_CONNECTION`].
+pub const TOO_MANY_OPEN: &str = "This agent already has 50 requests waiting in your organization. Wait for some of \
+                                 them to finish (reins_get_result), then ask again.";
 
 /// What [`submit`] decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +78,8 @@ pub struct LeaseAsk {
     pub box_key: String,
 }
 
-fn member_policy(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<MemberPolicy>, OrgError> {
+/// The member's own stricter policy, when they set one.
+pub fn member_policy_of(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<MemberPolicy>, OrgError> {
     Ok(reins_org_keys::q_member_policy(c, org, user)?.and_then(|row| serde_json::from_str(&row.body).ok()))
 }
 
@@ -111,7 +118,8 @@ fn retention_secs(c: &mut DbConnInner, org: &str) -> Result<i64, OrgError> {
     Ok(reins_org::q_org(c, org)?.map_or(30, |t| i64::from(t.body_retention_days)) * 86_400)
 }
 
-/// Whoever can satisfy one of `obligations` now and has a device that may decide.
+/// Whoever can satisfy one of `obligations` now from their standing and has a device that may decide.
+#[cfg(test)]
 pub fn eligible_reviewers(
     c: &mut DbConnInner,
     org: &str,
@@ -130,7 +138,33 @@ pub fn eligible_reviewers(
         .collect())
 }
 
+/// What a request brings besides its call (O3): the agent's reason, and what the dynamic routing sources said
+/// ([`routing::prefetch`]).
+#[derive(Clone, Copy)]
+pub struct Extra<'a> {
+    pub reason: Option<&'a str>,
+    pub touches: &'a routing::Touches,
+    pub dynamic: &'a routing::Dynamic,
+}
+
+static NO_TOUCHES: LazyLock<routing::Touches> = LazyLock::new(routing::Touches::default);
+static NO_DYNAMIC: LazyLock<routing::Dynamic> = LazyLock::new(routing::Dynamic::new);
+
+impl Default for Extra<'_> {
+    fn default() -> Self {
+        Self {
+            reason: None,
+            touches: &NO_TOUCHES,
+            dynamic: &NO_DYNAMIC,
+        }
+    }
+}
+
+/// The longest reason kept.
+pub const MAX_REASON: usize = reins_policy::org::MAX_REASON;
+
 /// Evaluates and records one Managed request of `user` through `connection` (its id and label).
+#[cfg(test)]
 #[allow(clippy::too_many_arguments, reason = "one request's parts")]
 pub fn submit(
     c: &mut DbConnInner,
@@ -143,6 +177,25 @@ pub fn submit(
     lease: Option<&LeaseAsk>,
     now: i64,
 ) -> Result<Submitted, OrgError> {
+    submit_with(c, org, user, connection, agent_label, tool, args, lease, &Extra::default(), now)
+}
+
+/// [`submit`] with a reason and the routing sources' answers.
+#[allow(clippy::too_many_arguments, reason = "one request's parts")]
+pub fn submit_with(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    connection: &str,
+    agent_label: &str,
+    tool: &str,
+    args: &Value,
+    lease: Option<&LeaseAsk>,
+    extra: &Extra<'_>,
+    now: i64,
+) -> Result<Submitted, OrgError> {
+    // A reason beyond what a permit accepts isn't kept (and can't satisfy one).
+    let reason = extra.reason.map(str::trim).filter(|r| !r.is_empty() && r.chars().count() <= MAX_REASON);
     if !reins_proto::managed::ids_ok(&[org, user, connection, tool]) {
         return Err(OrgError::Invalid("That request can't be read."));
     }
@@ -163,19 +216,21 @@ pub fn submit(
     c.transaction(|c| {
         let (policy, _) = super::policy::active(c, org)?
             .ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
-        let member = member_policy(c, org, user)?;
-        let verdict = evaluate_managed(
-            &ManagedRequest {
-                org,
-                member: user,
-                connection,
-                tool,
-                args,
-                now,
-            },
-            &policy,
-            member.as_ref(),
-        );
+        // Request flooding (03 §8): beyond its open requests, a connection is told to wait, and nothing is recorded.
+        if reins_org_request::q_open_of_connection(c, org, connection)? >= MAX_OPEN_PER_CONNECTION {
+            return Err(OrgError::Invalid(TOO_MANY_OPEN));
+        }
+        let member = member_policy_of(c, org, user)?;
+        let managed = ManagedRequest {
+            org,
+            member: user,
+            connection,
+            tool,
+            args,
+            now,
+            reason,
+        };
+        let verdict = evaluate_managed(&managed, &policy, member.as_ref());
         let id = format!("or_{}", crate::util::get_uuid());
         let trace = trace_of(&verdict);
         let window = verdict.obligations.iter().map(|o| i64::try_from(o.spec.window()).unwrap_or(0)).max().unwrap_or(0);
@@ -207,9 +262,14 @@ pub fn submit(
             claimed_at: None,
             finished_at: None,
             receipt: None,
+            resolved: None,
         };
         reins_org_request::q_insert_request(c, &row)?;
-        let body = canonical_json(&json!({"tool": tool, "args": args}));
+        let mut body = json!({"tool": tool, "args": args});
+        if let Some(r) = reason {
+            body["reason"] = json!(r);
+        }
+        let body = canonical_json(&body);
         let (key_id, sealed) = kms::seal_data(c, org, &format!("{id}/request"), body.as_bytes(), now)?;
         reins_org_request::q_put_body(
             c,
@@ -258,6 +318,7 @@ pub fn submit(
             now,
         )?;
         let mut notify = Vec::new();
+        let mut expires_at = row.expires_at;
         let state = match verdict.outcome {
             ManagedOutcome::Auto => {
                 finalize(c, org, &row, Vec::new(), now)?;
@@ -286,7 +347,26 @@ pub fn submit(
                     &json!({"request": request, "policy": pol, "expires_at": row.expires_at}),
                     now,
                 )?;
-                notify = eligible_reviewers(c, org, user, &verdict.obligations, now)?;
+                let resources = routing::resources_of(&policy, &managed);
+                let ctx = routing::Ctx {
+                    org,
+                    web: reins_proto::managed::channel_allowed(trace["level"].as_str().unwrap_or_default()),
+                    requester: user,
+                    policy: &policy,
+                    resources: &resources,
+                    touches: extra.touches,
+                    dynamic: extra.dynamic,
+                };
+                let routed = routing::open(c, &id, &ctx, &verdict.obligations, now)?;
+                if !routed.resolved.is_empty() {
+                    let text = serde_json::to_string(&routed.resolved).unwrap_or_default();
+                    reins_org_request::q_set_resolved(c, org, &id, &text)?;
+                }
+                if routed.expires_at != row.expires_at {
+                    reins_org_request::q_set_expiry(c, org, &id, routed.expires_at)?;
+                    expires_at = routed.expires_at;
+                }
+                notify = routed.notify.into_iter().collect();
                 st::REVIEWING
             }
         };
@@ -295,7 +375,7 @@ pub fn submit(
             state: state.to_owned(),
             outcome: verdict.outcome,
             explain: verdict.explain.clone(),
-            expires_at: row.expires_at,
+            expires_at,
             instant: verdict.outcome == ManagedOutcome::Review
                 && verdict.obligations.iter().all(|o| o.spec.class == ReviewClass::Instant),
             notify,
@@ -313,7 +393,7 @@ fn end(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, to: &str, now: i64
             } else {
                 lease_state::EXPIRED
             };
-            reins_org_request::q_set_lease_state(c, org, &l.uuid, &[lease_state::PENDING], lease_to)?;
+            reins_org_request::q_end_lease(c, org, &l.uuid, &[lease_state::PENDING], lease_to, now)?;
         }
         let keep = retention_secs(c, org)?;
         reins_org_request::q_set_purge(c, org, &row.uuid, now + keep)?;
@@ -349,6 +429,22 @@ pub fn finalize(
         None => None,
     };
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
+    let resolved =
+        routing::stored(row.resolved.as_deref()).into_iter().map(|(k, v)| (k, v.into_iter().collect())).collect();
+    let reason = match reins_org_request::q_body(c, org, &row.uuid, "request")? {
+        Some(body) => {
+            let plain = kms::open_data(c, org, &body.key_id, &format!("{}/request", row.uuid), &body.sealed)?;
+            serde_json::from_slice::<Value>(&plain)
+                .ok()
+                .and_then(|v| v.get("reason").and_then(Value::as_str).map(str::to_owned))
+        }
+        None => None,
+    };
+    let valid = obligations
+        .iter()
+        .filter_map(|o| o.spec.approval_valid_secs)
+        .min()
+        .map_or(VALID_SECS, |s| i64::try_from(s).unwrap_or(VALID_SECS).min(VALID_SECS));
     let record = DecisionRecord {
         v: reins_proto::managed::DECISION_VERSION,
         org: org.to_owned(),
@@ -367,9 +463,11 @@ pub fn finalize(
         obligations: obligations.iter().map(|o| o.id.clone()).collect(),
         approvals,
         lease,
+        resolved,
+        reason,
         evaluated_at: row.created_at,
         decided_at: now,
-        valid_until: now + VALID_SECS,
+        valid_until: now + valid,
     };
     let env = kms::envelope(
         c,
@@ -475,7 +573,7 @@ pub fn status(c: &mut DbConnInner, org: &str, connection: &str, id: &str, now: i
         other => {
             let reason = receipt_of(c, org, &row)?.map(|r| r.reason).unwrap_or_default();
             let words = match other {
-                st::EXPIRED => "Expired, not approved.",
+                st::EXPIRED => "Expired: not approved in time.",
                 st::CANCELLED => "Cancelled.",
                 st::STALE => "Your organization's policy changed since it was approved. Ask again.",
                 st::REFUSED => "Your organization's executor refused to run it.",
@@ -513,31 +611,89 @@ pub async fn wait_change(id: &str, max: Duration) {
     let _ = tokio::time::timeout(max.min(Duration::from_secs(1)), rx.changed()).await;
 }
 
-/// The sweeper's part: expires overdue reviews and lapsed approvals, and marks stuck executions unknown.
+/// Expires a request under review that nobody approved in time (`why`: what ran out).
+pub fn expire(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, why: &str, now: i64) -> Result<bool, OrgError> {
+    let moved = end(c, org, row, st::EXPIRED, now)?;
+    if moved {
+        audit::record(
+            c,
+            org,
+            audit::kinds::REVIEW_EXPIRED,
+            None,
+            Some(&row.uuid),
+            &json!({"on_expiry": "deny", "why": why}),
+            now,
+        )?;
+    }
+    Ok(moved)
+}
+
+/// The sweeper's part: expires overdue reviews, lapsed approvals and leases nobody minted in time, and marks stuck
+/// executions unknown.
+#[cfg(test)]
 pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
-    let mut n = 0;
-    for row in reins_org_request::q_overdue_reviews(c, now)? {
-        if end(c, &row.org_uuid, &row, st::EXPIRED, now)? {
-            audit::record(
-                c,
-                &row.org_uuid,
-                audit::kinds::REVIEW_EXPIRED,
-                None,
-                Some(&row.uuid),
-                &json!({"on_expiry": "deny"}),
-                now,
-            )?;
-            n += 1;
+    Ok(sweep_routed(c, now, &std::collections::BTreeMap::new())?.0)
+}
+
+/// [`sweep`], escalating first (O3) with what the dynamic sources said for each request; returns the escalations to
+/// notify. Every part runs whatever another did, and every row on its own: a row that fails is logged and skipped,
+/// never stopping deadline expiry for the others.
+pub fn sweep_routed(
+    c: &mut DbConnInner,
+    now: i64,
+    prefetched: &routing::escalation::Prefetched,
+) -> Result<(usize, Vec<routing::escalation::Swept>), OrgError> {
+    use diesel::Connection;
+    let swept = routing::escalation::escalate_due(c, now, prefetched).unwrap_or_else(|e| {
+        warn!("Org sweep: escalation: {e:?}");
+        Vec::new()
+    });
+    let mut n = swept.len();
+    let mut each = |c: &mut DbConnInner,
+                    what: &str,
+                    row: &ReinsOrgRequest,
+                    f: &dyn Fn(&mut DbConnInner) -> Result<bool, OrgError>| {
+        match c.transaction(|c| f(c)) {
+            Ok(true) => n += 1,
+            Ok(false) => {}
+            Err(e) => warn!("Org {}: {what} of {} failed: {e:?}", row.org_uuid, row.uuid),
         }
+    };
+    for row in listed(reins_org_request::q_overdue_reviews(c, now), "q_overdue_reviews") {
+        each(c, "expiry", &row, &|c| expire(c, &row.org_uuid, &row, "window", now));
     }
-    for row in reins_org_request::q_lapsed_approvals(c, now)? {
-        if end(c, &row.org_uuid, &row, st::EXPIRED, now)? {
-            audit::record(c, &row.org_uuid, audit::kinds::REQUEST_EXPIRED, None, Some(&row.uuid), &json!({}), now)?;
-            n += 1;
-        }
+    for row in listed(reins_org_request::q_lapsed_approvals(c, now), "q_lapsed_approvals") {
+        each(c, "lapse", &row, &|c| {
+            let moved = end(c, &row.org_uuid, &row, st::EXPIRED, now)?;
+            if moved {
+                audit::record(c, &row.org_uuid, audit::kinds::REQUEST_EXPIRED, None, Some(&row.uuid), &json!({}), now)?;
+            }
+            Ok(moved)
+        });
     }
-    for row in reins_org_request::q_stuck(c, now - STUCK_SECS)? {
-        if reins_org_request::q_set_state(c, &row.org_uuid, &row.uuid, &[st::EXECUTING], st::UNKNOWN, now)? {
+    // An approved lease no executor took before its end (it was offline): it ends unminted.
+    for row in listed(reins_org_request::q_lapsed_lease_requests(c, now), "q_lapsed_lease_requests") {
+        each(c, "lease end", &row, &|c| {
+            let moved = end(c, &row.org_uuid, &row, st::EXPIRED, now)?;
+            if moved {
+                audit::record(
+                    c,
+                    &row.org_uuid,
+                    audit::kinds::REQUEST_EXPIRED,
+                    None,
+                    Some(&row.uuid),
+                    &json!({"reason": "lease_ended"}),
+                    now,
+                )?;
+            }
+            Ok(moved)
+        });
+    }
+    for row in listed(reins_org_request::q_stuck(c, now - STUCK_SECS), "q_stuck") {
+        each(c, "stuck check", &row, &|c| {
+            if !reins_org_request::q_set_state(c, &row.org_uuid, &row.uuid, &[st::EXECUTING], st::UNKNOWN, now)? {
+                return Ok(false);
+            }
             let keep = retention_secs(c, &row.org_uuid)?;
             reins_org_request::q_set_purge(c, &row.org_uuid, &row.uuid, now + keep)?;
             audit::record(
@@ -550,10 +706,18 @@ pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
                 now,
             )?;
             wake(&row.uuid);
-            n += 1;
-        }
+            Ok(true)
+        });
     }
-    Ok(n)
+    Ok((n, swept))
+}
+
+/// Rows a sweep part works on; a query that fails is logged and the part skipped this pass.
+fn listed(rows: diesel::QueryResult<Vec<ReinsOrgRequest>>, what: &str) -> Vec<ReinsOrgRequest> {
+    rows.unwrap_or_else(|e| {
+        warn!("Org sweep: {what}: {e:?}");
+        Vec::new()
+    })
 }
 
 /// A member is gone (deprovisioning): their requests no executor took yet are cancelled, and their answers to reviews
@@ -746,6 +910,33 @@ pub(crate) mod tests {
                 .unwrap();
         let bound = record.lease.unwrap();
         assert_eq!((bound.repo.as_str(), bound.access, bound.lease.as_str()), ("acme/api", LeaseAccess::Push, "l2"));
+    }
+
+    #[test]
+    fn a_connection_may_have_at_most_50_open_requests() {
+        let mut c = db();
+        pilot(&mut c);
+        // Fifty reviews wait (deferred tickets), all from one connection.
+        let open: Vec<Submitted> =
+            (0..MAX_OPEN_PER_CONNECTION).map(|_| ask(&mut c, &issue("acme/prod-db"), 100)).collect();
+        assert_eq!(open.len(), 50);
+        // The fifty-first is refused with words the agent can act on, and nothing is recorded for it.
+        let before = reins_org_request::q_requests_of_org(&mut c, "o1", None, 500).unwrap().len();
+        let refused =
+            submit(&mut c, "o1", "lee", "conn-lee", "x", "github_create_issue", &issue("acme/api"), None, 101);
+        assert_eq!(refused, Err(OrgError::Invalid(TOO_MANY_OPEN)));
+        assert!(TOO_MANY_OPEN.contains("50"), "{TOO_MANY_OPEN}");
+        assert_eq!(reins_org_request::q_requests_of_org(&mut c, "o1", None, 500).unwrap().len(), before);
+        // Another connection isn't held back by this one's.
+        let other =
+            submit(&mut c, "o1", "lee", "conn-other", "x", "github_create_issue", &issue("acme/api"), None, 101);
+        assert_eq!(other.unwrap().outcome, ManagedOutcome::Auto);
+        // Once one ends, there is room again.
+        let row = reins_org_request::q_request(&mut c, "o1", &open[0].id).unwrap().unwrap();
+        deny(&mut c, "o1", &row, "kim", 102).unwrap();
+        assert!(
+            submit(&mut c, "o1", "lee", "conn-lee", "x", "github_create_issue", &issue("acme/api"), None, 103).is_ok()
+        );
     }
 
     #[test]

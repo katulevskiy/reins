@@ -1,0 +1,30 @@
+[
+  {
+    "id": "tpl.developer_baseline.1",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [
+        "L3"
+      ],
+      "effects": [
+        "git_push",
+        "git_ref_delete"
+      ],
+      "resource": null,
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Code owners review this.",
+    "review": {
+      "reviewers": "code_owners",
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 14400
+    }
+  }
+]

@@ -130,10 +130,10 @@ fn now() -> i64 {
 
 /// Dana invites Alex; both steps through; returns the link id.
 async fn link(dana: &Person, alex: &Person) -> String {
-    link_of(dana, alex, "cosign").await
+    link_as(dana, alex, "cosign").await
 }
 
-async fn link_of(dana: &Person, alex: &Person, kind: &str) -> String {
+async fn link_as(dana: &Person, alex: &Person, kind: &str) -> String {
     let commitment = circle::invite_commitment(&dana.user, &dana.owner_pub(), 1, &[1; 32]).expect("commitment");
     let (status, created) = dana
         .phone
@@ -155,6 +155,14 @@ async fn link_of(dana: &Person, alex: &Person, kind: &str) -> String {
     let challenge = json!({"v": 1, "token": token, "helper_pub": alex.owner_pub(), "helper_epoch": 1, "nonce": encode_nonce(&[2; 32])});
     let (status, body) = alex.phone.post(&format!("/circles/invites/{id}/challenge"), &challenge).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    // The same challenge again (its answer was lost): taken; another one from the same helper: refused.
+    assert_eq!(
+        alex.phone.post(&format!("/circles/invites/{id}/challenge"), &challenge).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let mut other = challenge.clone();
+    other["nonce"] = json!(encode_nonce(&[3; 32]));
+    assert_eq!(alex.phone.post(&format!("/circles/invites/{id}/challenge"), &other).await.0, StatusCode::CONFLICT);
     let (_, owner_view) = dana.phone.get(&format!("/circles/invites/{id}")).await;
     assert_eq!(owner_view["state"], "challenged");
     assert_eq!(owner_view["challenge"]["token"], "", "the link secret is never shown back");
@@ -352,7 +360,7 @@ async fn an_end_request_keeps_the_link_until_effective() {
     let server = Server::start().await;
     let sam = Person::new(&server, "sam@example.com", 10).await;
     let mom = Person::new(&server, "mom@example.com", 20).await;
-    let l = link_of(&sam, &mom, "guardian").await;
+    let l = link_as(&sam, &mom, "guardian").await;
     let path = format!("/circles/links/{l}/change");
     // The ward neither pauses nor ends a guardianship directly.
     assert_eq!(sam.phone.post(&path, &sam.change(&l, 1, LinkState::Paused, Side::Owner)).await.0, StatusCode::CONFLICT);
@@ -410,7 +418,7 @@ async fn consent_ends_at_once() {
     let server = Server::start().await;
     let sam = Person::new(&server, "sam@example.com", 10).await;
     let mom = Person::new(&server, "mom@example.com", 20).await;
-    let l = link_of(&sam, &mom, "guardian").await;
+    let l = link_as(&sam, &mom, "guardian").await;
     let path = format!("/circles/links/{l}/change");
     let t = now();
     let request = sam.step(
@@ -467,4 +475,22 @@ async fn notices_never_reach_non_guardians() {
         StatusCode::NO_CONTENT
     );
     assert_eq!(alex.phone.get("/guardian/notices").await.1, json!([]), "a co-signer gets no guardian notices");
+}
+
+#[tokio::test]
+async fn a_guardianship_is_ended_never_paused() {
+    let server = Server::start().await;
+    let ward = Person::new(&server, "sam@example.com", 10).await;
+    let guardian = Person::new(&server, "mom@example.com", 20).await;
+    let l = link_as(&ward, &guardian, "guardian").await;
+    let path = format!("/circles/links/{l}/change");
+    assert_eq!(
+        ward.phone.post(&path, &ward.change(&l, 1, LinkState::Paused, Side::Owner)).await.0,
+        StatusCode::CONFLICT
+    );
+    // P7: a ward doesn't end it outright either; it asks, with the notice it chose (`EndRequested`).
+    assert_eq!(
+        ward.phone.post(&path, &ward.change(&l, 1, LinkState::Ended, Side::Owner)).await.0,
+        StatusCode::CONFLICT
+    );
 }

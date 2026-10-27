@@ -15,9 +15,11 @@ use reins_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use reins_proto::relay::RelayRequest;
+
 use super::{
-    CircleEvent, CircleNoticeView, CircleProgress, CircleReviewState, CircleReviewView, Me, Standing, new_id,
-    sealed_to, verify,
+    CircleEvent, CircleNoticeView, CircleProgress, CircleReviewState, CircleReviewView, CircleState, Me, Standing,
+    new_id, sealed_to, verify,
 };
 use crate::{
     autopilot::context::{Decision, deciding},
@@ -26,7 +28,7 @@ use crate::{
     phone_api::ApiFailure,
     session::Session,
     store::unix_now,
-    types::ApprovalChoice,
+    types::{ApprovalChoice, PendingItem},
 };
 
 /// One helper's part in a hold: its packet, and its answer once verified.
@@ -67,6 +69,27 @@ pub(crate) struct Hold {
     pub deadline: i64,
     /// The decision it ended with ("Approved", "Denied"), once settled here.
     pub outcome: Option<String>,
+    /// How it runs once settled.
+    #[serde(default)]
+    pub finish: Finish,
+}
+
+/// The owner's tap, with what it picked.
+#[derive(Clone, Copy)]
+pub(crate) enum Tap<'a> {
+    Request(&'a ApprovalChoice),
+    Purchase(&'a crate::connector::payments::PurchaseChoice),
+    Blob,
+}
+
+/// How a settled hold runs: through the owner's approval of a request, a purchase (with the owner's picks), or an
+/// upload.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) enum Finish {
+    #[default]
+    Request,
+    Purchase(Option<crate::connector::payments::PurchaseChoice>),
+    Blob,
 }
 
 impl Hold {
@@ -202,6 +225,38 @@ pub(crate) struct NoticeRow {
     pub notice: Notice,
 }
 
+/// What a summary shows (04 §5): the effects, the service and the agent; never the title, headline or subtitle, which
+/// name subjects and recipients.
+fn summary_card(full: &ReviewCard) -> ReviewCard {
+    let service = if full.service.is_empty() {
+        "a service"
+    } else {
+        full.service.as_str()
+    };
+    let agent = if full.agent.is_empty() {
+        "An AI"
+    } else {
+        full.agent.as_str()
+    };
+    ReviewCard {
+        title: format!("{agent} wants to act on {service}"),
+        subtitle: String::new(),
+        headline: String::new(),
+        service: full.service.clone(),
+        account: None,
+        agent: full.agent.clone(),
+        line: full.line.clone(),
+        detail: None,
+        created_at: full.created_at,
+        deadline: full.deadline,
+    }
+    .cleaned()
+}
+
+/// Packets per page of the inbox (the server's), and how many pages a sync reads at most.
+const PAGE: usize = 500;
+const PAGES: usize = 10;
+
 /// How long settled reviews and notices stay listed.
 const KEEP_SECS: i64 = 7 * 86_400;
 
@@ -213,39 +268,23 @@ fn deadline_of(class: Class, window: u64, now: i64) -> i64 {
 impl Engine {
     // ---- the owner --------------------------------------------------------------------------------------------------
 
-    /// A request was parked: the arrangements that cover it, as a hold. Local only (no network): a hold exists before
-    /// Autopilot looks, so nothing a Circle must approve runs without it. Packets go out after ([`Engine::circle_send`]).
-    pub(crate) fn circle_route(&self, id: &str) -> Result<bool, CoreError> {
-        let Some(slot) = self.circle_slot_now() else {
-            return Ok(false);
-        };
-        let state = self.circle_state(&slot)?;
-        if state.holds.iter().any(|h| h.id == id) {
-            return Ok(false);
-        }
-        // In force: active, and a guardianship until its end takes effect (its notice running, or a minor's request
-        // waiting for consent: the guardian's review stays, 04 §4).
-        let in_force_at = unix_now();
-        let active: Vec<&circle::Arrangement> = state
-            .held
-            .iter()
-            .filter(|h| h.side == Side::Owner && h.in_force(in_force_at))
-            .map(|h| &h.arrangement)
-            .collect();
-        // A paused arrangement adds nothing; a suspended one (the helper's keys changed) still binds, and its requests
-        // wait for the owner to end it (never fewer reviews because a key went missing).
-        let suspended: Vec<&circle::Arrangement> = state
-            .held
-            .iter()
-            .filter(|h| h.side == Side::Owner && h.standing == Standing::Suspended)
-            .map(|h| &h.arrangement)
-            .collect();
-        if active.is_empty() && suspended.is_empty() {
-            return Ok(false);
-        }
-        let (_, parked) = self.parked(id)?;
+    /// The obligations the owner's arrangements put on `request`, its effect line and the owner's account; `None`
+    /// when no arrangement covers it.
+    fn circle_obligations(&self, state: &CircleState, request: &RelayRequest) -> Option<(Obligations, String, String)> {
+        // Arrangements in force bind (a guardianship until its end takes effect: its notice running, or a minor's
+        // request waiting for consent, 04 §4); a suspended one (the helper's keys changed) binds too, and its requests
+        // wait for the owner to end it (never fewer reviews because a key went missing). A paused one adds nothing.
         let now = unix_now();
-        let note = self.ap_evaluate(&parked.request, false, now, false).ok().flatten().map(|(n, _)| n);
+        let all: Vec<&circle::Arrangement> = state
+            .held
+            .iter()
+            .filter(|h| h.side == Side::Owner && (h.in_force(now) || h.standing == Standing::Suspended))
+            .map(|h| &h.arrangement)
+            .collect();
+        if all.is_empty() {
+            return None;
+        }
+        let note = self.ap_evaluate(request, false, unix_now(), false).ok().flatten().map(|(n, _)| n);
         let unknown = [EffectKind::Unknown];
         let (kinds, zone, level, certainty, line) = match &note {
             Some(n) if !n.kinds.is_empty() => (n.kinds.as_slice(), n.zone, n.level, Certainty::Full, n.line.clone()),
@@ -257,32 +296,83 @@ impl Engine {
             zone,
             level,
             certainty,
-            connection: &parked.request.connection_id.0,
-            account: parked.request.account.as_deref(),
+            connection: &request.connection_id.0,
+            account: request.account.as_deref(),
         };
-        let owner_account = active.iter().chain(&suspended).next().map(|a| a.owner.account.clone()).unwrap_or_default();
-        let all: Vec<&circle::Arrangement> = active.iter().chain(&suspended).copied().collect();
+        let owner_account = all[0].owner.account.clone();
         let ob = policy::obligations(&owner_account, &all, &input);
-        if ob.is_empty() && ob.watchers.is_empty() {
+        (!ob.is_empty() || !ob.watchers.is_empty()).then_some((ob, line, owner_account))
+    }
+
+    /// Whether a co-signer or a guardian must approve `request`. Then nothing runs without parking: no standing grant,
+    /// managed permit, read grant or Bypass-minted grant, and no automatic mode (`authorization_automatic` and
+    /// `permission_route` say review). Fails closed: Circle state that can't be read counts as yes.
+    pub(crate) fn circle_requires_review(&self, request: &RelayRequest) -> bool {
+        let slot = match self.circle_slot_now() {
+            Ok(Some(slot)) => slot,
+            Ok(None) => return false,
+            Err(e) => {
+                log::warn!("the Circle state could not be read; the request waits for review: {e}");
+                return true;
+            }
+        };
+        match self.circle_state(&slot) {
+            Ok(state) => self.circle_obligations(&state, request).is_some_and(|(ob, ..)| !ob.required.is_empty()),
+            Err(e) => {
+                log::warn!("the Circle state could not be read; the request waits for review: {e}");
+                true
+            }
+        }
+    }
+
+    /// A request was parked: the arrangements that cover it, as a hold. Local only (no network): a hold exists before
+    /// Autopilot looks, so nothing a Circle must approve runs without it. Packets go out after ([`Engine::circle_send`]).
+    pub(crate) fn circle_route(&self, id: &str) -> Result<bool, CoreError> {
+        if self.circle_slot_now()?.is_none() {
             return Ok(false);
         }
+        let (_, parked) = self.parked(id)?;
+        let finish = if parked.connector.as_ref().is_some_and(|c| c.purchase.is_some()) {
+            Finish::Purchase(None)
+        } else {
+            Finish::Request
+        };
         let mut item = self.pending_request_item(&parked);
         self.names().item(&mut item);
-        let class = ob.class();
-        let deadline = deadline_of(class, ob.window_secs().unwrap_or(circle::DEFERRED_DEFAULT_SECS), now);
-        let card = ReviewCard {
-            title: item.title.clone(),
-            subtitle: item.subtitle.clone(),
-            headline: item.headline.clone(),
-            service: item.service.clone(),
-            account: item.account.clone(),
-            agent: item.connection_label.clone(),
-            line,
-            detail: (!item.subtitle.is_empty()).then(|| item.subtitle.clone()),
-            created_at: now,
-            deadline,
+        self.circle_route_with(id, &parked.request, &item, finish)
+    }
+
+    /// An upload arrived and waits for the owner: the arrangements that cover it, as a hold.
+    pub(crate) fn circle_route_blob(
+        &self,
+        id: &str,
+        request: &RelayRequest,
+        item: &PendingItem,
+    ) -> Result<bool, CoreError> {
+        if self.circle_slot_now()?.is_none() {
+            return Ok(false);
         }
-        .cleaned();
+        self.circle_route_with(id, request, item, Finish::Blob)
+    }
+
+    fn circle_route_with(
+        &self,
+        id: &str,
+        request: &RelayRequest,
+        item: &PendingItem,
+        finish: Finish,
+    ) -> Result<bool, CoreError> {
+        let Some(slot) = self.circle_slot_now()? else {
+            return Ok(false);
+        };
+        let state = self.circle_state(&slot)?;
+        if state.holds.iter().any(|h| h.id == id) {
+            return Ok(state.holds.iter().any(|h| h.id == id && h.reviews()));
+        }
+        let Some((ob, line, owner_account)) = self.circle_obligations(&state, request) else {
+            return Ok(false);
+        };
+        let now = unix_now();
         let mut parts = Vec::new();
         for p in ob.reviewers() {
             let held = state.held(&p.arrangement).ok_or(CoreError::NotFound)?;
@@ -303,21 +393,37 @@ impl Engine {
                 // A suspended arrangement can't be answered: its window is over at once.
                 lapsed: held.standing == Standing::Suspended,
                 created_at: now,
-                deadline,
+                // Each helper's own window (its arrangement's class and length).
+                deadline: deadline_of(p.class, p.window_secs, now),
             });
         }
+        let deadline = parts.iter().map(|p| p.deadline).min().unwrap_or_else(|| deadline_of(Class::Deferred, 0, now));
+        let card = ReviewCard {
+            title: item.title.clone(),
+            subtitle: item.subtitle.clone(),
+            headline: item.headline.clone(),
+            service: item.service.clone(),
+            account: item.account.clone(),
+            agent: item.connection_label.clone(),
+            line,
+            detail: (!item.subtitle.is_empty()).then(|| item.subtitle.clone()),
+            created_at: now,
+            deadline,
+        }
+        .cleaned();
         let hold = Hold {
             id: id.to_owned(),
-            digest: reins_proto::ticket::digest_of(&parked.request),
+            digest: reins_proto::ticket::digest_of(request),
             owner_account,
             parts,
             watchers: ob.watchers.iter().map(|w| w.arrangement.clone()).collect(),
             owner_vote: None,
             selected: Vec::new(),
             card,
-            deferred: class == Class::Deferred,
+            deferred: ob.class() == Class::Deferred,
             deadline,
             outcome: None,
+            finish,
         };
         let reviews = hold.reviews();
         self.with_circles(&slot, |s| {
@@ -329,20 +435,32 @@ impl Engine {
         Ok(reviews)
     }
 
-    /// The hold of request `id`, when somebody besides the owner decides it.
-    pub(crate) fn circle_hold(&self, id: &str) -> Option<Hold> {
-        let slot = self.circle_slot_now()?;
-        self.circle_state(&slot).ok()?.holds.into_iter().find(|h| h.id == id && h.reviews())
+    /// The hold of request `id`, when somebody besides the owner decides it. An unreadable state is an error (the
+    /// callers fail closed).
+    pub(crate) fn circle_hold(&self, id: &str) -> Result<Option<Hold>, CoreError> {
+        let Some(slot) = self.circle_slot_now()? else {
+            return Ok(None);
+        };
+        Ok(self.circle_state(&slot)?.holds.into_iter().find(|h| h.id == id && h.reviews()))
+    }
+
+    /// The hold waits for others (the owner's tap is in, or isn't needed): an approval didn't run.
+    pub(crate) fn circle_waiting(&self, id: &str) -> bool {
+        match self.circle_hold(id) {
+            Ok(Some(h)) => h.outcome.is_none(),
+            Ok(None) => false,
+            Err(_) => true,
+        }
     }
 
     /// The owner's card line ("Needs Alex too").
     pub(crate) fn circle_progress(&self, id: &str) -> Option<CircleProgress> {
-        self.circle_hold(id).map(|h| h.progress())
+        self.circle_hold(id).ok().flatten().map(|h| h.progress())
     }
 
     /// Sends what a hold still owes: its packets; a Deferred hold becomes a ticket first.
     pub(crate) async fn circle_send(&self, session: &Session, id: &str) -> Result<(), CoreError> {
-        let Some(hold) = self.circle_hold(id) else {
+        let Some(hold) = self.circle_hold(id)? else {
             return Ok(());
         };
         let me = self.circle_me(session).await?;
@@ -375,11 +493,11 @@ impl Engine {
 
     async fn circle_send_part(&self, session: &Session, me: &Me, hold: &Hold, part: &Part) -> Result<(), CoreError> {
         let peer = self.circle_peer(session, &me.slot, &part.arrangement).await?;
-        let mut card = hold.card.clone().redacted(part.redaction);
+        let mut card = match part.redaction {
+            Redaction::Full => hold.card.clone(),
+            Redaction::Summary => summary_card(&hold.card),
+        };
         card.deadline = part.deadline;
-        if part.redaction == Redaction::Summary {
-            card.subtitle.clear();
-        }
         let body = PacketBody {
             v: circle::version(),
             id: part.packet.clone(),
@@ -426,14 +544,14 @@ impl Engine {
     pub(crate) fn circle_gate(
         &self,
         id: &str,
-        choice: &ApprovalChoice,
+        tap: Tap<'_>,
         source: crate::authorization::AuthorizationSource,
     ) -> Result<bool, CoreError> {
         use crate::authorization::AuthorizationSource;
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(true);
         };
-        let Some(hold) = self.circle_hold(id) else {
+        let Some(hold) = self.circle_hold(id)? else {
             return Ok(true);
         };
         if hold.outcome.as_deref() == Some("Approved") {
@@ -450,7 +568,12 @@ impl Engine {
                 return Ok(Settle::Approved);
             };
             h.owner_vote = Some(true);
-            choice.selected_message_ids.clone_into(&mut h.selected);
+            match tap {
+                Tap::Request(choice) => choice.selected_message_ids.clone_into(&mut h.selected),
+                // What pays and where it goes, as the owner picked it: what runs once the others approved.
+                Tap::Purchase(choice) => h.finish = Finish::Purchase(Some(choice.clone())),
+                Tap::Blob => {}
+            }
             let settled = h.settle();
             if settled == Settle::Approved {
                 h.outcome = Some("Approved".to_owned());
@@ -478,7 +601,7 @@ impl Engine {
 
     /// The owner denied (or Lockdown did): the hold is settled; its packets are withdrawn on the next sync.
     pub(crate) fn circle_denied(&self, id: &str) {
-        let Some(slot) = self.circle_slot_now() else {
+        let Ok(Some(slot)) = self.circle_slot_now() else {
             return;
         };
         if let Err(e) = self.with_circles(&slot, |s| {
@@ -495,10 +618,23 @@ impl Engine {
     /// Takes the helpers' answers: each verified against its arrangement, its packet, the request's digest and the
     /// helper's current approval phone, once; then settles what they complete.
     pub(crate) async fn circle_take_answers(&self, session: &Session, me: &Me) -> Result<(), CoreError> {
+        // A batch at a time: each one taken is marked seen, so the next batch is the rest.
+        for _ in 0..PAGES {
+            let more = Box::pin(self.circle_take_answer_batch(session, me)).await?;
+            if !more {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// One batch of answers; `true` when the server may have more.
+    async fn circle_take_answer_batch(&self, session: &Session, me: &Me) -> Result<bool, CoreError> {
         let items = api_call!(session, |api| api.circle_answers()).map_err(ApiFailure::into_core)?;
         if items.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
+        let more = items.len() >= PAGE;
         let mut seen = Vec::new();
         let mut touched = Vec::new();
         for item in items {
@@ -556,6 +692,9 @@ impl Engine {
                         seen.push(item.packet);
                     }
                 },
+                // The server says its window ran out: believed only once this phone's clock agrees (a server can't
+                // cut a helper's window short); until then the answer may still come.
+                PacketState::Expired if unix_now() < part.deadline => seen.push(item.packet),
                 PacketState::Expired => {
                     self.with_circles(&me.slot, |s| {
                         if let Some(p) = s
@@ -583,7 +722,7 @@ impl Engine {
         for id in touched {
             Box::pin(self.circle_settle(session, me, &id)).await;
         }
-        Ok(())
+        Ok(more)
     }
 
     async fn circle_check_answer(
@@ -656,7 +795,12 @@ impl Engine {
                     return;
                 };
                 let decision = Decision::new("circle", None).by_circle(note.clone());
-                let (result, _) = deciding(decision, Box::pin(self.deny_claimed_with(id, Some(note)))).await;
+                let result = match hold.finish {
+                    Finish::Blob => deciding(decision, Box::pin(self.answer_blob_claimed(id, false))).await.0,
+                    Finish::Request | Finish::Purchase(_) => {
+                        deciding(decision, Box::pin(self.deny_claimed_with(id, Some(note)))).await.0
+                    }
+                };
                 if let Err(e) = result {
                     log::warn!("a Circle denial could not be answered: {e}");
                 }
@@ -687,15 +831,33 @@ impl Engine {
                 } else {
                     Decision::new("circle", None).by_circle(line)
                 };
-                let (result, _) = deciding(
-                    decision,
-                    Box::pin(self.approve_claimed(id, choice, crate::authorization::AuthorizationSource::OwnerReview)),
-                )
-                .await;
+                let result = match &hold.finish {
+                    Finish::Request => {
+                        deciding(
+                            decision,
+                            Box::pin(self.approve_claimed(
+                                id,
+                                choice,
+                                crate::authorization::AuthorizationSource::OwnerReview,
+                            )),
+                        )
+                        .await
+                        .0
+                    }
+                    // A purchase pays only with the owner's own picks, from the purchase screen.
+                    Finish::Purchase(Some(picked)) => {
+                        let work = async {
+                            let (_, parked) = self.parked(id)?;
+                            self.approve_parked_purchase(session, id, &parked, Some(picked)).await
+                        };
+                        deciding(decision, Box::pin(work)).await.0
+                    }
+                    Finish::Purchase(None) => Err(CoreError::invalid("waits for the owner's picks")),
+                    Finish::Blob => deciding(decision, Box::pin(self.answer_blob_claimed(id, true))).await.0,
+                };
                 if let Err(e) = result {
                     log::warn!("a request the Circle approved could not run: {e}");
                 }
-                let _ = session;
             }
             Settle::Waiting {
                 ..
@@ -835,7 +997,7 @@ impl Engine {
         let Ok(session) = self.session() else {
             return;
         };
-        let Some(slot) = self.circle_slot_now() else {
+        let Ok(Some(slot)) = self.circle_slot_now() else {
             return;
         };
         let watchers: Vec<String> = match self.circle_state(&slot) {
@@ -875,7 +1037,16 @@ impl Engine {
     /// Takes the packets addressed to this account: each opened, checked against the owner's current approval phone and
     /// its arrangement, and kept. A new review is the one Circle notification.
     pub(crate) async fn circle_take_inbox(&self, session: &Session, me: &Me) -> Result<(), CoreError> {
-        let items = api_call!(session, |api| api.circle_inbox()).map_err(ApiFailure::into_core)?;
+        // Every page (waiting packets come first), up to a bound.
+        let mut items = Vec::new();
+        for page in 0..PAGES {
+            let got = api_call!(session, |api| api.circle_inbox(page * PAGE)).map_err(ApiFailure::into_core)?;
+            let full = got.len() >= PAGE;
+            items.extend(got);
+            if !full {
+                break;
+            }
+        }
         let mut changed = false;
         for item in items {
             let state = self.circle_state(&me.slot)?;
@@ -1000,7 +1171,7 @@ impl Engine {
     }
 
     pub(crate) fn circle_reviews(&self) -> Result<Vec<CircleReviewView>, CoreError> {
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(Vec::new());
         };
         let mut out: Vec<CircleReviewView> = self.circle_state(&slot)?.reviews.iter().map(Review::view).collect();
@@ -1009,7 +1180,7 @@ impl Engine {
     }
 
     pub(crate) fn circle_notices(&self) -> Result<Vec<CircleNoticeView>, CoreError> {
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(Vec::new());
         };
         let mut out: Vec<CircleNoticeView> = self
@@ -1187,7 +1358,29 @@ mod tests {
             deferred: true,
             deadline: 100,
             outcome: None,
+            finish: Finish::Request,
         }
+    }
+
+    #[test]
+    fn a_summary_names_no_subject_or_recipient() {
+        let full = ReviewCard {
+            title: "Claude wants to send \"Quarterly numbers\" to ann@acme.com".to_owned(),
+            subtitle: "ann@acme.com".to_owned(),
+            headline: "Sends Quarterly numbers to ann@acme.com".to_owned(),
+            service: "gmail".to_owned(),
+            account: Some("dana@gmail.com".to_owned()),
+            agent: "Claude".to_owned(),
+            line: "Ask · Outside · Reaches people".to_owned(),
+            detail: Some("To: ann@acme.com".to_owned()),
+            created_at: 1,
+            deadline: 2,
+        };
+        let s = summary_card(&full);
+        let shown = format!("{} {} {} {:?} {} {:?}", s.title, s.subtitle, s.headline, s.detail, s.line, s.account);
+        assert!(!shown.contains("ann@acme.com") && !shown.contains("Quarterly"), "{shown}");
+        assert_eq!(s.title, "Claude wants to act on gmail");
+        assert!(s.validate().is_ok());
     }
 
     #[test]

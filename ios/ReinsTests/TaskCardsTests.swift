@@ -81,7 +81,7 @@ final class TaskCardsTests: XCTestCase {
         let owner = SetupOwnerAnswers()
         let (core, model) = await start(owner: owner)
         let item = try XCTUnwrap(TicketInbox.proposals(model.pending).first)
-        XCTAssertEqual(item.id, "req40")
+        XCTAssertEqual(item.id, "req70")
         XCTAssertFalse(TicketInbox.instant(model.pending).contains { $0.id == item.id }, "a proposal is its own card, not a waiting card")
         XCTAssertFalse(TicketInbox.groups(model.pending).flatMap(\.items).contains { $0.id == item.id })
         var draft = TaskDraft(try XCTUnwrap(item.taskProposal))

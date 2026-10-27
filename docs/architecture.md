@@ -102,7 +102,11 @@ org-side authority), `reins_org_roles`, `reins_org_changes` (two-person admin ch
 `reins_org_keys` (per-tenant keys, sealed), `reins_org_policies` and `reins_org_member_policies`, `reins_org_requests`
 (decisions, their trace and countersigned record), `reins_org_bodies` (sealed bodies, results and receipts, with
 retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`, `reins_org_leases` and
-`reins_org_checkpoints`. Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
+`reins_org_checkpoints`. O3 adds `reins_org_people` (managers, linked GitHub, Slack and Teams identities),
+`reins_org_group_settings` (backups, windows), `reins_org_oncall`, `reins_org_channels` (sealed Slack and Teams apps),
+`reins_org_github_reader` (shared with O4), `reins_org_steps` (each obligation's escalation steps),
+`reins_org_web_passkeys`, `reins_org_web_tokens` (one-time web approval links, as SHA-256) and `reins_org_posted`
+(channel messages to update), and `reins_org_requests.resolved`. Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
 `reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`; guardianship adds
 `reins_circle_changes` (each signed change and when it arrived) and `reins_guardian_notices`. Everything else is in memory with a time limit, so
 there is one server process per deployment.

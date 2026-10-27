@@ -176,6 +176,15 @@ How it fits together:
   directory sync, which reads `dsync.*` events every `REINS_WORKOS_DSYNC_SECS` otherwise (keep it under 60, the
   deprovisioning target). A GitHub-org identity needs GitHub's `read:org` scope on the WorkOS GitHub connection, with
   provider tokens returned. See [security model](security-model.md#organizations-managed-work-profiles).
+- **Approval routing** (O3), in the console under Routing: group backups and windows, managers (Team tier; the
+  directory's `manager_email` custom attribute otherwise), the org's read-only GitHub App for code owners (`contents`,
+  `members`, `pull_requests` read; `checks` write for O4), and on-call sources (PagerDuty, Opsgenie, Incident.io; an
+  API key each). Under Channels, install the org's own Slack app (bot scopes `chat:write`, `users:read`,
+  `users:read.email`, `im:write`; Event Subscriptions and Interactivity to `https://<domain>/reins/org/slack/events`)
+  or its own single-tenant Azure Bot and Teams app (messaging endpoint `https://<domain>/reins/org/teams/messages`;
+  Graph `TeamsAppInstallation.ReadWriteSelfForUser.All` and `User.Read.All`), then turn it on (two admins). Members
+  add a device-bound passkey at `https://<domain>/reins/org/passkeys/new` and confirm it on their phone. Reports:
+  Routing › SLA.
 - **Org executors** run Managed requests with the org's credentials. Build `reins-executor`
   (`cargo build --release -p reins-executor`), then on the executor's host: `reins-executor keygen --out
   executor.key`, register its public key in the console (Executors; it takes two admins' phones), write a config

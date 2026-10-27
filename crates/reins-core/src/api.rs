@@ -277,6 +277,42 @@ impl ReinsCore {
         .await
     }
 
+    /// The web passkeys this member registered in the browser (a work profile's), confirmed or not; empty for a
+    /// Personal account. Confirm one by signing `org_passkey_confirm_message(...)` with the enrolled key, then
+    /// `org_confirm_passkey`.
+    pub async fn org_passkeys(&self) -> Result<Vec<crate::org::OrgPasskeyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_passkeys().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Confirms (`approve`) or refuses web passkey `id` with the enrolled key's `signature` over
+    /// `org_passkey_confirm_message(org, id, spki_hash, created_at, at)`. Refusing revokes it.
+    pub async fn org_confirm_passkey(
+        &self,
+        id: String,
+        approve: bool,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.org_confirm_passkey(&id, approve, at, signature).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
     /// `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
     /// app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).

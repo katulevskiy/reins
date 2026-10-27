@@ -652,6 +652,29 @@ pub fn q_unverified_devices(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgDevi
     reins_org_devices::table.filter(reins_org_devices::attestation_state.eq(attestation::UNVERIFIED)).load(c)
 }
 
+/// Devices whose attestation verified (re-checked when a new revocation list arrives).
+pub fn q_verified_devices(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgDevice>> {
+    reins_org_devices::table.filter(reins_org_devices::attestation_state.eq(attestation::VERIFIED)).load(c)
+}
+
+/// A verified `device`'s attestation was revoked since: it fails from now on, unless it enrolled a new key meanwhile.
+pub fn q_fail_attestation(c: &mut DbConnInner, device: &ReinsOrgDevice, detail: &str) -> QueryResult<bool> {
+    diesel::update(
+        reins_org_devices::table
+            .filter(reins_org_devices::org_uuid.eq(&device.org_uuid))
+            .filter(reins_org_devices::user_uuid.eq(&device.user_uuid))
+            .filter(reins_org_devices::device_uuid.eq(&device.device_uuid))
+            .filter(reins_org_devices::public_key.eq(&device.public_key))
+            .filter(reins_org_devices::attestation_state.eq(attestation::VERIFIED)),
+    )
+    .set((
+        reins_org_devices::attestation_state.eq(attestation::FAILED),
+        reins_org_devices::attestation_detail.eq(detail),
+    ))
+    .execute(c)
+    .map(|n| n == 1)
+}
+
 /// Records what verifying `device`'s attestations found, unless it was settled or enrolled a new key meanwhile;
 /// whether it did.
 pub fn q_set_attestation(c: &mut DbConnInner, device: &ReinsOrgDevice, state: &str, detail: &str) -> QueryResult<bool> {

@@ -28,12 +28,18 @@ pub struct Script(pub Vec<AndOr>);
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AndOr {
     pub pipelines: Vec<Pipeline>,
+    /// For each pipeline after the first: it follows `||` (else `&&`).
+    pub ors: Vec<bool>,
+    /// It ends with `&`: it runs in the background, in a shell of its own.
+    pub background: bool,
 }
 
 /// Commands joined by `|`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pipeline {
     pub commands: Vec<Command>,
+    /// It starts with `!`: its status is turned around.
+    pub negated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -422,15 +428,21 @@ impl Parser {
                 break;
             }
             let before = self.i;
-            if let Some(a) = self.and_or(terms) {
-                out.push(a);
-            }
+            let mut read = self.and_or(terms);
             self.blanks();
             match self.peek() {
                 Some(';') if self.peek_at(1) != Some(';') => self.i += 1,
-                Some('&') if self.peek_at(1) != Some('&') => self.i += 1,
+                Some('&') if self.peek_at(1) != Some('&') => {
+                    self.i += 1;
+                    if let Some(a) = read.as_mut() {
+                        a.background = true;
+                    }
+                }
                 Some('\n') => self.newline(),
                 _ => {}
+            }
+            if let Some(a) = read {
+                out.push(a);
             }
             if self.i == before {
                 // Nothing read: a character no rule takes.
@@ -448,13 +460,16 @@ impl Parser {
 
     fn and_or(&mut self, terms: &[&str]) -> Option<AndOr> {
         let mut pipelines = vec![self.pipeline(terms)?];
+        let mut ors = Vec::new();
         loop {
             self.blanks();
             if self.at("&&") || self.at("||") {
+                let or = self.at("||");
                 self.i += 2;
                 self.separators(false);
                 if let Some(p) = self.pipeline(terms) {
                     pipelines.push(p);
+                    ors.push(or);
                 } else {
                     self.problem("a `&&` or `||` with nothing after it".to_owned());
                     break;
@@ -465,17 +480,27 @@ impl Parser {
         }
         Some(AndOr {
             pipelines,
+            ors,
+            background: false,
         })
     }
 
     fn pipeline(&mut self, terms: &[&str]) -> Option<Pipeline> {
         self.blanks();
+        let mut negated = false;
         if self.keyword().as_deref() == Some("!") {
             self.i += 1;
+            negated = true;
             self.blanks();
         }
         if self.keyword().as_deref() == Some("time") {
             self.i += 4;
+            self.blanks();
+        }
+        // `time ! cmd`, and `! ! cmd`.
+        while self.keyword().as_deref() == Some("!") {
+            self.i += 1;
+            negated = !negated;
             self.blanks();
         }
         let mut commands = vec![self.command(terms)?];
@@ -499,6 +524,7 @@ impl Parser {
         }
         Some(Pipeline {
             commands,
+            negated,
         })
     }
 

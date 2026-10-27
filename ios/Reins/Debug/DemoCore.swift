@@ -372,6 +372,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
+    func orgPasskeys() async throws -> [OrgPasskeyView] { [] }
+
+    func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
+
     func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
@@ -1038,6 +1042,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let id = s.pending[i].id
             guard ["req10", "req11", "req2", "req9"].contains(id) else { continue }
             s.pending[i].parkedUntil = morning
+            s.pending[i].parked = true
             s.pending[i].canDefer = false
             if id == "req10" || id == "req11" {
                 s.pending[i].taskId = demoTaskId
@@ -1046,8 +1051,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pending[i].batchable = id == "req10" || id == "req9"
             if id != "req9" { makeTicket(&s.pending[i], state: "deferred", deferredAt: now - 3_600, deadline: morning + expiry) }
         }
+        // Its own id: req40 is the desktop's question, which this would replace in the views and shadow in the list.
         let v = DemoData.view(
-            "req40", conn: "c1", label: "Claude", kind: .write, action: "write", service: "tasks", account: nil,
+            "req70", conn: "c1", label: "Claude", kind: .write, action: "write", service: "tasks", account: nil,
             createdAt: now - 20, waitUntil: now + 240, op: "propose", preview: ["Start a task: Release v2.1"], noStanding: true,
             opTitle: "Start a task"
         )

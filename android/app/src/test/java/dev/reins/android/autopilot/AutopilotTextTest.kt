@@ -134,7 +134,7 @@ class AutopilotTextTest {
         assertEquals(AutopilotMode.OVERNIGHT, global.mode)
         assertTrue(global.global)
         assertEquals("Overnight on · 8 h left", global.title)
-        assertEquals("For every AI. What would ask is parked for the morning.", global.text)
+        assertEquals("For every AI.", global.text)
         assertEquals(400L, global.since)
         val untilOff = AutopilotText.overnightNotice(settings(overnight = AutopilotText.UNTIL_OFF), { it }, 1_000)!!
         assertEquals("Overnight on · until you stop it", untilOff.title)
@@ -146,7 +146,7 @@ class AutopilotTextTest {
             1_000,
         )!!
         assertEquals("a bypassed AI shows its bypass, not its Overnight", listOf("c1"), one.connectionIds)
-        assertEquals("For Claude Code. What would ask is parked for the morning.", one.text)
+        assertEquals("For Claude Code.", one.text)
         assertEquals(1_600L, one.nextEnd)
         assertNull("no bypass notice for it", AutopilotText.bypassNotice(settings(overnight = 2_000), { it }, 1_000))
         assertEquals("Deciding while you're away", AutopilotText.runningLine(AutopilotMode.OVERNIGHT, 2_000, 1_000, 1_100))
@@ -251,7 +251,7 @@ class AutopilotTextTest {
         val global = AutopilotText.bypassNotice(settings(bypass = 1_000 + 600), { it }, 1_000)!!
         assertTrue(global.global)
         assertEquals("Bypass on · 10 min left", global.title)
-        assertEquals("For every AI. New connections and new phones still ask.", global.text)
+        assertEquals("For every AI.", global.text)
         val one = AutopilotText.bypassNotice(
             settings(connections = listOf(conn("c1", AutopilotMode.BYPASS, bypass = 1_000 + 120))),
             { if (it == "c1") "Claude Code" else "?" },

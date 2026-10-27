@@ -311,7 +311,7 @@ impl Engine {
 
     /// The other side's label of guardianship `link` (for the owner check's reason).
     fn circle_state_label(&self, link: &str) -> Result<String, CoreError> {
-        let slot = self.circle_slot_now().ok_or(CoreError::NotFound)?;
+        let slot = self.circle_slot_now()?.ok_or(CoreError::NotFound)?;
         Ok(self.circle_state(&slot)?.held(link).ok_or(CoreError::NotFound)?.other().label.clone())
     }
 
@@ -415,7 +415,7 @@ impl Engine {
         })
         .await?;
         // The first summary covers the week after opting in, never what came before.
-        if on && let Some(slot) = self.circle_slot_now() {
+        if on && let Some(slot) = self.circle_slot_now()? {
             let id = link.to_owned();
             self.with_circles(&slot, |s| {
                 s.digests.retain(|(l, _)| *l != id);
@@ -428,7 +428,7 @@ impl Engine {
 
     /// One guardianship as the ward sees it: the scope, every decision with its note, how it ends.
     pub(crate) fn guardian_ward_view(&self, link: &str) -> Result<WardView, CoreError> {
-        let slot = self.circle_slot_now().ok_or(CoreError::NotFound)?;
+        let slot = self.circle_slot_now()?.ok_or(CoreError::NotFound)?;
         let state = self.circle_state(&slot)?;
         let held = state.held(link).ok_or(CoreError::NotFound)?;
         let terms = held.arrangement.terms.guardian_terms().ok_or_else(|| CoreError::invalid("not a guardianship"))?;
@@ -495,7 +495,7 @@ impl Engine {
 
     /// What this account was told as a guardian, newest first.
     pub(crate) fn guardian_notices(&self) -> Result<Vec<GuardianNoticeView>, CoreError> {
-        let Some(slot) = self.circle_slot_now() else {
+        let Some(slot) = self.circle_slot_now()? else {
             return Ok(Vec::new());
         };
         let state = self.circle_state(&slot)?;
@@ -506,7 +506,7 @@ impl Engine {
 
     /// Keeps a row (once). Only a row that needs the guardian ([`alerts`]) and is newer than this phone's last look
     /// notifies; the rest are listed quietly.
-    fn guardian_tell(&self, slot: &str, row: &GuardianRow) -> Result<(), CoreError> {
+    pub(crate) fn guardian_tell(&self, slot: &str, row: &GuardianRow) -> Result<(), CoreError> {
         let view = self.with_circles(slot, |s| {
             if s.guardian_notices.iter().any(|r| r.id == row.id) {
                 return Ok(None);
@@ -725,8 +725,18 @@ impl Engine {
             return Ok(true);
         }
         let ward = held.arrangement.owner.label.clone();
+        // A reset or a recovery has one row per guardianship, whoever saw it first (this phone's own roster check,
+        // the link the server ended, or the server's notice).
+        let id = match &notice.kind {
+            GuardianNoticeKind::AccountReset => format!("{}:reset", notice.link),
+            GuardianNoticeKind::RosterChanged {
+                reason: reins_proto::roster::RosterReason::Recovery,
+                ..
+            } => format!("{}:recovered", notice.link),
+            _ => notice.id.clone(),
+        };
         let row = |line: &str, verified: bool| GuardianRow {
-            id: notice.id.clone(),
+            id: id.clone(),
             link: notice.link.clone(),
             ward: ward.clone(),
             line: line.to_owned(),
@@ -959,6 +969,7 @@ mod tests {
             since: 1,
             guardian: None,
             server_gone: false,
+            checked_at: 0,
         }
     }
 
