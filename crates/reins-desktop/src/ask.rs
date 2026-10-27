@@ -158,8 +158,8 @@ pub fn outcome(answer: &Answer, waited: Duration, timeout: Duration) -> (Outcome
 }
 
 /// [`ask`], written to this computer's activity log as `entry`. When the answer takes a moment the entry is logged as
-/// waiting, the desktop says "check your phone" (when the phone decides), and `tell` (stderr for a hook) gets a
-/// waiting line and then how it ended. Returns the answer and whether it timed out.
+/// waiting, and `tell` (stderr for a hook) gets a waiting line and then how it ended; when the phone decides and still
+/// has not after `[notify] delay_ms`, the desktop says "check your phone". Returns the answer and whether it timed out.
 #[allow(clippy::too_many_arguments, reason = "the question, where it goes and how it is logged")]
 pub async fn ask_logged(
     paths: &Paths,
@@ -195,6 +195,7 @@ pub async fn ask_logged_entry(
     };
     let mut entry = entry.decider(who);
     let started = Instant::now();
+    let asked_at = tokio::time::Instant::now();
     let (asking, mut heard) = crate::told::listen(ask(paths, config, q, timeout, interactive, prompter));
     let mut asking = std::pin::pin!(asking);
     let quick = tokio::select! {
@@ -207,14 +208,12 @@ pub async fn ask_logged_entry(
     } else {
         entry.hear(&heard.borrow_and_update());
         journal.record(&entry);
-        if who == JournalDecider::Phone {
-            journal.notify_waiting(&entry.what);
-        }
         // The terminal prompt shows itself.
         if !interactive && let Some(tell) = tell {
             tell(&crate::phone::waiting_line(who, timeout, &entry.what));
         }
-        crate::phone::hearing(&journal, &mut entry, &mut heard, asking).await
+        let notify_at = (who == JournalDecider::Phone).then(|| asked_at + journal.notify_delay());
+        crate::phone::hearing(&journal, &mut entry, &mut heard, notify_at, asking).await
     };
     let (outcome, reason) = outcome(&answer, started.elapsed(), timeout);
     entry.hear(&heard.borrow_and_update());

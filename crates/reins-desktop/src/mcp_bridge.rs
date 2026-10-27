@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as
 use tokio::sync::mpsc;
 
 use crate::config::Paths;
-use crate::journal::{Entry, Journal, Kind, Outcome};
+use crate::journal::{Entry, Journal, Kind, Notice, Outcome};
 use crate::server::LinkError;
 use crate::server::oauth::{Access, SessionTokens};
 
@@ -32,7 +32,8 @@ const BRIDGE_ERROR: i64 = -32000;
 const PROGRESS_AFTER: Duration = Duration::from_secs(2);
 const PROGRESS_EVERY: Duration = Duration::from_secs(5);
 /// Unanswered this long, the user is most likely asked: the activity log shows it waiting and the desktop says "check
-/// your phone". (Calls the phone runs on its own, under a grant or Autopilot, usually finish well before.)
+/// your phone" (not before `[notify] delay_ms` either). (Calls the phone runs on its own, under a grant or Autopilot,
+/// usually finish well before.)
 const NOTIFY_AFTER: Duration = Duration::from_secs(5);
 /// What the progress notifications say.
 pub const WAITING_MESSAGE: &str = "Waiting for Reins 2FA on your phone…";
@@ -317,15 +318,20 @@ impl Bridge {
             .effects(call.effects.clone());
         // Answers pass through here so the call's own response can be found.
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+        // "Check your phone", once shown: taken down when the call ends.
+        let shown: Arc<Mutex<Option<Notice>>> = Arc::default();
         let watch = {
             let out = out.clone();
             let journal = self.journal.clone();
             let entry = entry.clone();
             let token = call.progress_token.clone();
+            let shown = Arc::clone(&shown);
             tokio::spawn(async move {
                 let started = tokio::time::Instant::now();
                 tokio::time::sleep(PROGRESS_AFTER).await;
+                let notify_after = NOTIFY_AFTER.max(journal.notify_delay());
                 let mut told = false;
+                let mut notified = false;
                 loop {
                     if let Some(token) = &token {
                         let _closed =
@@ -338,11 +344,16 @@ impl Bridge {
                     if !told && started.elapsed() >= NOTIFY_AFTER {
                         told = true;
                         journal.record(&entry);
-                        journal.notify_waiting(&entry.what);
                         eprintln!("reins mcp: {} {}", WAITING_MESSAGE.trim_end_matches('…'), entry.what);
                     }
-                    let next = if told {
+                    if !notified && started.elapsed() >= notify_after {
+                        notified = true;
+                        *lock(&shown) = journal.notify_waiting(&entry.what);
+                    }
+                    let next = if notified {
                         PROGRESS_EVERY
+                    } else if told {
+                        PROGRESS_EVERY.min(notify_after.saturating_sub(started.elapsed()))
                     } else {
                         NOTIFY_AFTER.saturating_sub(started.elapsed())
                     };
@@ -367,6 +378,11 @@ impl Bridge {
         self.forward_plain(msg, &tx).await;
         drop(tx);
         watch.abort();
+        // Stopped for sure (it may be showing the notification on another thread right now), then taken down.
+        let _stopped = watch.await;
+        if let Some(shown) = lock(&shown).take() {
+            shown.withdraw();
+        }
         let own = passing.await.ok().flatten();
         let (outcome, reason) = tool_outcome(own.as_ref());
         entry.end(outcome, reason.as_deref());

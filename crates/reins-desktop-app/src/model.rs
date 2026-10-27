@@ -250,6 +250,8 @@ pub struct Model {
     notified: std::collections::HashSet<String>,
     /// The first read of the activity log has marked what was already waiting before this run as shown.
     notified_seeded: bool,
+    /// A fresh look at the activity log when the next waiting request's grace period (`[notify] delay_ms`) is over.
+    notify_timer: Option<Task<()>>,
     /// Unix seconds when this run of the app started.
     started_at: i64,
     /// `--demo`: the checks fixed with the health card's buttons.
@@ -415,6 +417,7 @@ impl Model {
                 demo,
                 notified: std::collections::HashSet::new(),
                 notified_seeded: false,
+                notify_timer: None,
                 started_at: reins_desktop::now_unix(),
                 demo_fixed: Vec::new(),
                 window_open: false,
@@ -663,7 +666,7 @@ impl Model {
             self.screen = Screen::Welcome(Stage::Pair);
             self.start_pairing(cx);
         }
-        self.check_your_phone(&snapshot.activity, now, cx);
+        self.check_your_phone(&snapshot.activity, cx);
         if self.snapshot.as_deref() != Some(&snapshot) {
             if self.fingerprint.is_none() {
                 self.fingerprint.clone_from(&snapshot.fingerprint);
@@ -680,8 +683,9 @@ impl Model {
 
     /// "Check your phone" for each request that started waiting for the phone in the last two minutes (the asking
     /// processes leave it to this app while it runs: on macOS only an app's own notifications show up), with the
-    /// chime; taken down once the request ended.
-    fn check_your_phone(&mut self, activity: &[Entry], now: i64, cx: &mut Context<'_, Self>) {
+    /// chime; taken down once the request ended. Only for what a person has to answer: a request still waiting after
+    /// `[notify] delay_ms` (or one Autopilot left to the user), never one the phone's mode decides meanwhile.
+    fn check_your_phone(&mut self, activity: &[Entry], cx: &mut Context<'_, Self>) {
         if self.demo.is_some() {
             return;
         }
@@ -691,17 +695,26 @@ impl Model {
             self.notified_seeded = true;
             self.notified.extend(seed_shown(activity, self.started_at));
         }
-        let (fresh, ended) = waiting_changes(activity, &self.notified, now);
+        let config = self.backend.notify_config();
+        let now_ms = now_millis();
+        let changes = waiting_changes(activity, &self.notified, now_ms, config.delay());
         // Ended (answered, refused, timed out): the notification goes.
-        for id in ended {
-            cx.dismiss_system_notification(&format!("reins-waiting-{id}"));
+        for id in changes.ended {
+            cx.dismiss_system_notification(&format!("{WAITING_TAG}{id}"));
             self.notified.remove(&id);
         }
-        if fresh.is_empty() {
+        // Still in its grace period: looked at again when it is over (the next refresh may be later).
+        self.notify_timer = changes.next_due.map(|due| {
+            let wait = Duration::from_millis(u64::try_from(due - now_ms).unwrap_or(0)) + Duration::from_millis(50);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(wait).await;
+                let _gone = this.update(cx, Self::refresh_now);
+            })
+        });
+        if changes.due.is_empty() {
             return;
         }
-        let config = self.backend.notify_config();
-        for e in &fresh {
+        for e in &changes.due {
             self.notified.insert(e.id.clone());
             if !config.phone {
                 continue;
@@ -2063,18 +2076,55 @@ fn seed_shown(activity: &[Entry], started_at: i64) -> Vec<String> {
         .collect()
 }
 
-/// Which requests waiting for the phone are new (started in the last two minutes, not shown yet), and which of the
-/// shown ones ended.
+/// Milliseconds since the Unix epoch.
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// What "Check your phone" does next, by [`waiting_changes`].
+#[derive(Debug, Default)]
+struct WaitingChanges<'a> {
+    /// To show now: new requests a person has to answer.
+    due: Vec<&'a Entry>,
+    /// Shown, and no longer waiting: to take down.
+    ended: Vec<String>,
+    /// When the next request still in its grace period is due (Unix milliseconds).
+    next_due: Option<i64>,
+}
+
+/// Which requests waiting for the phone are due (started in the last two minutes, not shown yet, and still waiting
+/// after `delay`, or left to the user by Autopilot), when the next one is, and which of the shown ones ended. One the
+/// phone's mode (Bypass, Auto, Overnight, Lockdown) or a standing permission answers within `delay` is never due: it
+/// is not waiting any more by then.
 fn waiting_changes<'a>(
     activity: &'a [Entry],
     notified: &std::collections::HashSet<String>,
-    now: i64,
-) -> (Vec<&'a Entry>, Vec<String>) {
+    now_ms: i64,
+    delay: Duration,
+) -> WaitingChanges<'a> {
     use reins_desktop::journal::{Decider, Outcome};
     let waiting = |e: &Entry| e.outcome == Outcome::Waiting && e.decider == Decider::Phone;
-    let fresh = activity.iter().filter(|e| waiting(e) && now - e.at < 120 && !notified.contains(&e.id)).collect();
-    let ended = notified.iter().filter(|id| !activity.iter().any(|e| &e.id == *id && waiting(e))).cloned().collect();
-    (fresh, ended)
+    let delay_ms = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX);
+    let mut changes = WaitingChanges::default();
+    for e in activity.iter().filter(|e| waiting(e) && now_ms / 1_000 - e.at < 120 && !notified.contains(&e.id)) {
+        // `at` is in whole seconds: the request started within the second after it, so its grace period is over
+        // a second later at the most.
+        let due = if delay_ms == 0 || e.leaning.is_some() {
+            now_ms
+        } else {
+            (e.at + 1).saturating_mul(1_000).saturating_add(delay_ms)
+        };
+        if due <= now_ms {
+            changes.due.push(e);
+        } else {
+            changes.next_due = Some(changes.next_due.map_or(due, |n| n.min(due)));
+        }
+    }
+    changes.ended =
+        notified.iter().filter(|id| !activity.iter().any(|e| &e.id == *id && waiting(e))).cloned().collect();
+    changes
 }
 
 /// `REINS_DEMO_SCREEN`: `pair`, `tools` (`tools-connected`: one connected just now), `turn-on` (`turning-on`: and
@@ -2094,49 +2144,108 @@ fn demo_screen(name: &str) -> Option<Screen> {
 mod tests {
     use super::*;
 
+    const DELAY: Duration = Duration::from_secs(3);
+
+    fn phone_entry(id: &str, at: i64, outcome: Outcome) -> Entry {
+        use reins_desktop::journal::{Decider, Kind};
+        let mut e = Entry::new(Kind::Command, "Claude Code wants to run: git push --force").decider(Decider::Phone);
+        e.id = id.to_owned();
+        e.at = at;
+        e.outcome = outcome;
+        e
+    }
+
+    fn ids(entries: &[&Entry]) -> Vec<String> {
+        entries.iter().map(|e| e.id.clone()).collect()
+    }
+
     #[test]
     fn a_restart_does_not_ring_again_for_what_was_already_waiting() {
-        use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
-        let wait = |id: &str, at: i64| {
-            let mut e = Entry::new(Kind::Ask, "Deploy?").decider(Decider::Phone);
-            e.id = id.to_owned();
-            e.at = at;
-            e.outcome = Outcome::Waiting;
-            e
-        };
-        let activity = vec![wait("before", 990), wait("after", 1_005)];
+        let activity =
+            vec![phone_entry("before", 990, Outcome::Waiting), phone_entry("after", 1_005, Outcome::Waiting)];
         assert_eq!(seed_shown(&activity, 1_000), ["before"]);
         let shown: std::collections::HashSet<String> = seed_shown(&activity, 1_000).into_iter().collect();
-        let (fresh, _) = waiting_changes(&activity, &shown, 1_010);
-        assert_eq!(fresh.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["after"]);
+        let changes = waiting_changes(&activity, &shown, 1_010_000, DELAY);
+        assert_eq!(ids(&changes.due), ["after"]);
     }
 
     #[test]
     fn check_your_phone_shows_each_new_wait_once_and_takes_it_down_when_it_ends() {
-        use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
+        use reins_desktop::journal::Decider;
         let now = 10_000;
-        let entry = |id: &str, at: i64, outcome: Outcome, decider: Decider| {
-            let mut e = Entry::new(Kind::Command, "Claude Code wants to run: git push --force").decider(decider);
-            e.id = id.to_owned();
-            e.at = at;
-            e.outcome = outcome;
-            e
-        };
+        let mut local = phone_entry("local", now - 5, Outcome::Waiting);
+        local.decider = Decider::Local;
         let activity = vec![
-            entry("new", now - 5, Outcome::Waiting, Decider::Phone),
-            entry("old", now - 600, Outcome::Waiting, Decider::Phone),
-            entry("local", now - 5, Outcome::Waiting, Decider::Local),
-            entry("done", now - 30, Outcome::Approved, Decider::Phone),
+            phone_entry("new", now - 5, Outcome::Waiting),
+            phone_entry("old", now - 600, Outcome::Waiting),
+            local,
+            phone_entry("done", now - 30, Outcome::Approved),
         ];
         let mut shown = std::collections::HashSet::new();
-        let (fresh, ended) = waiting_changes(&activity, &shown, now);
-        assert_eq!(fresh.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["new"], "recent phone waits only");
-        assert!(ended.is_empty());
+        let changes = waiting_changes(&activity, &shown, now * 1_000, DELAY);
+        assert_eq!(ids(&changes.due), ["new"], "recent phone waits only");
+        assert!(changes.ended.is_empty());
         shown.insert("new".to_owned());
         shown.insert("done".to_owned());
-        let (fresh, ended) = waiting_changes(&activity, &shown, now);
-        assert!(fresh.is_empty(), "shown once");
-        assert_eq!(ended, ["done"], "answered: taken down");
+        let changes = waiting_changes(&activity, &shown, now * 1_000, DELAY);
+        assert!(changes.due.is_empty(), "shown once");
+        assert_eq!(changes.ended, ["done"], "answered: taken down");
+    }
+
+    /// Bypass, Auto or Overnight on the phone answers within the grace period: nothing shows, then or later.
+    #[test]
+    fn an_answer_within_the_delay_shows_nothing() {
+        let at = 1_000;
+        let shown = std::collections::HashSet::new();
+        // Waiting, two seconds in: not yet, but looked at again when the grace period is over.
+        let waiting = [phone_entry("r", at, Outcome::Waiting)];
+        let changes = waiting_changes(&waiting, &shown, at * 1_000 + 2_000, DELAY);
+        assert!(changes.due.is_empty());
+        assert_eq!(changes.next_due, Some((at + 1) * 1_000 + 3_000));
+        // Answered by then: nothing to show, nothing to take down, nothing to look at again.
+        let answered = [phone_entry("r", at, Outcome::Approved)];
+        let changes = waiting_changes(&answered, &shown, at * 1_000 + 5_000, DELAY);
+        assert!(changes.due.is_empty() && changes.ended.is_empty() && changes.next_due.is_none());
+    }
+
+    /// Still waiting for a person after the grace period: shown exactly once; answered later: taken down.
+    #[test]
+    fn still_waiting_after_the_delay_shows_once_and_an_answer_takes_it_down() {
+        let at = 1_000;
+        let mut shown = std::collections::HashSet::new();
+        let waiting = [phone_entry("r", at, Outcome::Waiting)];
+        let mut times_shown = 0;
+        for now_ms in (0..20).map(|i| at * 1_000 + i * 500) {
+            let changes = waiting_changes(&waiting, &shown, now_ms, DELAY);
+            if !changes.due.is_empty() {
+                assert!(now_ms >= at * 1_000 + 3_000, "not within the grace period ({now_ms})");
+                times_shown += changes.due.len();
+                shown.extend(changes.due.iter().map(|e| e.id.clone()));
+            }
+        }
+        assert_eq!(times_shown, 1);
+        let answered = [phone_entry("r", at, Outcome::Approved)];
+        let changes = waiting_changes(&answered, &shown, at * 1_000 + 30_000, DELAY);
+        assert_eq!(changes.ended, ["r"], "withdrawn");
+    }
+
+    /// Autopilot looked and left it to the user (the phone says where it leans): shown at once.
+    #[test]
+    fn left_to_the_user_shows_without_the_grace_period() {
+        use reins_desktop::journal::Lean;
+        use reins_proto::autopilot::Leaning;
+        let at = 1_000;
+        let mut e = phone_entry("r", at, Outcome::Waiting);
+        e.leaning = Some(Lean {
+            leaning: Leaning::Ask,
+            confidence: 60,
+        });
+        let changes = waiting_changes(std::slice::from_ref(&e), &std::collections::HashSet::new(), at * 1_000, DELAY);
+        assert_eq!(ids(&changes.due), ["r"]);
+        // No grace period at all with `delay_ms = 0`.
+        let plain = [phone_entry("p", at, Outcome::Waiting)];
+        let changes = waiting_changes(&plain, &std::collections::HashSet::new(), at * 1_000, Duration::ZERO);
+        assert_eq!(ids(&changes.due), ["p"]);
     }
 
     #[test]

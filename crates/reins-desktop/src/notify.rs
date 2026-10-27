@@ -7,8 +7,16 @@
 //! missing tool only means no notification.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+/// How long a request waits for the phone before "Check your phone" shows, by default: what a mode (Bypass, Auto,
+/// Overnight, Lockdown) or a standing permission on the phone decides in that time shows nothing here.
+pub const DEFAULT_DELAY_MS: u64 = 3_000;
+/// The longest that wait may be.
+pub const MAX_DELAY_MS: u64 = 15_000;
 
 /// `[notify]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +26,9 @@ pub struct NotifyConfig {
     pub phone: bool,
     /// With a chime.
     pub sound: bool,
+    /// Milliseconds a request waits before the notification shows (at most [`MAX_DELAY_MS`]): one the phone decides
+    /// by itself meanwhile needs nobody, and shows nothing.
+    pub delay_ms: u64,
 }
 
 impl Default for NotifyConfig {
@@ -25,7 +36,23 @@ impl Default for NotifyConfig {
         Self {
             phone: true,
             sound: true,
+            delay_ms: DEFAULT_DELAY_MS,
         }
+    }
+}
+
+impl NotifyConfig {
+    /// [`Self::delay_ms`], at most [`MAX_DELAY_MS`].
+    #[must_use]
+    pub fn delay(&self) -> Duration {
+        Duration::from_millis(self.delay_ms.min(MAX_DELAY_MS))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.delay_ms > MAX_DELAY_MS {
+            return Err(format!("`notify.delay_ms` must be at most {MAX_DELAY_MS}"));
+        }
+        Ok(())
     }
 }
 
@@ -50,7 +77,7 @@ pub fn text(sentence: &str) -> (String, String) {
 /// notification permission (on macOS the only way a notification shows up at all), and the asking processes stay quiet.
 const CLAIM: &str = "app-notifies";
 /// A claim older than this is a Reins app that quit or hangs.
-const CLAIM_FRESH: std::time::Duration = std::time::Duration::from_secs(20);
+const CLAIM_FRESH: Duration = Duration::from_secs(20);
 
 /// The app shows the notifications from now on (call it every few seconds while it runs).
 pub fn claim(state_dir: &Path) {
@@ -66,19 +93,19 @@ pub fn release(state_dir: &Path) {
 
 /// Why the app's own notifications cannot show, when the system refused them (the user turned them off for Reins, or
 /// macOS does not accept this copy of the app: one run from the disk image, or moved aside by Gatekeeper).
-static AUTH_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static AUTH_PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 
 /// Looks at a log line of the UI framework for a refused notification authorization (it only logs it).
 pub fn observe_log(target: &str, message: &str) {
     if target.starts_with("gpui") && message.contains("notification authorization") {
-        *AUTH_PROBLEM.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(message.to_owned());
+        *AUTH_PROBLEM.lock().unwrap_or_else(PoisonError::into_inner) = Some(message.to_owned());
     }
 }
 
 /// The refused notification authorization this app saw, if any.
 #[must_use]
 pub fn authorization_problem() -> Option<String> {
-    AUTH_PROBLEM.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    AUTH_PROBLEM.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 /// Whether a running Reins app shows the notifications.
@@ -92,14 +119,63 @@ pub fn app_notifies(state_dir: &Path) -> bool {
 }
 
 /// Shows "Check your phone" for `what` (and plays the chime), as `config` says, unless the Reins app shows it.
-/// Returns at once.
-pub fn phone_waiting(config: &NotifyConfig, state_dir: &Path, what: &str) {
+/// Returns at once: `None` when nothing was shown, else the notification, to [`Shown::withdraw`] once answered.
+#[must_use]
+pub fn phone_waiting(config: &NotifyConfig, state_dir: &Path, what: &str) -> Option<Shown> {
     if !config.phone || app_notifies(state_dir) {
-        return;
+        return None;
     }
     let (title, body) = text(what);
     let chime = config.sound.then(|| chime_file(state_dir)).flatten();
-    show(&title, &body, config.sound, chime.as_deref());
+    Some(show(&title, &body, config.sound, chime.as_deref()))
+}
+
+/// A notification this process showed. Where the platform lets a notification be taken down (a freedesktop
+/// notification daemon, through `notify-send --print-id`), [`Shown::withdraw`] does; elsewhere it stays until it
+/// expires or is dismissed.
+#[derive(Clone, Debug, Default)]
+pub struct Shown(Arc<Mutex<Handle>>);
+
+#[derive(Debug, Default)]
+struct Handle {
+    /// The daemon's id for it, once `notify-send` printed it.
+    id: Option<u32>,
+    /// Taken down already (before its id was known: it goes as soon as it is).
+    withdrawn: bool,
+}
+
+impl Shown {
+    /// Takes the notification down where the platform allows; returns at once.
+    pub fn withdraw(&self) {
+        let id = {
+            let mut h = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            h.withdrawn = true;
+            h.id.take()
+        };
+        if let Some(id) = id {
+            close(id);
+        }
+    }
+
+    /// The daemon gave the notification `id` (closed at once when it was withdrawn meanwhile).
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    fn got_id(&self, id: u32) {
+        let withdrawn = {
+            let mut h = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if !h.withdrawn {
+                h.id = Some(id);
+            }
+            h.withdrawn
+        };
+        if withdrawn {
+            close(id);
+        }
+    }
+
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    fn withdrawn(&self) -> bool {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).withdrawn
+    }
 }
 
 /// Only the chime (the app plays it next to its own notification): the system's Glass sound on macOS, the chime file
@@ -218,25 +294,83 @@ fn on_path(program: &str) -> bool {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn show(title: &str, body: &str, sound: bool, chime: Option<&Path>) {
-    let mut n = std::process::Command::new("notify-send");
-    n.args([
-        "--app-name=Reins",
-        "--urgency=normal",
-        "--icon=dialog-password",
-        "--category=im.received",
-        "--expire-time=15000",
-    ]);
-    if sound {
-        // Daemons that play sounds themselves (GNOME, KDE) use this one; the chime below covers the rest.
-        n.arg("--hint=string:sound-name:message-new-instant");
+fn show(title: &str, body: &str, sound: bool, chime: Option<&Path>) -> Shown {
+    let notify_send = |print_id: bool| {
+        let mut n = std::process::Command::new("notify-send");
+        n.args([
+            "--app-name=Reins",
+            "--urgency=normal",
+            "--icon=dialog-password",
+            "--category=im.received",
+            "--expire-time=15000",
+        ]);
+        if print_id {
+            n.arg("--print-id");
+        }
+        if sound {
+            // Daemons that play sounds themselves (GNOME, KDE) use this one; the chime below covers the rest.
+            n.arg("--hint=string:sound-name:message-new-instant");
+        }
+        n.arg(title).arg(body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"));
+        n
+    };
+    let shown = Shown::default();
+    let mut n = notify_send(true);
+    n.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    match n.spawn() {
+        Ok(child) => {
+            let shown = shown.clone();
+            let again = notify_send(false);
+            // Reads the id it prints (and reaps it): a long-running daemon keeps no zombies.
+            std::thread::spawn(move || match child.wait_with_output() {
+                Ok(out) if out.status.success() => {
+                    if let Some(id) = notification_id(&out.stdout) {
+                        shown.got_id(id);
+                    }
+                }
+                // A notify-send before `--print-id` (libnotify 0.7.9): shown without, so it cannot be taken down.
+                Ok(_) if !shown.withdrawn() => detach(again),
+                Ok(_) => {}
+                Err(e) => log::debug!("notification: {e}"),
+            });
+        }
+        Err(e) => log::debug!("notification: {e}"),
     }
-    n.arg(title).arg(body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"));
-    detach(n);
     if let Some(file) = chime {
         play(file);
     }
+    shown
 }
+
+/// The id `notify-send --print-id` printed.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+fn notification_id(stdout: &[u8]) -> Option<u32> {
+    std::str::from_utf8(stdout).ok()?.lines().next()?.trim().parse().ok().filter(|id| *id != 0)
+}
+
+/// Asks the notification daemon to take notification `id` down (`CloseNotification`), through `gdbus` (GLib, which
+/// `notify-send` comes with) or systemd's `busctl`.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn close(id: u32) {
+    const DEST: &str = "org.freedesktop.Notifications";
+    const OBJECT: &str = "/org/freedesktop/Notifications";
+    let id = id.to_string();
+    if on_path("gdbus") {
+        let mut c = std::process::Command::new("gdbus");
+        c.args(["call", "--session", "--dest", DEST, "--object-path", OBJECT, "--method"])
+            .arg(format!("{DEST}.CloseNotification"))
+            .arg(id);
+        detach(c);
+    } else if on_path("busctl") {
+        let mut c = std::process::Command::new("busctl");
+        c.args(["--user", "call", DEST, OBJECT, DEST, "CloseNotification", "u"]).arg(id);
+        detach(c);
+    }
+}
+
+/// Elsewhere a notification shown from another program cannot be taken down: it stays until it expires.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn close(_id: u32) {}
 
 /// Plays a WAV file with the first player installed.
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -269,7 +403,7 @@ fn play(file: &Path) {
 fn play(_file: &Path) {}
 
 #[cfg(target_os = "macos")]
-fn show(title: &str, body: &str, sound: bool, _chime: Option<&Path>) {
+fn show(title: &str, body: &str, sound: bool, _chime: Option<&Path>) -> Shown {
     let mut c = std::process::Command::new("osascript");
     // The text goes in as arguments, never into the script.
     let script = if sound {
@@ -279,6 +413,7 @@ fn show(title: &str, body: &str, sound: bool, _chime: Option<&Path>) {
     };
     c.args(["-e", "on run argv", "-e", script, "-e", "end run", title, body]);
     detach(c);
+    Shown::default()
 }
 
 /// A toast from PowerShell's own app id (Windows 10 and 11 show it without a registered app), then the chime.
@@ -296,7 +431,7 @@ const TOAST_SCRIPT: &str = "$ErrorActionPreference = 'SilentlyContinue'; \
     if ($env:REINS_NOTIFY_CHIME) { (New-Object System.Media.SoundPlayer $env:REINS_NOTIFY_CHIME).PlaySync() }";
 
 #[cfg(windows)]
-fn show(title: &str, body: &str, _sound: bool, chime: Option<&Path>) {
+fn show(title: &str, body: &str, _sound: bool, chime: Option<&Path>) -> Shown {
     let mut c = std::process::Command::new(crate::win::system32(r"WindowsPowerShell\v1.0\powershell.exe"));
     c.args(["-NoProfile", "-NonInteractive", "-Command", TOAST_SCRIPT])
         .env("REINS_NOTIFY_TITLE", title)
@@ -306,10 +441,13 @@ fn show(title: &str, body: &str, _sound: bool, chime: Option<&Path>) {
     }
     crate::win::hidden(&mut c);
     detach(c);
+    Shown::default()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn show(_title: &str, _body: &str, _sound: bool, _chime: Option<&Path>) {}
+fn show(_title: &str, _body: &str, _sound: bool, _chime: Option<&Path>) -> Shown {
+    Shown::default()
+}
 
 #[cfg(test)]
 mod tests {
@@ -324,6 +462,33 @@ mod tests {
         assert_eq!(text("").1, "");
         let (_, long) = text(&"x".repeat(500));
         assert!(long.chars().count() < 220 && long.ends_with('…'));
+    }
+
+    #[test]
+    fn the_delay_defaults_to_three_seconds_and_stays_short() {
+        let config: NotifyConfig = toml::from_str("phone = true").unwrap();
+        assert_eq!(config.delay(), Duration::from_secs(3));
+        let long = NotifyConfig {
+            delay_ms: 60_000,
+            ..NotifyConfig::default()
+        };
+        assert_eq!(long.delay(), Duration::from_secs(15));
+        assert!(long.validate().is_err());
+        assert!(NotifyConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn the_printed_id_is_read_and_a_withdrawal_before_it_is_kept() {
+        assert_eq!(notification_id(b"42\n"), Some(42));
+        assert_eq!(notification_id(b"0\n"), None);
+        assert_eq!(notification_id(b""), None);
+        assert_eq!(notification_id(b"nope"), None);
+        // Withdrawn before notify-send printed its id: remembered, so the id is closed as soon as it comes.
+        let shown = Shown::default();
+        assert!(!shown.withdrawn());
+        shown.withdraw();
+        assert!(shown.withdrawn());
+        assert_eq!(shown.0.lock().unwrap().id, None);
     }
 
     #[test]

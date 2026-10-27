@@ -339,9 +339,10 @@ pub fn ended_line(decider: Decider, outcome: Outcome, reason: Option<&str>, time
 }
 
 /// Waits for `decision` and writes it to the activity log as `entry`. When it takes longer than [`NOTICE_AFTER`]
-/// (somebody has to look), the entry is logged as waiting, the desktop says "check your phone" (phone decisions only),
-/// and `tell` gets a waiting line; afterwards `tell` hears how it ended: approved, denied or timed out. A quick answer
-/// (a grant, Autopilot) is only logged. `tell` may block: it runs on a blocking thread.
+/// (somebody has to look), the entry is logged as waiting and `tell` gets a waiting line; afterwards `tell` hears how
+/// it ended: approved, denied or timed out. A quick answer (a grant, Autopilot) is only logged. For a phone decision
+/// the desktop says "check your phone" only once it still waits after `[notify] delay_ms` (see [`hearing`]). `tell`
+/// may block: it runs on a blocking thread.
 pub async fn awaiting<T>(
     journal: &Journal,
     entry: Entry,
@@ -361,6 +362,7 @@ pub async fn awaiting_logged<T>(
     log_quick_yes: bool,
     decision: impl Future<Output = Result<T, Refusal>>,
 ) -> Result<T, Refusal> {
+    let started = tokio::time::Instant::now();
     let (decision, mut heard) = crate::told::listen(decision);
     let mut decision = std::pin::pin!(decision);
     tokio::select! {
@@ -377,14 +379,12 @@ pub async fn awaiting_logged<T>(
     }
     entry.hear(&heard.borrow_and_update());
     journal.record(&entry);
-    if entry.decider == Decider::Phone {
-        journal.notify_waiting(&entry.what);
-    }
+    let notify_at = (entry.decider == Decider::Phone).then(|| started + journal.notify_delay());
     let told = tell.clone().map(|t| {
         let line = waiting_line(entry.decider, timeout, &entry.what);
         tokio::task::spawn_blocking(move || t(&line))
     });
-    let r = hearing(journal, &mut entry, &mut heard, decision).await;
+    let r = hearing(journal, &mut entry, &mut heard, notify_at, decision).await;
     if let Some(told) = told {
         told.await.ok();
     }
@@ -400,17 +400,31 @@ pub async fn awaiting_logged<T>(
 }
 
 /// Waits for `decision`, logging `entry` again whenever the phone says something new about it (where Autopilot leans).
+///
+/// "Check your phone" (`notify_at`: when, `None`: never) shows only for a request a person has to answer: one the
+/// phone's mode (Bypass, Auto, Overnight, Lockdown) or a standing permission decides before then shows nothing. It
+/// shows at once when the phone says Autopilot looked and left it to the user (it then tells where it leans), and it is
+/// taken down when the answer comes after it showed. The decision never waits for any of it.
 pub(crate) async fn hearing<T>(
     journal: &Journal,
     entry: &mut Entry,
     heard: &mut tokio::sync::watch::Receiver<crate::told::Heard>,
+    notify_at: Option<tokio::time::Instant>,
     decision: impl Future<Output = T>,
 ) -> T {
     let mut decision = std::pin::pin!(decision);
     let mut listening = true;
-    loop {
+    let mut notify_at = notify_at;
+    let mut shown = None;
+    let r = loop {
+        // Autopilot left it to the user: somebody has to look now.
+        if entry.leaning.is_some() && notify_at.is_some() {
+            notify_at = Some(tokio::time::Instant::now());
+        }
+        let due = notify_at.unwrap_or_else(tokio::time::Instant::now);
         tokio::select! {
-            r = &mut decision => return r,
+            biased;
+            r = &mut decision => break r,
             changed = heard.changed(), if listening => {
                 if changed.is_err() {
                     listening = false;
@@ -418,6 +432,93 @@ pub(crate) async fn hearing<T>(
                     journal.record(entry);
                 }
             }
+            () = tokio::time::sleep_until(due), if notify_at.is_some() => {
+                notify_at = None;
+                shown = journal.notify_waiting(&entry.what);
+            }
         }
+    };
+    if let Some(shown) = shown {
+        shown.withdraw();
+    }
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn waiting_entry() -> Entry {
+        Entry::new(crate::journal::Kind::Git, "push to me/app main")
+    }
+
+    /// Bypass, Auto or Overnight on the phone answers within the delay: nobody has to look, nothing shows.
+    #[tokio::test(start_paused = true)]
+    async fn an_answer_within_the_delay_shows_nothing() {
+        let (journal, events) = Journal::recording(Duration::from_secs(3));
+        let decision = async {
+            tokio::time::sleep(Duration::from_millis(2_500)).await;
+            Ok::<_, Refusal>(())
+        };
+        awaiting(&journal, waiting_entry(), None, Duration::from_mins(2), decision).await.unwrap();
+        assert!(events.lock().unwrap().is_empty(), "{:?}", events.lock().unwrap());
+    }
+
+    /// Still waiting after the delay: shown once, and taken down when the answer comes.
+    #[tokio::test(start_paused = true)]
+    async fn still_waiting_after_the_delay_shows_once_then_goes() {
+        let (journal, events) = Journal::recording(Duration::from_secs(3));
+        let seen = Arc::clone(&events);
+        let decision = async move {
+            tokio::time::sleep(Duration::from_millis(3_100)).await;
+            assert_eq!(*seen.lock().unwrap(), ["shown: push to me/app main"], "shown at the delay, not before");
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            Ok::<_, Refusal>(())
+        };
+        let started = tokio::time::Instant::now();
+        awaiting(&journal, waiting_entry(), None, Duration::from_mins(2), decision).await.unwrap();
+        assert!(started.elapsed() < Duration::from_millis(23_200), "the answer is not held back");
+        assert_eq!(*events.lock().unwrap(), ["shown: push to me/app main", "withdrawn: push to me/app main"]);
+    }
+
+    /// Asked on this computer (local mode): no "Check your phone" at all.
+    #[tokio::test(start_paused = true)]
+    async fn a_local_question_never_says_check_your_phone() {
+        let (journal, events) = Journal::recording(Duration::from_secs(3));
+        let decision = async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok::<_, Refusal>(())
+        };
+        awaiting(&journal, waiting_entry().decider(Decider::Local), None, Duration::from_mins(2), decision)
+            .await
+            .unwrap();
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    /// The phone says Autopilot left it to the user: shown at once, without waiting out the delay.
+    #[tokio::test(start_paused = true)]
+    async fn left_to_the_user_shows_at_once() {
+        use reins_proto::autopilot::{Leaning, Suggestion};
+        let (journal, events) = Journal::recording(Duration::from_secs(10));
+        let seen = Arc::clone(&events);
+        let decision = async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            crate::told::hear(&CallAnswer {
+                request_id: "r1".to_owned(),
+                status: CallStatus::Pending,
+                decided: None,
+                suggestion: Some(Suggestion {
+                    v: 1,
+                    leaning: Leaning::Ask,
+                    confidence: 0.5,
+                }),
+            });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(seen.lock().unwrap().len(), 1, "shown before the delay");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<_, Refusal>(())
+        };
+        awaiting(&journal, waiting_entry(), None, Duration::from_mins(2), decision).await.unwrap();
+        assert_eq!(events.lock().unwrap().len(), 2, "shown once, then withdrawn: {:?}", events.lock().unwrap());
     }
 }

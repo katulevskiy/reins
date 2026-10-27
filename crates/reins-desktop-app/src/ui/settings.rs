@@ -3,7 +3,7 @@
 //! notifications, the health checks, Appearance) and Keyboard and Account (disconnect, held to confirm; quit); the
 //! version and the links at the bottom.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -59,6 +59,28 @@ pub fn name_lines(own: &str, given: Option<&str>) -> (String, Option<String>) {
     }
 }
 
+/// The waits "Check your phone" offers before it shows, in milliseconds (`[notify] delay_ms`).
+const DELAYS: [u64; 4] = [0, 3_000, 5_000, 10_000];
+
+/// [`DELAYS`], with `current` among them when `config.toml` says another.
+fn delay_choices(current: u64) -> Vec<u64> {
+    let mut choices = DELAYS.to_vec();
+    if !choices.contains(&current) {
+        choices.push(current);
+        choices.sort_unstable();
+    }
+    choices
+}
+
+/// "3 s", "2.5 s".
+fn delay_label(ms: u64) -> String {
+    if ms.is_multiple_of(1_000) {
+        format!("{} s", ms / 1_000)
+    } else {
+        format!("{:.1} s", Duration::from_millis(ms).as_secs_f32())
+    }
+}
+
 /// "This Mac", "This computer": the section's label.
 fn this_computer_label() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -89,7 +111,7 @@ impl Root {
         let value = |t: String| kit::pane::row_value(t, pal);
         let autostart = d.autostart;
         let notify = d.config().map(|c| c.notify.clone()).unwrap_or_default();
-        let (phone, sound) = (notify.phone, notify.sound);
+        let (phone, sound, delay_ms) = (notify.phone, notify.sound, notify.delay_ms);
         let notify_word = match (phone, sound) {
             (true, true) => "With sound",
             (true, false) => "On",
@@ -220,6 +242,37 @@ impl Root {
                     } else {
                         r
                     }
+                })
+                .child({
+                    // How long a request waits before it shows: what the phone's mode decides meanwhile never does.
+                    let mut bar = kit::segmented(pal);
+                    for ms in delay_choices(delay_ms) {
+                        let segment = kit::segment(
+                            SharedString::from(format!("notify-delay-{ms}")),
+                            delay_label(ms),
+                            ms == delay_ms,
+                            pal,
+                        );
+                        bar = bar.child(if phone {
+                            segment.on_click(Self::on_model(cx, move |m, cx| m.change(Setting::NotifyDelay(ms), cx)))
+                        } else {
+                            segment
+                        });
+                    }
+                    div()
+                        .id("notify-delay")
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.0))
+                        .min_h(px(52.0))
+                        .pl(px(kit::pane::INSET))
+                        .pr(px(14.0))
+                        .text_size(px(14.5))
+                        .text_color(pal.ink())
+                        .child("Wait first")
+                        .child(bar)
+                        .when(!phone, |r| r.opacity(0.4))
                 });
         }
         rows.push(notify_block.into_any_element());
@@ -694,6 +747,16 @@ mod tests {
         assert_eq!(name_lines("M2A", None), ("M2A".to_owned(), None));
         assert_eq!(name_lines("M2A", Some("M2A")), ("M2A".to_owned(), None));
         assert_eq!(name_lines("M2A", Some("Work Mac")), ("Work Mac".to_owned(), Some("Calls itself M2A".to_owned())));
+    }
+
+    #[test]
+    fn the_notification_waits_are_few_and_keep_an_odd_one() {
+        assert_eq!(delay_choices(3_000), [0, 3_000, 5_000, 10_000]);
+        assert_eq!(delay_choices(2_500), [0, 2_500, 3_000, 5_000, 10_000]);
+        assert_eq!(
+            (delay_label(0), delay_label(3_000), delay_label(2_500)),
+            ("0 s".into(), "3 s".into(), "2.5 s".into())
+        );
     }
 
     #[test]
