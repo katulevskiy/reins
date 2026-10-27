@@ -285,6 +285,53 @@ pub enum AdminAction {
     ConfirmDirectoryRemovals {
         held: String,
     },
+    /// Makes a drafted policy revision the org's active policy, signed by the org issuer key (O2). `hash` is the draft's
+    /// hash, so what's approved is what was shown.
+    ActivatePolicy {
+        revision: u64,
+        hash: String,
+    },
+    /// How long request bodies are kept: 0, 30 or 365 days (06 §4).
+    SetRetention {
+        days: u32,
+    },
+    /// Registers an executor for this org with its Ed25519 public key (base64url).
+    RegisterExecutor {
+        executor_id: String,
+        mode: ExecutorMode,
+        public_key: String,
+    },
+    RemoveExecutor {
+        executor_id: String,
+    },
+}
+
+/// Where an org executor runs (05 §5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutorMode {
+    /// Hosted by Reins Cloud, one isolated runtime per tenant.
+    Cloud,
+    /// A single-tenant deployment in the org's own region.
+    Dedicated,
+    /// In the org's own network.
+    SelfHosted,
+}
+
+impl ExecutorMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cloud => "cloud",
+            Self::Dedicated => "dedicated",
+            Self::SelfHosted => "self_hosted",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::Cloud, Self::Dedicated, Self::SelfHosted].into_iter().find(|m| m.as_str() == s)
+    }
 }
 
 impl AdminAction {
@@ -334,7 +381,31 @@ impl AdminAction {
                     Capability::ManageMembers
                 }
             }
+            Self::ActivatePolicy {
+                ..
+            }
+            | Self::SetRetention {
+                ..
+            } => Capability::ActivatePolicy,
+            Self::RegisterExecutor {
+                ..
+            }
+            | Self::RemoveExecutor {
+                ..
+            } => Capability::ManageConnections,
         }
+    }
+
+    /// The admin actions 06 §3 names: they take two admins' device signatures (the proposer's and the approver's).
+    #[must_use]
+    pub fn needs_device_signatures(&self) -> bool {
+        matches!(
+            self,
+            Self::ActivatePolicy { .. }
+                | Self::SetRetention { .. }
+                | Self::RegisterExecutor { .. }
+                | Self::RemoveExecutor { .. }
+        )
     }
 
     /// Shapes refused whoever proposes them: an admin role granted to a group (anyone the identity provider adds to
@@ -711,6 +782,33 @@ mod tests {
         for r in Role::ALL {
             assert_eq!(Role::parse(r.as_str()), Some(r));
         }
+    }
+
+    #[test]
+    fn o2_admin_actions_need_security_or_connections_and_device_signatures() {
+        let activate = AdminAction::ActivatePolicy {
+            revision: 3,
+            hash: "h".to_owned(),
+        };
+        assert_eq!(activate.capability(&[]), Capability::ActivatePolicy);
+        assert!(activate.needs_device_signatures());
+        let exec = AdminAction::RegisterExecutor {
+            executor_id: "e1".to_owned(),
+            mode: ExecutorMode::Cloud,
+            public_key: "k".to_owned(),
+        };
+        assert_eq!(exec.capability(&[]), Capability::ManageConnections);
+        assert!(exec.needs_device_signatures());
+        assert!(
+            !AdminAction::SetTwoPerson {
+                on: true
+            }
+            .needs_device_signatures()
+        );
+        let json = serde_json::to_value(&exec).unwrap();
+        assert_eq!(json["kind"], "register_executor");
+        assert_eq!(json["mode"], "cloud");
+        assert_eq!(ExecutorMode::parse("self_hosted"), Some(ExecutorMode::SelfHosted));
     }
 
     #[test]

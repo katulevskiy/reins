@@ -24,6 +24,7 @@ use crate::db::{
         self, ACTIVE_STATUS, CHANGE_APPLIED, CHANGE_EXPIRED, CHANGE_PENDING, CHANGE_REJECTED, ReinsOrgChange,
         ReinsOrgRole, SUBJECT_GROUP, SUBJECT_MEMBER,
     },
+    models::reins_org_exec::{self, ReinsOrgExecutor},
     schema::groups,
 };
 
@@ -360,7 +361,55 @@ fn validate(
         AdminAction::ConfirmDirectoryRemovals {
             held,
         } => super::scim::q_confirm_held(c, org, held, true).map(drop),
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => super::policy::check_draft(c, org, *revision, hash).map(drop),
+        AdminAction::SetRetention {
+            days,
+        } => {
+            if [0, 30, 365].contains(days) {
+                Ok(())
+            } else {
+                Err(OrgError::Invalid("Keep request bodies for none, 30 days or 1 year."))
+            }
+        }
+        AdminAction::RegisterExecutor {
+            executor_id,
+            public_key,
+            ..
+        } => {
+            if !executor_id_ok(executor_id) {
+                return Err(OrgError::Invalid("Name the executor with 1-32 of a-z, 0-9 and -."));
+            }
+            if executor_key(public_key).is_none() {
+                return Err(OrgError::Invalid("That isn't an Ed25519 public key (base64url, 32 bytes)."));
+            }
+            if reins_org_exec::q_executor(c, org, executor_id)?.is_some() {
+                return Err(OrgError::Invalid("That executor name is taken."));
+            }
+            Ok(())
+        }
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => match reins_org_exec::q_executor(c, org, executor_id)? {
+            Some(e) if e.revoked_at.is_none() => Ok(()),
+            _ => Err(OrgError::NotFound),
+        },
     }
+}
+
+/// An executor's name: 1-32 of `a-z`, `0-9`, `-`.
+#[must_use]
+pub fn executor_id_ok(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// An executor's Ed25519 public key (base64url without padding, 32 bytes, a strict key).
+#[must_use]
+pub fn executor_key(b64: &str) -> Option<[u8; 32]> {
+    let key: [u8; 32] = reins_proto::canon::decode_payload(b64.trim())?.try_into().ok()?;
+    reins_proto::canon::strict_ed25519_key(&key).then_some(key)
 }
 
 /// Applies a validated action inside the caller's transaction.
@@ -473,6 +522,68 @@ fn apply(
         } => {
             let count = super::scim::q_confirm_held(c, org, held, false)?;
             event(c, org, "directory.removals_confirmed", Some(actor), None, &json!({"count": count}), now)?;
+        }
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => super::policy::apply_activation(c, org, *revision, hash, actor, now)?,
+        AdminAction::SetRetention {
+            days,
+        } => {
+            let mut tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
+            tenant.body_retention_days = i32::try_from(*days).unwrap_or(30);
+            tenant.updated_at = now;
+            reins_org::q_save_org(c, &tenant)?;
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::RETENTION_SET,
+                Some(actor),
+                None,
+                &json!({"days": days}),
+                now,
+            )?;
+        }
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            public_key,
+        } => {
+            let row = ReinsOrgExecutor {
+                org_uuid: org.to_owned(),
+                executor_id: executor_id.clone(),
+                mode: mode.as_str().to_owned(),
+                public_key: public_key.trim().to_owned(),
+                created_at: now,
+                last_seen: None,
+                revoked_at: None,
+            };
+            if !reins_org_exec::q_insert_executor(c, &row)? {
+                return Err(OrgError::Invalid("That executor name is taken."));
+            }
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::EXECUTOR_REGISTERED,
+                Some(actor),
+                Some(executor_id),
+                &json!({"mode": mode.as_str(), "public_key": row.public_key}),
+                now,
+            )?;
+        }
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => {
+            reins_org_exec::q_revoke_executor(c, org, executor_id, now)?;
+            super::audit::record(
+                c,
+                org,
+                super::audit::kinds::EXECUTOR_REMOVED,
+                Some(actor),
+                Some(executor_id),
+                &json!({}),
+                now,
+            )?;
         }
     }
     Ok(Vec::new())

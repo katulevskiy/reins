@@ -377,8 +377,40 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
                 },
             ),
         ),
+        AdminAction::ActivatePolicy {
+            revision,
+            hash,
+        } => (
+            format!("Activate policy revision {revision}"),
+            field("Policy", "current", &e(&format!("revision {revision} · {}", hash.get(..12).unwrap_or(hash)))),
+        ),
+        AdminAction::SetRetention {
+            days,
+        } => ("Request body retention".to_owned(), field("Bodies kept", "current", &retention_text(*days))),
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            public_key,
+        } => (
+            format!("Register executor {}", e(executor_id)),
+            [field("Mode", "—", mode.as_str()), field("Key", "—", &e(public_key.get(..16).unwrap_or(public_key)))]
+                .concat(),
+        ),
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => (format!("Remove executor {}", e(executor_id)), field("Executor", "registered", "removed")),
     };
     format!("<div>{title}</div>{fields}")
+}
+
+/// "none", "30 days", "1 year".
+#[must_use]
+pub fn retention_text(days: u32) -> String {
+    match days {
+        0 => "none".to_owned(),
+        365 => "1 year".to_owned(),
+        d => format!("{d} days"),
+    }
 }
 
 pub fn overview(frame: &Frame<'_>, v: &OverviewView) -> String {
