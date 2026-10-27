@@ -274,19 +274,6 @@ private fun Due(deadline: Long, nowSeconds: Long, modifier: Modifier = Modifier)
     }
 }
 
-/** A small tinted pill (the scope line). */
-@Composable
-private fun Chip(text: String, icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
-    Row(
-        modifier.semantics(mergeDescendants = true) {}.clip(CircleShape).background(tint.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, Modifier.size(13.dp), tint = tint)
-        RText(text, RType.sans(12f, FontWeight.SemiBold), tint, maxLines = 1)
-    }
-}
-
 /** The watcher notices shown at most. */
 private const val MAX_NOTICES = 5
 
