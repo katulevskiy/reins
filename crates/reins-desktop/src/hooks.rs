@@ -569,11 +569,10 @@ pub fn question_netted(
             let _infallible = writeln!(head_lines, "Default branch: {d}");
         }
     }
-    if let Some(n) = net {
-        head_lines.push_str(&crate::nets::hook::question_lines(n));
-    }
     let detail = format!("{}{head_lines}\n{detail}", rule_lines(&m));
-    let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
+    let mut q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
+    // Its own argument, not a line of the detail: a detail can be written by an agent (`reins ask`), this can't.
+    q.net = net.map(crate::nets::hook::question_net);
     Some((m, q))
 }
 

@@ -137,16 +137,10 @@ pub fn plan(config: &Config, paths: &crate::config::Paths, call: &HookCall, head
     Some(net)
 }
 
-/// The question's lines for the net (after the rule's and the repository's): `Net: …`, one per net.
+/// The question's `net` argument: one line per net.
 #[must_use]
-pub fn question_lines(net: &HookNet) -> String {
-    let mut out = String::new();
-    for l in net.plan.lines() {
-        out.push_str("Net: ");
-        out.push_str(&l.replace('\n', " "));
-        out.push('\n');
-    }
-    out
+pub fn question_net(net: &HookNet) -> String {
+    net.plan.lines().iter().map(|l| l.replace('\n', " ")).collect::<Vec<_>>().join("\n")
 }
 
 /// Takes the snapshots a file tool's net needs, right before it runs. `Err`: something could not be kept (the request

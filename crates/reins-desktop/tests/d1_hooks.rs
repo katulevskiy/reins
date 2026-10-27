@@ -320,7 +320,8 @@ async fn an_approved_delete_runs_with_its_net_and_restores() {
     // The phone was asked about exactly the netted command, and told about the net.
     let asked = mock.with(|s| s.calls.last().cloned()).unwrap();
     let detail = asked["detail"].as_str().unwrap();
-    assert!(detail.contains("\nNet: Keeps 1 deleted path in the Reins trash"), "{detail}");
+    assert_eq!(asked["net"], "Keeps 1 deleted path in the Reins trash for 7 days");
+    assert!(!detail.contains("Net:"), "the net is its own argument, never a line of the detail: {detail}");
     assert!(detail.contains(&format!("Netted command:\n{rewritten}")), "{detail}");
     // Activity has the net.
     let log = journal::read(&app.paths, 10, 3_600);
@@ -375,6 +376,9 @@ async fn nets_go_back_only_with_an_allow_and_where_the_harness_can_take_them() {
     // Nothing to keep (scratch only): asked, approved, unchanged.
     let scratch = run(Harness::ClaudeCode, bash("claude", &proj, "rm -rf /tmp/reins-nets-test-nothing")).await.unwrap();
     assert!(scratch["hookSpecificOutput"].get("updatedInput").is_none(), "{scratch}");
+    // An un-netted question has no `net` argument.
+    let plain = mock.with(|s| s.calls.last().cloned()).unwrap();
+    assert!(plain.get("net").is_none(), "{plain}");
     let log = journal::read(&app.paths, 20, 3_600);
     assert_eq!(log.iter().filter(|e| e.nets.is_some()).count(), 2, "Codex and Gemini");
 }
