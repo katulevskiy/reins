@@ -381,12 +381,19 @@ pub fn request_zone(a: &Analysis, facts: &Facts, base_repo: Option<&str>) -> Res
                     add(Zone::Outside, None);
                 }
                 for p in to {
-                    let (z, u) = party_zone(facts, channel, p);
-                    if *channel == Channel::GitHub {
-                        repos.insert(p.clone());
-                    } else {
+                    let (z, u) = if *channel != Channel::GitHub {
                         parties.insert(p.trim().to_ascii_lowercase());
-                    }
+                        party_zone(facts, channel, p)
+                    } else if split_repo(p).is_some() {
+                        repos.insert(p.clone());
+                        repo_zone(facts, p)
+                    } else {
+                        // "this repository": the one the request acts on, else Outside.
+                        if let Some(b) = base_repo {
+                            repos.insert(b.to_owned());
+                        }
+                        base()
+                    };
                     add(z, u);
                 }
             }
@@ -599,5 +606,8 @@ mod tests {
         let f = facts();
         assert_eq!(request_zone(&a, &f, Some("github.com/dkat/app")).zone, Zone::Mine);
         assert_eq!(request_zone(&a, &f, None).zone, Zone::Outside, "no repository known: Outside");
+        let comment = analyze_tool("github_comment", &json!({"body": "hi"}));
+        assert_eq!(request_zone(&comment, &f, Some("dkat/app")).zone, Zone::Mine, "this repository");
+        assert_eq!(request_zone(&comment, &f, None).zone, Zone::Outside);
     }
 }

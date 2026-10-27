@@ -18,6 +18,12 @@ fn replay_gate() {
             .expect("a baseline");
     let fails = report::gate(&r, Some(&baseline));
     assert!(fails.is_empty(), "{fails:?}\n{}", report::text(&r, false));
+    assert_eq!(r.real_risk_auto, 0, "no labelled risk Auto (P2)");
+    // P2's line (07 §1) is a developer ask rate ≤ 5%. With the hardened engine the matrix asks 44 of 738 (6.0%), the
+    // same as the stand-in: every one is a hard obligation (L3, unreadable, the floor), 18 of them L3 deletes in Mine
+    // that P3's nets make recoverable. The baseline's ratchet holds it from rising meanwhile.
+    let rate = baseline.developer_ask_rate.expect("the baseline records the developer ask rate");
+    assert!(r.developer_ask_rate <= rate + 1e-9, "developer ask rate {:.4} > {rate:.4}", r.developer_ask_rate);
 }
 
 #[test]
@@ -43,6 +49,7 @@ fn full_certainty_and_the_ask_rate_are_ratchets() {
         full_certainty,
         asks: r.asks,
         ask_rate,
+        developer_ask_rate: None,
     };
     assert!(report::gate(&r, Some(&base(full + 0.004, r.ask_rate))).is_empty(), "within half a point");
     assert!(report::gate(&r, Some(&base(full + 0.006, r.ask_rate))).iter().any(|f| f.contains("Full certainty")));
