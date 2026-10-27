@@ -694,3 +694,90 @@ fn git_options_fail_closed() {
         assert_eq!(run(cmd).certainty, Certainty::None, "{cmd}");
     }
 }
+
+/// Runs `f` on a thread with a bounded stack (the size the desktop gives the engine) and a deadline.
+fn bounded<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(move || {
+            let _sent = tx.send(f());
+        })
+        .expect("a thread");
+    rx.recv_timeout(std::time::Duration::from_secs(20)).expect("the engine answers in time, without crashing")
+}
+
+/// Inputs built to exhaust the parser, the walker or the inline reader: each is read in time, without a crash.
+#[test]
+fn hostile_inputs_are_total() {
+    let payloads: Vec<String> = vec![
+        "$(".repeat(5_000),
+        "(".repeat(5_000),
+        "{ ".repeat(3_000),
+        "if true; then ".repeat(2_000),
+        "f() ".repeat(5_000),
+        "`".repeat(3_000),
+        format!("echo {}", "${a:-".repeat(3_000)),
+        format!("echo {}", "{a,".repeat(60)),
+        format!("echo {}", "{a,{b,".repeat(40)),
+        "x".repeat(2 << 20),
+        "echo {-9223372036854775808..9223372036854775807..4611686018427387904}".to_owned(),
+        "python3 -c \".write_text('x')\"".to_owned(),
+        format!("python3 -c \"p = {}x{}\"", "(".repeat(5_000), ")".repeat(5_000)),
+        format!("python3 -c \"open({}'a'{})\"", "f(".repeat(3_000), ")".repeat(3_000)),
+        format!("node -e \"{}\"", "a.".repeat(5_000)),
+        format!("bash -c '{}'", "\"$(".repeat(2_000)),
+        format!("for x in {}; do :; done", "a ".repeat(10_000)),
+    ];
+    for p in payloads {
+        let label: String = p.chars().take(40).collect();
+        let a = bounded(move || {
+            let ctx = Context::new("/home/me/Documents/dev/app", Workspace::standard("/home/me"));
+            analyze_command(&p, &ctx)
+        });
+        assert!(a.level >= Level::L0, "{label}");
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+    /// Any text, long and deeply nested: read in time, without a crash.
+    #[test]
+    fn analyze_command_is_total(
+        unit in proptest::sample::select(&["$(", "(", ")", "`", "{", "}", "${a:-", "{a,", "\"", "'", ";", "|", "<<E\n", "f() ", "if ", "x", " "][..]),
+        times in 1_usize..4_000,
+        tail in r"[ -~\n]{0,64}",
+    ) {
+        let text = format!("{}{tail}", unit.repeat(times));
+        let a = bounded(move || {
+            let ctx = Context::new("/home/me/Documents/dev/app", Workspace::standard("/home/me"));
+            analyze_command(&text, &ctx)
+        });
+        proptest::prop_assert!(a.level >= Level::L0);
+    }
+}
+
+#[test]
+fn a_brace_range_never_overflows() {
+    let a = run("echo {-9223372036854775808..9223372036854775807..4611686018427387904}");
+    assert_eq!(a.level, Level::L0);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+    /// Inline code, long and deeply nested, in every language: read in time, without a crash.
+    #[test]
+    fn analyze_code_is_total(
+        lang in proptest::sample::select(&["python3 - <<'EOF'\n", "node - <<'EOF'\n", "ruby - <<'EOF'\n", "perl - <<'EOF'\n"][..]),
+        unit in proptest::sample::select(&["(", ")", "[", "]", "{", "}", "'", "\"", "`", "/", ".", "a", "=", "open(", "x.write_text(", "f(", "#", "\n", "\\", "$", "%x(", "qx{"][..]),
+        times in 1_usize..6_000,
+        tail in r"[ -~\n]{0,64}",
+    ) {
+        let text = format!("{lang}{}{tail}\nEOF\n", unit.repeat(times));
+        let a = bounded(move || {
+            let ctx = Context::new("/home/me/Documents/dev/app", Workspace::standard("/home/me"));
+            analyze_command(&text, &ctx)
+        });
+        proptest::prop_assert!(a.level >= Level::L0);
+    }
+}

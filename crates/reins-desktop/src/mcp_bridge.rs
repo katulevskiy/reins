@@ -64,7 +64,7 @@ struct ToolCall {
     progress_token: Option<Value>,
     arguments: Vec<String>,
     /// What the call does, from its name and arguments (Decisions v2 P1: shown in Activity, deciding nothing).
-    effects: reins_policy::effects::Summary,
+    effects: Option<reins_policy::effects::Summary>,
 }
 
 fn tool_call(msg: &Value) -> Option<ToolCall> {
@@ -80,11 +80,11 @@ fn tool_call(msg: &Value) -> Option<ToolCall> {
             .and_then(Value::as_object)
             .map(|a| a.keys().cloned().collect())
             .unwrap_or_default(),
-        effects: reins_policy::effects::analyze_tool(
-            params.get("name").and_then(Value::as_str).unwrap_or_default(),
-            params.get("arguments").unwrap_or(&Value::Null),
-        )
-        .summary(),
+        effects: {
+            let name = params.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+            crate::consequences::guarded(move || Some(reins_policy::effects::analyze_tool(&name, &arguments).summary()))
+        },
     })
 }
 
@@ -314,7 +314,7 @@ impl Bridge {
             .detail(
                 (!call.arguments.is_empty()).then(|| format!("Arguments: {}", call.arguments.join(", "))).as_deref(),
             )
-            .effects(Some(call.effects.clone()));
+            .effects(call.effects.clone());
         // Answers pass through here so the call's own response can be found.
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         let watch = {

@@ -316,7 +316,12 @@ struct Reader<'w, 'a> {
     cwd: String,
     /// The script's arguments (`sys.argv[1:]`, `process.argv[2:]`), as the shell gave them.
     argv: Vec<Val>,
+    /// How deep [`Reader::eval`] is nested (deeper expressions are unknown).
+    depth: std::cell::Cell<usize>,
 }
+
+/// The deepest expression [`Reader::eval`] reads.
+const MAX_EVAL_DEPTH: usize = 48;
 
 /// Records what `code` in `lang` does.
 #[allow(clippy::similar_names, reason = "the shell's `args` and the script's own `argv`")]
@@ -345,6 +350,7 @@ pub(super) fn analyze_code(w: &mut Walk<'_>, lang: Lang, code: &str, args: &[Exp
         params: BTreeMap::new(),
         cwd,
         argv,
+        depth: std::cell::Cell::new(0),
     };
     r.function_params();
     r.read();
@@ -422,6 +428,18 @@ impl Reader<'_, '_> {
     #[allow(clippy::too_many_lines, reason = "one case per expression shape")]
     #[allow(clippy::many_single_char_names, reason = "token indexes: s(tart), e(nd), k")]
     fn eval(&self, s: usize, e: usize) -> Val {
+        if self.depth.get() >= MAX_EVAL_DEPTH {
+            return Val::Unknown;
+        }
+        self.depth.set(self.depth.get() + 1);
+        let v = self.eval_at(s, e);
+        self.depth.set(self.depth.get() - 1);
+        v
+    }
+
+    #[allow(clippy::too_many_lines, reason = "one case per expression shape")]
+    #[allow(clippy::many_single_char_names, reason = "token indexes: s(tart), e(nd), k")]
+    fn eval_at(&self, s: usize, e: usize) -> Val {
         if s >= e {
             return Val::Unknown;
         }
@@ -673,15 +691,18 @@ impl Reader<'_, '_> {
         }
         // The receiver: an identifier, or a call `X(...)` ending at `dot`.
         let end = dot;
-        match self.toks.get(end - 1) {
+        let Some(last) = end.checked_sub(1) else {
+            return Val::Unknown;
+        };
+        match self.toks.get(last) {
             Some(Tok::Ident(_)) => {
                 // `a.b.c`: the whole dotted name before; evaluate the last identifier as a variable.
-                let mut start = end - 1;
+                let mut start = last;
                 while start >= 2 && punct(self.toks.get(start - 1), '.') && ident(self.toks.get(start - 2)).is_some() {
                     start -= 2;
                 }
                 let _ = from;
-                if start == end - 1 {
+                if start == last {
                     self.eval(start, end)
                 } else {
                     Val::Unknown

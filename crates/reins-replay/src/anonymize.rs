@@ -70,6 +70,29 @@ fn ip(m: &str) -> String {
     }
 }
 
+/// A run of 16+ hex digits with at least 3 digits in it (an id, a hash, a key); letters only stay (a word).
+fn hex_id(m: &str) -> String {
+    if m.chars().filter(char::is_ascii_digit).count() >= 3 {
+        "abcdef0123456789".to_owned()
+    } else {
+        m.to_owned()
+    }
+}
+
+/// Base64 text: long, both cases and digits, and not a path.
+fn base64_like(m: &str) -> String {
+    let digits = m.chars().filter(char::is_ascii_digit).count();
+    let upper = m.chars().filter(char::is_ascii_uppercase).count();
+    let lower = m.chars().filter(char::is_ascii_lowercase).count();
+    let path_like = m.contains("//")
+        || m.split('/').any(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_lowercase() || c == '-'));
+    if digits >= 3 && upper >= 3 && lower >= 3 && !path_like {
+        "REDACTED".to_owned()
+    } else {
+        m.to_owned()
+    }
+}
+
 /// Long strings of mixed letters and digits with no separators a path or a word has: keys and ids.
 fn key_like(m: &str) -> String {
     let digits = m.chars().filter(char::is_ascii_digit).count();
@@ -106,9 +129,17 @@ impl Scrubber {
         add(r"\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b", Replace::With("02:00:00:00:00:01".to_owned()));
         add(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", Replace::With("person@example.com".to_owned()));
         add(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b", Replace::By(ip));
-        add(r"\b[0-9a-f]{16,}\b", Replace::With("abcdef0123456789".to_owned()));
+        // Tokens with a known prefix, wherever they are.
+        add(
+            r"(npm_|hf_|glpat-|gho_|ghs_|ghr_|(?:sk|rk|pk)_(?:live|test)_|xox[abprs]-|AKIA|ASIA|ya29\.|shpat_|dop_v1_|SG\.)[A-Za-z0-9_\-.]{10,}",
+            Replace::With("REDACTED".to_owned()),
+        );
+        // Hex ids in either case, also next to `_` or `-` (no word boundary there): with digits in them, so words stay.
+        add(r"[0-9a-fA-F]{16,}", Replace::By(hex_id));
         // ULIDs, also after a prefix (`org_01M3…`, `user_01M3…`).
         add(r"[0-9A-HJKMNP-TV-Z]{26}\b", Replace::With("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()));
+        // Base64 with `+` and `/` (a key, not a path: digits and both cases, no `//` or `..`).
+        add(r"[A-Za-z0-9+/]{32,}={0,2}", Replace::By(base64_like));
         add(r"\b[A-Za-z0-9]{20,}\b", Replace::By(key_like));
         Self {
             rules,
@@ -481,6 +512,34 @@ mod tests {
             "cargo build --target-dir target-198 assembleFullReleaseAndroidTest"
         );
         assert_eq!(s.scrub("curl http://127.0.0.1:8080/alive"), "curl http://127.0.0.1:8080/alive");
+    }
+
+    /// The review's leaks: hex next to `_` or `-`, uppercase hex, prefixed tokens, base64 with `+` and `/`.
+    #[test]
+    fn tokens_next_to_separators_are_removed() {
+        let s = Scrubber::new(&Labels::default());
+        // Token-shaped fixtures are put together here, so no scanner takes the source for a leaked key.
+        let fake = |prefix: &str| format!("{prefix}{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123");
+        let cases: Vec<(String, String)> = vec![
+            (format!("SIGNATURE={}_1700000000_12345", "0123456789abcdef".repeat(2)), "0123456789abcdef".to_owned()),
+            (format!("X={}", "0123456789ABCDEF".repeat(2)), "0123456789ABCDEF".to_owned()),
+            ("agent-a1234567890abcdef12-x".to_owned(), "a1234567890abcdef12".to_owned()),
+            (fake(&["npm", "_"].concat()), "AbCdEfGh".to_owned()),
+            (fake(&["hf", "_"].concat()), "AbCdEfGh".to_owned()),
+            (fake(&["sk", "_live_"].concat()), "AbCdEfGh".to_owned()),
+            (fake(&["rk", "_test_"].concat()), "AbCdEfGh".to_owned()),
+            (fake(&["glpat", "-"].concat()), "AbCdEfGh".to_owned()),
+            (format!("KEY={}+{}/4567", "Zm9vYmFyMTIz", "QUJDREVGR0hJSktM"), "Zm9vYmFyMTIz".to_owned()),
+        ];
+        for (text, bad) in &cases {
+            let out = s.scrub(text);
+            assert!(!out.contains(bad), "{bad} in {out}");
+        }
+        // Paths and words stay.
+        assert_eq!(
+            s.scrub("/home/user/Documents/dev/reins/target-198/debug"),
+            "/home/user/Documents/dev/reins/target-198/debug"
+        );
     }
 
     #[test]

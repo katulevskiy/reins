@@ -196,17 +196,39 @@ impl Word {
     }
 }
 
+/// The longest text read: anything longer is not read at all (`complete` is false).
+pub const MAX_INPUT: usize = 64 * 1024;
+/// Brace expansions read per text: nested unclosed braces would otherwise be read again and again.
+const MAX_BRACES: usize = 512;
+
 /// Parses a command line.
 #[must_use]
 pub fn parse(text: &str) -> Parsed {
-    let mut p = Parser {
+    parse_at(text, 0)
+}
+
+fn new_parser(text: &str, depth: usize) -> Parser {
+    Parser {
         s: text.chars().collect(),
         i: 0,
         problems: Vec::new(),
         pending: Vec::new(),
         bodies: Vec::new(),
-        depth: 0,
-    };
+        depth,
+        braces: 0,
+    }
+}
+
+/// [`parse`] at a nesting depth (text inside backticks or `${…}` continues its outer text's depth).
+fn parse_at(text: &str, depth: usize) -> Parsed {
+    if text.len() > MAX_INPUT {
+        return Parsed {
+            script: Script::default(),
+            complete: false,
+            problems: vec!["a command too long to read".to_owned()],
+        };
+    }
+    let mut p = new_parser(text, depth);
     let mut script = p.list(&[]);
     while p.i < p.s.len() {
         // A stray `)`, `}`, `;;` or keyword at the top: skip it and read on.
@@ -231,14 +253,14 @@ pub fn parse(text: &str) -> Parsed {
 /// Parses text as the inside of double quotes (a heredoc body that expands): its variables and substitutions.
 #[must_use]
 pub fn parse_double_quoted(text: &str) -> (Word, bool) {
-    let mut p = Parser {
-        s: text.chars().collect(),
-        i: 0,
-        problems: Vec::new(),
-        pending: Vec::new(),
-        bodies: Vec::new(),
-        depth: 0,
-    };
+    parse_double_quoted_at(text, 0)
+}
+
+fn parse_double_quoted_at(text: &str, depth: usize) -> (Word, bool) {
+    if text.len() > MAX_INPUT || depth > MAX_DEPTH {
+        return (Word(vec![Part::Param("a text too long or too deep to read".to_owned())]), false);
+    }
+    let mut p = new_parser(text, depth);
     let mut parts = Vec::new();
     p.double_quoted_until(&mut parts, None);
     let bodies = std::mem::take(&mut p.bodies);
@@ -260,6 +282,8 @@ struct Parser {
     pending: Vec<Pending>,
     bodies: Vec<Option<String>>,
     depth: usize,
+    /// Brace expansions tried so far (see [`MAX_BRACES`]).
+    braces: usize,
 }
 
 const KEYWORDS: &[&str] = &["then", "else", "elif", "fi", "do", "done", "esac", "in", "}"];
@@ -497,7 +521,20 @@ impl Parser {
     }
 
     #[allow(clippy::too_many_lines, reason = "one case per compound command")]
+    /// A command, nested no deeper than [`MAX_DEPTH`] (functions' bodies and compound commands count).
     fn command(&mut self, terms: &[&str]) -> Option<Command> {
+        if self.depth > MAX_DEPTH {
+            self.problem("nested too deep".to_owned());
+            self.i = self.s.len();
+            return None;
+        }
+        self.depth += 1;
+        let c = self.command_at(terms);
+        self.depth -= 1;
+        c
+    }
+
+    fn command_at(&mut self, terms: &[&str]) -> Option<Command> {
         self.blanks();
         if self.at_terminator(terms) {
             return None;
@@ -711,7 +748,7 @@ impl Parser {
                 }
                 // Substitutions inside are commands too.
                 if text.contains("$(") || text.contains('`') {
-                    let (w, _) = parse_double_quoted(&text);
+                    let (w, _) = parse_double_quoted_at(&text, self.depth + 1);
                     simple.words.push(w);
                 }
                 return Some(Command::Simple(simple));
@@ -1102,14 +1139,18 @@ impl Parser {
     /// A brace expansion at `{`: its alternatives (`{a,b}`, `{1..3}`), or `None` (the cursor unmoved) when it is
     /// not one (`{}`, `{x}`, `${`).
     fn brace(&mut self) -> Option<Vec<Word>> {
+        self.braces += 1;
+        if self.braces > MAX_BRACES || self.depth > MAX_DEPTH {
+            self.problem("brace expansions too many or too deep to read".to_owned());
+            return None;
+        }
         let start = self.i;
         // A range: `{1..5}`, `{a..e}`.
         let close = (self.i + 1..self.s.len()).take_while(|&k| !is_meta(self.s[k])).find(|&k| self.s[k] == '}');
         if let Some(end) = close {
             let inner: String = self.s[self.i + 1..end].iter().collect();
-            if let Some((a, b)) = inner.split_once("..")
-                && !b.contains("..")
-            {
+            // `{1..10}`, `{1..10..2}`: `range` reads the step.
+            if let Some((a, b)) = inner.split_once("..") {
                 let alts = range(a, b)?;
                 self.i = end + 1;
                 return Some(alts.into_iter().map(|s| Word(vec![Part::Lit(s)])).collect());
@@ -1230,7 +1271,7 @@ impl Parser {
                 } else {
                     self.problem("a `${` that never closes".to_owned());
                 }
-                parts.push(param(&inner));
+                parts.push(param(&inner, self.depth + 1));
             }
             Some('\'') if !quoted => {
                 // `$'…'`: ANSI-C quoting, decoded.
@@ -1370,7 +1411,7 @@ impl Parser {
         if !closed {
             self.problem("a backtick that never closes".to_owned());
         }
-        let inner = parse(&text);
+        let inner = parse_at(&text, self.depth + 1);
         for p in inner.problems {
             self.problem(p);
         }
@@ -1412,7 +1453,15 @@ fn range(a: &str, b: &str) -> Option<Vec<String>> {
         } else {
             -step
         };
-        return Some((0..n).map(|k| (x + dir * i64::try_from(k).unwrap_or(0)).to_string()).collect());
+        return (0..n)
+            .map(|k| {
+                i64::try_from(k)
+                    .ok()
+                    .and_then(|k| dir.checked_mul(k))
+                    .and_then(|d| x.checked_add(d))
+                    .map(|v| v.to_string())
+            })
+            .collect();
     }
     let (mut x, mut y) = (a.chars(), b.chars());
     let (Some(x), None, Some(y), None) = (x.next(), x.next(), y.next(), y.next()) else {
@@ -1430,7 +1479,7 @@ fn range(a: &str, b: &str) -> Option<Vec<String>> {
 }
 
 /// The inside of `${…}`.
-fn param(inner: &str) -> Part {
+fn param(inner: &str, depth: usize) -> Part {
     let name_end = inner.find(|c: char| !name_char(c)).unwrap_or(inner.len());
     let (name, rest) = inner.split_at(name_end);
     if name.is_empty() {
@@ -1441,7 +1490,7 @@ fn param(inner: &str) -> Part {
     }
     for op in [":-", ":=", "-", "="] {
         if let Some(word) = rest.strip_prefix(op) {
-            let (w, _) = parse_double_quoted(word);
+            let (w, _) = parse_double_quoted_at(word, depth);
             return Part::Default(name.to_owned(), w);
         }
     }

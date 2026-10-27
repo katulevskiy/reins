@@ -83,6 +83,36 @@ pub fn context(
     c
 }
 
+/// How long the engine may take for one request before its reading is dropped.
+pub const DEADLINE: std::time::Duration = std::time::Duration::from_millis(200);
+/// The engine's thread stack: its recursion is bounded well below this (`reins-policy`'s totality tests run it at a
+/// quarter of it).
+const STACK: usize = 64 << 20;
+
+/// Runs `f` on its own thread with a large stack, catching a panic, for at most [`DEADLINE`]. `None` on a panic, a
+/// missed deadline or a thread that could not start: the reading is dropped, nothing else changes.
+pub fn guarded<F>(f: F) -> Option<Summary>
+where
+    F: FnOnce() -> Option<Summary> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("reins-effects".to_owned()).stack_size(STACK).spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok().flatten();
+        let _sent = tx.send(result);
+    });
+    if spawned.is_err() {
+        return None;
+    }
+    rx.recv_timeout(DEADLINE).ok().flatten()
+}
+
+/// [`of_action`] under [`guarded`].
+#[must_use]
+pub fn guarded_action(config: &Config, action: &Action, cwd: Option<&str>, head: Option<&GitHead>) -> Option<Summary> {
+    let (config, action, cwd, head) = (config.clone(), action.clone(), cwd.map(str::to_owned), head.cloned());
+    guarded(move || of_action(&config, &action, cwd.as_deref(), head.as_ref()))
+}
+
 /// What a hook's action does.
 #[must_use]
 pub fn of_action(config: &Config, action: &Action, cwd: Option<&str>, head: Option<&GitHead>) -> Option<Summary> {
@@ -98,6 +128,26 @@ pub fn of_action(config: &Config, action: &Action, cwd: Option<&str>, head: Opti
             Some(effects::analyze_files(&paths, *write, &ctx).summary())
         }
         Action::Other => None,
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    /// A panic or a hang in the engine drops the reading and nothing else.
+    #[test]
+    fn a_panic_or_a_hang_drops_the_reading() {
+        assert_eq!(guarded(|| panic!("the engine broke")), None);
+        let started = std::time::Instant::now();
+        assert_eq!(
+            guarded(|| {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                None
+            }),
+            None
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
 
@@ -121,6 +171,7 @@ mod tests {
         let s = of_action(&config, &Action::Command("rm -rf src".to_owned()), Some(&cwd), None).unwrap();
         assert!(s.level <= effects::Level::L1, "inside the worktree: recoverable from git: {s:?}");
         assert!(of_action(&config, &Action::Other, Some(&cwd), None).is_none());
+        assert!(guarded_action(&config, &Action::Command("rm -rf target".to_owned()), Some(&cwd), None).is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

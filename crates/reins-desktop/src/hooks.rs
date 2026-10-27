@@ -688,19 +688,20 @@ pub async fn run(
         } => Kind::File,
         _ => Kind::Command,
     };
-    // What it does, for Activity (Decisions v2 P1: shown, not deciding).
-    let effects = crate::consequences::of_action(config, &call.action, call.cwd.as_deref(), head.as_ref());
-    let entry = Entry::new(kind, &q.question)
-        .source(Some(harness.label()))
-        .service(Some(&m.topic))
-        .detail(q.detail.as_deref())
-        .effects(effects);
+    let entry =
+        Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
     // stderr: the harness's log, and its transcript where it shows hook output.
     let tell = |line: &str| eprintln!("{line}");
-    let (answer, timed_out) =
-        crate::ask::ask_logged(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
+    let (answer, timed_out, entry) =
+        crate::ask::ask_logged_entry(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
     let v = verdict(answer, timed_out, config.guard.on_no_answer);
     let (out, code) = render(&call, &v);
+    // What it does, for Activity (Decisions v2 P1: shown, never deciding): read only once the verdict is fixed, on
+    // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
+    if let Some(effects) = crate::consequences::guarded_action(config, &call.action, call.cwd.as_deref(), head.as_ref())
+    {
+        crate::journal::Journal::new(paths).record(&entry.effects(Some(effects)));
+    }
     (out, code, None)
 }
 

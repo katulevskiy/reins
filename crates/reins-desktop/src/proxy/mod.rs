@@ -651,11 +651,12 @@ impl Proxy {
             digest.get(..12).unwrap_or(&digest)
         );
         // The push's exact facts as effects (Decisions v2 P1: shown in Activity, deciding nothing).
-        let effects = reins_policy::effects::analyze_push(&repo.label(), &summary).summary();
-        let entry = self
-            .git_entry(repo, &push_what(repo, &summary))
-            .detail(Some(&push_detail(&summary)))
-            .effects(Some(effects));
+        let effects = {
+            let (label, facts) = (repo.label(), summary.clone());
+            crate::consequences::guarded(move || Some(reins_policy::effects::analyze_push(&label, &facts).summary()))
+        };
+        let entry =
+            self.git_entry(repo, &push_what(repo, &summary)).detail(Some(&push_detail(&summary))).effects(effects);
         let entry_id = entry.id.clone();
         // Kept before it is asked, so the app shows the commits while the push waits; gone again unless approved.
         self.journal.keep_push(

@@ -171,6 +171,23 @@ pub async fn ask_logged(
     entry: Entry,
     tell: Option<&(dyn Fn(&str) + Sync)>,
 ) -> (Answer, bool) {
+    let (answer, timed_out, _entry) =
+        ask_logged_entry(paths, config, q, timeout, interactive, prompter, entry, tell).await;
+    (answer, timed_out)
+}
+
+/// [`ask_logged`], also returning the entry as it was last written (to add to it later under the same id).
+#[allow(clippy::too_many_arguments, reason = "ask_logged's arguments")]
+pub async fn ask_logged_entry(
+    paths: &Paths,
+    config: &Config,
+    q: &Question,
+    timeout: Duration,
+    interactive: bool,
+    prompter: &dyn Prompter,
+    entry: Entry,
+    tell: Option<&(dyn Fn(&str) + Sync)>,
+) -> (Answer, bool, Entry) {
     let journal = Journal::new(paths);
     let who = match decider(paths, config) {
         Ok(Decider::Phone) => JournalDecider::Phone,
@@ -209,7 +226,7 @@ pub async fn ask_logged(
     {
         tell(&crate::phone::ended_line(who, outcome, reason.as_deref(), timeout));
     }
-    (answer, outcome == Outcome::TimedOut)
+    (answer, outcome == Outcome::TimedOut, entry)
 }
 
 /// How long "Send a test to my phone" waits.
