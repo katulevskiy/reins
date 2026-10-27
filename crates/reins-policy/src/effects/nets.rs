@@ -366,7 +366,9 @@ fn visit_command(c: &Command, f: &mut dyn FnMut(&Command)) {
         } => {
             visit_word(word, f);
             for (pats, body) in arms {
-                pats.iter().for_each(|p| visit_word(p, f));
+                for p in pats {
+                    visit_word(p, f);
+                }
                 visit_script(body, f);
             }
             visit_redirects(redirects, f);
