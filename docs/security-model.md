@@ -784,6 +784,16 @@ What this doesn't do yet:
   a pre-signed stage as soon as its time comes even if a guard should have tripped, or withhold the rollback: either
   only moves a rollout that two Security admins approved, no faster than its approved schedule. A decision made under
   the previous stage still runs for two minutes after an executor first sees the next one; older, it is stale.
+  Executors keep the steps they've seen on disk (`state_dir/rollouts.log`), so a restart doesn't forget them.
+
+What this doesn't do yet:
+- An executor that never received a rollout's steps (the decision service withheld them from the start) can't tell
+  a candidate from the active policy: it falls back to O2's check, any issuer-signed snapshot and the policy named
+  current. Publishing the steps to a witness (O5) closes this.
+- One Connection admin can replace the GitHub reader's key and webhook secret. That lets them post check runs and
+  propose drafts, never activate one.
+- A rollout advanced by hand through its stages with too few decisions reaches "everyone" without a stable baseline:
+  there only the time-to-decision guard applies.
 
 ## Known gaps
 

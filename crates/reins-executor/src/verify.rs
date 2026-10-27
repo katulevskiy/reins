@@ -69,7 +69,7 @@ pub enum Refusal {
 pub const STAGE_GRACE_SECS: i64 = 120;
 
 /// A rollout step this executor holds, and when it first saw it (by its own clock).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HeldStep {
     pub envelope: Envelope,
     pub seen_at: i64,

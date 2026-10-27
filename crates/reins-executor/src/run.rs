@@ -129,8 +129,9 @@ pub struct Context {
     pub done: DoneLog,
     policies: Mutex<HashMap<String, Envelope>>,
     /// Every issuer-signed rollout step seen, with when it was first seen: a step the server stops sending still
-    /// counts (it can't take one back).
+    /// counts (it can't take one back), across restarts too (`state_dir/rollouts.log`).
     rollouts: Mutex<Vec<HeldStep>>,
+    rollouts_path: PathBuf,
 }
 
 impl Context {
@@ -141,6 +142,18 @@ impl Context {
             return Err("the pins are for another organization".to_owned());
         }
         std::fs::create_dir_all(state_dir).map_err(|e| format!("creating {}: {e}", state_dir.display()))?;
+        let rollouts_path = state_dir.join("rollouts.log");
+        let mut held: Vec<HeldStep> = match std::fs::read_to_string(&rollouts_path) {
+            Ok(text) => text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(format!("reading {}: {e}", rollouts_path.display())),
+        };
+        // Only what the pinned issuer signed for this org is kept.
+        held.retain(|h| {
+            h.envelope.kind == reins_proto::managed::EnvelopeKind::Rollout
+                && h.envelope.org == pins.org
+                && verify_envelope(&h.envelope, std::slice::from_ref(&pins.issuer))
+        });
         Ok(Self {
             leases: LeaseStore::open(state_dir)?,
             done: DoneLog::open(state_dir)?,
@@ -150,7 +163,8 @@ impl Context {
             github: None,
             google: None,
             policies: Mutex::new(HashMap::new()),
-            rollouts: Mutex::new(Vec::new()),
+            rollouts: Mutex::new(held),
+            rollouts_path,
         })
     }
 
@@ -210,22 +224,44 @@ impl Context {
 const MAX_HELD_STEPS: usize = 2_000;
 
 impl Context {
-    /// Adds the issuer-signed rollout steps in `envs` not held yet, first seen `now`.
-    pub fn hold_rollouts(&self, envs: Vec<Envelope>, now: i64) {
+    /// Adds the issuer-signed rollout steps in `envs` not held yet, first seen `now`, and keeps them on disk.
+    pub fn hold_rollouts(&self, envs: Vec<Envelope>, now: i64) -> Result<(), String> {
         let mut held = self.rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut fresh = Vec::new();
         for env in envs {
             let signed = env.kind == reins_proto::managed::EnvelopeKind::Rollout
                 && env.org == self.pins.org
                 && verify_envelope(&env, std::slice::from_ref(&self.pins.issuer));
-            if signed && !held.iter().any(|h| h.envelope == env) {
-                held.push(HeldStep {
+            if signed && !held.iter().any(|h| h.envelope == env) && !fresh.iter().any(|h: &HeldStep| h.envelope == env)
+            {
+                fresh.push(HeldStep {
                     envelope: env,
                     seen_at: now,
                 });
             }
         }
+        if !fresh.is_empty() {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.create(true).append(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let err = |e: std::io::Error| format!("writing {}: {e}", self.rollouts_path.display());
+            let mut text = String::new();
+            for h in &fresh {
+                text.push_str(&serde_json::to_string(h).map_err(|e| e.to_string())?);
+                text.push('\n');
+            }
+            let mut f = opts.open(&self.rollouts_path).map_err(err)?;
+            f.write_all(text.as_bytes()).map_err(err)?;
+            f.sync_data().map_err(err)?;
+            held.extend(fresh);
+        }
         let excess = held.len().saturating_sub(MAX_HELD_STEPS);
         held.drain(..excess);
+        Ok(())
     }
 
     /// The rollout steps held.
@@ -276,7 +312,7 @@ pub async fn run(ctx: &Context) {
 async fn run_jobs(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
     let roster = ctx.client.roster().await?;
     // Refreshed with the roster, before any job: a decision is judged against every stage published so far.
-    ctx.hold_rollouts(ctx.client.rollouts().await?, crate::now());
+    ctx.hold_rollouts(ctx.client.rollouts().await?, crate::now())?;
     let jobs = ctx.client.claim().await?;
     stats.claimed = jobs.len();
     for job in jobs {
@@ -560,6 +596,30 @@ mod tests {
                 env.parse().unwrap()
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn held_rollout_steps_survive_a_restart() {
+        let f = Fixture::new();
+        let w = world(&f, Vec::new()).await;
+        let steps = f.rollout_steps("ro_1", "S", "C", &[LEE], 100);
+        let mut forged = Fixture::new();
+        forged.issuer = ed25519(9);
+        let fake = forged.rollout_steps("ro_1", "S", "C", &[LEE], 100);
+        w.ctx.hold_rollouts(vec![steps[0].clone(), steps[1].clone(), fake[2].clone()], 500).unwrap();
+        // Seen again later: still first seen at 500.
+        w.ctx.hold_rollouts(vec![steps[1].clone()], 900).unwrap();
+        let held = w.ctx.held_rollouts();
+        assert_eq!(
+            held.iter().map(|h| (h.envelope.clone(), h.seen_at)).collect::<Vec<_>>(),
+            [(steps[0].clone(), 500), (steps[1].clone(), 500)]
+        );
+        // A restarted executor holds the same steps, even if the server stops sending them.
+        let client =
+            Client::new(&w.server.uri(), ORG, "ex-1", Arc::new(Ed25519KeyPair::from_seed_unchecked(&[8; 32]).unwrap()))
+                .unwrap();
+        let again = Context::new(client, f.pins(), w.dir.path()).unwrap();
+        assert_eq!(again.held_rollouts(), held);
     }
 
     #[tokio::test]
