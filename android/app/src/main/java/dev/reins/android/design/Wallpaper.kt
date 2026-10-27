@@ -254,13 +254,16 @@ class WallpaperArt(val choice: WallpaperChoice, val dark: Boolean, val bitmap: B
 
 /**
  * The picture for [choice] in a theme: at once when it is the image as it is (or was made before), else made off the
- * main thread; the last picture stays until the new one is ready.
+ * main thread. Until it is ready the last picture stays, or with none the image as it is shows, so there is always art.
  */
 @Composable
 fun rememberWallpaper(choice: WallpaperChoice?, dark: Boolean): WallpaperArt? {
     val context = LocalContext.current
     val version = Wallpapers.photoVersion
     val now = remember(choice, dark, version) { choice?.let { ch -> Wallpapers.ready(context, ch, dark)?.let { WallpaperArt(ch, dark, it) } } }
+    val plain = remember(choice?.image, dark, version) {
+        choice?.let { WallpaperChoice(it.image) }?.let { p -> Wallpapers.ready(context, p, dark)?.let { WallpaperArt(p, dark, it) } }
+    }
     var last by remember { mutableStateOf(now) }
     LaunchedEffect(choice, dark, version) {
         last = when {
@@ -269,7 +272,7 @@ fun rememberWallpaper(choice: WallpaperChoice?, dark: Boolean): WallpaperArt? {
             else -> withContext(Dispatchers.Default) { Wallpapers.bitmap(context, choice, dark) }?.let { WallpaperArt(choice, dark, it) }
         }
     }
-    return if (choice == null) null else now ?: last
+    return if (choice == null) null else now ?: last ?: plain
 }
 
 /** Where the art is drawn on screen, for panes to look through. Null when the page has no art. */

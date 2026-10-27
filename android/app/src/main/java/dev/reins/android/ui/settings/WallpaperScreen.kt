@@ -122,8 +122,7 @@ fun WallpaperScreen(onBack: () -> Unit) {
                         true
                     }.getOrDefault(false)
                 }
-                // The new photo takes the theme's effect and fade as they are.
-                if (saved) Appearance.setWallpaper(context, dark, Appearance.state(context).value.wallpaper(dark).copy(image = Wallpaper.Photo))
+                if (saved) Appearance.setWallpaper(context, dark, Appearance.state(context).value.wallpaper(dark).withNewPhoto())
             }
         }
     }

@@ -63,6 +63,17 @@ data class WallpaperChoice(
 
     /** Whether the image is drawn as it is: no effect and no fade of its own. */
     val plain: Boolean get() = effect == PhotoEffect.Original && fadeStep == 0
+
+    /**
+     * The owner's new photo in this choice's place: the effect stays; with no fade it takes [PHOTO_FADE], so a photo
+     * does not end in a hard edge under the page.
+     */
+    fun withNewPhoto(): WallpaperChoice = copy(image = Wallpaper.Photo, fade = if (fadeStep == 0) PHOTO_FADE else fade)
+
+    companion object {
+        /** The fade a new photo gets when the theme had none. */
+        const val PHOTO_FADE = 0.6f
+    }
 }
 
 /**

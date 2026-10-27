@@ -82,6 +82,23 @@ class WallpaperChoiceTest {
     }
 
     @Test
+    fun aNewPhotoKeepsTheEffectAndFadesWhenTheThemeHadNoFade() {
+        // No fade: the photo gets the old default, so it does not end in a hard edge.
+        assertEquals(
+            WallpaperChoice(Wallpaper.Photo, PhotoEffect.Dither, WallpaperChoice.PHOTO_FADE),
+            WallpaperChoice(Wallpaper.Halo, PhotoEffect.Dither, 0f).withNewPhoto(),
+        )
+        assertEquals(WallpaperChoice(Wallpaper.Photo, PhotoEffect.Original, 0.6f), WallpaperChoice(Wallpaper.Halo).withNewPhoto())
+        // A fade below one step counts as none.
+        assertEquals(0.6f, WallpaperChoice(Wallpaper.Ruins, fade = 0.004f).withNewPhoto().fade)
+        // A fade of its own is kept.
+        assertEquals(
+            WallpaperChoice(Wallpaper.Photo, PhotoEffect.Halftone, 0.25f),
+            WallpaperChoice(Wallpaper.Eyes, PhotoEffect.Halftone, 0.25f).withNewPhoto(),
+        )
+    }
+
+    @Test
     fun theKeySeparatesImageEffectFadeAndTheme() {
         val base = WallpaperChoice(Wallpaper.Halo, PhotoEffect.Dither, 0.5f)
         val keys = listOf(
