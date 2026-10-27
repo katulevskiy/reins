@@ -104,6 +104,7 @@ jobs:
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
       - run: python3 scripts/test-macos-gate.py
+      - run: python3 scripts/test-prune-caches.py
       - run: python3 scripts/test-ios-ui-plan.py
       - name: Conflict markers and shell syntax
         run: |
@@ -386,12 +387,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # Outputs of exactly these sources (no prefix fallback), restored everywhere and saved from main.
+      # Outputs of exactly these sources (no prefix fallback), restored everywhere and saved from main. This workflow is
+      # not in the key (any edit to it would miss): bump the v2 when this job's build or the Cargo variables above change.
       - uses: actions/cache/restore@v5
         id: native
         with:
           path: native
-          key: android-native-dev-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh', '.github/workflows/ci.yml') }}
+          key: android-native-dev-v2-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh') }}
       - name: Install Rust toolchain and Android targets
         if: steps.native.outputs.cache-hit != 'true'
         run: |
@@ -600,3 +602,14 @@ jobs:
           name: android-test-reports-${{ matrix.id }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore
+
+  # Deletes the caches this run superseded (.github/workflows/cache-prune.yml), on main only, once the jobs that write
+  # caches are done. Its own job holds actions: write; nothing else here does.
+  cache-prune:
+    name: Prune caches
+    needs: [rust, desktop-linux, desktop-macos, desktop-windows, android-native, android-release-smoke, android]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/cache-prune.yml # zizmor: ignore[self-repository] the same commit's prune
+    permissions:
+      actions: write # delete superseded caches
+      contents: read

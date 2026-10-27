@@ -416,6 +416,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Deletes the caches this run superseded (.github/workflows/cache-prune.yml), on main only, once the core and the build
+  # (which write the simulator core's and the Swift caches) are done. Its own job holds actions: write.
+  cache-prune:
+    name: Prune caches
+    needs: [ios-core, ios-build]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/cache-prune.yml # zizmor: ignore[self-repository] the same commit's prune
+    permissions:
+      actions: write # delete superseded caches
+      contents: read
+
   # The check to require. Shards are skipped when the lane is off, which would leave a required shard
   # pending; this job passes in that case and fails when the unit shard, the build, the core, or the lane selector
   # did. A UI shard continues on error, so its failure never reaches this result.

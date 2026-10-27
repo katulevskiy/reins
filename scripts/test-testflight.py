@@ -416,7 +416,8 @@ check("--key-id" not in section and "--issuer-id" not in section, "the key ids r
 check("Infisical" not in section and "release-secrets" not in section
       and "id-token" not in section and "INFISICAL_" not in section, "no Infisical in the job")
 permissions = section.split("    permissions:\n", 1)[1].split("\n    outputs:", 1)[0].split("\n    env:", 1)[0]
-check(permissions.split("#", 1)[0].split() == ["contents:", "read"], "least permissions")
+check([line.split("#", 1)[0].split() for line in permissions.splitlines()]
+      == [["contents:", "read"], ["attestations:", "read"]], "least permissions")
 for line in section.splitlines():
     if "uses: " in line and "uses: ./" not in line:
         check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
@@ -447,7 +448,7 @@ def at(name, within=None):
 # The signing material comes only from the testflight environment's secrets, each mapped only into the steps that need
 # it, all after the build; no Infisical, no OIDC token.
 first_secret = min(at(name) for name, step in steps.items() if "secrets." in step)
-for build_step in ("Build the Rust core", "Resolve and check the Swift packages", "rust-cache@"):
+for build_step in ("Prebuilt core", "Build the Rust core", "Resolve and check the Swift packages"):
     check(at(build_step) < first_secret, f"{build_step} before the secrets")
 asc = {"AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"}
 signing = {
@@ -503,16 +504,28 @@ for call in calls:
     check("-onlyUsePackageVersionsFromResolvedFile" in call and "-disableAutomaticPackageResolution" in call, call)
 check("skipPackagePluginValidation" not in job and "skipMacroValidation" not in job, "validation kept")
 check("scripts/testflight.py packages" in steps["Resolve and check the Swift packages"], "packages checked")
-check('cache-bin: "false"' in job and 'REINS_SKIP_CORE: "1"' in steps["Archive"], "no cached binaries, no cargo")
+check("rust-cache" not in job and "actions/cache" not in job and 'REINS_SKIP_CORE: "1"' in steps["Archive"],
+      "no Actions cache, no cargo in the archive")
 build_core = (ROOT / "ios/scripts/build-core.sh").read_text()
 check(build_core.index('REINS_SKIP_CORE:-}" == "1"') < build_core.index("rustup target add")
       < build_core.index("run_cargo rustc"), "build-core.sh stops before rustup and cargo when skipping")
-# The built core is kept by its sources, with the bindings it was generated with, and only main writes it.
-saved = job.split("uses: actions/cache/save@", 1)[1].split("\n      - ", 1)[0]
-check("github.ref == 'refs/heads/main'" in saved and "ios/Core/Generated/reins_core.swift" in saved
-      and "crates/reins-core/**" in steps["uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0"],
-      "the core's own cache")
-check(at("cache/save@") < first_secret, "the core is saved before any secret is in the job")
+# The core: the Release build ios-core.yml published from main for these sources (core-cache.sh verifies its
+# attestation, the hash and profile it carries, and its bindings), from this Xcode's SDK; else built here, cold.
+prebuilt = steps["Prebuilt core"]
+check("ios/scripts/core-cache.sh fetch iphoneos-release" in prebuilt and "GH_TOKEN: ${{ github.token }}" in prebuilt
+      and '"$sdk" == "$XCODE_VERSION"' in prebuilt and "rm -rf target/ios-core/iphoneos" in prebuilt, prebuilt)
+for name in ("Install Rust toolchain", "Build the Rust core"):
+    check("if: steps.prebuilt.outputs.hit != 'true'" in steps[name], f"{name} only without a published core")
+check("CONFIGURATION=Release ios/scripts/build-core.sh iphoneos" in steps["Build the Rust core"], "a Release core")
+check(at("Prebuilt core") < at("Build the Rust core") < at("Require the core") < at("No build is running"), order)
+core_cache = (ROOT / "ios/scripts/core-cache.sh").read_text()
+check("iphoneos-release" in core_cache and "profile_of" in core_cache
+      and '--cert-identity "https://github.com/$REPO/.github/workflows/ios-core.yml@refs/heads/main"' in core_cache
+      and "--deny-self-hosted-runners" in core_cache and '"$(cat "$stage/.hash")" != "$(content_hash)"' in core_cache,
+      "core-cache.sh: the Release variant, verified, of these sources")
+ios_core = (ROOT / ".github/workflows/ios-core.yml").read_text()
+check("iphonesimulator iphoneos iphoneos-release" in ios_core and "(iphonesimulator|iphoneos|iphoneos-release)" in ios_core,
+      "ios-core.yml publishes the Release core")
 check("--profile host-tool" in build_core and "target/host-tool/uniffi-bindgen" in build_core,
       "uniffi-bindgen is a cheap host build")
 print(f"{checks} TestFlight checks passed")
