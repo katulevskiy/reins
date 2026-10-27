@@ -25,26 +25,6 @@ pub enum PostureFail {
     Stale,
 }
 
-impl PostureFail {
-    /// Short words for the reviewer's phone and the console.
-    #[must_use]
-    pub fn text(&self) -> String {
-        match self {
-            Self::Revoked => "This device was removed by your organization".to_owned(),
-            Self::NoScreenLock => "Set a screen lock to approve".to_owned(),
-            Self::Rooted => "This device can't approve: its system was modified".to_owned(),
-            Self::NotAttested => "This device couldn't prove it's genuine".to_owned(),
-            Self::OldOs {
-                min,
-            } => format!("Update the system to {min} or later to approve"),
-            Self::OldApp {
-                min,
-            } => format!("Update Reins to {min} or later to approve"),
-            Self::Stale => "Open Reins to refresh this device's status".to_owned(),
-        }
-    }
-}
-
 /// Compares dotted versions numerically (`17.4 < 17.10`); a part that isn't a number compares as 0.
 #[must_use]
 pub fn compare_versions(a: &str, b: &str) -> Ordering {

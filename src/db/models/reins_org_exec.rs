@@ -1,7 +1,5 @@
 //! An org's registered executors and its signed audit checkpoints (Decisions v2 · O2).
 
-#![allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
-
 use diesel::prelude::*;
 
 use crate::db::{

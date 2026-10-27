@@ -1,7 +1,5 @@
 //! An org's keys (sealed by the KMS), its policy snapshots and its members' own policies (Decisions v2 · O2).
 
-#![allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
-
 use diesel::prelude::*;
 
 use crate::db::{

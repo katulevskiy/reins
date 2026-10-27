@@ -161,8 +161,8 @@ pub struct ReinsOrgDevice {
     pub attestation_detail: Option<String>,
 }
 
+#[allow(dead_code, reason = "verified and failed are set by attestation verification")]
 /// [`ReinsOrgDevice::attestation_state`] values.
-#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod attestation {
     pub const UNVERIFIED: &str = "unverified";
     pub const VERIFIED: &str = "verified";

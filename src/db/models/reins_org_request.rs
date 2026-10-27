@@ -3,8 +3,6 @@
 //! Every state change is a guarded update (`… WHERE state IN (from)`), so two writers (a reviewer and the sweeper, two
 //! executors) can't both move one request.
 
-#![allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
-
 use diesel::prelude::*;
 
 use crate::db::{
@@ -28,8 +26,6 @@ pub mod request_state {
     pub const STALE: &str = "stale";
     /// Claimed and never receipted: never run again (receipt rules).
     pub const UNKNOWN: &str = "unknown";
-    /// Still open: an agent may wait on it.
-    pub const OPEN: [&str; 3] = [REVIEWING, APPROVED, EXECUTING];
 }
 
 /// [`ReinsOrgRequest::kind`] values.

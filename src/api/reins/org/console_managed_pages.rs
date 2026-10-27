@@ -82,7 +82,11 @@ padding:10px;border:0;box-shadow:0 0 0 1px var(--rule);background:var(--paper)\"
     };
     let retention = if v.can_activate {
         let opt = |d: u32| {
-            let sel = if d == v.retention_days { " selected" } else { "" };
+            let sel = if d == v.retention_days {
+                " selected"
+            } else {
+                ""
+            };
             format!("<option value=\"{d}\"{sel}>{}</option>", retention_text(d))
         };
         format!(
@@ -186,10 +190,8 @@ pub fn audit(frame: &Frame<'_>, v: &AuditView) -> String {
     } else {
         format!("<span class=\"pill bad\">{}Chain broken</span>", svg(icon::WARNING))
     };
-    let checkpoint = v.checkpoint.as_ref().map_or_else(
-        || "none yet".to_owned(),
-        |(seq, at)| format!("event {seq} · {}", e(at)),
-    );
+    let checkpoint =
+        v.checkpoint.as_ref().map_or_else(|| "none yet".to_owned(), |(seq, at)| format!("event {seq} · {}", e(at)));
     let key = |k: &(String, String)| format!("<div class=\"record mono\">{}={}</div>", e(&k.0), e(&k.1));
     let body = format!(
         "<div class=\"row\"><h1>{}Audit</h1>{chain}</div><section><h2>Chain</h2><p>{} events · last checkpoint \
@@ -212,7 +214,12 @@ pub struct ExecutorRow {
     pub removed: bool,
 }
 
-pub fn executors(frame: &Frame<'_>, rows: &[ExecutorRow], can_manage: bool, pins: &(String, String, String, String)) -> String {
+pub fn executors(
+    frame: &Frame<'_>,
+    rows: &[ExecutorRow],
+    can_manage: bool,
+    pins: &(String, String, String, String),
+) -> String {
     let org = frame.org.map(|(id, _)| format!("{}{}", e(frame.base), e(id))).unwrap_or_default();
     let csrf = hidden_csrf(frame.csrf);
     let list: String = rows
