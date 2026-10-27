@@ -138,6 +138,9 @@ class AppContainer(private val context: Context) {
     val recoveryRecord = RecoveryRecord(context)
     val phone = PhoneBridge(context)
 
+    /** The platform's age signal, for a guardianship's minor mark (read each time, so tests can swap it). */
+    fun ageSignals(): dev.reins.android.platform.AgeSignals = dev.reins.android.platform.AgeSignalsProvider.factory(context)
+
     /**
      * In-app updates from [BuildConfig.UPDATE_URL]; downloads live in the cache, out of backups. Null in the `play` build
      * ([BuildConfig.SELF_UPDATE] is false): Google Play installs its updates, and Play's policy forbids an app updating

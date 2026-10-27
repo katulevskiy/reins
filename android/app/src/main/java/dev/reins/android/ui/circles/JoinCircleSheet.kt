@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Handshake
 import androidx.compose.material.icons.rounded.QrCodeScanner
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -132,6 +133,10 @@ private fun ColumnScope.TermsPage(view: CircleInviteView, busy: Boolean, onAnswe
             (if (view.fullCards) "Whole card" else "Summary") + " · " + classLine(view.deferred, view.windowSecs.toLong()),
             "joinClass",
         )
+    }
+    // A guardianship: the notice the ward chose, before you accept.
+    view.noticeDays?.takeIf { view.role == dev.reins.core.CircleRole.GUARDIAN }?.let {
+        Fact(Icons.Rounded.Schedule, noticeLine(it.toInt()), "joinNotice")
     }
     Spacer(Modifier.size(8.dp))
     when (view.stage) {

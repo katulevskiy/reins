@@ -251,10 +251,16 @@ class AppNotifier(
     /**
      * Circles (Decisions v2, 04). A request of another account waiting for this phone is the one Circle notification,
      * titled by person ("Sam: Buy headphones waiting"), with Open only: it is answered in For others, never inline.
-     * Anything else (a review settled, a person added, an owner's progress) refreshes the screens quietly.
+     * Anything else (a review settled, a person added, an owner's progress) refreshes the screens quietly. A guardian
+     * notice (a ward asked to leave, ended early, reset the account) is the one guardianship notification: "Sam:
+     * guardianship changed", opening Settings › Circles.
      */
     override fun circleChanged(event: CircleEvent) {
         onCircles()
+        if (event is CircleEvent.GuardianNotice) {
+            guardianNotice(event.notice)
+            return
+        }
         val review = (event as? CircleEvent.ReviewWaiting)?.review ?: return
         if (Foreground.focused) {
             // In front, For others shows it; the chime says something arrived.
@@ -285,6 +291,43 @@ class AppNotifier(
             .build()
         manager.notify(tag, notificationId(CIRCLE_PREFIX + review.id), notification)
     }
+
+    /** "Sam: guardianship changed", with what changed; posted in front too, but silently there. */
+    private fun guardianNotice(notice: dev.reins.core.GuardianNoticeView) {
+        val inFront = Foreground.focused
+        if (inFront) feedback().play(Event.Alert)
+        if (!manager.areNotificationsEnabled()) return
+        val channel = channel(Kind.Status, silent = inFront)
+        val public = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Reins")
+            .setContentText("A guardianship changed")
+            .build()
+        val line = untrusted(notice.line).ifBlank { "Changed" }
+        val text = if (notice.verified) line else "$line · ${dev.reins.android.ui.circles.REPORTED_BY_SERVER}"
+        val notification = Notification.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(dev.reins.android.ui.circles.guardianNotificationTitle(untrusted(notice.ward)))
+            .setContentText(text)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(public)
+            .setAutoCancel(true)
+            .setContentIntent(openCircles(notice.id))
+            .setWhen(notice.at * 1000)
+            .build()
+        manager.notify(tag, notificationId(GUARDIAN_PREFIX + notice.id), notification)
+    }
+
+    /** Opens Settings › Circles (a guardian notice's notification). */
+    private fun openCircles(id: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        notificationId(GUARDIAN_PREFIX + id),
+        Intent(context, MainActivity::class.java)
+            .setAction(ACTION_OPEN_CIRCLES)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile(),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /** Takes away the notifications of Circle reviews that no longer wait ([waiting] are the ids that do). */
     fun dropStaleCircles(waiting: Set<String>) {
@@ -703,6 +746,9 @@ class AppNotifier(
         const val EXTRA_CIRCLE = "dev.reins.android.CIRCLE"
         /** Keeps a review's notification id apart from a request's of the same id. */
         private const val CIRCLE_PREFIX = "circle:"
+        /** A guardian notice's notification: Settings › Circles. */
+        const val ACTION_OPEN_CIRCLES = "dev.reins.android.OPEN_CIRCLES"
+        private const val GUARDIAN_PREFIX = "guardian:"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4
