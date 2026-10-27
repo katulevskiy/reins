@@ -595,6 +595,7 @@ async fn get_links(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResul
                 link.helper_copy.clone()
             },
             change: link.last_change.as_deref().and_then(|c| serde_json::from_str(c).ok()),
+            changes: Vec::new(),
             updated_at: link.updated_at,
         });
     }

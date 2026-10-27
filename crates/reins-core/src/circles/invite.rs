@@ -131,6 +131,7 @@ pub(crate) fn terms_of(draft: &CircleDraft) -> Result<Terms, CoreError> {
             Redaction::Summary
         },
         scope_line,
+        guardian: None,
     };
     terms.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
     Ok(terms)

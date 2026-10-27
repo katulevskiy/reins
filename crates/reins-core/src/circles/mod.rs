@@ -541,6 +541,7 @@ impl Engine {
             state: to,
             by: held.side,
             at: crate::store::unix_now(),
+            guardian: None,
         };
         let body = serde_json::to_string(&change).map_err(|e| CoreError::storage(e.to_string()))?;
         let sig = self.circle_owner_key(&me.slot)?.sign_b64(&circle::change_message(&body));
