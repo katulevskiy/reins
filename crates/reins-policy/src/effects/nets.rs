@@ -1262,12 +1262,12 @@ fn cd_targets(script: &Script, ctx: &Context) -> Vec<String> {
     out
 }
 
-/// A `cd` target as written, when it is literal but for a leading `~` (the home folder, which [`super::normalize`]
-/// reads from the plan's home).
+/// A `cd` target as written, when it is literal but for a leading unquoted `~` (the home folder, which
+/// [`super::normalize`] reads from the plan's home). A quoted or escaped `~` is a folder named `~`: not read.
 fn cd_word(w: &Word) -> Option<String> {
     match w.0.split_first() {
         Some((Part::Tilde(None), rest)) => Word(rest.to_vec()).literal().map(|r| format!("~{r}")),
-        _ => w.literal(),
+        _ => w.literal().filter(|t| !t.starts_with('~')),
     }
 }
 

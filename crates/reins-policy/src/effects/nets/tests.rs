@@ -558,4 +558,9 @@ fn only_the_leading_plain_commands_are_netted() {
 fn a_cd_under_home_is_a_plan_folder() {
     let p = plan("cd ~/Documents/dev/notes/sub && rm -rf a").expect("a net");
     assert!(p.cwds.contains(&"/home/me/Documents/dev/notes/sub".to_owned()), "{:?}", p.cwds);
+    // A quoted or escaped `~` is a folder named `~`, not the home folder.
+    for c in ["cd '~/Documents/dev/notes/sub' && rm -rf a", "cd \\~/Documents/dev/notes/sub && rm -rf a"] {
+        let p = plan(c).expect("a net");
+        assert!(!p.cwds.contains(&"/home/me/Documents/dev/notes/sub".to_owned()), "{c}: {:?}", p.cwds);
+    }
 }

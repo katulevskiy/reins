@@ -516,10 +516,12 @@ pub enum RepoAt {
 }
 
 /// A word as written when it is literal but for a leading `~`.
+/// Only an unquoted `~` is the home folder: a quoted or escaped one (`'~/x'`, `\~/x`) is a folder named `~`, which
+/// this never names.
 fn tilde_literal(w: &ast::Word) -> Option<String> {
     match w.0.split_first() {
         Some((ast::Part::Tilde(None), rest)) => ast::Word(rest.to_vec()).literal().map(|r| format!("~{r}")),
-        _ => w.literal(),
+        _ => w.literal().filter(|t| !t.starts_with('~')),
     }
 }
 
@@ -596,7 +598,8 @@ fn fresh_worktree_cds(command: &str, cwd: &str, home: &str, target: &str) -> usi
                 && matches!(p.commands.as_slice(), [add] if worktree_add(add)
                     .is_some_and(|d| effects::normalize(&d, cwd, home) == target))
         });
-        if let Some(k) = added {
+        // Only `&&` before the add too: after `a || add`, what follows runs when `a` succeeded and git never ran.
+        if let Some(k) = added.filter(|k| ao.ors[..*k].iter().all(|or| !or)) {
             count += ao
                 .pipelines
                 .iter()
@@ -625,8 +628,18 @@ pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoA
         })
         .collect::<String>()
         .replace(';', " ; ");
-    let tokens: Vec<String> =
-        spaced.split_whitespace().map(|t| t.trim_matches(|c| c == '"' || c == '\'').to_owned()).collect();
+    // A quoted `~` is no home folder: such a word is not read (`\` makes it not literal).
+    let tokens: Vec<String> = spaced
+        .split_whitespace()
+        .map(|t| {
+            let bare = t.trim_matches(|c| c == '"' || c == '\'');
+            if bare.starts_with('~') && !t.starts_with('~') {
+                format!("\\{bare}")
+            } else {
+                bare.to_owned()
+            }
+        })
+        .collect();
     let literal = |t: &str| t != ";" && !t.starts_with('-') && !t.contains(['$', '`', '*', '?', '\\']);
     let inside =
         |abs: &str| top.map(|t| t.trim_end_matches('/')).is_some_and(|t| abs == t || abs.starts_with(&format!("{t}/")));
@@ -1291,6 +1304,16 @@ mod tests {
             "git worktree add ~/tmp/w && cd ~/tmp/w; cd ~/tmp/w && git push origin feat/x",
             "git worktree add ~/tmp/w && cd ~/tmp/w; builtin cd ~/tmp/w && git push origin feat/x",
             "git worktree add ~/tmp/w && echo 'cd ~/tmp/w' && cd ~/tmp/w && git push origin feat/x",
+            // An `||` before the add: it may be skipped while the `cd` runs.
+            "true || git worktree add ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "git status || ! true && git worktree add ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "true; git worktree add ~/tmp/w; cd ~/tmp/w && git push origin feat/x",
+            // A quoted or escaped `~` is a folder named `~`, not the home folder.
+            "git worktree add '~/tmp/w' && cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/w && cd '~/tmp/w' && git push origin feat/x",
+            "git worktree add ~/tmp/w && cd \\~/tmp/w && git push origin feat/x",
+            "cd '~/dev/other' && git push origin feat/x",
+            "cd \"~/dev/other\" && git push origin feat/x",
         ] {
             assert_eq!(repo_at(c, cwd, top, home), RepoAt::Unknown, "{c}");
         }
@@ -1299,6 +1322,7 @@ mod tests {
             "git worktree add -q --detach ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
             "git fetch -q origin x && git worktree add -q -B x ~/tmp/w origin/x && cd ~/tmp/w && git push origin x; ls",
             "cd /home/me/dev/app && git worktree add /home/me/tmp/w && git status && cd /home/me/tmp/w && git push",
+            "git fetch && ! false && git worktree add ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
         ] {
             assert_eq!(repo_at(c, cwd, top, home), RepoAt::Cwd, "{c}");
         }
