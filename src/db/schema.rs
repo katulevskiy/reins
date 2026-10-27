@@ -970,6 +970,32 @@ table! {
 }
 
 table! {
+    reins_org_audit_sinks (org_uuid, kind) {
+        org_uuid -> Text,
+        kind -> Text,
+        key_id -> Text,
+        sealed -> Text,
+        digest -> Text,
+        enabled -> Bool,
+        sent_seq -> BigInt,
+        last_ok_at -> Nullable<BigInt>,
+        last_error -> Nullable<Text>,
+        failing -> Bool,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_witness (org_uuid, seq) {
+        org_uuid -> Text,
+        seq -> BigInt,
+        tsa -> Text,
+        response -> Text,
+        at -> BigInt,
+    }
+}
+
+table! {
     reins_org_github_reader (org_uuid) {
         org_uuid -> Text,
         app_id -> BigInt,
@@ -1031,6 +1057,7 @@ table! {
 
 allow_tables_to_appear_in_same_query!(reins_connections, reins_refresh_tokens);
 allow_tables_to_appear_in_same_query!(reins_org_leases, reins_org_requests);
+allow_tables_to_appear_in_same_query!(reins_org_checkpoints, reins_org_witness);
 
 allow_tables_to_appear_in_same_query!(
     archives,

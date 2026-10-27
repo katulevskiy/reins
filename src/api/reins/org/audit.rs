@@ -4,11 +4,11 @@
 //! The chain is O1's admin event table (`reins_org_events`), taken over as it is: its rows keep their hashes, so the
 //! events O1 wrote verify unchanged, and O2 appends decisions, reviews, executions, leases, policy and executor changes
 //! to the same chain ([`kinds`]). Every 10 minutes ([`CHECKPOINT_SECS`]) a chain that grew gets a checkpoint signed by
-//! the decision service key, handed to the [`Witness`]. An export ends with a signed head, so `reins-audit verify`
+//! the decision service key, which an RFC 3161 authority then timestamps ([`super::witness`]). An export ends with a signed head, so `reins-audit verify`
 //! (`crates/reins-audit`) catches an edit, a gap, a reordering or a cut tail, and a rewrite against any checkpoint kept
 //! from before.
 
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::LazyLock;
 
 use diesel::prelude::*;
 use reins_proto::{
@@ -24,7 +24,7 @@ use super::{
 use crate::db::{
     DbConnInner,
     models::{
-        reins_org, reins_org_event,
+        reins_org, reins_org_compliance, reins_org_event,
         reins_org_exec::{self, ReinsOrgCheckpoint},
     },
     schema::reins_orgs,
@@ -106,33 +106,6 @@ pub fn record(
     Ok(reins_org_event::append(c, org, kind, actor, subject, detail, now)?)
 }
 
-/// Where checkpoints are published so a rewrite of the whole chain shows (06 §5.2: a transparency log or an RFC 3161
-/// timestamp). O2 publishes nowhere by default; O5 adds witnesses.
-pub trait Witness: Send + Sync {
-    fn publish(&self, org: &str, checkpoint: &Envelope) -> Result<(), String>;
-}
-
-/// Publishes nowhere.
-pub struct NoWitness;
-
-impl Witness for NoWitness {
-    fn publish(&self, _org: &str, _checkpoint: &Envelope) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-static WITNESS: LazyLock<RwLock<Arc<dyn Witness>>> = LazyLock::new(|| RwLock::new(Arc::new(NoWitness)));
-
-/// Sets the witness (once, at launch).
-#[allow(dead_code, reason = "the seam O5's witnesses plug into")]
-pub fn set_witness(w: Arc<dyn Witness>) {
-    *WITNESS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = w;
-}
-
-fn witness() -> Arc<dyn Witness> {
-    WITNESS.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
-}
-
 fn signed_head(
     c: &mut DbConnInner,
     org: &str,
@@ -151,7 +124,8 @@ fn signed_head(
     Ok((cp, env))
 }
 
-/// Checkpoints `org`'s chain when it grew since the last checkpoint: signed, stored, handed to the witness.
+/// Checkpoints `org`'s chain when it grew since the last checkpoint: signed and stored ([`super::witness`] has it
+/// timestamped later, outside any transaction).
 pub fn checkpoint(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<Checkpoint>, OrgError> {
     // The key first: creating it is itself an event, which the checkpoint then covers.
     kms::signing_key(c, org, KeyPurpose::Decision, now)?;
@@ -172,9 +146,6 @@ pub fn checkpoint(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<Che
             envelope: serde_json::to_string(&env).unwrap_or_default(),
         },
     )?;
-    if let Err(e) = witness().publish(org, &env) {
-        warn!("Audit checkpoint {seq} of {org} not witnessed: {e}");
-    }
     Ok(Some(cp))
 }
 
@@ -332,6 +303,7 @@ pub fn prune(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<i64>, Or
     c.transaction(|c| {
         let deleted = reins_org_event::q_delete_before(c, org, anchor.seq)?;
         reins_org_exec::q_delete_checkpoints_before(c, org, anchor.seq)?;
+        reins_org_compliance::q_delete_witness_before(c, org, anchor.seq)?;
         record(
             c,
             org,

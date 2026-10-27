@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing};
+use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing, witness};
 use crate::{
     api::reins::now_unix,
     db::{DbConnInner, DbPool, models::reins_org_request},
@@ -123,6 +123,8 @@ pub fn spawn(pool: DbPool) {
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }
+            // O5: checkpoints timestamped by the configured authority (network calls, outside any transaction).
+            witness::stamp_due(&pool).await;
             tokio::time::sleep(Duration::from_secs(every_secs())).await;
         }
     });
