@@ -84,6 +84,14 @@ class AppState {
         _autoQuestions.value = _autoQuestions.value.filter { it.id != id }
     }
 
+    /** Tasks (Decisions v2, 01 §12): the live ones, then those that ended in the last day. */
+    private val _tasks = MutableStateFlow<List<dev.reins.core.TaskView>>(emptyList())
+    val tasks: StateFlow<List<dev.reins.core.TaskView>> = _tasks.asStateFlow()
+
+    fun setTasks(tasks: List<dev.reins.core.TaskView>) {
+        _tasks.value = tasks
+    }
+
     private val _services = MutableStateFlow<List<ServiceView>>(emptyList())
     val services: StateFlow<List<ServiceView>> = _services.asStateFlow()
 
@@ -297,6 +305,7 @@ class AppState {
             _services.value = emptyList()
             _startingPolicy.value = null
             _autoQuestions.value = emptyList()
+            _tasks.value = emptyList()
             _connections.value = emptyList()
             _connectionsHidden.value = false
             setMcpServers(emptyList())

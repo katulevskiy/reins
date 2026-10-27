@@ -6,7 +6,6 @@ import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ConnectionAutopilot
 import dev.reins.core.ModelState
-import dev.reins.core.OvernightRisky
 import dev.reins.core.RiskLevel
 import dev.reins.core.Verdict
 import org.junit.Assert.assertEquals
@@ -20,7 +19,6 @@ class AutopilotTextTest {
         bypass: Long? = null,
         connections: List<ConnectionAutopilot> = emptyList(),
         overnight: Long? = null,
-        risky: OvernightRisky = OvernightRisky.WAIT,
     ) = AutopilotSettings(
         mode = when {
             bypass != null -> AutopilotMode.BYPASS
@@ -32,7 +30,6 @@ class AutopilotTextTest {
         bypassSince = bypass?.let { 500L },
         overnightUntil = overnight,
         overnightSince = overnight?.let { 400L },
-        overnightWhenRisky = risky,
         defaultProfileId = "personal",
         wifiOnly = true,
         model = TestData.modelStatus(ModelState.INSTALLED),
@@ -105,21 +102,15 @@ class AutopilotTextTest {
     }
 
     @Test
-    fun `the Overnight sheet says what it does and what waits, by the setting`() {
-        assertEquals("Decides like Auto. Too risky waits.", AutopilotText.overnightLine(OvernightRisky.WAIT))
-        assertEquals("Decides like Auto. Too risky is denied.", AutopilotText.overnightLine(OvernightRisky.DENY))
-        assertEquals("If something is too risky:", AutopilotText.WHEN_RISKY)
-        assertEquals(listOf("Wait for me", "Deny it"), AutopilotText.whenRiskyChoices.map(AutopilotText::whenRiskyLabel))
-        assertEquals(OvernightRisky.WAIT, AutopilotText.whenRiskyChoices.first())
-        assertTrue(AutopilotText.overnightStillAsks(OvernightRisky.DENY).contains("denied"))
-    }
-
-    @Test
-    fun `without a model that rates risk, Overnight's help says it decides like Auto`() {
-        assertTrue(AutopilotText.overnightHelp(ratesRisk = false).contains("decides like Auto"))
-        assertTrue(AutopilotText.overnightHelp(ratesRisk = false).contains("doesn't rate risk"))
-        assertTrue(AutopilotText.overnightHelp(ratesRisk = true).contains("weighed"))
-        assertTrue(!AutopilotText.overnightHelp(ratesRisk = true).contains("doesn't rate risk"))
+    fun `the Overnight sheet says it parks and never denies, and offers how long parked requests wait`() {
+        assertEquals("Auto while you're away. Asks wait for the morning.", AutopilotText.OVERNIGHT_LINE)
+        assertEquals("What would ask is parked for the morning.", AutopilotText.OVERNIGHT_STILL_ASKS)
+        assertTrue(AutopilotText.OVERNIGHT_HELP.contains("parked"))
+        assertTrue(AutopilotText.OVERNIGHT_HELP.contains("Nothing is denied but by your own rules"))
+        assertEquals("Expires after", AutopilotText.EXPIRES_AFTER)
+        assertEquals(listOf("6 h", "12 h", "24 h"), AutopilotText.expiryChoices.map(AutopilotText::expiryLabel))
+        assertEquals(12u, AutopilotText.DEFAULT_EXPIRY_HOURS)
+        assertFalse(AutopilotText.MODE_HELP.contains("too risky"))
     }
 
     @Test
@@ -143,19 +134,19 @@ class AutopilotTextTest {
         assertEquals(AutopilotMode.OVERNIGHT, global.mode)
         assertTrue(global.global)
         assertEquals("Overnight on · 8 h left", global.title)
-        assertEquals("For every AI. Too risky or unclear waits for you.", global.text)
+        assertEquals("For every AI. What would ask is parked for the morning.", global.text)
         assertEquals(400L, global.since)
-        val deny = AutopilotText.overnightNotice(settings(overnight = AutopilotText.UNTIL_OFF, risky = OvernightRisky.DENY), { it }, 1_000)!!
-        assertEquals("Overnight on · until you stop it", deny.title)
-        assertTrue(deny.text.endsWith("Too risky is denied. Unclear waits for you."))
-        assertNull(deny.nextEnd)
+        val untilOff = AutopilotText.overnightNotice(settings(overnight = AutopilotText.UNTIL_OFF), { it }, 1_000)!!
+        assertEquals("Overnight on · until you stop it", untilOff.title)
+        assertTrue("it never denies", !untilOff.text.contains("denied"))
+        assertNull(untilOff.nextEnd)
         val one = AutopilotText.overnightNotice(
             settings(connections = listOf(conn("c1", AutopilotMode.OVERNIGHT, overnight = 1_000 + 600), conn("c2", AutopilotMode.BYPASS, overnight = 1_000 + 900))),
             { if (it == "c1") "Claude Code" else "?" },
             1_000,
         )!!
         assertEquals("a bypassed AI shows its bypass, not its Overnight", listOf("c1"), one.connectionIds)
-        assertEquals("For Claude Code. Too risky or unclear waits for you.", one.text)
+        assertEquals("For Claude Code. What would ask is parked for the morning.", one.text)
         assertEquals(1_600L, one.nextEnd)
         assertNull("no bypass notice for it", AutopilotText.bypassNotice(settings(overnight = 2_000), { it }, 1_000))
         assertEquals("Deciding while you're away", AutopilotText.runningLine(AutopilotMode.OVERNIGHT, 2_000, 1_000, 1_100))

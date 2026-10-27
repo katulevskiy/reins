@@ -50,7 +50,7 @@ object TicketReminders {
     /**
      * The reminders the waiting [items] call for: each ticket still open, and not waiting for the agent, gets its 50 %
      * and 90 % reminders; of those already due only the latest stays (it fires at once), so a phone that was off never
-     * sends two in a row.
+     * sends two in a row. What Overnight parked reminds only after the morning: its window starts there (01 §11).
      */
     fun plan(items: List<PendingItem>, nowSeconds: Long): List<Reminder> = items.flatMap { item ->
         val t = item.ticket ?: return@flatMap emptyList()
@@ -58,7 +58,7 @@ object TicketReminders {
         // Waiting for the agent's answer to "Why?", not for the user: no reminder (its alarms go at the next sync).
         if (t.state == STATE_NEEDS_INFO) return@flatMap emptyList()
         val title = askSentence(item).text
-        val all = reminderTimes(t).zip(STAGES) { at, stage -> Reminder(item.id, stage, at, t.deadline, title, item.connectionLabel, item.quick) }
+        val all = reminderTimes(t, item.parkedUntil).zip(STAGES) { at, stage -> Reminder(item.id, stage, at, t.deadline, title, item.connectionLabel, item.quick) }
         val due = all.lastOrNull { it.fireAt <= nowSeconds }
         all.filter { it.fireAt > nowSeconds || it == due }
     }
@@ -100,7 +100,7 @@ object TicketReminders {
     private fun notify(context: Context, manager: NotificationManager, r: Reminder, nowSeconds: Long) {
         // Quiet while there is time; under an hour left it sounds like a request.
         val kind = if (r.deadline - nowSeconds < 3_600) AppNotifier.Kind.Approvals else AppNotifier.Kind.Waiting
-        val channel = AppNotifier.channel(context, kind, FeedbackStore(context).current)
+        val channel = AppNotifier.channel(context, kind, FeedbackStore(context).current, profile = dev.reins.android.profiles.WorkProfiles.PERSONAL)
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Reins")

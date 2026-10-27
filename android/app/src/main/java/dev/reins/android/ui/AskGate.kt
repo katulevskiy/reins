@@ -1,6 +1,7 @@
 package dev.reins.android.ui
 
 import dev.reins.android.ui.nav.SheetTarget
+import dev.reins.android.ui.activity.inInbox
 import dev.reins.core.PendingItem
 
 /**
@@ -12,9 +13,11 @@ import dev.reins.core.PendingItem
 object AskGate {
     /**
      * The item to pop up by itself: the first one that waits for the owner and has not popped up before. A ticket never
-     * pops up: the agent is not waiting on it, and it waits under "Waiting for you".
+     * pops up: the agent is not waiting on it, and it waits under "Waiting for you"; nor does what Overnight parked, or a
+     * task proposal (its card is on Activity).
      */
-    fun next(waiting: List<PendingItem>, presented: Set<String>): PendingItem? = waiting.firstOrNull { it.id !in presented && it.ticket == null }
+    fun next(waiting: List<PendingItem>, presented: Set<String>): PendingItem? =
+        waiting.firstOrNull { it.id !in presented && !it.inInbox() && it.taskProposal == null }
 
     /** Whether the sheet open on [open] is the ask a mode or Autopilot just decided ([decidedId]): it closes. */
     fun closes(open: SheetTarget?, decidedId: String): Boolean = open != null && open.id == decidedId

@@ -5,7 +5,6 @@ import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ConnectionAutopilot
 import dev.reins.core.ModelState
-import dev.reins.core.OvernightRisky
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -19,7 +18,6 @@ class AutopilotDraftTest {
         baseMode = mode,
         bypassUntil = null,
         bypassSince = null,
-        overnightWhenRisky = OvernightRisky.WAIT,
         defaultProfileId = "personal",
         wifiOnly = true,
         model = TestData.modelStatus(ModelState.INSTALLED),

@@ -81,7 +81,6 @@ import dev.reins.android.ui.settings.BottomSheet
 import dev.reins.android.ui.settings.HelpIcon
 import dev.reins.android.design.hairlineBelow
 import dev.reins.core.AutopilotMode
-import dev.reins.core.OvernightRisky
 
 /** What the "Bypass for" sheet has picked. */
 private sealed interface Longer {
@@ -144,17 +143,16 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
 }
 
 /**
- * Turning Overnight on, like a bypass ([BypassSheets]: how long, a hold, then the owner's check), with what it does to
- * a request too risky to decide ([risky], changed at once with [onRisky]). Its (?) says what it weighs, or, when the
- * model does not rate risk ([ratesRisk] false), that it decides like Auto.
+ * Turning Overnight on, like a bypass ([BypassSheets]: how long, a hold, then the owner's check), with how long what it
+ * parks waits past the morning ([expiryHours], changed at once with [onExpiry]; no owner check: it only shortens or
+ * lengthens a wait that ends "not approved"). Overnight never denies: what Auto would ask is parked for the morning.
  */
 @Composable
 fun BoxScope.OvernightSheets(
     open: Boolean,
     who: String?,
-    risky: OvernightRisky,
-    ratesRisk: Boolean,
-    onRisky: (OvernightRisky) -> Unit,
+    expiryHours: UInt,
+    onExpiry: (UInt) -> Unit,
     onStart: (UInt?) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -163,28 +161,30 @@ fun BoxScope.OvernightSheets(
         TimedKind.Overnight,
         open,
         title = AutopilotText.overnightTitle(who),
-        line = AutopilotText.overnightLine(risky),
+        line = AutopilotText.OVERNIGHT_LINE,
         helpTopic = AutopilotText.OVERNIGHT,
-        helpText = AutopilotText.overnightHelp(ratesRisk),
+        helpText = AutopilotText.OVERNIGHT_HELP,
         untilOffTitle = "Decides for you until you stop it.",
-        stillAsks = AutopilotText.overnightStillAsks(risky),
+        stillAsks = AutopilotText.OVERNIGHT_STILL_ASKS,
         onStart = onStart,
         onClose = onClose,
     ) {
         RText(
-            AutopilotText.WHEN_RISKY,
+            AutopilotText.EXPIRES_AFTER,
             RType.sans(13f, FontWeight.Medium),
             c.secondary,
             Modifier.padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 8.dp),
             maxLines = 1,
         )
+        // A value the owner set elsewhere (1 to 48 h) shows as its own choice until another is picked.
+        val choices = (AutopilotText.expiryChoices + expiryHours).distinct().sorted()
         Segmented(
-            AutopilotText.whenRiskyChoices,
-            risky,
-            AutopilotText::whenRiskyLabel,
-            Modifier.padding(horizontal = 16.dp).testTag("overnightRisky"),
-            tag = { "overnightRisky:${it.name}" },
-            onSelect = onRisky,
+            choices,
+            expiryHours,
+            AutopilotText::expiryLabel,
+            Modifier.padding(horizontal = 16.dp).testTag("overnightExpiry"),
+            tag = { "overnightExpiry:$it" },
+            onSelect = onExpiry,
         )
     }
 }

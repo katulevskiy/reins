@@ -82,10 +82,42 @@ object TestData {
         quick: Boolean = false,
         ticket: dev.reins.core.TicketView? = null,
         canDefer: Boolean = false,
+        parkedUntil: Long? = null,
+        taskId: String? = null,
+        taskTitle: String? = null,
+        batchable: Boolean = false,
+        taskProposal: dev.reins.core.TaskView? = null,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
         service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
-        ticket = ticket, canDefer = canDefer,
+        ticket = ticket, canDefer = canDefer, parkedUntil = parkedUntil, taskId = taskId, taskTitle = taskTitle,
+        batchable = batchable, taskProposal = taskProposal,
+    )
+
+    /** A task (or a proposal's envelope): one agent's, for [length] seconds from [startedAt]. */
+    fun task(
+        id: String = "task1",
+        title: String = "Fix CI",
+        conn: String = "c1",
+        label: String = "Claude",
+        repos: List<String> = listOf("dkat/reins", "dkat/site"),
+        branches: List<String> = listOf("fix/*"),
+        paths: List<String> = emptyList(),
+        people: List<String> = emptyList(),
+        operations: List<String> = listOf("git_push"),
+        ceiling: UByte = 1u,
+        budget: UInt? = 20u,
+        startedAt: Long = 1_700_000_100,
+        length: Long = 4 * 3_600,
+        endedAt: Long? = null,
+        startedBy: String = "agent",
+        reason: String? = null,
+        auto: UInt = 0u,
+        asked: UInt = 0u,
+        parked: UInt = 0u,
+    ) = dev.reins.core.TaskView(
+        id, conn, label, title, reason, repos, branches, paths, people, operations, ceiling, budget, budget,
+        startedAt, startedAt + length, endedAt, startedBy, auto, asked, parked,
     )
 
     /** A request that became a ticket [age] seconds before [now], due [left] seconds after it. */

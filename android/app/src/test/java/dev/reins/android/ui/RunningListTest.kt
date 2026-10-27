@@ -10,7 +10,6 @@ import dev.reins.android.ui.trust.runningMood
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ModelState
-import dev.reins.core.OvernightRisky
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -24,7 +23,6 @@ class RunningListTest {
         bypassSince = since.takeIf { mode == AutopilotMode.BYPASS },
         overnightUntil = until.takeIf { mode == AutopilotMode.OVERNIGHT },
         overnightSince = since.takeIf { mode == AutopilotMode.OVERNIGHT },
-        overnightWhenRisky = OvernightRisky.WAIT,
         defaultProfileId = "personal",
         wifiOnly = true,
         model = TestData.modelStatus(ModelState.INSTALLED),

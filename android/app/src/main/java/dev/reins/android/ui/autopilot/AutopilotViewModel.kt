@@ -25,7 +25,6 @@ import dev.reins.core.ZoneChoice
 import dev.reins.core.ThresholdReplay
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
-import dev.reins.core.OvernightRisky
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
@@ -260,15 +259,14 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * What Overnight does with a request too risky to decide: wait for the user, or deny it. Either way the core asks
-     * the owner first; the choice shows once it is made.
+     * How long what Overnight parks waits past the morning before it expires, not approved. It never loosens
+     * anything, so nothing is asked; the choice shows at once.
      */
-    fun setOvernightWhenRisky(risky: OvernightRisky, authenticator: Authenticator) {
-        if (settings.value?.overnightWhenRisky == risky) return
-        val owner = OwnerPrompt(authenticator, "Change ${AutopilotText.OVERNIGHT}")
-        ownerAsked(owner) {
-            container.core.setOvernightWhenRisky(risky, owner)
-            draft { it.copy(overnightWhenRisky = risky) }
+    fun setOvernightExpiry(hours: UInt) {
+        if (settings.value?.overnightExpiryHours == hours) return
+        draft { it.copy(overnightExpiryHours = hours) }
+        perform {
+            container.core.setOvernightExpiry(hours)
             container.refreshAutopilot()
         }
     }

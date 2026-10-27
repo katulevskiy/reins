@@ -127,6 +127,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- The morning summary of what Overnight parked, and its alarm after a reboot. -->
+        <receiver
+            android:name=".platform.OvernightDigest$Receiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Approve and Deny on a request's notification. -->
         <receiver
             android:name=".platform.ApprovalActionReceiver"

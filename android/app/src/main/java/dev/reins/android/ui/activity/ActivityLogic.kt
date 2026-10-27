@@ -248,7 +248,8 @@ sealed interface WaitCard {
 }
 
 fun waitCards(all: List<PendingItem>): List<WaitCard> {
-    val pending = all.filter { it.ticket == null }
+    // Tickets and what Overnight parked wait under Waiting for you; a task proposal has its own card.
+    val pending = all.filter { !it.inInbox() && it.taskProposal == null }
     val groups = bursts(pending).associateBy { it.connectionId }
     val grouped = groups.values.flatMap { it.quick }.toSet()
     val placed = mutableSetOf<String>()

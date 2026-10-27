@@ -436,8 +436,21 @@ class MainSafeCore(
     override suspend fun startOvernight(connectionId: String?, minutes: UInt?, owner: dev.reins.core.OwnerCheck) =
         io { startOvernight(connectionId, minutes, owner) }
 
-    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) =
-        io { setOvernightWhenRisky(risky, owner) }
+    override suspend fun setOvernightExpiry(hours: UInt) = io { setOvernightExpiry(hours) }
+
+    override suspend fun overnightDigest(): dev.reins.core.OvernightDigest? = io { overnightDigest() }
+
+    override suspend fun approveAll(connectionId: String, taskId: String?): UInt = io { approveAll(connectionId, taskId) }
+
+    override suspend fun tasks(): List<dev.reins.core.TaskView> = io { tasks() }
+
+    override suspend fun startTask(draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck): dev.reins.core.TaskView =
+        io { startTask(draft, owner) }
+
+    override suspend fun endTask(id: String) = io { endTask(id) }
+
+    override suspend fun approveTask(requestId: String, draft: dev.reins.core.TaskView, owner: dev.reins.core.OwnerCheck) =
+        io { approveTask(requestId, draft, owner) }
 
     override suspend fun autopilotStats(days: UInt): dev.reins.core.AutopilotStats = io { autopilotStats(days) }
 
