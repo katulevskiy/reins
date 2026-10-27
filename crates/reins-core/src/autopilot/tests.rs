@@ -4374,6 +4374,27 @@ mod decisions_v2 {
     }
 
     #[tokio::test]
+    async fn profiles_never_share_a_snapshot() {
+        // A Personal core and a work profile's core (each profile runs its own, 08 R6): a fact or a rule in one is
+        // never seen by the other, and the same request is evaluated by each against its own snapshot only.
+        let personal = auto_env().await;
+        let work = auto_env().await;
+        personal
+            .core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        assert_eq!(work.core.engine().ap_snapshot().unwrap().facts.people.get("friend@x.com"), None);
+        personal.relay("p", OLD, email("friend@x.com", "hi")).await;
+        work.relay("w", OLD, email("friend@x.com", "hi")).await;
+        let p = personal.store().ap_suggestion("p").unwrap().unwrap().matrix.unwrap();
+        let w = work.store().ap_suggestion("w").unwrap().unwrap().matrix.unwrap();
+        assert_eq!((p.zone, w.zone), (Zone::Friends, Zone::Outside));
+        assert_ne!(p.snapshot, w.snapshot);
+        assert_eq!(p.snapshot, personal.core.engine().ap_snapshot().unwrap().hash());
+    }
+
+    #[tokio::test]
     async fn loosening_needs_the_owner() {
         let env = env(false).await;
         let core = &env.core;

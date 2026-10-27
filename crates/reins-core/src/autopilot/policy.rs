@@ -234,8 +234,9 @@ pub fn matrix_view(n: &MatrixNote) -> MatrixView {
 
 impl Engine {
     /// What the matrix says of a request, with what it named that Auto doesn't know. `seen`: the owner approved its
-    /// target before. Every connection's request is evaluated against the account's Personal snapshot: the phone holds
-    /// no other profile (a Managed connection is evaluated by its org, O1).
+    /// target before. A request is evaluated against this core's own snapshot: each profile (Personal, or an org's
+    /// Managed one) runs its own core on its own store (`crate::profiles`), and a connection pairs with exactly one, so
+    /// no request is evaluated with another profile's facts or rules (08 R6).
     pub(crate) fn ap_evaluate(
         &self,
         request: &RelayRequest,
