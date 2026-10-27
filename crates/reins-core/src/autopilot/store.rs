@@ -180,6 +180,10 @@ pub struct Suggestion {
     /// Overnight parked it for the morning (01 §11).
     #[serde(default)]
     pub parked: Option<Parked>,
+    /// "Approve all" may cover it: set only where the matrix asked it softly (never for a closer look, a risk hold, a
+    /// tripwire, a pause, the floor or anything always asked).
+    #[serde(default)]
+    pub batchable: bool,
 }
 
 /// An Overnight park: a Deferred ticket until `deadline`, shown in the morning digest at `until`.

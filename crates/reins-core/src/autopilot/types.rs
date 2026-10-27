@@ -732,4 +732,12 @@ pub struct TaskView {
     pub auto: u32,
     pub asked: u32,
     pub parked: u32,
+    /// The owner chose that it covers any repository, folder, person and kind (shown as "Any"); otherwise it must
+    /// name at least one of them.
+    #[uniffi(default)]
+    pub any: bool,
+    /// The ceiling the agent asked for. A proposal's `ceiling` starts at the default for its repositories (01 §12: L2
+    /// only when every one is the owner's) and the owner may raise it up to this.
+    #[uniffi(default)]
+    pub requested_ceiling: u8,
 }

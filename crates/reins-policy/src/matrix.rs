@@ -302,6 +302,9 @@ impl Task {
             || (!parts.is_empty() && parts.iter().all(in_envelope));
         // Unknown never widens: an Outside request is covered only by what the envelope names.
         let outside_ok = input.resolved.zone != Zone::Outside || !(self.resources.is_empty() && self.people.is_empty());
+        // Branches bound git, folders bound files, people bound messages: once branches or folders are named, a kind
+        // of effect no list bounds is outside the task (reads aside).
+        let bounded = !self.branches.is_empty() || !self.paths.is_empty();
         let effects_ok = a.effects.iter().all(|e| match e {
             Effect::GitPush {
                 refname,
@@ -312,20 +315,42 @@ impl Task {
                 ..
             } => {
                 let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-                self.branches.is_empty() || self.branches.iter().any(|b| glob_exact(b, branch))
+                if self.branches.is_empty() {
+                    !bounded
+                } else {
+                    self.branches.iter().any(|b| glob_exact(b, branch))
+                }
             }
             Effect::FileWrite {
                 path,
-            } => self.paths.is_empty() || self.paths.iter().any(|r| under(r, &path.path)),
+            } => {
+                if self.paths.is_empty() {
+                    !bounded
+                } else {
+                    self.paths.iter().any(|r| under(r, &path.path))
+                }
+            }
             Effect::FileDelete {
                 paths,
                 ..
-            } => self.paths.is_empty() || paths.iter().all(|p| self.paths.iter().any(|r| under(r, &p.path))),
+            } => {
+                if self.paths.is_empty() {
+                    !bounded
+                } else {
+                    paths.iter().all(|p| self.paths.iter().any(|r| under(r, &p.path)))
+                }
+            }
             Effect::Message {
                 to,
                 ..
             } => !to.is_empty() && to.iter().all(|t| person_in(&self.people, t)),
-            _ => true,
+            Effect::FileRead {
+                ..
+            }
+            | Effect::DataRead {
+                ..
+            } => true,
+            _ => !bounded,
         });
         input.now < self.not_after
             && input.connection == self.connection
@@ -1274,5 +1299,63 @@ mod tests {
         assert!(holds(&delete("/home/u/src/a/build")));
         assert!(!holds(&delete("/home/u/src/ab")));
         assert!(!holds(&delete("/home/u/src/a/../../x")));
+        // Folders named: a push or a network write isn't a folder's, so it's outside the task.
+        let push = Analysis::new(
+            vec![Effect::GitPush {
+                repo: "acme/app".to_owned(),
+                refname: "refs/heads/x".to_owned(),
+                default_branch: Some(false),
+                rewrites: Some(false),
+                commits: 1,
+            }],
+            Certainty::Full,
+            Vec::new(),
+        );
+        assert!(!holds(&push));
+    }
+
+    #[test]
+    fn branches_bound_the_kinds_of_effect() {
+        let mut s = snap();
+        s.tasks.push(Task {
+            id: "t".to_owned(),
+            connection: "c1".to_owned(),
+            resources: vec!["acme/*".to_owned()],
+            branches: vec!["fix/*".to_owned()],
+            not_after: i64::MAX,
+            ..Task::default()
+        });
+        assert_eq!(eval(&push("acme/api", "fix/a"), &s, false).outcome, Outcome::Auto);
+        // A change in the same repository that isn't a branch's (an issue closed): outside a task that names branches.
+        let task = &s.tasks[0];
+        let mut close = analysis(
+            Effect::DataWrite {
+                service: "github".to_owned(),
+                what: "issue".to_owned(),
+                lost: false,
+            },
+            Certainty::Full,
+        );
+        close.level = Level::L1;
+        let resolved = Resolved {
+            zone: Zone::Work,
+            unknown: Vec::new(),
+            resource: Some("acme/api".to_owned()),
+            parts: vec!["acme/api".to_owned()],
+        };
+        let input = Input {
+            analysis: &close,
+            resolved: &resolved,
+            connection: "c1",
+            seen_resource: false,
+            now: 0,
+            overnight: false,
+        };
+        assert!(!task.holds(&input, &[EffectKind::DataWrite]));
+        let wide = Task {
+            branches: Vec::new(),
+            ..task.clone()
+        };
+        assert!(wide.holds(&input, &[EffectKind::DataWrite]), "without branches, the repository bounds it");
     }
 }

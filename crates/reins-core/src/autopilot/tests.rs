@@ -4637,6 +4637,8 @@ mod decisions_v2_p5 {
             auto: 0,
             asked: 0,
             parked: 0,
+            any: false,
+            requested_ceiling: 2,
         }
     }
 
@@ -4770,8 +4772,16 @@ mod decisions_v2_p5 {
         env.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
         let card = item(&env, "p1").await.task_proposal.expect("the envelope on the card");
         assert_eq!(card.people, vec!["ann@acme.io", "bob@acme.io"]);
-        assert_eq!(card.ceiling, 2);
+        // Asked up to Reaches people, shown at the default for its (no) repositories: Recoverable; the owner may raise it
+        // to what was asked, no higher.
+        assert_eq!((card.ceiling, card.requested_ceiling), (1, 2));
         assert_eq!(card.reason.as_deref(), Some("ceiling L3 please"));
+        let mut too_high = card.clone();
+        too_high.ceiling = 3;
+        assert!(env.core.approve_task("p1".to_owned(), too_high, owner_yes()).await.is_err());
+        let mut any = card.clone();
+        any.any = true;
+        assert!(env.core.approve_task("p1".to_owned(), any, owner_yes()).await.is_err(), "Any is the owner's own");
         // The plain approval (a notification, the generic card) can't start it: only the card's, after the owner check.
         let once = ApprovalChoice {
             selected_message_ids: vec![],
@@ -4807,5 +4817,69 @@ mod decisions_v2_p5 {
 
     fn owner_no() -> Arc<testing::FakeOwner> {
         testing::FakeOwner::new(Ok(false))
+    }
+
+    /// An Overnight with no end parks until now: the item says it's parked anyway, and no digest notification is set.
+    #[tokio::test]
+    async fn an_overnight_without_an_end_still_parks_quietly() {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core.start_overnight(None, None, owner_yes()).await.unwrap();
+        env.relay("r1", OLD, email("stranger@x.com", "hi")).await;
+        assert!(env.decided().is_empty());
+        let i = item(&env, "r1").await;
+        assert!(i.parked, "parked, so never notified on arrival");
+        assert!(i.parked_until.is_some_and(|u| u <= unix_now()), "until now: shown when Reins is opened");
+        let digest = env.core.overnight_digest().await.unwrap().expect("listed");
+        assert_eq!(digest.at, None, "no notification for an Overnight without an end");
+        assert!(env.told().contains("r1"), "the list is updated; the app keys notifications on `parked`");
+    }
+
+    /// A task stopped between the evaluation and the spend covers nothing: the use isn't spent and it waits.
+    #[tokio::test]
+    async fn a_stopped_task_spends_nothing() {
+        let env = env_risk().await;
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        let task = env.core.start_task(draft(OLD, &["ann@acme.io"], Some(3)), owner_yes()).await.unwrap();
+        env.core.end_task(task.id.clone()).await.unwrap();
+        let engine = env.core.engine();
+        assert!(engine.ap_task_count(&task.id, crate::autopilot::tasks::Count::Auto).is_err());
+        assert_eq!(env.core.tasks().await.unwrap()[0].uses_left, Some(3));
+    }
+
+    /// The owner names what a task covers, or chooses Any explicitly.
+    #[tokio::test]
+    async fn a_task_names_what_it_covers_or_says_any() {
+        let env = env_risk().await;
+        let mut d = draft(OLD, &[], None);
+        assert!(env.core.start_task(d.clone(), owner_yes()).await.is_err());
+        d.any = true;
+        let t = env.core.start_task(d, owner_yes()).await.unwrap();
+        assert!(t.any);
+    }
+
+    /// "Approve all" covers only the soft matrix asks: not what waits for a closer look, a pause or the floor.
+    #[tokio::test]
+    async fn approve_all_covers_only_soft_matrix_asks() {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.set_default(logits(0.97, 0.01, 0.02));
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core
+            .set_world_zone(FactChoice::Person, "pal@pal.dev".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env.core.start_overnight(None, Some(8 * 60), owner_yes()).await.unwrap();
+        // Friends · Reaches people is Auto by the matrix: what still waits is the model's (a new target), not soft.
+        env.relay("r1", OLD, email("pal@pal.dev", "hi")).await;
+        if !env.decided().iter().any(|(id, ..)| id == "r1") {
+            assert!(!item(&env, "r1").await.batchable, "a model's doubt is not a soft matrix ask");
+        }
+        // The floor (a standing permission) parks, and is never batched.
+        env.relay("r2", OLD, grant()).await;
+        assert!(!item(&env, "r2").await.batchable);
+        assert_eq!(env.core.approve_all(OLD.to_owned(), None).await.unwrap(), 0);
     }
 }

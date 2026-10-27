@@ -150,6 +150,10 @@ pub struct PendingItem {
     /// Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
     #[uniffi(default)]
     pub circle: Option<crate::circles::CircleProgress>,
+    /// Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
+    /// this, not `parked_until`).
+    #[uniffi(default)]
+    pub parked: bool,
 }
 
 /// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.
