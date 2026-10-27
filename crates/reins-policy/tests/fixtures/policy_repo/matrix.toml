@@ -1,0 +1,5 @@
+# Cells per zone, by level L0 to L3: auto, ask_first or ask.
+mine = ["auto", "auto", "auto", "ask"]
+friends = ["auto", "ask_first", "auto", "ask"]
+work = ["auto", "auto", "auto", "ask"]
+outside = ["ask", "ask", "ask", "ask"]
