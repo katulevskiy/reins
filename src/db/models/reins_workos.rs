@@ -283,7 +283,7 @@ fn q_reset_devices(c: &mut DbConnInner, user_uuid: &UserId, keep: &DeviceId) -> 
     })
 }
 
-fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Option<String>> {
+pub(crate) fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Option<String>> {
     reins_settings::table
         .filter(reins_settings::name.eq(name))
         .select(reins_settings::value)
@@ -291,7 +291,7 @@ fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Option<String>>
         .optional()
 }
 
-fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()> {
+pub(crate) fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()> {
     c.transaction(|c| {
         diesel::delete(reins_settings::table.filter(reins_settings::name.eq(name))).execute(c)?;
         diesel::insert_into(reins_settings::table)

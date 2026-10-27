@@ -500,6 +500,78 @@ pub fn q_delete_user_devices(c: &mut DbConnInner, user: &str) -> QueryResult<()>
     diesel::delete(reins_org_devices::table.filter(reins_org_devices::user_uuid.eq(user))).execute(c).map(|_| ())
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Cutting a member off
+// ---------------------------------------------------------------------------------------------------------------
+
+/// What [`q_cut_off_user`] removed, and what the caller still has to do outside the database.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct CutOff {
+    /// Signed-in devices (their tokens stop working at once).
+    pub devices: usize,
+    /// AI and desktop connections, with their refresh tokens.
+    pub connections: usize,
+    /// The SSO sessions the devices signed in with, to end at the provider.
+    pub sso_sessions: Vec<String>,
+    /// The approval device's push token, to tell it once more.
+    pub push_token: Option<String>,
+}
+
+/// Signs `user` out everywhere and disables the account: every Vaultwarden device, the approval device and the phone
+/// roster, the SSO session mappings, every AI and desktop connection with its refresh tokens. One transaction, the
+/// caller's.
+pub fn q_cut_off_user(c: &mut DbConnInner, user: &str) -> QueryResult<CutOff> {
+    use crate::db::schema::{
+        devices, reins_connections, reins_devices, reins_refresh_tokens, reins_sso_sessions, users,
+    };
+    let push_token: Option<Option<String>> = reins_devices::table
+        .filter(reins_devices::user_uuid.eq(user))
+        .select(reins_devices::fcm_token)
+        .first(c)
+        .optional()?;
+    let sso_sessions: Vec<String> = reins_sso_sessions::table
+        .filter(reins_sso_sessions::user_uuid.eq(user))
+        .select(reins_sso_sessions::session_id)
+        .load(c)?;
+    let connections: Vec<String> = reins_connections::table
+        .filter(reins_connections::user_uuid.eq(user))
+        .select(reins_connections::uuid)
+        .load(c)?;
+    diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::connection_uuid.eq_any(&connections)))
+        .execute(c)?;
+    diesel::delete(reins_connections::table.filter(reins_connections::user_uuid.eq(user))).execute(c)?;
+    diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(user))).execute(c)?;
+    diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::user_uuid.eq(user))).execute(c)?;
+    super::reins_roster::q_delete_all(c, user)?;
+    let devices = diesel::delete(devices::table.filter(devices::user_uuid.eq(user))).execute(c)?;
+    diesel::update(users::table.filter(users::uuid.eq(user))).set(users::enabled.eq(false)).execute(c)?;
+    Ok(CutOff {
+        devices,
+        connections: connections.len(),
+        sso_sessions,
+        push_token: push_token.flatten(),
+    })
+}
+
+/// Ends a membership: revoked (it can be restored) or deleted, and in both cases out of every group and without its
+/// own role grants.
+pub fn q_end_membership(c: &mut DbConnInner, org: &str, membership: &str, delete: bool) -> QueryResult<()> {
+    diesel::delete(groups_users::table.filter(groups_users::users_organizations_uuid.eq(membership))).execute(c)?;
+    q_revoke_all(c, org, SUBJECT_MEMBER, membership)?;
+    let target = users_organizations::table
+        .filter(users_organizations::org_uuid.eq(org))
+        .filter(users_organizations::uuid.eq(membership));
+    if delete {
+        diesel::delete(target).execute(c)?;
+    } else {
+        // Vaultwarden's revocation: the status moves below `Revoked` and can move back.
+        diesel::update(target.filter(users_organizations::status.gt(MembershipStatus::Revoked as i32)))
+            .set(users_organizations::status.eq(users_organizations::status - 128))
+            .execute(c)?;
+    }
+    Ok(())
+}
+
 #[cfg(all(test, sqlite))]
 pub(crate) mod tests {
     use super::super::reins_device::test_db;

@@ -15,6 +15,8 @@
 
 #![allow(dead_code)] // O1 wiring in progress: the routes and console use these.
 
+pub mod admin;
+pub mod deprovision;
 pub mod dns;
 pub mod tenant;
 
