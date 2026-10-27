@@ -1,0 +1,85 @@
+[
+  {
+    "id": "tpl.finance.1",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "money"
+      ],
+      "resource": null,
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Large payments: Finance approves.",
+    "review": {
+      "reviewers": {
+        "group": "fin"
+      },
+      "quorum": 2,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 86400
+    },
+    "min_amount_minor": 100000,
+    "currency": "USD"
+  },
+  {
+    "id": "tpl.finance.2",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "money"
+      ],
+      "resource": null,
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "New payee: Finance approves.",
+    "review": {
+      "reviewers": {
+        "group": "fin"
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 86400
+    },
+    "new_party": true
+  },
+  {
+    "id": "tpl.finance.3",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "money"
+      ],
+      "resource": null,
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "New payee: your manager approves.",
+    "review": {
+      "reviewers": "manager",
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 86400
+    },
+    "new_party": true
+  }
+]

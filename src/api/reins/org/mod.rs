@@ -57,6 +57,7 @@ pub mod roster;
 pub mod routing;
 pub mod scim;
 pub mod sweeper;
+pub mod templates;
 pub mod tenant;
 pub mod web_approval;
 pub mod web_approval_pages;
