@@ -3420,6 +3420,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func proposals() async throws  -> [ProposalView]
     
+    /**
+     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
+     */
+    func pushTag() async throws  -> String?
+    
     func registerDevice(fcmToken: String?) async throws 
     
     /**
@@ -5655,6 +5660,25 @@ open func proposals()async throws  -> [ProposalView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeProposalView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The tag this account's pushes carry (`None` signed out): the profile a push is for.
+     */
+open func pushTag()async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_push_tag(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -27356,6 +27380,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_proposals() != 10001) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_push_tag() != 15550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {

@@ -35,16 +35,16 @@ enum CoreFactory {
     static var storeExists: Bool { FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("dek.bin").path) }
 
     /// A work profile's own core while it signs in ("Add work account"): its own store and Keychain item, and no
-    /// notifications until it is the active profile.
+    /// notifications until it is the active profile. It never reaches the phone's data (contacts, calendar).
     static func makeWork(_ profile: AccountProfile) throws -> ReinsCore {
         try FileManager.default.createDirectory(atPath: profile.dataDir, withIntermediateDirectories: true)
         let info = Bundle.main.infoDictionary ?? [:]
         return try ReinsCore(
             dataDir: profile.dataDir,
             keys: KeychainKeyWrapper(account: WorkProfiles.keychainAccount(keyAlias: profile.keyAlias)),
-            google: GoogleTokens.shared,
+            google: GoogleTokens.of(WorkProfiles.of(profile)),
             notifier: SilentNotifier(),
-            device: PhoneBridge.shared,
+            device: nil,
             telegramApiId: Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0,
             telegramApiHash: (info["ReinsTelegramApiHash"] as? String) ?? ""
         )
@@ -53,10 +53,14 @@ enum CoreFactory {
     /// `keys`: the extension passes `KeychainKeyWrapper(mayReset: false)` so it can never make the core start over.
     static func make(
         notifier: Notifier,
-        google: GoogleTokenProvider = GoogleTokens.shared,
+        google: GoogleTokenProvider? = nil,
         keys: KeyWrapper? = nil
     ) throws -> ReinsCore {
         let dataDir = dataDir
+        let profile = WorkProfiles.active
+        // Each profile's Google sign-ins are its own; the phone's own data is the Personal profile's.
+        let google = google ?? GoogleTokens.of(profile)
+        let device: DeviceBridge? = profile.managed ? nil : PhoneBridge.shared
         let keys = keys ?? KeychainKeyWrapper(account: keyAccount)
         let info = Bundle.main.infoDictionary ?? [:]
         let apiId = Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0
@@ -66,7 +70,7 @@ enum CoreFactory {
             keys: keys,
             google: google,
             notifier: notifier,
-            device: PhoneBridge.shared,
+            device: device,
             telegramApiId: apiId,
             telegramApiHash: apiHash
         )

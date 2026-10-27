@@ -11,6 +11,7 @@ protocol WorkSignInCore: AnyObject, Sendable {
     func registerDevice(fcmToken: String?) async throws
     func orgChallenge() async throws -> String
     func orgEnroll(challenge: String, input: EnrollInput) async throws
+    func pushTag() async throws -> String?
 }
 
 extension ReinsCore: WorkSignInCore {}
@@ -166,6 +167,8 @@ final class AddWorkAccount {
             }
             let added = try registry.confirmManaged(id: profile.id, orgId: org.orgId, orgName: org.name, email: outcome.session.email)
             reserved = nil
+            // The work account's pushes reach this phone too; their tag routes them to the work profile.
+            if let tag = try? await core.pushTag() { WorkProfiles.rememberPushTag(tag, profileId: added.id) }
             let enrolled = await enroll(core: core, profileId: added.id)
             step = .added(label: added.label, id: added.id, enrolled: enrolled)
         } catch {

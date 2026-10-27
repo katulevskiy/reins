@@ -25,6 +25,9 @@ enum PushReceiver {
 
     static func handle(_ userInfo: [AnyHashable: Any], host: AppHost) async -> UIBackgroundFetchResult {
         guard let payload = PushPayload(userInfo: userInfo), let model = await host.ready() else { return .noData }
+        // A push for another profile on this phone: not this core's (no fetch, no "replaced"). Its notification says
+        // only that something waits, and a tap opens that profile.
+        guard WorkProfiles.belongsHere(userInfo, remote: true) else { return .noData }
         if payload.kind == "replaced" {
             model.markReplaced()
             host.notifier.deviceReplaced()

@@ -1,4 +1,5 @@
 @testable import Reins
+import UserNotifications
 import XCTest
 
 /// The profiles on this phone in memory, as the core's registry keeps them.
@@ -63,6 +64,7 @@ private final class FakeWorkCore: WorkSignInCore, @unchecked Sendable {
     func registerDevice(fcmToken: String?) async throws {}
     func orgChallenge() async throws -> String { "challenge-1" }
     func orgEnroll(challenge: String, input: EnrollInput) async throws { enrollments.append((challenge, input)) }
+    func pushTag() async throws -> String? { "bbbbbbbbbbbbbbbb" }
 }
 
 private struct FakeKeys: DeviceKeys {
@@ -228,5 +230,60 @@ final class ProfileSwitchInPlaceTests: XCTestCase {
         XCTAssertFalse(host.switching)
         XCTAssertNotNil(host.model, "the profile's model is open again")
         XCTAssertFalse(host.model === before, "a fresh model, not the old one")
+    }
+}
+
+/// Which profile a notification, an action on it, or a push belongs to: never acted on by another profile's core.
+final class WorkProfileRoutingTests: XCTestCase {
+    private let work = WorkProfiles.Active(id: "work-1", label: "Acme", managed: true, threadPrefix: "work-1.", keyAlias: "work-1")
+    private let tags = ["personal": "aaaaaaaaaaaaaaaa", "work-1": "bbbbbbbbbbbbbbbb"]
+
+    func testPushTagsAreSixteenLowercaseHexDigits() {
+        XCTAssertEqual(PushPayload.tag(["p": "0123456789abcdef"]), "0123456789abcdef")
+        XCTAssertNil(PushPayload.tag(["p": "0123"]))
+        XCTAssertNil(PushPayload.tag(["p": "0123456789ABCDEF"]))
+        XCTAssertNil(PushPayload.tag([:]))
+    }
+
+    func testAPushGoesToTheProfileWhoseTagItCarries() {
+        let personal = WorkProfiles.personal
+        let forWork: [AnyHashable: Any] = ["t": "req", "id": "r1", "p": "bbbbbbbbbbbbbbbb"]
+        XCTAssertFalse(WorkProfiles.belongsHere(forWork, remote: true, active: personal, hasWork: true, tags: tags))
+        XCTAssertEqual(WorkProfiles.owner(of: forWork, remote: true, active: personal, hasWork: true, tags: tags), "work-1")
+        XCTAssertTrue(WorkProfiles.belongsHere(forWork, remote: true, active: work, hasWork: true, tags: tags))
+        // A tag nobody here knows is no profile's.
+        let unknown: [AnyHashable: Any] = ["t": "req", "id": "r1", "p": "cccccccccccccccc"]
+        XCTAssertNil(WorkProfiles.owner(of: unknown, remote: true, active: personal, hasWork: true, tags: tags))
+        // No tag (an older server), or no work profile: the running profile's, as before.
+        XCTAssertTrue(WorkProfiles.belongsHere(["t": "req", "id": "r1"], remote: true, active: personal, hasWork: true, tags: tags))
+        XCTAssertTrue(WorkProfiles.belongsHere(unknown, remote: true, active: personal, hasWork: false, tags: [:]))
+    }
+
+    func testANotificationPostedHereNamesItsProfile() {
+        let content = UNMutableNotificationContent()
+        content.userInfo = ["t": "req", "id": "r1"]
+        let stamped = WorkProfiles.stamp(content, profile: work)
+        XCTAssertEqual(stamped.userInfo[WorkProfiles.notificationKey] as? String, "work-1")
+        XCTAssertFalse(WorkProfiles.belongsHere(stamped.userInfo, remote: false, active: WorkProfiles.personal, hasWork: true, tags: tags))
+        XCTAssertTrue(WorkProfiles.belongsHere(stamped.userInfo, remote: false, active: work, hasWork: true, tags: tags))
+        // One posted before profiles is the Personal profile's.
+        XCTAssertFalse(WorkProfiles.belongsHere(content.userInfo, remote: false, active: work, hasWork: true, tags: tags))
+    }
+
+    func testGrantRemindersAreKeptPerProfile() {
+        let now: Int64 = 1_700_000_000
+        let grant = GrantView(
+            id: "g1", connectionId: "c1", connectionLabel: "Claude", action: "read", summary: "Read mail",
+            expiresAt: now + 600, maxUses: nil, uses: 0, createdAt: now - 3_000, lastUsedAt: nil, origin: "approval",
+            service: "gmail", account: "me@gmail.com", lines: [], active: true, state: "active", allMail: false,
+            editableScope: nil
+        )
+        let personal = GrantReminders.plan([grant], now: now)
+        let ours = GrantReminders.plan([grant], now: now, profile: work)
+        XCTAssertNotEqual(personal[0].identifier, ours[0].identifier)
+        XCTAssertNotEqual(GrantReminders.scheduledKey(WorkProfiles.personal), GrantReminders.scheduledKey(work))
+        let c = GrantReminders.content(ours[0], now: now, settings: FeedbackSettings(), profile: work)
+        XCTAssertEqual(c.userInfo[WorkProfiles.notificationKey] as? String, "work-1")
+        XCTAssertTrue(c.threadIdentifier.hasPrefix("work-1."))
     }
 }

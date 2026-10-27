@@ -310,6 +310,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     func orgsOffered(serverUrl: String) async throws -> Bool { false }
+    func pushTag() async throws -> String? { nil }
 
     func orgMembership() async throws -> OrgView? { nil }
 

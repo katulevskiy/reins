@@ -10,6 +10,15 @@ final class AppNotifier: Notifier, @unchecked Sendable {
     @MainActor weak var model: AppModel?
     private let center: UNUserNotificationCenter
     private let settings: @Sendable () -> FeedbackSettings
+    private let profileLock = NSLock()
+    nonisolated(unsafe) private var boundProfile = WorkProfiles.personal
+
+    /// The profile this notifier posts for: set when that profile's core is made (`AppHost.openActiveProfile`), and
+    /// named on every notification it posts, so an action on it is never taken by another profile's core.
+    var profile: WorkProfiles.Active {
+        get { profileLock.withLock { boundProfile } }
+        set { profileLock.withLock { boundProfile = newValue } }
+    }
 
     init(center: UNUserNotificationCenter = .current(), settings: @escaping @Sendable () -> FeedbackSettings = { FeedbackSettings.load() }) {
         self.center = center
@@ -156,7 +165,8 @@ final class AppNotifier: Notifier, @unchecked Sendable {
     }
 
     func post(_ id: String, _ content: UNNotificationContent) {
-        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { _ in
+        let stamped = WorkProfiles.stamp(content, profile: profile)
+        center.add(UNNotificationRequest(identifier: id, content: stamped, trigger: nil)) { _ in
             // Not allowed or not possible: the app shows it all the next time it is opened.
         }
     }

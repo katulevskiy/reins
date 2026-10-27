@@ -54,6 +54,8 @@ final class AppHost {
         profileId = CoreFactory.activeProfile()?.id ?? ""
         if openDemo() { return }
         let notifier = notifier
+        // Everything this notifier posts from now on names this profile.
+        notifier.profile = WorkProfiles.active
         // Before the core opens the store: the app holds a background task while it holds the store's lock.
         let keepAwake = keepAwake ?? AppKeepAwake()
         self.keepAwake = keepAwake
@@ -70,6 +72,9 @@ final class AppHost {
             core.setModelRuntime(runtime: runtime)
             modelRuntime = runtime
             settle(AppModel(core: core, feedback: feedback, authenticator: Authenticator()))
+            // This profile's push tag, so a push for another profile on this phone never reaches this core.
+            let profile = WorkProfiles.active.id
+            Task.detached { if let tag = try? await core.pushTag() { WorkProfiles.rememberPushTag(tag, profileId: profile) } }
         case let .failure(error):
             startupError = error.userMessage
             settle(nil)

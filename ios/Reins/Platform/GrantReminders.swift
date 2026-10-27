@@ -13,9 +13,11 @@ enum GrantReminders {
         var expiresAt: Int64
         var label: String
         var summary: String
+        /// The profile it belongs to: "" for Personal (today's identifiers), its thread prefix for a work profile.
+        var owner: String = ""
 
-        /// The notification's identifier: per grant and end time.
-        var identifier: String { "\(GrantReminders.prefix)\(id).\(expiresAt)" }
+        /// The notification's identifier: per profile, grant and end time.
+        var identifier: String { "\(owner)\(GrantReminders.prefix)\(id).\(expiresAt)" }
     }
 
     static let prefix = "grant."
@@ -36,11 +38,16 @@ enum GrantReminders {
     }
 
     /// The reminders the running `grants` call for (those that have not ended yet).
-    static func plan(_ grants: [GrantView], now: Int64) -> [Reminder] {
+    static func plan(_ grants: [GrantView], now: Int64, profile: WorkProfiles.Active = WorkProfiles.personal) -> [Reminder] {
         grants.filter(\.active).compactMap { g in
             guard let end = g.expiresAt, end > now, let at = reminderAt(createdAt: g.createdAt, expiresAt: end) else { return nil }
-            return Reminder(id: g.id, fireAt: at, expiresAt: end, label: g.connectionLabel, summary: g.summary)
+            return Reminder(id: g.id, fireAt: at, expiresAt: end, label: g.connectionLabel, summary: g.summary, owner: profile.threadPrefix)
         }
+    }
+
+    /// Where a profile's scheduled identifiers are kept: today's key for Personal, its own per work profile.
+    static func scheduledKey(_ profile: WorkProfiles.Active) -> String {
+        profile.managed ? "\(scheduledKey).\(profile.id)" : scheduledKey
     }
 
     /// A grant already inside its last stretch reminds at once (a second from now).
@@ -66,29 +73,36 @@ enum GrantReminders {
         }
     }
 
-    static func content(_ r: Reminder, now: Int64, settings: FeedbackSettings) -> UNMutableNotificationContent {
+    static func content(_ r: Reminder, now: Int64, settings: FeedbackSettings, profile: WorkProfiles.Active = WorkProfiles.personal) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
         c.title = "Access ends in \(compactDuration(r.expiresAt - dueAt(r, now: now)))"
         c.body = "\(untrusted(r.label)): \(untrusted(r.summary))"
         c.categoryIdentifier = NotificationCategory.grant.rawValue
-        c.threadIdentifier = NotificationCategory.grant.thread
+        c.threadIdentifier = WorkProfiles.thread("grants", prefix: profile.threadPrefix)
         c.interruptionLevel = .active
         c.relevanceScore = 0.6
         c.sound = NotificationSoundFile.sound(NotificationSoundFile.attention, .alerts, settings)
-        c.userInfo = [NotificationKey.link: DeepLink.grant(id: r.id).url.absoluteString]
+        c.userInfo = [NotificationKey.link: DeepLink.grant(id: r.id).url.absoluteString, WorkProfiles.notificationKey: profile.id]
         return c
     }
 
     /// Aligns the scheduled reminders with `grants`.
     @MainActor
-    static func sync(_ grants: [GrantView], now: Int64 = Int64(Date().timeIntervalSince1970), center: UNUserNotificationCenter = .current(), defaults: UserDefaults = .standard) {
-        let wanted = plan(grants, now: now)
-        let scheduled = Set(defaults.stringArray(forKey: scheduledKey) ?? [])
+    static func sync(
+        _ grants: [GrantView],
+        profile: WorkProfiles.Active,
+        now: Int64 = Int64(Date().timeIntervalSince1970),
+        center: UNUserNotificationCenter = .current(),
+        defaults: UserDefaults = .standard
+    ) {
+        let wanted = plan(grants, now: now, profile: profile)
+        let key = scheduledKey(profile)
+        let scheduled = Set(defaults.stringArray(forKey: key) ?? [])
         let (remove, add) = diff(wanted: wanted, scheduled: scheduled)
         let settings = FeedbackSettings.load()
         let requests = add.map { r in
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(dueAt(r, now: now) - now, 1)), repeats: false)
-            return UNNotificationRequest(identifier: r.identifier, content: content(r, now: now, settings: settings), trigger: trigger)
+            return UNNotificationRequest(identifier: r.identifier, content: content(r, now: now, settings: settings, profile: profile), trigger: trigger)
         }
         // Off the main thread: the notification center's calls go through a system service that can be slow to
         // answer (and never answers on a simulator whose notification service has not started).
@@ -99,7 +113,7 @@ enum GrantReminders {
             }
             requests.forEach { center.add($0) }
         }
-        defaults.set(wanted.map(\.identifier).sorted(), forKey: scheduledKey)
+        defaults.set(wanted.map(\.identifier).sorted(), forKey: key)
     }
 }
 

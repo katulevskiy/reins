@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import UserNotifications
 
 /// The profiles on this phone (Decisions v2 O1, 06 §2): the Personal account and a Managed work profile per
 /// organization. Each profile runs its own core on its own data directory, its data key wrapped by its own Keychain
@@ -62,6 +63,63 @@ enum WorkProfiles {
     /// What the device key signs to enroll (`reins_proto::org::enrollment_message`).
     static func enrollmentMessage(challenge: String) -> Data {
         Data("reins/org-enroll/v1\n".utf8) + Data(challenge.utf8)
+    }
+
+    // MARK: Which profile a notification is for
+
+    /// The `userInfo` key naming the profile a notification posted on this phone belongs to.
+    static let notificationKey = "profile"
+
+    private static let pushTagsKey = "workProfiles.pushTags"
+
+    /// Each profile's push tag (`reins_proto::pairing::push_profile_tag`), in the App Group so the notification
+    /// extension reads them too. Not secret: the server sends it in the clear.
+    static func rememberPushTag(_ tag: String, profileId: String, defaults: UserDefaults = AppGroup.defaults) {
+        var tags = defaults.dictionary(forKey: pushTagsKey) as? [String: String] ?? [:]
+        guard tags[profileId] != tag else { return }
+        tags[profileId] = tag
+        defaults.set(tags, forKey: pushTagsKey)
+    }
+
+    static func forgetPushTag(profileId: String, defaults: UserDefaults = AppGroup.defaults) {
+        var tags = defaults.dictionary(forKey: pushTagsKey) as? [String: String] ?? [:]
+        tags[profileId] = nil
+        defaults.set(tags, forKey: pushTagsKey)
+    }
+
+    static func pushTags(defaults: UserDefaults = AppGroup.defaults) -> [String: String] {
+        defaults.dictionary(forKey: pushTagsKey) as? [String: String] ?? [:]
+    }
+
+    /// The profile a notification belongs to: the one it names (posted here), or for a push, the profile whose tag it
+    /// carries. `nil` when it can't be placed: a push whose tag no profile here knows.
+    ///
+    /// A push without a tag (an older server), on a phone without a work profile, is the active profile's, as before
+    /// profiles; a local notification without a name was posted before profiles, by the Personal profile.
+    static func owner(
+        of userInfo: [AnyHashable: Any],
+        remote: Bool,
+        active: Active = active,
+        hasWork: Bool = hasWork,
+        tags: [String: String] = pushTags()
+    ) -> String? {
+        if let named = userInfo[notificationKey] as? String { return named }
+        guard remote else { return personal.id }
+        guard let tag = PushPayload.tag(userInfo), hasWork else { return active.id }
+        if tags[active.id] == tag { return active.id }
+        return tags.first { $0.value == tag && $0.key != active.id }?.key
+    }
+
+    /// `content`, naming `profile` (`notificationKey`): an action on it is only ever taken by that profile's core.
+    static func stamp(_ content: UNNotificationContent, profile: Active) -> UNNotificationContent {
+        let c = (content.mutableCopy() as? UNMutableNotificationContent) ?? UNMutableNotificationContent()
+        c.userInfo[notificationKey] = profile.id
+        return c
+    }
+
+    /// Whether a notification may be acted on by the active profile's core.
+    static func belongsHere(_ userInfo: [AnyHashable: Any], remote: Bool, active: Active = active, hasWork: Bool = hasWork, tags: [String: String] = pushTags()) -> Bool {
+        owner(of: userInfo, remote: remote, active: active, hasWork: hasWork, tags: tags) == active.id
     }
 
     /// The folder that holds the Personal `core` directory and the registry.
