@@ -46,10 +46,12 @@ pub struct OrgFacts {
     pub identity: IdentityKind,
     pub workos_org_id: Option<String>,
     pub has_directory: bool,
+    /// The tenant's verified domains.
+    pub domains: Vec<String>,
 }
 
 impl OrgFacts {
-    fn of(org: &ReinsOrg, name: String) -> Self {
+    fn of(org: &ReinsOrg, name: String, domains: Vec<String>) -> Self {
         Self {
             org_uuid: org.org_uuid.clone(),
             name,
@@ -57,9 +59,13 @@ impl OrgFacts {
             identity: org.identity(),
             workos_org_id: org.workos_org_id.clone(),
             has_directory: org.directory_id.is_some(),
+            domains,
         }
     }
 }
+
+/// What a refused sign-in through an org's identity says, whatever the reason (it tells nobody which accounts exist).
+pub const NOT_THIS_WAY: &str = "This account can't sign in this way. Sign in with your own account.";
 
 /// The signing-in account, as the org sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +84,8 @@ pub struct SignInFacts<'a> {
     pub organization_id: Option<&'a str>,
     /// For a GitHub org: whether the user is an active member (`None`: not checked, no token).
     pub github_member: Option<bool>,
+    /// The domain of the email the sign-in names.
+    pub email_domain: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +120,10 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
     let Some(org) = org else {
         return Ok(Decision::Personal);
     };
+    // Through the tenant's own WorkOS organization (its IdP): only its members, and new accounts on its domains.
+    let through_tenant_idp = org.workos_org_id.is_some() && sign_in.organization_id == org.workos_org_id.as_deref();
     let active = match existing {
+        Existing::NotMember if through_tenant_idp => return Err(NOT_THIS_WAY.to_owned()),
         Existing::NotMember => return Ok(Decision::Personal),
         Existing::Member {
             active: false,
@@ -151,6 +162,10 @@ pub fn decide(org: Option<&OrgFacts>, existing: Existing, sign_in: &SignInFacts<
             _ => "its SSO",
         };
         return Err(format!("{} manages this account. Sign in with {how}.", org.name));
+    }
+    // The account's address must be on one of the tenant's verified domains, whatever the IdP vouches for.
+    if !sign_in.email_domain.is_some_and(|d| org.domains.iter().any(|v| v == d)) {
+        return Err(NOT_THIS_WAY.to_owned());
     }
     if !active && org.tier.scim() && org.has_directory {
         return Err(format!("{} adds its members from its directory. Ask your IT team to add you.", org.name));
@@ -202,14 +217,23 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         return Ok(Decision::Personal);
     }
     let existing_uuid = existing.map(|u| u.uuid.to_string());
+    let existing_is_stub = existing.is_some_and(|u| u.private_key.is_none());
     let domain_org = org_of_domain(&user.email, conn).await;
+    let idp_org = user.workos.as_ref().and_then(|w| w.organization_id.clone());
     let loaded = conn
         .run(move |c| -> Result<Option<(OrgFacts, Existing)>, diesel::result::Error> {
             let member_of = match &existing_uuid {
                 Some(u) => reins_org::q_orgs_of_user_any(c, u)?,
                 None => Vec::new(),
             };
-            let org_uuid = member_of.first().cloned().or(domain_org);
+            // A stub nobody ever signed in to (no keys) and no org's member is no account yet: it joins like a new one.
+            let existing_uuid = existing_uuid.filter(|_| !(existing_is_stub && member_of.is_empty()));
+            // The account's own org first; then the org whose IdP the sign-in came through; then its email's domain.
+            let idp_tenant = match &idp_org {
+                Some(id) => reins_org::q_org_by_workos(c, id)?.map(|o| o.org_uuid),
+                None => None,
+            };
+            let org_uuid = member_of.first().cloned().or(idp_tenant).or(domain_org);
             let Some(org_uuid) = org_uuid else {
                 return Ok(None);
             };
@@ -217,6 +241,11 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
                 return Ok(None);
             };
             let name = reins_org::q_org_name(c, &org_uuid)?.unwrap_or_default();
+            let domains = reins_org::q_domains(c, &org_uuid)?
+                .into_iter()
+                .filter(|d| d.verified_at.is_some())
+                .map(|d| d.domain)
+                .collect();
             let existing = match &existing_uuid {
                 None => Existing::NoAccount,
                 Some(u) => match reins_org::q_member_state(c, &org_uuid, u)? {
@@ -226,7 +255,7 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
                     },
                 },
             };
-            Ok(Some((OrgFacts::of(&org, name), existing)))
+            Ok(Some((OrgFacts::of(&org, name, domains), existing)))
         })
         .await;
     let loaded = match loaded {
@@ -252,10 +281,12 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
     } else {
         None
     };
+    let email_domain = email_domain(&user.email);
     let facts = SignInFacts {
         method: workos.method.as_deref(),
         organization_id: workos.organization_id.as_deref(),
         github_member,
+        email_domain: email_domain.as_deref(),
     };
     match decide(Some(&org), existing, &facts) {
         Ok(d) => Ok(d),
@@ -269,6 +300,37 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
 async fn github_org_of(org: &str, conn: &DbConn) -> Option<String> {
     let org = org.to_owned();
     conn.run(move |c| reins_org::q_org(c, &org)).await.ok().flatten().and_then(|o| o.github_org)
+}
+
+/// Saves a new account. A work account joining at this sign-in (`Managed { jit }`) is made with its membership in
+/// one transaction, so there is never an account on an org's domain that its org doesn't hold.
+pub async fn create_account(user: &mut User, decision: &Decision, conn: &DbConn) -> EmptyResult {
+    let Decision::Managed {
+        org,
+        jit: true,
+        ..
+    } = decision
+    else {
+        return user.save(conn).await;
+    };
+    let org = org.clone();
+    let now = super::super::now_unix();
+    let done = conn
+        .run(move |c| {
+            use diesel::{Connection, RunQueryDsl};
+            c.transaction(|c| -> Result<(), super::OrgError> {
+                diesel::insert_into(crate::db::schema::users::table).values(&*user).execute(c)?;
+                let uuid = user.uuid.to_string();
+                let m = Membership::new(user.uuid.clone(), org.clone().into(), None);
+                reins_org::q_add_member(c, &m, Some(&uuid), now)?;
+                event(c, &org, "member.joined", Some(&uuid), Some(m.uuid.as_ref()), &json!({"jit": true}), now)
+            })
+        })
+        .await;
+    if let Err(e) = done {
+        err!(format!("Could not create your work account: {e:?}"));
+    }
+    Ok(())
 }
 
 /// After the account is known: a just-in-time member joins the org.
@@ -324,6 +386,7 @@ mod tests {
             identity,
             workos_org_id: Some("org_ACME".to_owned()),
             has_directory: false,
+            domains: vec!["acme.com".to_owned()],
         }
     }
 
@@ -332,6 +395,7 @@ mod tests {
             method: Some(Box::leak(method.to_owned().into_boxed_str())),
             organization_id: org,
             github_member: None,
+            email_domain: Some("acme.com"),
         }
     }
 
@@ -398,11 +462,24 @@ mod tests {
     fn an_existing_personal_account_is_not_captured() {
         for identity in IdentityKind::ALL {
             let o = org(identity, Tier::Business);
-            // Whatever way it signs in, an account that isn't the org's member stays Personal.
-            for s in [via("Passkey", None), via("SSO", Some("org_ACME")), via("GoogleOAuth", None)] {
+            // Signing in its own way, an account that isn't the org's member stays Personal.
+            for s in [via("Passkey", None), via("GoogleOAuth", None), via("SSO", Some("org_OTHER"))] {
                 assert_eq!(decide(Some(&o), Existing::NotMember, &s), Ok(Decision::Personal));
             }
         }
+    }
+
+    #[test]
+    fn the_orgs_idp_opens_only_its_members_and_new_accounts_on_its_domains() {
+        let o = org(IdentityKind::Sso, Tier::Business);
+        // A Personal account signed in through the org's IdP: refused, with nothing said about why.
+        assert_eq!(decide(Some(&o), Existing::NotMember, &via("SSO", Some("org_ACME"))), Err(NOT_THIS_WAY.to_owned()));
+        // A new account, or a member, whose address isn't on the tenant's verified domains: refused alike.
+        let mut elsewhere = via("SSO", Some("org_ACME"));
+        elsewhere.email_domain = Some("gmail.com");
+        assert_eq!(decide(Some(&o), Existing::NoAccount, &elsewhere), Err(NOT_THIS_WAY.to_owned()));
+        assert_eq!(decide(Some(&o), MEMBER, &elsewhere), Err(NOT_THIS_WAY.to_owned()));
+        assert_eq!(decide(Some(&o), Existing::NoAccount, &via("SSO", Some("org_ACME"))), managed(true));
     }
 
     #[test]

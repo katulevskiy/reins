@@ -187,6 +187,7 @@ pub async fn finish(removal: Removal, pool: Option<&DbPool>) -> TicketOutcome {
             reins_proto::pairing::PushMessage {
                 t: reins_proto::pairing::PushKind::Replaced,
                 id: String::new(),
+                p: None,
             },
         );
     }

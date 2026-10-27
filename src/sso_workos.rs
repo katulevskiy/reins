@@ -480,6 +480,9 @@ mod tests {
         // The provider token never reaches the database (the sign-in is kept between steps as JSON).
         let kept = serde_json::to_string(&user).unwrap();
         assert!(!kept.contains("gho_x"), "{kept}");
+        // Nor the logs (`Debug`).
+        assert!(!format!("{w:?}").contains("gho_x"));
+        assert!(!format!("{user:?}").contains("gho_x"));
         let back: OIDCAuthenticatedUser = serde_json::from_str(&kept).unwrap();
         assert_eq!(back.workos.unwrap().organization_id.as_deref(), Some("org_01ACME"));
     }

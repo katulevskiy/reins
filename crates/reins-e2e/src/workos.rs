@@ -33,6 +33,8 @@ struct State {
     organizations: HashMap<String, Vec<String>>,
     /// Directories: id -> their organization.
     directories: HashMap<String, String>,
+    /// Directory users as `GET /directory_users` lists them (kept from the `dsync.user.*` events emitted).
+    directory_users: Vec<Value>,
     /// Session ids handed out, in order.
     sessions: Vec<String>,
     events: Vec<Value>,
@@ -227,6 +229,15 @@ impl Respond for Lookup {
             return ResponseTemplate::new(200)
                 .set_body_json(json!({"object": "organization", "id": id, "domains": domains}));
         }
+        if path == "/directory_users" || path == "/directory_groups" {
+            let directory = query(req).get("directory").cloned().unwrap_or_default();
+            let data: Vec<Value> = if path == "/directory_users" {
+                st.directory_users.iter().filter(|u| u["directory_id"] == directory.as_str()).cloned().collect()
+            } else {
+                Vec::new()
+            };
+            return ResponseTemplate::new(200).set_body_json(json!({"data": data, "list_metadata": {"after": null}}));
+        }
         if let Some(id) = path.strip_prefix("/directories/")
             && let Some(org) = st.directories.get(id)
         {
@@ -258,7 +269,7 @@ impl FakeWorkos {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path_regex("^/(organizations|directories)/[A-Za-z0-9_]+$"))
+            .and(path_regex("^/((organizations|directories)/[A-Za-z0-9_]+|directory_users|directory_groups)$"))
             .respond_with(Lookup(Arc::clone(&state)))
             .mount(&server)
             .await;
@@ -345,6 +356,16 @@ impl FakeWorkos {
     /// Adds an event to the Events API (`kind` such as `user.updated`).
     pub fn emit(&self, kind: &str, data: Value) {
         let mut st = self.state.lock().expect("state");
+        // The directory as WorkOS would list it afterwards.
+        let user_id = data["id"].clone();
+        match kind {
+            "dsync.user.created" | "dsync.user.updated" => {
+                st.directory_users.retain(|u| u["id"] != user_id);
+                st.directory_users.push(data.clone());
+            }
+            "dsync.user.deleted" => st.directory_users.retain(|u| u["id"] != user_id),
+            _ => {}
+        }
         st.serial += 1;
         let id = format!("event_{:04}", st.serial);
         let mut event = json!({"object": "event", "id": id, "event": kind, "created_at": "2026-10-02T10:00:00.000Z"});

@@ -171,6 +171,14 @@ pub fn q_org_by_directory(c: &mut DbConnInner, directory_id: &str) -> QueryResul
     reins_orgs::table.filter(reins_orgs::directory_id.eq(directory_id)).first(c).optional()
 }
 
+/// The tenants bound to a directory.
+pub fn q_bound_directories(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrg>> {
+    reins_orgs::table
+        .filter(reins_orgs::directory_id.is_not_null())
+        .filter(reins_orgs::workos_org_id.is_not_null())
+        .load(c)
+}
+
 pub fn q_insert_org(c: &mut DbConnInner, org: &ReinsOrg) -> QueryResult<()> {
     diesel::insert_into(reins_orgs::table).values(org).execute(c).map(|_| ())
 }

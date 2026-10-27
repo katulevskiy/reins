@@ -350,7 +350,8 @@ async fn sso_login(
 
             let mut user = User::new(&user_infos.email, user_infos.user_name.clone());
             user.verified_at = Some(now);
-            user.save(conn).await?;
+            // A work account joining at its first sign-in: the account and its membership in one transaction.
+            crate::api::reins::org::gate::create_account(&mut user, &org_decision, conn).await?;
 
             let device = get_device(&data, conn, &user).await?;
 

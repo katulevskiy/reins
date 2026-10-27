@@ -108,13 +108,15 @@ fn put_cookie(cookies: &CookieJar<'_>, sid: String, https: bool) {
     );
 }
 
-fn new_session(now: i64) -> (String, Session) {
+/// A new session; `None` when the store is full of signed-in sessions. Only sessions still signing in are ever pushed
+/// out to make room (the oldest first), never a signed-in admin's.
+fn new_session(now: i64) -> Option<(String, Session)> {
     let mut map = sessions();
     map.retain(|_, s| now - s.last < IDLE_SECS && now - s.created < MAX_SECS);
-    if map.len() >= MAX_SESSIONS
-        && let Some(oldest) = map.iter().min_by_key(|(_, s)| s.last).map(|(k, _)| k.clone())
-    {
-        map.remove(&oldest);
+    if map.len() >= MAX_SESSIONS {
+        let oldest_pending =
+            map.iter().filter(|(_, s)| s.user.is_none()).min_by_key(|(_, s)| s.last).map(|(k, _)| k.clone());
+        map.remove(&oldest_pending?);
     }
     let session = Session {
         user: None,
@@ -128,7 +130,22 @@ fn new_session(now: i64) -> (String, Session) {
     };
     let sid = random_token();
     map.insert(sid.clone(), session.clone());
-    (sid, session)
+    Some((sid, session))
+}
+
+/// Takes the session `sid` if it is still signing in with exactly `state`, and gives its PKCE verifier; anything else
+/// (no session, another state, a signed-in session) is left as it was.
+fn take_pending(sid: &str, state: &str) -> Option<String> {
+    let mut map = sessions();
+    let matches = map.get(sid).and_then(|s| s.pending.as_ref()).is_some_and(|(expected, _)| s_eq(expected, state));
+    if !matches {
+        return None;
+    }
+    map.remove(sid).and_then(|s| s.pending).map(|(_, verifier)| verifier)
+}
+
+fn s_eq(a: &str, b: &str) -> bool {
+    crate::crypto::ct_eq(a, b)
 }
 
 /// The signed-in session of this browser: `(sid, user, email, csrf)`.
@@ -285,12 +302,14 @@ async fn home(cookies: &CookieJar<'_>, conn: DbConn) -> Page {
 }
 
 #[get("/reins/org/login")]
-fn login(cookies: &CookieJar<'_>, secure: Secure) -> Redirect {
-    if !enabled() || !CONFIG.sso_enabled() {
+fn login(cookies: &CookieJar<'_>, secure: Secure, ip: crate::auth::ClientIp) -> Redirect {
+    if !enabled() || !CONFIG.sso_enabled() || crate::ratelimit::check_limit_login(&ip.ip).is_err() {
         return to_home();
     }
     let now = now_unix();
-    let (sid, _) = new_session(now);
+    let Some((sid, _)) = new_session(now) else {
+        return to_home();
+    };
     let state = random_token();
     let verifier = random_token();
     let challenge = data_encoding::BASE64URL_NOPAD
@@ -330,13 +349,11 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
     let Some(sid) = cookies.get(COOKIE).map(|c| c.value().to_owned()) else {
         return refused("Your sign-in expired. Sign in again.");
     };
-    let pending = sessions().remove(&sid).and_then(|s| s.pending);
-    let Some((expected, verifier)) = pending else {
+    // Only the sign-in this callback answers is taken: a forged callback (another state) leaves every session alone.
+    let pending = take_pending(&sid, &state);
+    let Some(verifier) = pending else {
         return refused("Your sign-in expired. Sign in again.");
     };
-    if !crate::crypto::ct_eq(&expected, &state) {
-        return refused("Your sign-in expired. Sign in again.");
-    }
     let Ok(verifier) = serde_json::from_value(serde_json::Value::String(verifier)) else {
         return refused("Your sign-in expired. Sign in again.");
     };
@@ -375,7 +392,9 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
     }
     // A new session id once signed in.
     let now = now_unix();
-    let (new_sid, _) = new_session(now);
+    let Some((new_sid, _)) = new_session(now) else {
+        return refused("The console is busy. Try again in a minute.");
+    };
     let github_token = user_infos
         .workos
         .as_ref()
@@ -392,15 +411,34 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_forged_callback_never_ends_a_session() {
+        let now = 1_000;
+        let (sid, _) = new_session(now).unwrap();
+        sessions().get_mut(&sid).unwrap().pending = Some(("right-state".to_owned(), "verifier".to_owned()));
+        assert_eq!(take_pending(&sid, "forged"), None);
+        assert!(sessions().contains_key(&sid), "untouched");
+        assert_eq!(take_pending(&sid, "right-state").as_deref(), Some("verifier"));
+        assert!(!sessions().contains_key(&sid));
+        // A signed-in session can't be taken as a pending one.
+        let (admin, _) = new_session(now).unwrap();
+        sessions().get_mut(&admin).unwrap().user = Some("u1".to_owned());
+        assert_eq!(take_pending(&admin, ""), None);
+        assert!(sessions().contains_key(&admin));
+        sessions().remove(&admin);
+    }
+
     #[test]
     fn accounts_with_two_step_sign_in_are_refused() {
         use crate::db::models::{TwoFactor, TwoFactorType};
         let user = crate::db::models::UserId::from("u1".to_owned());
-        assert!(!super::two_factor_refused(&[]));
+        assert!(!two_factor_refused(&[]));
         let mut totp = TwoFactor::new(user, TwoFactorType::Authenticator, String::new());
-        assert!(super::two_factor_refused(std::slice::from_ref(&totp)));
+        assert!(two_factor_refused(std::slice::from_ref(&totp)));
         totp.enabled = false;
-        assert!(!super::two_factor_refused(&[totp]));
+        assert!(!two_factor_refused(&[totp]));
     }
 }
 
@@ -712,6 +750,10 @@ async fn set_identity(
         Ok(binding) => propose(&conn, pool, org, &s.user, action, binding).await,
         Err(e) => Err(e),
     };
+    if matches!(r, Ok(admin::Proposed::Applied)) {
+        // A newly bound directory: its users and groups come from listing it.
+        super::scim::backfill_soon();
+    }
     let (t, bad) = outcome_text(&r, "Saved.");
     flash(&s.sid, &t, bad);
     to_org(org, "")
@@ -999,6 +1041,7 @@ async fn approve_change(
                         for removal in followups {
                             deprovision::finish(removal, Some(pool)).await;
                         }
+                        super::scim::backfill_soon();
                         Ok(())
                     }
                     Err(e) => Err(e),

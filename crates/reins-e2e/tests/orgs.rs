@@ -237,6 +237,12 @@ async fn a_pilot_org_is_provisioned_and_deprovisioned_end_to_end() {
         .await;
     assert!(verified.body.contains("Verified"), "{}", verified.body);
 
+    // An event of the directory before it is bound is dropped (nothing knows whose it is)…
+    workos.emit("dsync.user.created", dir_user("directory_user_kim", "kim@acme.com", "active"));
+    webhook(&server, &json!({"id": "wh_0", "event": "dsync.user.created"})).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(member_state(&server, "kim@acme.com"), None);
+
     // SSO and the directory, bound only with WorkOS's word.
     let refused = browser
         .post(
@@ -265,6 +271,12 @@ async fn a_pilot_org_is_provisioned_and_deprovisioned_end_to_end() {
         .await;
     assert!(bound.body.contains("Saved"), "{}", bound.body);
     assert!(bound.body.contains("org_ACME") && bound.body.contains("directory_ACME"), "{}", bound.body);
+
+    // …and the binding lists the directory: Kim arrives all the same.
+    wait_for("backfill", Duration::from_secs(20), || {
+        member_state(&server, "kim@acme.com").as_deref() == Some("active")
+    })
+    .await;
 
     // SCIM: the directory adds Lee; the webhook wakes the sync.
     workos.emit("dsync.user.created", dir_user("directory_user_lee", "lee@acme.com", "active"));

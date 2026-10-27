@@ -337,6 +337,7 @@ mod tests {
         let push = PushMessage {
             t: PushKind::Pair,
             id: "p1".to_owned(),
+            p: None,
         };
         let body = message_body("device-token", &push);
         assert_eq!(
@@ -384,6 +385,7 @@ mod tests {
         let push = PushMessage {
             t: PushKind::Req,
             id: "live-check".to_owned(),
+            p: None,
         };
         let error = sender.send("not-a-real-device-token", &push).await.expect_err("a bogus token must not be sent");
         assert!(error.contains("400") && error.contains("INVALID_ARGUMENT"), "unexpected answer: {error}");

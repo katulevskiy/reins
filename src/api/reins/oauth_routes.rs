@@ -966,6 +966,7 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
             PushMessage {
                 t: PushKind::Pair,
                 id: request.id.0.clone(),
+                p: None,
             },
         );
     }

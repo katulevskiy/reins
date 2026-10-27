@@ -184,22 +184,29 @@ pub async fn sync_once(conn: &DbConn) -> Result<usize, String> {
             applied += 1;
         }
         if !full {
-            // Prioritize new revocations; at most ten deferred cleanups per tick, rotating past blocked accounts.
-            let after = ReinsSetting::get(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?.unwrap_or_default();
-            let pending = ReinsSetting::pending_workos_deletions(&after, conn).await.map_err(|e| e.to_string())?;
-            if pending.is_empty() {
-                ReinsSetting::remove(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?;
-            }
-            for pending in pending {
-                let uuid = crate::db::models::UserId::from(pending.value);
-                if let Err(e) = finish_deletion(&uuid, &pending.name, conn).await {
-                    warn!("WorkOS sync: account {uuid} cleanup deferred: {e}");
-                }
-                ReinsSetting::set(CLEANUP_CURSOR, &pending.name, conn).await.map_err(|e| e.to_string())?;
-            }
+            drain_deletions(conn).await?;
             return Ok(applied);
         }
     }
+}
+
+/// Finishes up to ten pending account deletions (a WorkOS `user.deleted`, an account deleting itself, or an org's
+/// directory deleting a member), rotating past blocked accounts. The user sync runs it every tick, and so does the
+/// organizations' directory sync, so the queue drains with either one on.
+pub async fn drain_deletions(conn: &DbConn) -> Result<(), String> {
+    let after = ReinsSetting::get(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?.unwrap_or_default();
+    let pending = ReinsSetting::pending_workos_deletions(&after, conn).await.map_err(|e| e.to_string())?;
+    if pending.is_empty() {
+        ReinsSetting::remove(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?;
+    }
+    for pending in pending {
+        let uuid = crate::db::models::UserId::from(pending.value);
+        if let Err(e) = finish_deletion(&uuid, &pending.name, conn).await {
+            warn!("WorkOS sync: account {uuid} cleanup deferred: {e}");
+        }
+        ReinsSetting::set(CLEANUP_CURSOR, &pending.name, conn).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 async fn reins_user(workos_user_id: &str, conn: &DbConn) -> Option<User> {

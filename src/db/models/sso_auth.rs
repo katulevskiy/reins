@@ -43,8 +43,8 @@ pub struct OIDCAuthenticatedUser {
     pub workos: Option<WorkosSignIn>,
 }
 
-/// What a WorkOS sign-in says about how it happened.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// What a WorkOS sign-in says about how it happened. Its `Debug` never shows the provider token.
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct WorkosSignIn {
     /// `authentication_method`: `SSO`, `GoogleOAuth`, `GitHubOAuth`, `Passkey`, …
     #[serde(default)]
@@ -56,6 +56,16 @@ pub struct WorkosSignIn {
     /// the member's organization membership with it. Used during the sign-in only, never stored.
     #[serde(skip)]
     pub provider_token: Option<String>,
+}
+
+impl std::fmt::Debug for WorkosSignIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkosSignIn")
+            .field("method", &self.method)
+            .field("organization_id", &self.organization_id)
+            .field("provider_token", &self.provider_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl_FromToSqlText!(OIDCAuthenticatedUser);

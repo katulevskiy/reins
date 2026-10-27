@@ -424,6 +424,7 @@ mod tests {
         PushMessage {
             t,
             id: id.to_owned(),
+            p: None,
         }
     }
 

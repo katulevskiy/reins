@@ -335,6 +335,7 @@ async fn put_device(
             PushMessage {
                 t: PushKind::Replaced,
                 id: String::new(),
+                p: None,
             },
         );
     }

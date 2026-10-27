@@ -525,6 +525,157 @@ pub async fn sync_once(source: &dyn EventSource, conn: &DbConn, pool: Option<&Db
     }
 }
 
+/// How often every bound directory is listed again, besides right after it is bound.
+const BACKFILL_EVERY: Duration = Duration::from_secs(30 * 60);
+
+static BACKFILL_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Lists every bound directory at the next tick (a directory was just bound: its events before the binding were
+/// dropped, so its users and groups come from listing it).
+pub fn backfill_soon() {
+    BACKFILL_NOW.store(true, std::sync::atomic::Ordering::SeqCst);
+    nudge();
+}
+
+/// A directory's users and groups as WorkOS lists them now.
+#[rocket::async_trait]
+pub trait DirectoryListing: Send + Sync {
+    async fn users(&self, directory: &str) -> Result<Vec<Value>, String>;
+    async fn groups(&self, directory: &str) -> Result<Vec<Value>, String>;
+}
+
+/// `GET /directory_users` and `GET /directory_groups` with the server's key, every page.
+pub struct WorkosListing;
+
+async fn list_all(path: &str, directory: &str) -> Result<Vec<Value>, String> {
+    let base = crate::sso_workos::api_base().map_err(|e| format!("{e:?}"))?;
+    let client = crate::sso_workos::http_client().map_err(|e| format!("{e:?}"))?;
+    let mut out = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..1_000 {
+        let mut url = url::Url::parse(&format!("{base}/{path}")).map_err(|e| e.to_string())?;
+        url.query_pairs_mut().append_pair("directory", directory).append_pair("limit", "100");
+        if let Some(a) = &after {
+            url.query_pairs_mut().append_pair("after", a);
+        }
+        let response = client
+            .get(url)
+            .bearer_auth(crate::sso_workos::api_key())
+            .send()
+            .await
+            .map_err(|e| format!("could not reach WorkOS: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!("WorkOS answered {}", response.status()));
+        }
+        let page: Value = response.json().await.map_err(|e| format!("unexpected WorkOS list: {e}"))?;
+        out.extend(page["data"].as_array().cloned().unwrap_or_default());
+        after = page["list_metadata"]["after"].as_str().map(str::to_owned);
+        if after.is_none() {
+            return Ok(out);
+        }
+    }
+    Err("the directory listing did not end".to_owned())
+}
+
+#[rocket::async_trait]
+impl DirectoryListing for WorkosListing {
+    async fn users(&self, directory: &str) -> Result<Vec<Value>, String> {
+        list_all("directory_users", directory).await
+    }
+
+    async fn groups(&self, directory: &str) -> Result<Vec<Value>, String> {
+        list_all("directory_groups", directory).await
+    }
+}
+
+/// Applies a complete listing of `tenant`'s directory: its groups, its users and their group memberships, as the
+/// events would have; then the members it linked before whose directory id is gone are deprovisioned (the directory
+/// deleted them while nothing listened). One transaction.
+pub fn q_backfill(
+    c: &mut DbConnInner,
+    tenant: &ReinsOrg,
+    users: &[Value],
+    groups: &[Value],
+    now: i64,
+) -> Result<Vec<Removal>, OrgError> {
+    let (Some(directory), Some(workos)) = (tenant.directory_id.as_deref(), tenant.workos_org_id.as_deref()) else {
+        return Ok(Vec::new());
+    };
+    let event = |kind: &str, data: &Value| {
+        let mut data = data.clone();
+        data["directory_id"] = json!(directory);
+        data["organization_id"] = json!(workos);
+        Event {
+            id: String::new(),
+            event: kind.to_owned(),
+            data,
+        }
+    };
+    let mut removals = Vec::new();
+    for g in groups {
+        removals.extend(apply(c, &plan(&event("dsync.group.updated", g)), now)?);
+    }
+    let mut listed = std::collections::HashSet::new();
+    for u in users {
+        if let Some(id) = u.get("id").and_then(Value::as_str) {
+            listed.insert(id.to_owned());
+        }
+        removals.extend(apply(c, &plan(&event("dsync.user.updated", u)), now)?);
+        let user_id = u.get("id").and_then(Value::as_str).unwrap_or_default();
+        for g in u.get("groups").and_then(Value::as_array).cloned().unwrap_or_default() {
+            if let Some(group_id) = g.get("id").and_then(Value::as_str) {
+                let added =
+                    event("dsync.group.user_added", &json!({"user": {"id": user_id}, "group": {"id": group_id}}));
+                removals.extend(apply(c, &plan(&added), now)?);
+            }
+        }
+    }
+    let org = tenant.org_uuid.as_str();
+    for m in reins_org::q_members(c, org)? {
+        let Some(external) = m.external_id.as_deref() else {
+            continue;
+        };
+        let user = m.user_uuid.to_string();
+        let active = reins_org::q_member_state(c, org, &user)?.is_some_and(|s| s.is_active());
+        if active && !listed.contains(external) {
+            removals.extend(deprovision::q_deprovision(c, org, &user, Reason::DirectoryDelete, None, now)?);
+        }
+    }
+    Ok(removals)
+}
+
+/// Lists and applies every bound directory. A listing that fails changes nothing for that tenant.
+pub async fn backfill_all(
+    listing: &dyn DirectoryListing,
+    conn: &DbConn,
+    pool: Option<&DbPool>,
+) -> Result<usize, String> {
+    let tenants = conn.run(|c| reins_org::q_bound_directories(c)).await.map_err(|e| e.to_string())?;
+    let mut done = 0;
+    for tenant in tenants.into_iter().filter(|t| t.tier().scim()) {
+        let Some(directory) = tenant.directory_id.clone() else {
+            continue;
+        };
+        let (users, groups) = match (listing.users(&directory).await, listing.groups(&directory).await) {
+            (Ok(u), Ok(g)) => (u, g),
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("Directory backfill of org {}: {e}", tenant.org_uuid);
+                continue;
+            }
+        };
+        let now = super::super::now_unix();
+        let removals = conn
+            .run(move |c| c.transaction(|c| q_backfill(c, &tenant, &users, &groups, now)))
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        for removal in removals {
+            deprovision::finish(removal, pool).await;
+        }
+        done += 1;
+    }
+    Ok(done)
+}
+
 /// Starts the background task (once, inside the runtime).
 pub fn spawn(pool: DbPool) {
     if !enabled() {
@@ -533,13 +684,28 @@ pub fn spawn(pool: DbPool) {
     let every = Duration::from_secs(CONFIG.reins_workos_dsync_secs());
     info!("Directory sync: reading WorkOS directory events every {}s", every.as_secs());
     tokio::spawn(async move {
+        let mut last_backfill = tokio::time::Instant::now();
         loop {
             match pool.get().await {
-                Ok(conn) => match sync_once(&WorkosEvents, &conn, Some(&pool)).await {
-                    Ok(0) => {}
-                    Ok(n) => info!("Directory sync: applied {n} events"),
-                    Err(e) => warn!("Directory sync failed: {e}"),
-                },
+                Ok(conn) => {
+                    match sync_once(&WorkosEvents, &conn, Some(&pool)).await {
+                        Ok(0) => {}
+                        Ok(n) => info!("Directory sync: applied {n} events"),
+                        Err(e) => warn!("Directory sync failed: {e}"),
+                    }
+                    if BACKFILL_NOW.swap(false, std::sync::atomic::Ordering::SeqCst)
+                        || last_backfill.elapsed() >= BACKFILL_EVERY
+                    {
+                        last_backfill = tokio::time::Instant::now();
+                        if let Err(e) = backfill_all(&WorkosListing, &conn, Some(&pool)).await {
+                            warn!("Directory backfill failed: {e}");
+                        }
+                    }
+                    // Deprovisioned accounts' erasure, also when the user sync is off.
+                    if let Err(e) = crate::api::reins::workos_sync::drain_deletions(&conn).await {
+                        warn!("Directory sync: deletions deferred: {e}");
+                    }
+                }
                 Err(e) => warn!("Directory sync: no database connection: {e:?}"),
             }
             tokio::select! {
@@ -806,6 +972,34 @@ mod tests {
         run(&mut c, &ev("dsync.user.created", dir_user("directory_user_7", "vee@acme.com", "active")));
         assert!(reins_org::q_membership(&mut c, "o1", "v1").unwrap().is_none());
         assert_eq!(reins_org::q_member_state(&mut c, "o2", "v1").unwrap().unwrap().state, state::ACTIVE);
+    }
+
+    #[test]
+    fn a_listing_backfills_what_the_events_missed_and_removes_what_is_gone() {
+        let mut c = db();
+        bound_tenant(&mut c);
+        // Lee was provisioned by an event; then the directory was bound to nothing for a while.
+        run(&mut c, &ev("dsync.user.created", dir_user("directory_user_lee", "lee@acme.com", "active")));
+        let tenant = reins_org::q_org(&mut c, "o1").unwrap().unwrap();
+        let mut kim = dir_user("directory_user_kim", "kim@acme.com", "active");
+        kim["groups"] = json!([{"id": "directory_group_sec", "name": "Security"}]);
+        let groups = [json!({"id": "directory_group_sec", "name": "Security"})];
+        let removed = q_backfill(&mut c, &tenant, &[kim], &groups, 20).unwrap();
+        // Kim and her group arrive; Lee, gone from the directory, is deprovisioned.
+        let kim_m = member_by_email(&mut c, "kim@acme.com").unwrap();
+        let g = group_by_external(&mut c, "o1", "directory_group_sec").unwrap().unwrap();
+        assert_eq!(reins_org::q_group_members(&mut c, &g).unwrap(), [kim_m.uuid.to_string()]);
+        assert_eq!(removed.len(), 1);
+        let lee = member_by_email(&mut c, "lee@acme.com").unwrap().user_uuid.to_string();
+        assert_eq!(
+            reins_org::q_member_state(&mut c, "o1", &lee).unwrap().unwrap().state,
+            state::DEPROVISIONED_BY_DIRECTORY
+        );
+        // A member who joined before the directory (no directory id) is never removed by a listing.
+        add_user(&mut c, "creator", "owner@acme.com");
+        add_member(&mut c, "o1", "m_owner", "creator", ACTIVE_STATUS);
+        q_backfill(&mut c, &tenant, &[], &[], 30).unwrap();
+        assert!(reins_org::q_member_state(&mut c, "o1", "creator").unwrap().unwrap().is_active());
     }
 
     #[test]

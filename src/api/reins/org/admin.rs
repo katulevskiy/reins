@@ -29,6 +29,8 @@ use crate::db::{
 
 /// How long a change waits for its second person.
 pub const CHANGE_TTL_SECS: i64 = 7 * 24 * 3600;
+/// Changes that may wait at once in one org (older ones lapse after [`CHANGE_TTL_SECS`]).
+pub const MAX_PENDING: usize = 50;
 
 /// What [`propose`] did.
 #[derive(Debug, PartialEq, Eq)]
@@ -121,6 +123,10 @@ pub fn propose(
                 now,
             )?;
             return Ok((Proposed::Applied, followups));
+        }
+        let waiting = reins_org::q_pending_changes(c, org)?;
+        if waiting.iter().filter(|ch| ch.expires_at > now).count() >= MAX_PENDING {
+            return Err(OrgError::Invalid("Too many changes are waiting. Approve or reject some first."));
         }
         let uuid = crate::util::get_uuid();
         reins_org::q_insert_change(

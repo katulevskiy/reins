@@ -48,6 +48,29 @@ pub fn append(
     detail: &serde_json::Value,
     at: i64,
 ) -> QueryResult<i64> {
+    let mut tries = 0;
+    loop {
+        match append_once(c, org, kind, actor, subject, detail, at) {
+            // Another append took this sequence number meanwhile: read the new head and chain after it.
+            Err(diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _))
+                if tries < 3 =>
+            {
+                tries += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+fn append_once(
+    c: &mut DbConnInner,
+    org: &str,
+    kind: &str,
+    actor: Option<&str>,
+    subject: Option<&str>,
+    detail: &serde_json::Value,
+    at: i64,
+) -> QueryResult<i64> {
     c.transaction(|c| {
         let head: Option<(i64, String)> = reins_org_events::table
             .filter(reins_org_events::org_uuid.eq(org))

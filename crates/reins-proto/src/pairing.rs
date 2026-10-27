@@ -82,6 +82,18 @@ pub enum PushKind {
 pub struct PushMessage {
     pub t: PushKind,
     pub id: String,
+    /// Which account it is for ([`push_profile_tag`] of the receiving user), so a phone with a Personal and a work
+    /// profile hands it to the right one. Older servers send none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p: Option<String>,
+}
+
+/// The tag a push carries for the account `user_uuid` (16 hex of SHA-256 of a fixed context and the id): stable, and
+/// meaningless to anyone without the id.
+#[must_use]
+pub fn push_profile_tag(user_uuid: &str) -> String {
+    let digest = crate::canon::sha256(format!("reins/push-profile/v1\n{user_uuid}").as_bytes());
+    crate::canon::hex32(&digest)[..16].to_owned()
 }
 
 /// The suffix of a [`PushKind::Sync`] id that asks for an alert (FCM data values are strings, so the flag rides in the
@@ -101,6 +113,7 @@ impl PushMessage {
             } else {
                 seq.to_string()
             },
+            p: None,
         }
     }
 
@@ -119,6 +132,22 @@ impl PushMessage {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pushes_name_their_account_by_a_tag() {
+        let tag = push_profile_tag("2c4b2a6e-0000-4000-8000-000000000001");
+        assert_eq!(tag.len(), 16);
+        assert_eq!(tag, push_profile_tag("2c4b2a6e-0000-4000-8000-000000000001"));
+        assert_ne!(tag, push_profile_tag("2c4b2a6e-0000-4000-8000-000000000002"));
+        let mut push = PushMessage::sync(3, false);
+        assert_eq!(serde_json::to_value(&push).unwrap(), serde_json::json!({"t": "sync", "id": "3"}));
+        push.p = Some(tag.clone());
+        assert_eq!(serde_json::to_value(&push).unwrap()["p"], serde_json::json!(tag));
+        // Older servers' pushes still read.
+        let old: PushMessage = serde_json::from_str(r#"{"t":"req","id":"r1"}"#).unwrap();
+        assert_eq!(old.p, None);
+    }
+
     use serde_json::json;
 
     use super::*;
@@ -128,6 +157,7 @@ mod tests {
         let p = PushMessage {
             t: PushKind::Req,
             id: "r1".into(),
+            p: None,
         };
         assert_eq!(serde_json::to_value(&p).unwrap(), json!({"t": "req", "id": "r1"}));
     }
@@ -137,6 +167,7 @@ mod tests {
         let p = PushMessage {
             t: PushKind::Replaced,
             id: String::new(),
+            p: None,
         };
         assert_eq!(serde_json::to_value(&p).unwrap(), json!({"t": "replaced", "id": ""}));
         assert_eq!(serde_json::from_value::<PushMessage>(json!({"t": "replaced", "id": ""})).unwrap(), p);
@@ -157,6 +188,7 @@ mod tests {
             let p = PushMessage {
                 t: PushKind::Sync,
                 id: bad.to_owned(),
+                p: None,
             };
             assert_eq!(p.sync_head(), None, "{bad}");
         }

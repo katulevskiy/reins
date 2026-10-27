@@ -448,6 +448,7 @@ async fn announce_new_primary(
             PushMessage {
                 t: PushKind::Replaced,
                 id: String::new(),
+                p: None,
             },
         );
     }
@@ -458,6 +459,7 @@ async fn announce_new_primary(
         PushMessage {
             t: PushKind::Handover,
             id: handover_id.unwrap_or_else(|| entry.epoch.to_string()),
+            p: None,
         },
     );
     if entry.reason == RosterReason::Recovery {
@@ -876,6 +878,7 @@ async fn post_handover(
             PushMessage {
                 t: PushKind::Handover,
                 id: created.id.clone(),
+                p: None,
             },
         );
     }
