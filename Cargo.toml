@@ -6,7 +6,7 @@ repository = "https://github.com/katulevskiy/reins"
 publish = false
 
 [workspace]
-members = ["macros", "crates/reins-proto", "crates/reins-policy", "crates/reins-audit", "crates/reins-core", "crates/reins-e2e", "crates/reins-desktop", "crates/reins-desktop-app", "crates/reins-laya", "crates/reins-replay"]
+members = ["macros", "crates/reins-proto", "crates/reins-policy", "crates/reins-audit", "crates/reins-executor", "crates/reins-core", "crates/reins-e2e", "crates/reins-desktop", "crates/reins-desktop-app", "crates/reins-laya", "crates/reins-replay"]
 
 [package]
 name = "vaultwarden"

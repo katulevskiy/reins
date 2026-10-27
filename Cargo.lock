@@ -8440,6 +8440,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "reins-executor"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "reins-audit",
+ "reins-policy",
+ "reins-proto",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
 name = "reins-laya"
 version = "0.1.0"
 dependencies = [
