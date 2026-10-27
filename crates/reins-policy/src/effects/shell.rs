@@ -584,6 +584,19 @@ impl<'a> Walk<'a> {
         });
     }
 
+    /// A path whose name, size, times or link is read, never its contents (`ls`, `du`, `stat`): no secret is read.
+    pub fn read_meta(&mut self, e: &Exp) {
+        self.note(e);
+        let path = self.path(e);
+        if device(&path.path) || path.area.in_workspace() {
+            return;
+        }
+        self.effect(Effect::FileRead {
+            path,
+            kind: FileKind::Other,
+        });
+    }
+
     /// The path an expanded word names, classified.
     pub fn path(&mut self, e: &Exp) -> PathRef {
         self.note(e);

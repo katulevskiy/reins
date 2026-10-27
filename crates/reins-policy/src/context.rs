@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::effects::{self, Analysis, Area, Channel, CodeSource, Effect, NetMethod};
+use crate::shell::ast;
 
 /// Whose a thing is, least trusted last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -514,6 +515,101 @@ pub enum RepoAt {
     Unknown,
 }
 
+/// A word as written when it is literal but for a leading `~`.
+fn tilde_literal(w: &ast::Word) -> Option<String> {
+    match w.0.split_first() {
+        Some((ast::Part::Tilde(None), rest)) => ast::Word(rest.to_vec()).literal().map(|r| format!("~{r}")),
+        _ => w.literal(),
+    }
+}
+
+/// The folder a simple command `git worktree add [options] <folder> [<commit>]` adds, as written (literal, absolute or
+/// under `~`), for the options git has. `None` for anything else.
+fn worktree_add(c: &ast::Command) -> Option<String> {
+    let ast::Command::Simple(s) = c else {
+        return None;
+    };
+    if !s.assigns.is_empty() {
+        return None;
+    }
+    let words: Vec<String> = s.words.iter().map(tilde_literal).collect::<Option<_>>()?;
+    let rest = match words.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["git", "worktree", "add", rest @ ..] => rest.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>(),
+        _ => return None,
+    };
+    let mut positional = Vec::new();
+    let mut k = 0;
+    let mut options = true;
+    while let Some(w) = rest.get(k) {
+        match w.as_str() {
+            "--" if options => options = false,
+            "-f"
+            | "--force"
+            | "-d"
+            | "--detach"
+            | "--checkout"
+            | "--no-checkout"
+            | "--lock"
+            | "-q"
+            | "--quiet"
+            | "--track"
+            | "--no-track"
+            | "--guess-remote"
+            | "--no-guess-remote"
+            | "--orphan"
+            | "--relative-paths"
+            | "--no-relative-paths"
+                if options => {}
+            "-b" | "-B" | "--reason" if options => k += 1,
+            o if options && o.starts_with("--reason=") => {}
+            o if options && o.starts_with('-') => return None,
+            o => positional.push(o.to_owned()),
+        }
+        k += 1;
+    }
+    match positional.as_slice() {
+        [dir] | [dir, _] if dir.starts_with('/') || dir.starts_with('~') => Some(dir.clone()),
+        _ => None,
+    }
+}
+
+/// How many times `command` moves to `target` (absolute) right after adding it as a worktree: at the top level, a
+/// `git worktree add <target>` joined to a later `cd <target>` by `&&` only, so the `cd` runs only when git made the
+/// worktree (git fails on a folder that exists). There, the command is still in the repository it runs in.
+fn fresh_worktree_cds(command: &str, cwd: &str, home: &str, target: &str) -> usize {
+    let parsed = ast::parse(command);
+    if !parsed.complete {
+        return 0;
+    }
+    let is_cd = |q: &ast::Pipeline| {
+        matches!(q.commands.as_slice(), [ast::Command::Simple(s)]
+            if s.assigns.is_empty()
+                && s.words.len() == 2
+                && s.words[0].literal().as_deref() == Some("cd")
+                && tilde_literal(&s.words[1]).is_some_and(|t| effects::normalize(&t, cwd, home) == target))
+    };
+    let mut count = 0;
+    for ao in &parsed.script.0 {
+        // The first add of `target` in the list; every `cd` after it joined by `&&` only.
+        let added = ao.pipelines.iter().position(|p| {
+            !p.negated
+                && matches!(p.commands.as_slice(), [add] if worktree_add(add)
+                    .is_some_and(|d| effects::normalize(&d, cwd, home) == target))
+        });
+        if let Some(k) = added {
+            count += ao
+                .pipelines
+                .iter()
+                .enumerate()
+                .skip(k + 1)
+                .take_while(|(j, _)| !ao.ors[*j - 1])
+                .filter(|(_, q)| is_cd(q))
+                .count();
+        }
+    }
+    count
+}
+
 /// Where `command`, run in `cwd` (in the repository at `top`), acts.
 #[must_use]
 pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoAt {
@@ -548,6 +644,23 @@ pub fn repo_at(command: &str, cwd: &str, top: Option<&str>, home: &str) -> RepoA
                     _ => return RepoAt::Unknown,
                 };
                 if inside(&target) {
+                    // Back in the repository `cwd` is in after a leading `cd` elsewhere: two repositories.
+                    if at != RepoAt::Cwd {
+                        return RepoAt::Unknown;
+                    }
+                    continue;
+                }
+                // A worktree the command just added is the same repository, when every move there (as the words
+                // read) is one that runs only once git added it.
+                let moves = tokens
+                    .windows(2)
+                    .filter(|w| {
+                        matches!(w[0].as_str(), "cd" | "pushd")
+                            && literal(&w[1])
+                            && effects::normalize(&w[1], cwd, home) == target
+                    })
+                    .count();
+                if moves > 0 && fresh_worktree_cds(command, cwd, home, &target) == moves {
                     continue;
                 }
                 // Only a leading `cd` says where everything after it runs.
@@ -1163,9 +1276,36 @@ mod tests {
             "git --config-env=remote.origin.url=EVIL push origin",
             "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=x git push origin",
             "GIT_CONFIG_PARAMETERS=x git push",
+            // Back in `cwd`'s repository after a leading `cd` elsewhere: two repositories.
+            "cd ~/dev/other && git status; cd /home/me/dev/app && git push origin feat/x",
+            // A worktree added, but the `cd` may run when git failed (the folder may be another repository).
+            "git worktree add ~/tmp/w; cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/w || cd ~/tmp/w && git push origin feat/x",
+            "! git worktree add ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/w | cat && cd ~/tmp/w && git push origin feat/x",
+            "echo 'git worktree add ~/tmp/w &&' && cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/other && cd ~/tmp/w && git push origin feat/x",
+            "git worktree add --unknown ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "git -C ~/dev/other worktree add ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "for x in a; do git worktree add ~/tmp/w && cd ~/tmp/w; done; git push origin feat/x",
+            "git worktree add ~/tmp/w && cd ~/tmp/w; cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/w && cd ~/tmp/w; builtin cd ~/tmp/w && git push origin feat/x",
+            "git worktree add ~/tmp/w && echo 'cd ~/tmp/w' && cd ~/tmp/w && git push origin feat/x",
         ] {
             assert_eq!(repo_at(c, cwd, top, home), RepoAt::Unknown, "{c}");
         }
+        // A worktree the command just added, then moved to with `&&` only: the same repository.
+        for c in [
+            "git worktree add -q --detach ~/tmp/w && cd ~/tmp/w && git push origin feat/x",
+            "git fetch -q origin x && git worktree add -q -B x ~/tmp/w origin/x && cd ~/tmp/w && git push origin x; ls",
+            "cd /home/me/dev/app && git worktree add /home/me/tmp/w && git status && cd /home/me/tmp/w && git push",
+        ] {
+            assert_eq!(repo_at(c, cwd, top, home), RepoAt::Cwd, "{c}");
+        }
+        assert_eq!(
+            repo_at("cd ~/dev/other && git worktree add ~/tmp/w && cd ~/tmp/w && git push origin x", cwd, top, home),
+            RepoAt::Dir("/home/me/dev/other".to_owned())
+        );
         for c in [
             "git push origin main",
             "cd .. && git push origin main",
