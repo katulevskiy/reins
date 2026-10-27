@@ -495,6 +495,19 @@ pub fn q_set_lease_issued(
     Ok(n == 1)
 }
 
+/// Sets a pending lease's expiry (from its decision: the lease lives from then).
+pub fn q_set_lease_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -> QueryResult<()> {
+    diesel::update(
+        reins_org_leases::table
+            .filter(reins_org_leases::org_uuid.eq(org))
+            .filter(reins_org_leases::uuid.eq(id))
+            .filter(reins_org_leases::state.eq(lease_state::PENDING)),
+    )
+    .set(reins_org_leases::expires_at.eq(expires_at))
+    .execute(c)
+    .map(drop)
+}
+
 /// Revokes every pending or issued lease of `user` in `org` and returns them (deprovisioning). The issued ones are
 /// then revoked upstream by the executor ([`q_leases_to_revoke`]); the sealed credential is dropped here.
 pub fn q_revoke_leases_of_user(c: &mut DbConnInner, org: &str, user: &str, at: i64) -> QueryResult<Vec<ReinsOrgLease>> {

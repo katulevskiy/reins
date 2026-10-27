@@ -31,6 +31,8 @@ pub mod api;
 pub mod audit;
 pub mod console;
 pub mod console_pages;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod decisions;
 pub mod deprovision;
 pub mod dns;
 pub mod gate;
