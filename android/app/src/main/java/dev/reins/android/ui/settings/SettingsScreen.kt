@@ -166,7 +166,7 @@ fun SettingsScreen(
                         "Wallpaper",
                         Glyph.Photo,
                         Modifier.testTag("openWallpaper"),
-                        value = wall.label,
+                        value = wall.image.label,
                         divider = false,
                         leading = { WallpaperThumb(wall, dark, Modifier.size(32.dp), radius = 9.dp) },
                         onClick = onWallpaper,

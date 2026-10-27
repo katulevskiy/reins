@@ -1,4 +1,4 @@
-package dev.reins.android.ui.settings
+package dev.reins.android.design
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -9,23 +9,35 @@ import androidx.compose.ui.graphics.toArgb
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** The looks a photo can take behind Activity (Settings › Wallpaper › Your photo). */
+/** The looks a wallpaper can take behind Activity (Settings › Wallpaper): any image, shipped or the owner's own. */
 enum class PhotoEffect(val label: String) {
-    Photo("Photo"),
+    /** The image as it is. */
+    Original("Original"),
     Dither("Dither"),
     Scanlines("Scanlines"),
     Halftone("Halftone"),
     Colour("Colour"),
+    ;
+
+    companion object {
+        fun named(name: String?): PhotoEffect? = entries.firstOrNull { it.name == name }
+    }
 }
 
 /**
- * Turning a photo into a wallpaper on this phone: cropped to the shipped art's shape (780 × 1000, from its top), given
- * an effect drawn in the page's ink on its paper, and faded into the paper at its foot ([fade] 0 none … 1 from a third
- * of the way down). Pure functions on bitmaps; nothing leaves the phone.
+ * Turning an image into a wallpaper on this phone: a photo cropped to the shipped art's shape (780 × 1000, from its
+ * top), given an effect drawn in the page's ink on its paper, and faded into the paper at its foot ([fade] 0 none … 1
+ * from a third of the way down). Pure functions on bitmaps; nothing leaves the phone.
  */
 object PhotoEffects {
     const val WIDTH = 780
     const val HEIGHT = 1000
+
+    /** The page a theme's wallpaper fades into. */
+    fun paper(dark: Boolean): Color = (if (dark) RColors.Dark else RColors.Light).paper
+
+    /** The ink a theme's effects draw in. */
+    fun ink(dark: Boolean): Color = if (dark) Color(0xFFE6E8FF) else Color(0xFF2A2932)
 
     /** [src] covered into 780 × 1000, cropped from the top centre. */
     fun fit(src: Bitmap): Bitmap {
@@ -43,6 +55,9 @@ object PhotoEffects {
 
     private val BAYER = intArrayOf(0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5)
 
+    /** [apply] in a theme's paper and ink. */
+    fun apply(src: Bitmap, effect: PhotoEffect, fade: Float, dark: Boolean): Bitmap = apply(src, effect, fade, paper(dark), ink(dark))
+
     fun apply(src: Bitmap, effect: PhotoEffect, fade: Float, paper: Color, ink: Color): Bitmap {
         val w = src.width
         val h = src.height
@@ -52,6 +67,8 @@ object PhotoEffects {
         val k = ink.toArgb()
         val cell = (w / 195).coerceAtLeast(1) // the boards' dither dots: about 2 px on a 390-wide page
         val dot = (w / 65).coerceAtLeast(3) // halftone cells
+        // How much ink: light pixels are ink on a dark page, dark pixels on a light one.
+        val darkPage = luminance(p) < 0.5f
         for (y in 0 until h) {
             for (x in 0 until w) {
                 val i = y * w + x
@@ -60,11 +77,9 @@ object PhotoEffects {
                 val g = (c shr 8) and 0xFF
                 val b = c and 0xFF
                 val lum = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
-                // How much ink: light pixels are ink on a dark page, dark pixels on a light one.
-                val darkPage = luminance(p) < 0.5f
                 val amount = if (darkPage) lum else 1f - lum
                 px[i] = when (effect) {
-                    PhotoEffect.Photo -> c
+                    PhotoEffect.Original -> c
                     PhotoEffect.Colour -> saturate(c, 1.25f)
                     PhotoEffect.Dither -> {
                         val t = (BAYER[((y / cell) % 4) * 4 + (x / cell) % 4] + 0.5f) / 16f

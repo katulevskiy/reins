@@ -2,6 +2,7 @@ package dev.reins.android.design
 
 import android.app.UiModeManager
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -14,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import kotlin.math.roundToInt
 
 /** What the drawing of the app follows, beyond the theme. */
 @Immutable
@@ -46,47 +48,98 @@ enum class ThemeChoice(val label: String) {
 }
 
 /**
+ * A theme's wallpaper: three separate choices. Any [image] (shipped or the owner's photo) takes any [effect] and any
+ * [fade] into the page. Original with no fade draws the image as it is.
+ */
+@Immutable
+data class WallpaperChoice(
+    val image: Wallpaper,
+    val effect: PhotoEffect = PhotoEffect.Original,
+    /** 0 none … 1 from a third of the way down ([PhotoEffects.apply]). */
+    val fade: Float = 0f,
+) {
+    /** The fade in hundredths: the step the slider keeps and the made pictures are keyed by. */
+    val fadeStep: Int get() = (fade.coerceIn(0f, 1f) * 100f).roundToInt()
+
+    /** Whether the image is drawn as it is: no effect and no fade of its own. */
+    val plain: Boolean get() = effect == PhotoEffect.Original && fadeStep == 0
+}
+
+/**
  * The Appearance choices, kept on this phone: paper or graphite, the field grain, and the wallpaper for each theme
- * (Settings › Wallpaper; Halo in the dark and Torii dither in the light by default).
+ * (Settings › Wallpaper; Halo in the dark and Torii dither in the light by default, both as they are).
  */
 @Immutable
 data class AppearanceChoice(
     val grain: Boolean = true,
     val theme: ThemeChoice = ThemeChoice.System,
-    val wallpaperDark: Wallpaper = Wallpaper.Halo,
-    val wallpaperLight: Wallpaper = Wallpaper.ToriiDither,
+    val wallpaperDark: WallpaperChoice = WallpaperChoice(Wallpaper.Halo),
+    val wallpaperLight: WallpaperChoice = WallpaperChoice(Wallpaper.ToriiDither),
 ) {
-    fun wallpaper(dark: Boolean): Wallpaper = if (dark) wallpaperDark else wallpaperLight
+    fun wallpaper(dark: Boolean): WallpaperChoice = if (dark) wallpaperDark else wallpaperLight
+
+    fun withWallpaper(dark: Boolean, wallpaper: WallpaperChoice): AppearanceChoice =
+        if (dark) copy(wallpaperDark = wallpaper) else copy(wallpaperLight = wallpaper)
 }
 
 object Appearance {
     private const val PREFS = "appearance"
-    private const val KEY_WALL_DARK = "wallpaperDark"
-    private const val KEY_WALL_LIGHT = "wallpaperLight"
+
+    /** Before effects were separate: the image's name alone (a photo had its effect baked in). Read once, then gone. */
+    private const val OLD_WALL_DARK = "wallpaperDark"
+    private const val OLD_WALL_LIGHT = "wallpaperLight"
     private const val KEY_GRAIN = "grain"
     private const val KEY_THEME = "theme"
     private var state: MutableState<AppearanceChoice>? = null
 
+    private fun imageKey(dark: Boolean) = if (dark) "wallpaperDarkImage" else "wallpaperLightImage"
+
+    private fun effectKey(dark: Boolean) = if (dark) "wallpaperDarkEffect" else "wallpaperLightEffect"
+
+    private fun fadeKey(dark: Boolean) = if (dark) "wallpaperDarkFade" else "wallpaperLightFade"
+
     fun state(context: Context): MutableState<AppearanceChoice> = state ?: mutableStateOf(load(context)).also { state = it }
 
     fun set(context: Context, choice: AppearanceChoice) {
-        prefs(context).edit()
-            .putString(KEY_WALL_DARK, choice.wallpaperDark.name)
-            .putString(KEY_WALL_LIGHT, choice.wallpaperLight.name)
-            .putBoolean(KEY_GRAIN, choice.grain)
-            .putString(KEY_THEME, choice.theme.name)
-            .apply()
+        putWallpapers(prefs(context).edit(), choice).putBoolean(KEY_GRAIN, choice.grain).putString(KEY_THEME, choice.theme.name).apply()
         state(context).value = choice
     }
 
-    private fun load(context: Context): AppearanceChoice {
+    private fun putWallpapers(edit: SharedPreferences.Editor, choice: AppearanceChoice): SharedPreferences.Editor {
+        for (dark in listOf(true, false)) {
+            val w = choice.wallpaper(dark)
+            edit.putString(imageKey(dark), w.image.name).putString(effectKey(dark), w.effect.name).putFloat(fadeKey(dark), w.fade)
+        }
+        return edit
+    }
+
+    /** Sets one theme's wallpaper, keeping the rest. */
+    fun setWallpaper(context: Context, dark: Boolean, wallpaper: WallpaperChoice) {
+        set(context, state(context).value.withWallpaper(dark, wallpaper))
+    }
+
+    /** What is kept on this phone; the old one-key wallpaper is moved to the three keys (as it was: no effect). */
+    internal fun load(context: Context): AppearanceChoice {
         val p = prefs(context)
-        return AppearanceChoice(
-            wallpaperDark = Wallpaper.named(p.getString(KEY_WALL_DARK, null)) ?: Wallpaper.Halo,
-            wallpaperLight = Wallpaper.named(p.getString(KEY_WALL_LIGHT, null)) ?: Wallpaper.ToriiDither,
+        val old = p.contains(OLD_WALL_DARK) || p.contains(OLD_WALL_LIGHT)
+        fun wallpaper(dark: Boolean, default: Wallpaper): WallpaperChoice {
+            val image = Wallpaper.named(p.getString(imageKey(dark), null))
+                ?: Wallpaper.named(p.getString(if (dark) OLD_WALL_DARK else OLD_WALL_LIGHT, null))
+                ?: return WallpaperChoice(default)
+            return WallpaperChoice(
+                image,
+                PhotoEffect.named(p.getString(effectKey(dark), null)) ?: PhotoEffect.Original,
+                p.getFloat(fadeKey(dark), 0f).coerceIn(0f, 1f),
+            )
+        }
+        val choice = AppearanceChoice(
+            wallpaperDark = wallpaper(true, Wallpaper.Halo),
+            wallpaperLight = wallpaper(false, Wallpaper.ToriiDither),
             grain = p.getBoolean(KEY_GRAIN, true),
             theme = ThemeChoice.entries.firstOrNull { it.name == p.getString(KEY_THEME, null) } ?: ThemeChoice.System,
         )
+        if (old) putWallpapers(p.edit().remove(OLD_WALL_DARK).remove(OLD_WALL_LIGHT), choice).apply()
+        return choice
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
