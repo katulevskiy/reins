@@ -229,4 +229,24 @@ final class ActivitySearchTests: XCTestCase {
         let facets = try await core.activityFacets()
         XCTAssertTrue(facets.services.contains("gmail"))
     }
+
+    /// An entry beyond what the app holds (older than the newest read at once, or dropped from what days and searches
+    /// brought in) opens: it is read from the core by its id and kept. "Not found" only when the core has none.
+    @MainActor
+    func testAnEntryTheAppDoesNotHoldIsReadFromTheCoreByItsId() async throws {
+        let core = DemoReinsCore(signedIn: true, syncCap: 0.3)
+        let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        let history = try await core.activity(limit: 500)
+        let oldest = try XCTUnwrap(history.last)
+        XCTAssertNil(model.entry(oldest.id), "nothing read yet")
+        let read = try await model.loadEntry(oldest.id)
+        XCTAssertEqual(read, oldest)
+        XCTAssertEqual(model.entry(oldest.id), oldest, "kept once read")
+        let none = try await model.loadEntry(-1)
+        XCTAssertNil(none)
+        let found = await EntryMissing.read(oldest.id, model: model)
+        XCTAssertNil(found)
+        let gone = await EntryMissing.read(-1, model: model)
+        XCTAssertEqual(gone, .gone)
+    }
 }

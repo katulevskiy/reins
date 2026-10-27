@@ -14,6 +14,8 @@ struct ActivityDetailScreen: View {
     @State private var diffs: PushDiffs?
     /// Until the core has answered nothing is drawn, so an entry with its approval never flashes the older page first.
     @State private var looked = false
+    /// Set once the core has said it has no such entry (or could not be read); until then a missing entry is read.
+    @State private var missing: EntryMissing?
 
     var body: some View {
         let entry = model.entry(entryId)
@@ -34,10 +36,17 @@ struct ActivityDetailScreen: View {
                 } else {
                     Color.clear
                 }
-            } else {
+            } else if case let .failed(message) = missing {
+                EmptyState(symbol: "list.bullet", title: "Can't open it", message: message)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("entryError")
+            } else if missing == .gone {
                 EmptyState(symbol: "list.bullet", title: "Not found")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("entryGone")
+            } else {
+                // Older than the history read at once: read from the core by its id.
+                Color.clear
             }
         }
         // Read again once the entry is there (a link can open it before the history has loaded).
@@ -71,6 +80,11 @@ struct ActivityDetailScreen: View {
     /// Reads the approval the entry kept. Without one (an older entry, or the core could not say) the entry shows what
     /// it kept itself.
     private func lookUp() async {
+        if model.entry(entryId) == nil {
+            // Once read it is kept, so this task runs again with the entry (its id changes).
+            missing = await EntryMissing.read(entryId, model: model)
+            return
+        }
         let shown = try? await model.core.activityApproval(entryId: entryId)
         if Task.isCancelled { return }
         if let shown, let entry = model.entry(entryId) {
@@ -252,6 +266,25 @@ private struct MessageLine: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .contentShape(Rectangle())
+    }
+}
+
+/// Why an entry being opened is not shown: the core has no such entry, or it could not be read.
+enum EntryMissing: Equatable {
+    case gone
+    case failed(String)
+
+    /// Reads entry `id` from the core when the app does not have it (`AppModel.loadEntry`): nil once it is there (or
+    /// when the read was cancelled), else why it is not.
+    @MainActor
+    static func read(_ id: Int64, model: AppModel) async -> EntryMissing? {
+        do {
+            let entry = try await model.loadEntry(id)
+            if Task.isCancelled { return nil }
+            return entry == nil ? .gone : nil
+        } catch {
+            return Task.isCancelled || error is CancellationError ? nil : .failed(error.userMessage)
+        }
     }
 }
 

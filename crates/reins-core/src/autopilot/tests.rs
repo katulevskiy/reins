@@ -4045,6 +4045,43 @@ async fn every_decision_goes_through_on_a_store_sealed_before_entry_snapshots() 
     }
 }
 
+/// An entry older than the newest the apps read at once (a day of Bypass logs hundreds) still opens by its id, named
+/// as the list names it; an id this device does not have is `None`, not an error.
+#[tokio::test]
+async fn an_entry_older_than_the_newest_read_at_once_opens_by_its_id() {
+    let env = env(false).await;
+    let core = &env.core;
+    let record = |n: i64| crate::store::AuditRecord {
+        seq: 0,
+        at: unix_now() - 3 * 86_400 + n,
+        connection_id: OLD.to_owned(),
+        connection_label: "Claude".to_owned(),
+        action: "send".to_owned(),
+        outcome: "sent".to_owned(),
+        detail: format!("entry {n}"),
+        grant_id: None,
+        service: "gmail".to_owned(),
+        account: Some(GMAIL.to_owned()),
+        count: 1,
+        info: crate::store::AuditInfo::default(),
+        op: String::new(),
+    };
+    let store = &core.engine().store;
+    let oldest = store.append_audit(&record(0)).unwrap();
+    for n in 1..=320 {
+        store.append_audit(&record(n)).unwrap();
+    }
+    let newest = core.activity(300).await.unwrap();
+    assert_eq!(newest.len(), 300);
+    assert!(newest.iter().all(|e| e.id != oldest), "the oldest is beyond what is read at once");
+
+    let entry = core.activity_entry(oldest).await.unwrap().expect("the oldest entry opens by its id");
+    assert_eq!((entry.id, entry.detail.as_str(), entry.service.as_str()), (oldest, "entry 0", "gmail"));
+    let listed = newest.last().unwrap();
+    assert_eq!(core.activity_entry(listed.id).await.unwrap().as_ref(), Some(listed), "the same as the list has it");
+    assert!(core.activity_entry(oldest + 10_000).await.unwrap().is_none());
+}
+
 /// An entry's snapshot that cannot be written (its table gone while the app runs) never stops a bypass: the request is
 /// approved, a desktop question too, and the AI gets its answer.
 #[tokio::test]

@@ -2752,6 +2752,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func activityCommitChange(entryId: Int64, shortSha: String) async throws  -> GitCommitView
     
     /**
+     * One Activity entry by its id, however far back (`activity` reads only the newest): to open an entry a day or a
+     * search brought in. `None` when this device has no such entry.
+     */
+    func activityEntry(entryId: Int64) async throws  -> ActivityEntry?
+    
+    /**
      * The integrations, kinds and connections the Activity holds: the search filters' choices.
      */
     func activityFacets() async throws  -> ActivityFacets
@@ -3781,6 +3787,26 @@ open func activityCommitChange(entryId: Int64, shortSha: String)async throws  ->
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGitCommitView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * One Activity entry by its id, however far back (`activity` reads only the newest): to open an entry a day or a
+     * search brought in. `None` when this device has no such entry.
+     */
+open func activityEntry(entryId: Int64)async throws  -> ActivityEntry?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_entry(
+                        self.uniffiCloneHandle(),FfiConverterInt64.lower(entryId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeActivityEntry.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -23292,6 +23318,30 @@ fileprivate struct FfiConverterOptionTypeActivityCursor: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityEntry: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityEntry?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityEntry.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityEntry.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeActivityPush: FfiConverterRustBuffer {
     typealias SwiftType = ActivityPush?
 
@@ -26000,6 +26050,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_activity_commit_change() != 48115) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_entry() != 52393) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_activity_facets() != 56450) {

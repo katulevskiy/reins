@@ -1380,6 +1380,16 @@ impl Engine {
             .collect())
     }
 
+    /// One entry by its id, however far back: `activity` reads only the newest, while the days and search reach the
+    /// whole history. `None` when this device has no such entry (pruned, or never logged here).
+    pub fn activity_entry(&self, entry_id: i64) -> Result<Option<ActivityEntry>, CoreError> {
+        Ok(self.store.audit_entry(entry_id)?.map(|r| {
+            let mut entry = views::activity_entry(&r);
+            self.names().entry(&mut entry);
+            entry
+        }))
+    }
+
     /// One page of the entries matching `query`, newest first, after `after` (see `store::audit_search`).
     pub fn search_activity(
         &self,

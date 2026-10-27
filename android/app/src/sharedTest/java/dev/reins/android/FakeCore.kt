@@ -155,7 +155,17 @@ class FakeCore : ReinsCoreInterface {
         pairingCodes.clear()
     }
 
-    override suspend fun activity(limit: UInt) = activity
+    /** The newest [limit] of [activity] (seeded newest first), as the core reads the history at once. */
+    override suspend fun activity(limit: UInt) = activity.take(limit.toInt())
+
+    /** The ids `activityEntry` was asked for. */
+    val entryLookups = CopyOnWriteArrayList<Long>()
+
+    /** Any entry of [activity] by its id, however far back, as the core reads one. */
+    override suspend fun activityEntry(entryId: Long): ActivityEntry? {
+        entryLookups += entryId
+        return activity.firstOrNull { it.id == entryId }
+    }
 
     /** Whether the user edited the name field, for each answer in [pairingAnswers]. */
     val pairingNameEdited = CopyOnWriteArrayList<Boolean>()

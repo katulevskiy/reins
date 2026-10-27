@@ -584,6 +584,7 @@ private fun PageContent(
             state = state,
             load = { account, id -> container.core.fetchEmail(account, id) },
             onBack = { app.back() },
+            core = container.core,
         )
         is Route.GrantDetail -> GrantDetailScreen(
             grantId = route.id,
