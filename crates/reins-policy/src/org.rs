@@ -391,11 +391,52 @@ pub fn stricter(org: &Matrix, member: &Matrix) -> Matrix {
     out
 }
 
-/// Evaluates a Managed request (see the module docs).
+/// Everything [`evaluate_analyzed`] judges a request by, and nothing of its body: what it does (its analysis), the
+/// repository a lease names, where it came from and when. The decision service keeps it with every decision so a draft
+/// policy can be replayed over history (simulation, 02 §4) with the very function the live path runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimInput {
+    pub analysis: Analysis,
+    /// A credential lease's repository as asked (a lease has no effect that names one); `None` for any other request.
+    #[serde(default)]
+    pub base_repo: Option<String>,
+    pub connection: String,
+    /// The requester's user id.
+    pub member: String,
+    /// The agent gave a reason (O3's `require_reason`).
+    #[serde(default)]
+    pub reason_given: bool,
+    /// When it is judged (rules' `not_after`).
+    pub at: i64,
+}
+
+impl SimInput {
+    /// The input of a live request.
+    #[must_use]
+    pub fn from_request(req: &ManagedRequest<'_>) -> Self {
+        Self {
+            analysis: analyze_request(req.tool, req.args),
+            base_repo: (req.tool == LEASE_TOOL)
+                .then(|| req.args.get("repo").and_then(Value::as_str).unwrap_or_default().to_owned()),
+            connection: req.connection.to_owned(),
+            member: req.member.to_owned(),
+            reason_given: false,
+            at: req.now,
+        }
+    }
+}
+
+/// Evaluates a Managed request (see the module docs): [`evaluate_analyzed`] of its [`SimInput`].
 #[must_use]
 pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
-    let analysis = analyze_request(req.tool, req.args);
-    let resolved = resolve(req, &analysis, &org.facts);
+    evaluate_analyzed(&SimInput::from_request(req), org, member)
+}
+
+/// Evaluates a request from what it does: the one evaluation the decision service, every executor and simulation run.
+#[must_use]
+pub fn evaluate_analyzed(input: &SimInput, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
+    let analysis = &input.analysis;
+    let resolved = resolve(input, &org.facts);
     let mut rules: Vec<Rule> = org.rules.iter().map(|r| r.rule.clone()).collect();
     let mut matrix = org.matrix.clone();
     if let Some(m) = member {
@@ -419,11 +460,11 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
     };
     let evaluation = matrix::evaluate(
         &Input {
-            analysis: &analysis,
+            analysis,
             resolved: &resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
             netted: false,
@@ -442,7 +483,7 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
             let mut why = evaluation.why.clone();
             // Hard obligations stop P2's evaluation before the cell. The org's cell review still applies: a member's
             // rule (or the floor) only adds to what the org requires, never stands in for it.
-            if hard && cell_needs_review(req, &analysis, &resolved, &snapshot, org) {
+            if hard && cell_needs_review(input, &resolved, &snapshot, org) {
                 why.push(Why::Cell);
             }
             (ManagedOutcome::Review, obligations_of(&why, org))
@@ -465,9 +506,9 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
 
 /// Where a request acts. A lease names its repository directly (it has no effect that names one): the repository's
 /// zone, and the repository as the resource, so the org's resource rules apply to leases as to any other request.
-fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Resolved {
-    if req.tool == LEASE_TOOL {
-        let repo = req.args.get("repo").and_then(Value::as_str).and_then(|r| parse_repo(r, Some(GITHUB)));
+fn resolve(input: &SimInput, facts: &Facts) -> Resolved {
+    if let Some(asked) = &input.base_repo {
+        let repo = parse_repo(asked, Some(GITHUB));
         return match repo {
             Some(r) => {
                 let (zone, unknown) = repo_zone(facts, &r);
@@ -488,7 +529,7 @@ fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Reso
         };
     }
     request_zone(
-        analysis,
+        &input.analysis,
         facts,
         &Base {
             repo: None,
@@ -500,14 +541,8 @@ fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Reso
 
 /// Whether the composed matrix cell asks, unless one of the org's permits satisfies it: judged as if there were no
 /// hard obligation (no floor, full certainty, no deny or review rules).
-fn cell_needs_review(
-    req: &ManagedRequest<'_>,
-    analysis: &Analysis,
-    resolved: &Resolved,
-    snapshot: &Snapshot,
-    org: &OrgPolicy,
-) -> bool {
-    let mut soft = analysis.clone();
+fn cell_needs_review(input: &SimInput, resolved: &Resolved, snapshot: &Snapshot, org: &OrgPolicy) -> bool {
+    let mut soft = input.analysis.clone();
     soft.floor.clear();
     soft.certainty = Certainty::Full;
     let permits = Snapshot {
@@ -518,9 +553,9 @@ fn cell_needs_review(
         &Input {
             analysis: &soft,
             resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
             netted: false,
@@ -844,6 +879,30 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn evaluate_managed_is_evaluate_analyzed(
+            title in ".{0,40}",
+            repo in "(acme|someone|Acme)/(api|prod-db|forbidden|infra-x)",
+            tool in prop::sample::select(vec!["github_create_issue", "reins_list_accounts", "gmail_send", LEASE_TOOL]),
+            access in prop::sample::select(vec!["read", "push"]),
+            at in 0i64..3_000,
+        ) {
+            let mut p = acme();
+            p.rules.push(org_rule("prod-review", When { resource: Some("acme/prod-*".into()), ..When::default() },
+                Then::Review, Some(sec(1))));
+            p.rules.push(org_rule("deny", When { resource: Some("acme/forbidden".into()), ..When::default() },
+                Then::Deny, None));
+            let mut timed = org_rule("freeze", When::default(), Then::Deny, None);
+            timed.rule.not_after = Some(1_500);
+            p.rules.push(timed);
+            let args = json!({"repo": repo, "title": title, "access": access, "to": ["x@y.com"]});
+            let req = ManagedRequest { org: "o1", member: "lee", connection: "c1", tool, args: &args, now: at };
+            let input = SimInput::from_request(&req);
+            // Through JSON too: the retained form judges the same.
+            let input: SimInput = serde_json::from_str(&serde_json::to_string(&input).unwrap()).unwrap();
+            prop_assert_eq!(evaluate_managed(&req, &p, None), evaluate_analyzed(&input, &p, None));
+        }
+
         #[test]
         fn same_inputs_same_verdict(title in ".{0,40}", repo in "(acme|someone)/[a-z]{1,8}") {
             let args = json!({"repo": repo, "title": title});
