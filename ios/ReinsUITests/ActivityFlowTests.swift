@@ -652,6 +652,40 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(tab.waitForExistence(timeout: 3), "the tab bar is back")
     }
 
+    /// Latest answers the first tap while the list is still gliding from a fling: the top is back within about a second.
+    func testLatestWorksWhileTheListIsStillScrolling() throws {
+        // XCTest waits for the app to go still before and after each step, so a tap normally lands only once the glide
+        // is over. Its own interaction options skip those waits (skip pre-event 1, skip post-event 2).
+        let options = "currentInteractionOptions"
+        guard XCUIApplication().responds(to: NSSelectorFromString("setCurrentInteractionOptions:")) else {
+            throw XCTSkip("this XCTest cannot tap while the app is still moving")
+        }
+        let app = launch(extra: ["-demoLongRiver"])
+        let top = element(app, "pending:req1")
+        expectToAppear(top)
+        let latest = element(app, "scrollToLatest")
+        var swipes = 0
+        while !latest.exists && swipes < 8 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(latest.waitForExistence(timeout: 3), "Latest shows once the list is far from the top")
+        // Far enough that the lazy list has let go of the top.
+        for _ in 0..<5 { app.swipeUp() }
+        // A fling, then Latest at once, while the list still glides.
+        let button = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: latest.frame.midX, dy: latest.frame.midY))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        app.setValue(2, forKey: options)
+        start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -300)),
+                    withVelocity: XCUIGestureVelocity(rawValue: 12000), thenHoldForDuration: 0)
+        app.setValue(3, forKey: options)
+        button.tap()
+        app.setValue(0, forKey: options)
+        let back = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: top)
+        XCTAssertEqual(XCTWaiter().wait(for: [back], timeout: 1.5), .completed, "the top entry is back after one tap")
+        shot(app, "activity-latest-mid-fling")
+    }
+
     /// Rows scrolled up pass under paper at the top, never under the clock's digits.
     func testRowsScrollUnderPaperAtTheTop() {
         let app = launch()
