@@ -50,7 +50,6 @@ impl Template {
     }
 
     #[must_use]
-    #[allow(dead_code, reason = "the console's templates page shows it")]
     pub fn label(self) -> &'static str {
         match self {
             Self::DeveloperBaseline => "Developer baseline",

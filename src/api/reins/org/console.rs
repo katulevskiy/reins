@@ -73,6 +73,7 @@ pub fn routes() -> Vec<Route> {
         events
     ];
     routes.extend(super::web_approval::routes());
+    routes.extend(super::console_routing::routes());
     routes
 }
 

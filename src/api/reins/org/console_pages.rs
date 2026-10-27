@@ -81,6 +81,8 @@ pub enum Tab {
     Requests,
     Audit,
     Executors,
+    /// O3: routing, channels, SLA, templates.
+    Routing,
 }
 
 /// What every signed-in page shows in its header.
@@ -116,6 +118,7 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
                 tab(Tab::Requests, format!("{up}{}/requests", e(id)), "Requests"),
                 tab(Tab::Audit, format!("{up}{}/audit", e(id)), "Audit"),
                 tab(Tab::Executors, format!("{up}{}/executors", e(id)), "Executors"),
+                tab(Tab::Routing, format!("{up}{}/routing", e(id)), "Routing"),
             ]
             .concat(),
             None => tab(Tab::Home, up.to_owned(), "Orgs"),

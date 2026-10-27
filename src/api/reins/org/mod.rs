@@ -34,6 +34,8 @@ pub mod console;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
+pub mod console_routing;
+pub mod console_routing_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
