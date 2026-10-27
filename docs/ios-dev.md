@@ -116,8 +116,7 @@ A prebuilt core is a binary linked into the app, so nothing installs one it cann
 - **The bindings must match.** A prebuilt core whose Swift bindings differ from `ios/Core/Generated/reins_core.swift`
   is refused. Fix it by running `ios/scripts/build-core.sh` and committing its output.
 - **Caches are written only for main's own commit.** The Rust build cache in `ios-core.yml` is saved only for that
-  commit. The job's DerivedData cache is saved only when the job built the run's own commit, never for a dispatched
-  `ref`.
+  commit. The iOS job writes no cache at all; it only restores the Swift cache that `ios.yml` saves from main.
 
 **The app is built once per job, and tested many times.**
 - `ios/scripts/ios-job-run.sh` runs one `xcodebuild build-for-testing`.
@@ -125,25 +124,77 @@ A prebuilt core is a binary linked into the app, so nothing installs one it cann
 - The settings are Debug, simulator, only the active architecture, `dwarf` (no dSYM), no index store, and Swift
   compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`).
 
-**DerivedData is kept between runs.**
-- On GitHub it is an Actions cache keyed on the Xcode version and the project and package pins. The branch's last
-  cache is used first, then main's, and one cache is kept per branch.
-- On the Mac it is a fixed folder per checkout: `~/Library/Developer/Xcode/DerivedData/Reins-job-<checkout>-<hash>`.
+**Compiled Swift is reused.**
+- On GitHub the job restores the Swift compilation cache, module cache and packages that `ios.yml` saves from main,
+  with the same paths and build settings. Every module the branch did not change is a cache hit: the Swift compile
+  of a job took 41 s of task time instead of 422 s.
+- On GitHub a branch's own DerivedData is not kept. It was tried, and it made the next job slower (660 s against
+  426 s):
+  - a fresh checkout gives every file a new mtime, so Xcode recompiles all of them anyway;
+  - the restored incremental state splits the compile jobs differently from the jobs main's cache holds, so the cache
+    then misses;
+  - the repository's Actions caches sit at GitHub's 10 GB limit, so a branch's cache was evicted within the hour.
+- On the Mac, DerivedData is a fixed folder per checkout (`~/Library/Developer/Xcode/DerivedData/Reins-job-<checkout>-<hash>`)
+  that stays between jobs, so a Swift-only change builds incrementally.
 
 **One simulator.**
 - A simulator named "Reins Job" is created once and reused.
-- It boots while the app builds.
+- On the Mac it boots while the app builds.
+- On a runner with 4 cores or fewer it boots after the build. On GitHub's 3 cores, a first boot beside the compiler
+  made the same cached build take 426 s, against about 160 s for ios.yml's build alone.
 
 ## Timings
 
-Measured on GitHub's `xcode-27` runner (M1, 3 cores, 7 GB) on 2026-10-26/27. See the pull request that added this
-page for the run ids.
+Measured on GitHub's `xcode-27` runner (M1, 3 cores, 7 GB) on 2026-10-27. These are runs 40420651747 (cold),
+40438794679 (warm) and 40442183045 (a restored DerivedData, which is not used any more). The times are the job's
+own steps. Waiting for a free macOS runner comes on top.
 
-| | Before (the Mac, by hand) | Job, cold | Job, warm |
+| Step | Before | Cold job | Warm job |
 |---|---|---|---|
-| Check one screen | 20–50 min (core, Xcode build, XCUITest launch) | TBD | TBD |
-| Run one unit-test class | 20–50 min | TBD | TBD |
-| Build after a Swift-only change | 5–10 min, plus the core when the shared one was stale | TBD | TBD |
+| Rust core | 9–11 min to build, or the Mac's shared build | 9 min to build (first time for a hash) | 1–2 s: download and verify |
+| Build for testing | the Mac: 5–10 min, more under load | 14 min (841 s) | 7 min (426 s) |
+| Simulator | the Mac: one per agent, five at once | 2–5 min, alongside the build | 2 min, alongside the build |
+| One screen (`snapshots:Approve`) | an XCUITest launch per screen | 51–72 s | 51–72 s |
+| All 11 screens, light and dark | — | 97–140 s | 97–140 s |
+| One unit-test class | in a full ReinsTests run | 14–28 s | 14–28 s |
+
+End to end, from push to PNGs:
+
+| | Before (the Mac) | GitHub job, warm |
+|---|---|---|
+| Check one screen | 20–50 min | about 9 min |
+| Run one unit-test class | 20–50 min | about 8.5 min |
+| Build after a Swift-only change | 5–10 min | about 7 min |
+
+These warm runs booted the simulator beside the build. The job now boots it after the build on GitHub. That should
+bring a warm build down to about 3 minutes, since ios.yml's build job takes 2 min 41 s with the same cache. A job has
+not measured this yet.
+
+Each GitHub job adds the queue for a macOS runner: 0–20 minutes, longest while a release builds. The Mac does none of
+this work, and runs no simulators for it.
+
+The `--mac` path has not been measured yet, because SSH to the Mac is not set up. It keeps DerivedData and a booted
+simulator between jobs, so a Swift-only change should be an incremental build plus about a minute of tests.
+
+### Limits
+
+- **The GitHub path takes the load off the Mac, but it is not 10x.**
+  - A fresh runner compiles every module the branch changed.
+  - It boots a simulator from scratch, which takes 2–5 minutes.
+  - It waits for a free macOS runner.
+
+  The 10x loop is `ios-typecheck.sh` on Linux in seconds, plus `--mac` with a warm DerivedData folder and a booted
+  simulator.
+- **Five macOS jobs at once,** shared with CI (`ios.yml`, the desktop macOS jobs) and releases. Jobs queue when they
+  are busy.
+- **Before a core change reaches main,** each job on that branch builds the core itself (about 9 minutes), because
+  only main publishes cores.
+- **The snapshots are not the boards.**
+  - They draw no status bar, and they use the demo data.
+  - Relative times ("1m", "Yesterday") follow the real clock.
+  - Some live effects (blur, Liquid Glass) look as they do in a window drawn off-screen.
+  - Nothing compares them with a reference image.
+- **UI tests run in CI only.** `ui:Class` runs one class, but a UI test result never blocks a merge.
 
 ## The Mac (`--mac`)
 
