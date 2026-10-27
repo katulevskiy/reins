@@ -23,6 +23,7 @@ pub mod reins_org_github_reader;
 pub mod reins_org_keys;
 pub mod reins_org_policy_code;
 pub mod reins_org_request;
+pub mod reins_org_routing;
 mod reins_roster;
 mod reins_ticket;
 mod reins_vault_passkey;

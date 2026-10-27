@@ -1,7 +1,7 @@
 import Foundation
 
 /// A validated push from the server (contracts §A, the Android app's `PushPayload`): `t` is `req`, `pair`, `blob`,
-/// `replaced` or `circle`, `id` a server-issued id (a Circle push's id says why it came: `review:`, `alert:` or `news:`
+/// `replaced`, `circle`, `orgreview` or `orgpasskey`, `id` a server-issued id (a Circle push's id says why it came: `review:`, `alert:` or `news:`
 /// before the id). Push is only a hint that something waits; the phone fetches the real data
 /// itself, so anything that is not exactly this shape is dropped.
 struct PushPayload: Equatable {
@@ -10,8 +10,16 @@ struct PushPayload: Equatable {
 
     /// An org review waits for this member (O2): the app opens the work profile's reviews; the core fetches nothing.
     static let orgReview = "orgreview"
+    /// A web passkey the member added waits for this phone's confirmation (O3); the id is its credential id. The app
+    /// opens the same reviews, where its card is.
+    static let orgPasskey = "orgpasskey"
 
-    static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview, "circle"]
+    static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview, orgPasskey, "circle"]
+
+    /// A WebAuthn credential id: up to 1023 bytes, base64url.
+    static func isCredentialId(_ value: String) -> Bool {
+        (1...1400).contains(value.count) && value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+    }
 
     init?(kind: String?, id: String?) {
         guard let kind, let id, Self.kinds.contains(kind) else { return nil }
@@ -20,6 +28,8 @@ struct PushPayload: Equatable {
             guard id.isEmpty || DeepLink.isId(id) else { return nil }
         } else if kind == "circle" {
             guard CirclePush(id) != nil else { return nil }
+        } else if kind == Self.orgPasskey {
+            guard Self.isCredentialId(id) else { return nil }
         } else {
             guard DeepLink.isId(id) else { return nil }
         }
@@ -66,7 +76,7 @@ struct PushPayload: Equatable {
 
     /// Where tapping the notification goes: a Circle's to Activity, where "For others" is.
     var link: DeepLink? {
-        if kind == Self.orgReview { return .orgReviews }
+        if kind == Self.orgReview || kind == Self.orgPasskey { return .orgReviews }
         if kind == "circle" { return .home }
         return itemKind.map { .item(kind: $0, id: id) }
     }

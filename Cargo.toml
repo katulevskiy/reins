@@ -287,6 +287,8 @@ reins-policy = { path = "crates/reins-policy" }
 reins-audit = { path = "crates/reins-audit" }
 # Organizations (O2): Android key attestation chains
 x509-parser = "0.16.0"
+# Organizations (O3): a web passkey's attestation object (CBOR), as browsers send it
+serde_cbor_2 = "0.13.0"
 zeroize = "1.9.0"
 
 [dev-dependencies]
@@ -295,7 +297,7 @@ tokio = { version = "1.53.1", features = ["macros", "test-util"] }
 # The mock HTTP/2 server of the APNs sender tests (already built for reqwest's HTTP/2)
 h2 = "0.4.19"
 http = "1.5.0"
-# A fake GitHub for the org policy repo's tests (never the real one)
+# Organizations (O3, O4): mock GitHub (the policy repo too), on-call providers, Slack and Teams in the tests (never the real APIs)
 wiremock = "0.6.5"
 
 # Strip debuginfo from the release builds

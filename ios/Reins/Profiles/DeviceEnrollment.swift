@@ -10,9 +10,14 @@ extension DeviceKeys {
     }
 }
 
-/// The bytes an org review's answer signs: the core's (`org_review_message`, also `Propose` for your own change).
+/// The bytes an org review's answer signs: the core's (`org_review_message`, also `Propose` for your own change); and
+/// a web passkey's confirmation (`org_passkey_confirm_message`, over the listed key's hash and registration time).
 enum OrgSigning {
     static func message(orgId: String, review: OrgReviewView, approve: Bool, at: Int64) -> Data {
         orgReviewMessage(orgId: orgId, review: review, approve: approve, at: at)
+    }
+
+    static func passkeyMessage(orgId: String, key: OrgPasskeyView, at: Int64) -> Data {
+        orgPasskeyConfirmMessage(orgId: orgId, credentialId: key.credentialId, spkiHash: key.spkiHash, registeredAt: key.createdAt, at: at)
     }
 }

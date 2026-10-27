@@ -67,6 +67,8 @@ pub struct ReinsOrgRequest {
     pub finished_at: Option<i64>,
     /// The executor's signed receipt envelope.
     pub receipt: Option<String>,
+    /// O3: obligation id → the members its relationships and escalations resolved to (`ResolvedSets` as JSON).
+    pub resolved: Option<String>,
     /// `reins_policy::org::SimInput` as JSON: what simulation replays (decision metadata, no body).
     pub analysis: Option<String>,
     /// The rollout step it was decided under, if any (effective-version pinning).
@@ -750,6 +752,7 @@ pub(crate) mod tests {
             claimed_at: None,
             finished_at: None,
             receipt: None,
+            resolved: None,
             analysis: None,
             rollout_id: None,
             rollout_seq: None,
@@ -936,4 +939,50 @@ pub(crate) mod tests {
         assert_eq!(q_drop_open_approvals(&mut c, "o1", "u2").unwrap(), 1);
         assert!(q_approvals(&mut c, "o1", "r1").unwrap().is_empty());
     }
+}
+/// O3: records what an obligation's relationships and escalations resolved to.
+pub fn q_set_resolved(c: &mut DbConnInner, org: &str, id: &str, resolved: &str) -> QueryResult<bool> {
+    let n = diesel::update(
+        reins_org_requests::table.filter(reins_org_requests::org_uuid.eq(org)).filter(reins_org_requests::uuid.eq(id)),
+    )
+    .set(reins_org_requests::resolved.eq(Some(resolved)))
+    .execute(c)?;
+    Ok(n == 1)
+}
+
+/// O3: moves a request's review deadline (an escalation step), while it is still under review.
+pub fn q_set_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -> QueryResult<bool> {
+    let n = diesel::update(
+        reins_org_requests::table
+            .filter(reins_org_requests::org_uuid.eq(org))
+            .filter(reins_org_requests::uuid.eq(id))
+            .filter(reins_org_requests::state.eq(request_state::REVIEWING)),
+    )
+    .set(reins_org_requests::expires_at.eq(expires_at))
+    .execute(c)?;
+    Ok(n == 1)
+}
+
+/// O3: requests of `org` decided (or expired) in `[since, until)`, for SLA reports.
+/// O3: a request by id, whatever its org (a channel's fan-out and updates know only the id).
+pub fn q_request_any(c: &mut DbConnInner, id: &str) -> QueryResult<Option<ReinsOrgRequest>> {
+    reins_org_requests::table.filter(reins_org_requests::uuid.eq(id)).first(c).optional()
+}
+
+/// O3: every request under review (the escalation sweep).
+pub fn q_reviewing(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgRequest>> {
+    reins_org_requests::table
+        .filter(reins_org_requests::state.eq(request_state::REVIEWING))
+        .order(reins_org_requests::created_at.asc())
+        .load(c)
+}
+
+pub fn q_finished_between(c: &mut DbConnInner, org: &str, since: i64, until: i64) -> QueryResult<Vec<ReinsOrgRequest>> {
+    reins_org_requests::table
+        .filter(reins_org_requests::org_uuid.eq(org))
+        .filter(reins_org_requests::outcome.eq("review"))
+        .filter(reins_org_requests::created_at.ge(since))
+        .filter(reins_org_requests::created_at.lt(until))
+        .order(reins_org_requests::created_at.asc())
+        .load(c)
 }

@@ -267,6 +267,9 @@ class MainSafeCore(
     override suspend fun orgReportPosture(posture: dev.reins.core.PostureInput) = io { orgReportPosture(posture) }
     override suspend fun orgReviews(): List<dev.reins.core.OrgReviewView> = io { orgReviews() }
     override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) = io { orgDecide(id, approve, at, signature) }
+    override suspend fun orgPasskeys(): List<dev.reins.core.OrgPasskeyView> = io { orgPasskeys() }
+    override suspend fun orgConfirmPasskey(id: String, approve: Boolean, at: Long, signature: String) =
+        io { orgConfirmPasskey(id, approve, at, signature) }
     override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) =
         io { orgSetMemberPolicy(body, version, at, signature) }
     override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }

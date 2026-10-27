@@ -65,6 +65,10 @@ pub fn target_roles(c: &mut DbConnInner, org: &str, action: &AdminAction) -> Res
         },
         AdminAction::RemoveMember {
             member,
+        }
+        | AdminAction::SetManager {
+            member,
+            ..
         } => reins_org::q_roles_of(c, org, member)?,
         AdminAction::ConfirmDirectoryRemovals {
             ..
@@ -547,6 +551,69 @@ fn validate(
             Some(e) if e.revoked_at.is_none() => Ok(()),
             _ => Err(OrgError::NotFound),
         },
+        AdminAction::SetManager {
+            member,
+            manager,
+        } => {
+            if tenant.tier().scim() {
+                return Err(OrgError::Invalid("Managers come from your directory."));
+            }
+            active_member(c, org, member)?;
+            if let Some(m) = manager {
+                active_member(c, org, m)?;
+                if m == member {
+                    return Err(OrgError::Invalid("Nobody is their own manager."));
+                }
+            }
+            Ok(())
+        }
+        AdminAction::SetGroupRouting {
+            group,
+            backup,
+            window_secs,
+        } => {
+            group_exists(c, org, group)?;
+            if let Some(b) = backup {
+                group_exists(c, org, b)?;
+                if b == group {
+                    return Err(OrgError::Invalid("A group can't be its own backup."));
+                }
+            }
+            if window_secs.is_some_and(|w| w == 0 || w > reins_policy::org::DEFERRED_MAX_SECS) {
+                return Err(OrgError::Invalid("A window is 1 second to 7 days."));
+            }
+            Ok(())
+        }
+        AdminAction::SetOnCallSource {
+            alias,
+            schedule_id,
+            ..
+        } => {
+            if !super::routing::oncall::alias_ok(alias) {
+                return Err(OrgError::Invalid("Name it with 1-64 of a-z, 0-9, . _ and -."));
+            }
+            if !super::routing::oncall::schedule_ok(schedule_id) {
+                return Err(OrgError::Invalid("That isn't a schedule id."));
+            }
+            Ok(())
+        }
+        AdminAction::SetApprovalChannel {
+            channel: kind,
+            enabled,
+            config,
+        } => {
+            if !*enabled {
+                return Ok(());
+            }
+            let Some(current) = super::channels::config_digest(c, org, *kind)? else {
+                return Err(OrgError::Invalid("Install it first."));
+            };
+            // Only the install it was proposed for.
+            if config.as_deref().is_none_or(|d| !crate::crypto::ct_eq(d, &current)) {
+                return Err(OrgError::Invalid("It was reinstalled since. Propose it again."));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -683,27 +750,6 @@ fn apply(
             repo,
             default_branch,
         } => super::policy_repo::apply_binding(c, org, repo, default_branch, actor, now)?,
-        AdminAction::SetGithubReader {
-            app_id,
-            installation_id,
-        } => {
-            reins_org_github_reader::q_set_github_reader(
-                c,
-                org,
-                i64::try_from(*app_id).unwrap_or(0),
-                i64::try_from(*installation_id).unwrap_or(0),
-                now,
-            )?;
-            super::audit::record(
-                c,
-                org,
-                super::audit::kinds::GITHUB_READER_SET,
-                Some(actor),
-                None,
-                &json!({"app_id": app_id, "installation_id": installation_id}),
-                now,
-            )?;
-        }
         AdminAction::SetRetention {
             days,
         } => {
@@ -748,6 +794,21 @@ fn apply(
                 now,
             )?;
         }
+        AdminAction::SetManager {
+            ..
+        }
+        | AdminAction::SetGroupRouting {
+            ..
+        }
+        | AdminAction::SetGithubReader {
+            ..
+        }
+        | AdminAction::SetOnCallSource {
+            ..
+        }
+        | AdminAction::SetApprovalChannel {
+            ..
+        } => super::routing::apply_admin(c, org, action, actor, now)?,
         AdminAction::RemoveExecutor {
             executor_id,
         } => {

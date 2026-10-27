@@ -8479,6 +8479,8 @@ dependencies = [
 name = "reins-policy"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "data-encoding",
  "proptest",
  "regex",
@@ -11433,6 +11435,7 @@ dependencies = [
  "rustls 0.23.44",
  "semver",
  "serde",
+ "serde_cbor_2",
  "serde_json",
  "subtle",
  "svg-hush",

@@ -51,7 +51,7 @@ const MAX_SECS: i64 = 8 * 3600;
 const MAX_SESSIONS: usize = 10_000;
 
 pub fn routes() -> Vec<Route> {
-    routes![
+    let mut routes = routes![
         home,
         login,
         callback,
@@ -71,7 +71,10 @@ pub fn routes() -> Vec<Route> {
         approve_change,
         reject_change,
         events
-    ]
+    ];
+    routes.extend(super::web_approval::routes());
+    routes.extend(super::console_routing::routes());
+    routes
 }
 
 #[derive(Clone)]
@@ -84,6 +87,10 @@ struct Session {
     /// The GitHub token of a GitHub sign-in (never sent to the browser).
     github_token: Option<String>,
     flash: Option<(String, bool)>,
+    /// O3: where a sign-in started from a web approval link goes back to (a console path).
+    return_to: Option<String>,
+    /// O3: a passkey registration's challenge, until it is answered.
+    challenge: Option<String>,
     created: i64,
     last: i64,
 }
@@ -126,6 +133,8 @@ fn new_session(now: i64) -> Option<(String, Session)> {
         pending: None,
         github_token: None,
         flash: None,
+        return_to: None,
+        challenge: None,
         created: now,
         last: now,
     };
@@ -136,13 +145,39 @@ fn new_session(now: i64) -> Option<(String, Session)> {
 
 /// Takes the session `sid` if it is still signing in with exactly `state`, and gives its PKCE verifier; anything else
 /// (no session, another state, a signed-in session) is left as it was.
+#[cfg(test)]
 fn take_pending(sid: &str, state: &str) -> Option<String> {
+    take_pending_with_return(sid, state).map(|(v, _)| v)
+}
+
+/// [`take_pending`], with where the sign-in should go back to.
+fn take_pending_with_return(sid: &str, state: &str) -> Option<(String, Option<String>)> {
     let mut map = sessions();
     let matches = map.get(sid).and_then(|s| s.pending.as_ref()).is_some_and(|(expected, _)| s_eq(expected, state));
     if !matches {
         return None;
     }
-    map.remove(sid).and_then(|s| s.pending).map(|(_, verifier)| verifier)
+    map.remove(sid).and_then(|s| s.pending.map(|(_, verifier)| (verifier, s.return_to)))
+}
+
+/// A path a sign-in may return to: only the web approval and passkey pages (no other host, no scheme).
+fn return_ok(path: &str) -> bool {
+    let p = path.strip_prefix(&format!("{}/reins/org/", CONFIG.domain_path())).unwrap_or_default();
+    (p.starts_with("approve/") || p == "passkeys/new")
+        && path.len() <= 200
+        && path.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_'))
+}
+
+/// Keeps a passkey registration's challenge in the session.
+pub(super) fn put_challenge(sid: &str, challenge: &str) {
+    if let Some(s) = sessions().get_mut(sid) {
+        s.challenge = Some(challenge.to_owned());
+    }
+}
+
+/// Takes (once) the session's passkey registration challenge.
+pub(super) fn take_challenge(sid: &str) -> Option<String> {
+    sessions().get_mut(sid).and_then(|s| s.challenge.take())
 }
 
 fn s_eq(a: &str, b: &str) -> bool {
@@ -159,7 +194,7 @@ pub(super) struct Signed {
     pub(super) flash: Option<(String, bool)>,
 }
 
-fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
+pub(super) fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
     let sid = cookies.get(COOKIE)?.value().to_owned();
     let mut map = sessions();
     let s = map.get_mut(&sid)?;
@@ -302,8 +337,8 @@ async fn home(cookies: &CookieJar<'_>, conn: DbConn) -> Page {
     ))
 }
 
-#[get("/reins/org/login")]
-fn login(cookies: &CookieJar<'_>, secure: Secure, ip: crate::auth::ClientIp) -> Redirect {
+#[get("/reins/org/login?<next>")]
+fn login(next: Option<String>, cookies: &CookieJar<'_>, secure: Secure, ip: crate::auth::ClientIp) -> Redirect {
     if !enabled() || !CONFIG.sso_enabled() || crate::ratelimit::check_limit_login(&ip.ip).is_err() {
         return to_home();
     }
@@ -317,6 +352,7 @@ fn login(cookies: &CookieJar<'_>, secure: Secure, ip: crate::auth::ClientIp) -> 
         .encode(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()).as_ref());
     if let Some(s) = sessions().get_mut(&sid) {
         s.pending = Some((state.clone(), verifier));
+        s.return_to = next.filter(|n| return_ok(n));
     }
     put_cookie(cookies, sid, secure.https);
     let Ok(mut url) = url::Url::parse(&format!("{}/identity/connect/authorize", CONFIG.domain())) else {
@@ -351,8 +387,8 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
         return refused("Your sign-in expired. Sign in again.");
     };
     // Only the sign-in this callback answers is taken: a forged callback (another state) leaves every session alone.
-    let pending = take_pending(&sid, &state);
-    let Some(verifier) = pending else {
+    let pending = take_pending_with_return(&sid, &state);
+    let Some((verifier, return_to)) = pending else {
         return refused("Your sign-in expired. Sign in again.");
     };
     let Ok(verifier) = serde_json::from_value(serde_json::Value::String(verifier)) else {
@@ -407,7 +443,7 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
         s.github_token = github_token;
     }
     put_cookie(cookies, new_sid, secure.https);
-    Err(to_home())
+    Err(return_to.map_or_else(to_home, Redirect::to))
 }
 
 #[cfg(test)]

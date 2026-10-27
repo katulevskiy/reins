@@ -458,9 +458,15 @@ async fn set_reader(
         app_id: form.app_id,
         installation_id: form.installation_id,
     };
+    // Who approves is security-relevant: it waits for the proposer's phone, then a second admin's.
     let r = propose(&conn, pool, org, &s.user, action, None).await;
-    let (text, bad) = outcome_text(&r, "Set. Now its key and webhook secret.");
-    flash(&s.sid, &text, bad);
+    if let Ok(super::admin::Proposed::Pending(id)) = &r {
+        super::reviews::notify(pool, std::slice::from_ref(&s.user), id);
+        flash(&s.sid, "Confirm it on your phone. A second admin then approves on theirs.", false);
+    } else {
+        let (text, bad) = outcome_text(&r, "Set. Now its key and webhook secret.");
+        flash(&s.sid, &text, bad);
+    }
     to_org(org, "/policy/repo")
 }
 

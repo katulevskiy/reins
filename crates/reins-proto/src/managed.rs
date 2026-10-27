@@ -14,6 +14,8 @@
 //! Pure data: signatures are made and checked by the crates that hold keys (`reins-audit`, `reins-executor`, the
 //! server, the phone core).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -158,12 +160,129 @@ pub fn review_message(
 pub struct ReviewSignature {
     /// The reviewer's user id.
     pub member: String,
-    /// The device that signed (its id in the roster).
+    /// The device that signed (its id in the roster), or with `webauthn` the passkey's credential id.
     pub device: String,
     pub decision: ReviewDecision,
     pub at: i64,
-    /// DER ECDSA P-256, base64.
+    /// DER ECDSA P-256, base64: over [`review_message`], or with `webauthn` over [`webauthn_signed_bytes`].
     pub sig: String,
+    /// A signed web approval (O3): the passkey's assertion over [`webauthn_challenge`] of the [`review_message`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webauthn: Option<WebAuthnProof>,
+}
+
+/// What a WebAuthn assertion carries besides its signature, base64url without padding as the browser gave them.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WebAuthnProof {
+    pub authenticator_data: String,
+    pub client_data_json: String,
+}
+
+/// The WebAuthn challenge of a web approval: base64url (no padding) of SHA-256 of the [`review_message`] it stands for,
+/// so the passkey's signature binds the org, the request, its digest, the decision, the snapshot and the time.
+#[must_use]
+pub fn webauthn_challenge(review_message: &[u8]) -> String {
+    data_encoding::BASE64URL_NOPAD.encode(&sha256(review_message))
+}
+
+/// Authenticator data flags (WebAuthn §6.1).
+const FLAG_UP: u8 = 0x01;
+const FLAG_UV: u8 = 0x04;
+const FLAG_BE: u8 = 0x08;
+
+/// Why a WebAuthn assertion doesn't stand for the approval it claims.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum WebAuthnError {
+    #[error("the assertion can't be read")]
+    Malformed,
+    #[error("not an assertion of this challenge")]
+    Challenge,
+    #[error("asserted for another origin or relying party")]
+    Origin,
+    #[error("the user wasn't present and verified")]
+    NotVerified,
+    #[error("a synced passkey (backup eligible) can't approve")]
+    Synced,
+}
+
+/// Checks a web approval's assertion (everything but its signature) and returns the bytes its signature covers:
+/// `authenticator_data ‖ SHA-256(client_data_json)`.
+///
+/// - the client data is a `webauthn.get` of exactly `challenge`, from `origin`, not cross-origin;
+/// - the authenticator data is for `rp_id`, with user presence and user verification, and **not** backup eligible
+///   (a device-bound passkey, 05 §6).
+pub fn webauthn_signed_bytes(
+    proof: &WebAuthnProof,
+    challenge: &str,
+    origin: &str,
+    rp_id: &str,
+) -> Result<Vec<u8>, WebAuthnError> {
+    let b64 = data_encoding::BASE64URL_NOPAD;
+    let auth =
+        b64.decode(proof.authenticator_data.trim_end_matches('=').as_bytes()).map_err(|_| WebAuthnError::Malformed)?;
+    let client =
+        b64.decode(proof.client_data_json.trim_end_matches('=').as_bytes()).map_err(|_| WebAuthnError::Malformed)?;
+    let data: Value = serde_json::from_slice(&client).map_err(|_| WebAuthnError::Malformed)?;
+    if data["type"] != "webauthn.get" || data["challenge"].as_str() != Some(challenge) {
+        return Err(WebAuthnError::Challenge);
+    }
+    if data["origin"].as_str() != Some(origin) || data["crossOrigin"] == Value::Bool(true) {
+        return Err(WebAuthnError::Origin);
+    }
+    if auth.len() < 37 {
+        return Err(WebAuthnError::Malformed);
+    }
+    if auth[..32] != sha256(rp_id.as_bytes()) {
+        return Err(WebAuthnError::Origin);
+    }
+    let flags = auth[32];
+    if flags & FLAG_UP == 0 || flags & FLAG_UV == 0 {
+        return Err(WebAuthnError::NotVerified);
+    }
+    if flags & FLAG_BE != 0 {
+        return Err(WebAuthnError::Synced);
+    }
+    let mut signed = auth;
+    signed.extend_from_slice(&sha256(&client));
+    Ok(signed)
+}
+
+/// What a member's enrolled phone signs to confirm a web passkey as theirs: the canon encoding of
+/// (`reins/org-passkey/v1`, org, credential id, SHA-256 hex of the key's SPKI, registered at, at). It binds the exact
+/// key and registration, not just an id the browser chose. It is signed only to confirm: a refusal is an unsigned
+/// revoke, so a refusal never carries a signature that could be replayed as a confirmation.
+#[must_use]
+pub fn passkey_confirm_message(
+    org: &str,
+    credential_id: &str,
+    spki_hash: &str,
+    registered_at: i64,
+    at: i64,
+) -> Vec<u8> {
+    let mut c = Canon::new(contexts::ORG_PASSKEY);
+    c.str(org).str(credential_id).str(spki_hash).i64(registered_at).i64(at);
+    c.finish()
+}
+
+/// SHA-256 (hex) of a passkey's SPKI as the server stores it (base64 text, trimmed).
+#[must_use]
+pub fn passkey_spki_hash(spki_b64: &str) -> String {
+    hex32(&sha256(spki_b64.trim().as_bytes()))
+}
+
+/// The short code both the console and the phone show for a passkey, so the member confirms the key they just added:
+/// the first 8 hex digits of [`passkey_spki_hash`], as `abcd-ef01`.
+#[must_use]
+pub fn passkey_fingerprint(spki_b64: &str) -> String {
+    let h = passkey_spki_hash(spki_b64);
+    format!("{}-{}", &h[..4], &h[4..8])
+}
+
+/// Whether a review at `level` (`L0`…`L3`, as a trace records it) may be offered in Slack or Teams, as a link to the
+/// signed web approval (05 §6: L0–L2 only; L3 always needs the app). Anything else, unknown included, may not.
+#[must_use]
+pub fn channel_allowed(level: &str) -> bool {
+    matches!(level, "L0" | "L1" | "L2")
 }
 
 /// What an [`Envelope`] carries.
@@ -241,6 +360,9 @@ pub struct Roster {
     pub version: u64,
     pub issued_at: i64,
     pub members: Vec<RosterMember>,
+    /// Group id → its backup group id (O3's escalation, checked by executors).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub backups: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,6 +374,21 @@ pub struct RosterMember {
     pub groups: Vec<String>,
     pub roles: Vec<Role>,
     pub devices: Vec<RosterDevice>,
+    /// Their manager's user id, from the directory (or a Security admin on the Team tier).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager: Option<String>,
+    /// Web passkeys they registered and confirmed on their enrolled phone (signed web approvals).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passkeys: Vec<RosterPasskey>,
+}
+
+/// A device-bound passkey a member may approve with on the web (L0–L2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterPasskey {
+    /// The WebAuthn credential id, base64url.
+    pub credential_id: String,
+    /// P-256 SubjectPublicKeyInfo DER, base64.
+    pub key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,6 +456,14 @@ pub struct DecisionRecord {
     /// For a lease, exactly what may be minted and for whom: an executor mints nothing that differs.
     #[serde(default)]
     pub lease: Option<LeaseBinding>,
+    /// Obligation id → the members its relationships, on-call schedules and escalations resolved to (O3), from
+    /// verified sources only. Executors check what they can against the roster and take the rest on this
+    /// countersignature.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved: BTreeMap<String, Vec<String>>,
+    /// The agent's reason, when it gave one (a `require_reason` permit is judged with it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     /// When the request was evaluated (the time rules were judged at).
     pub evaluated_at: i64,
     /// The rollout step (rollout id, seq) whose cohorts chose `snapshot`, when a staged rollout was under way (O4).
@@ -628,6 +773,21 @@ pub struct ReviewItem {
     /// The viewer's own: their request, or their change to confirm with [`ReviewDecision::Propose`].
     #[serde(default)]
     pub own: bool,
+    /// One line per obligation still waiting ("On-call: payments", "2 of Finance", "Code owners").
+    #[serde(default)]
+    pub needs: Vec<String>,
+    /// Approvals so far, as "1 of 2" (empty when one approval decides).
+    #[serde(default)]
+    pub progress: String,
+    /// Where an escalation took it ("Escalated to Security").
+    #[serde(default)]
+    pub step: Option<String>,
+    /// Breaks quiet hours.
+    #[serde(default)]
+    pub urgent: bool,
+    /// The agent's reason, when it gave one.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// `POST /reins/api/org/reviews/<id>`.
@@ -767,5 +927,89 @@ mod tests {
         assert!(ids_ok(&["a", "b"]));
         assert!(!ids_ok(&["", "b"]));
         assert!(!ids_ok(&["a\n"]));
+    }
+
+    #[test]
+    fn old_records_and_rosters_still_parse() {
+        // O2's shapes, without O3's fields.
+        let record: DecisionRecord = serde_json::from_value(json!({
+            "v": 1, "org": "o", "request": "or_1", "digest": "d", "member": "m", "connection": "c", "tool": "t",
+            "verdict": "approved", "snapshot": "s", "obligations": ["r"],
+            "approvals": [{"member": "k", "device": "p", "decision": "approve", "at": 5, "sig": "x"}],
+            "evaluated_at": 1, "decided_at": 2, "valid_until": 3
+        }))
+        .unwrap();
+        assert!(record.resolved.is_empty() && record.reason.is_none() && record.approvals[0].webauthn.is_none());
+        // Re-serialized, nothing new appears (a countersigned body stays what it was).
+        let text = serde_json::to_string(&record).unwrap();
+        assert!(!text.contains("resolved") && !text.contains("webauthn") && !text.contains("reason"), "{text}");
+        let roster: Roster = serde_json::from_value(json!({
+            "org": "o", "version": 1, "issued_at": 1,
+            "members": [{"user": "u", "email": "u@x", "groups": [], "roles": [], "devices": []}]
+        }))
+        .unwrap();
+        assert!(roster.members[0].manager.is_none() && roster.members[0].passkeys.is_empty());
+        let text = serde_json::to_string(&roster).unwrap();
+        assert!(!text.contains("manager") && !text.contains("passkeys") && !text.contains("backups"), "{text}");
+        let item: ReviewItem = serde_json::from_value(json!({
+            "id": "or_1", "subject": "request", "org_name": "Acme", "requester": "lee@acme.com", "title": "x",
+            "digest": "d", "requires": "Security", "expires_at": 9
+        }))
+        .unwrap();
+        assert!(item.needs.is_empty() && item.step.is_none() && !item.urgent);
+    }
+
+    #[test]
+    fn webauthn_challenge_is_the_review_message_hash() {
+        let msg = review_message("o", ReviewSubject::Request, "or_1", "dg", ReviewDecision::Approve, "s", 5);
+        let c = webauthn_challenge(&msg);
+        assert_eq!(data_encoding::BASE64URL_NOPAD.decode(c.as_bytes()).unwrap(), sha256(&msg));
+        let deny = review_message("o", ReviewSubject::Request, "or_1", "dg", ReviewDecision::Deny, "s", 5);
+        assert_ne!(webauthn_challenge(&deny), c);
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred2", "h", 1, 2));
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred", "h2", 1, 2));
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred", "h", 3, 2));
+        assert_eq!(passkey_fingerprint("AAAA").len(), 9);
+        assert_ne!(passkey_fingerprint("AAAA"), passkey_fingerprint("AAAB"));
+        assert!(channel_allowed("L0") && channel_allowed("L2"));
+        assert!(!channel_allowed("L3") && !channel_allowed("") && !channel_allowed("l2"));
+    }
+
+    fn proof(flags: u8, rp: &str, ty: &str, challenge: &str, origin: &str) -> WebAuthnProof {
+        let b64 = data_encoding::BASE64URL_NOPAD;
+        let mut auth = sha256(rp.as_bytes()).to_vec();
+        auth.push(flags);
+        auth.extend_from_slice(&[0, 0, 0, 7]);
+        let client = json!({"type": ty, "challenge": challenge, "origin": origin, "crossOrigin": false});
+        WebAuthnProof {
+            authenticator_data: b64.encode(&auth),
+            client_data_json: b64.encode(client.to_string().as_bytes()),
+        }
+    }
+
+    #[test]
+    fn webauthn_assertions_bind_challenge_origin_and_device() {
+        let (o, rp) = ("https://reins.example", "reins.example");
+        let ok = proof(0x05, rp, "webauthn.get", "ch", o);
+        let signed = webauthn_signed_bytes(&ok, "ch", o, rp).unwrap();
+        assert_eq!(signed.len(), 37 + 32);
+        assert_eq!(webauthn_signed_bytes(&ok, "other", o, rp), Err(WebAuthnError::Challenge));
+        assert_eq!(webauthn_signed_bytes(&ok, "ch", "https://evil.example", rp), Err(WebAuthnError::Origin));
+        assert_eq!(webauthn_signed_bytes(&ok, "ch", o, "evil.example"), Err(WebAuthnError::Origin));
+        let create = proof(0x05, rp, "webauthn.create", "ch", o);
+        assert_eq!(webauthn_signed_bytes(&create, "ch", o, rp), Err(WebAuthnError::Challenge));
+        // Presence without verification, and a synced (backup eligible) passkey.
+        assert_eq!(
+            webauthn_signed_bytes(&proof(0x01, rp, "webauthn.get", "ch", o), "ch", o, rp),
+            Err(WebAuthnError::NotVerified)
+        );
+        assert_eq!(
+            webauthn_signed_bytes(&proof(0x0d, rp, "webauthn.get", "ch", o), "ch", o, rp),
+            Err(WebAuthnError::Synced)
+        );
+        assert_eq!(
+            webauthn_signed_bytes(&proof(0x1d, rp, "webauthn.get", "ch", o), "ch", o, rp),
+            Err(WebAuthnError::Synced)
+        );
     }
 }

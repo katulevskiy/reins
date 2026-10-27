@@ -315,12 +315,109 @@ pub enum AdminAction {
         #[serde(default)]
         default_branch: String,
     },
-    /// The org's GitHub reader App (O3, O4): its app and installation ids. Its private key and webhook secret are posted
-    /// apart, sealed.
+    /// O3: a member's manager (membership ids), on the Team tier, which has no directory to say.
+    SetManager {
+        member: String,
+        #[serde(default)]
+        manager: Option<String>,
+    },
+    /// O3: a group's backup group and review window (escalation, 05 §6).
+    SetGroupRouting {
+        group: String,
+        #[serde(default)]
+        backup: Option<String>,
+        #[serde(default)]
+        window_secs: Option<u64>,
+    },
+    /// O3: the org's read-only GitHub App (code owners, GitHub login links). Its key is posted separately, sealed.
     SetGithubReader {
         app_id: u64,
         installation_id: u64,
     },
+    /// O3: an on-call schedule reviewers can name (`on_call: <alias>`). Its API key is posted separately, sealed.
+    SetOnCallSource {
+        alias: String,
+        provider: OnCallProvider,
+        schedule_id: String,
+    },
+    /// O3: Slack or Teams review notifications (links to the signed web approval, L0–L2).
+    SetApprovalChannel {
+        channel: ChannelKind,
+        enabled: bool,
+        /// Turning on: the digest of the installed app and secret this was proposed for. Approving it turns on
+        /// exactly that install, never one swapped in meanwhile.
+        #[serde(default)]
+        config: Option<String>,
+    },
+}
+
+/// Where an on-call schedule lives (O3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnCallProvider {
+    Pagerduty,
+    Opsgenie,
+    IncidentIo,
+}
+
+impl OnCallProvider {
+    pub const ALL: [Self; 3] = [Self::Pagerduty, Self::Opsgenie, Self::IncidentIo];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pagerduty => "pagerduty",
+            Self::Opsgenie => "opsgenie",
+            Self::IncidentIo => "incident_io",
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pagerduty => "PagerDuty",
+            Self::Opsgenie => "Opsgenie",
+            Self::IncidentIo => "Incident.io",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+}
+
+/// A third-party approval channel (O3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelKind {
+    Slack,
+    Teams,
+}
+
+impl ChannelKind {
+    pub const ALL: [Self; 2] = [Self::Slack, Self::Teams];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Slack => "slack",
+            Self::Teams => "teams",
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Slack => "Slack",
+            Self::Teams => "Microsoft Teams",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
 }
 
 /// Where an org executor runs (05 §5).
@@ -394,6 +491,9 @@ impl AdminAction {
             }
             | Self::ConfirmDirectoryRemovals {
                 ..
+            }
+            | Self::SetManager {
+                ..
             } => {
                 if touches_privileged {
                     Capability::AssignAdmins
@@ -413,7 +513,16 @@ impl AdminAction {
             | Self::RemoveExecutor {
                 ..
             }
+            | Self::SetGroupRouting {
+                ..
+            }
             | Self::SetGithubReader {
+                ..
+            }
+            | Self::SetOnCallSource {
+                ..
+            }
+            | Self::SetApprovalChannel {
                 ..
             } => Capability::ManageConnections,
         }
@@ -428,6 +537,12 @@ impl AdminAction {
                 | Self::SetRetention { .. }
                 | Self::RegisterExecutor { .. }
                 | Self::RemoveExecutor { .. }
+                // O3: who approves (managers, backups, on-call, channels, the GitHub reader) is security-relevant.
+                | Self::SetManager { .. }
+                | Self::SetGroupRouting { .. }
+                | Self::SetGithubReader { .. }
+                | Self::SetOnCallSource { .. }
+                | Self::SetApprovalChannel { .. }
         )
     }
 

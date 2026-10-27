@@ -30,12 +30,15 @@ pub mod admin;
 pub mod api;
 pub mod attest;
 pub mod audit;
+pub mod channels;
 pub mod console;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
 pub mod console_policy;
 pub mod console_policy_pages;
+pub mod console_routing;
+pub mod console_routing_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
@@ -58,10 +61,14 @@ pub mod posture;
 pub mod reviews;
 pub mod rollout;
 pub mod roster;
+pub mod routing;
 pub mod scim;
 pub mod simulation;
 pub mod sweeper;
+pub mod templates;
 pub mod tenant;
+pub mod web_approval;
+pub mod web_approval_pages;
 pub mod workos_api;
 
 use reins_proto::org::{Capability, Role, role_grants};
@@ -90,6 +97,9 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console_policy::routes());
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
+    routes.extend(routing::sla::routes());
+    routes.extend(channels::slack::routes());
+    routes.extend(channels::teams::routes());
     routes.extend(policy_repo::routes());
     routes
 }

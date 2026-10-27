@@ -72,6 +72,7 @@ pub fn q_request_lease(
     c: &mut DbConnInner,
     connection: &ReinsConnection,
     ask: &LeaseRequest,
+    routed: &(super::routing::Touches, super::routing::Dynamic),
     now: i64,
 ) -> Result<(LeaseView, Vec<String>, String), OrgError> {
     if !repo_ok(&ask.repo) || !box_key_ok(&ask.box_key) {
@@ -86,8 +87,23 @@ pub fn q_request_lease(
         box_key: ask.box_key.clone(),
     };
     let args = lease_args(&lease.repo, lease.access, &lease.box_key);
-    let s =
-        decisions::submit(c, &org, &user, &connection.uuid, &connection.label, LEASE_TOOL, &args, Some(&lease), now)?;
+    let extra = decisions::Extra {
+        reason: None,
+        touches: &routed.0,
+        dynamic: &routed.1,
+    };
+    let s = decisions::submit_with(
+        c,
+        &org,
+        &user,
+        &connection.uuid,
+        &connection.label,
+        LEASE_TOOL,
+        &args,
+        Some(&lease),
+        &extra,
+        now,
+    )?;
     let row = reins_org_request::q_lease(c, &org, &lease.id)?.ok_or(OrgError::NotFound)?;
     Ok((view(&row, s.explain), s.notify, row.request_uuid))
 }
@@ -148,8 +164,19 @@ async fn post_lease(
     let connection = connection_of(&request, &conn).await.map_err(|s| (s, Json(json!({}))))?;
     let ask = body.into_inner();
     let now = now_unix();
+    // A push's code owners (the repository's default owners) and on-call are asked before the transaction.
+    let user = connection.user_uuid.to_string();
+    let org = conn.run(move |c| managed_org(c, &user)).await.ok().flatten();
+    let routed = match org {
+        Some(org) => {
+            let args = lease_args(&ask.repo.to_ascii_lowercase(), ask.access, &ask.box_key);
+            let user = connection.user_uuid.to_string();
+            super::routing::prefetch(pool.inner(), &org, &user, &connection.uuid, LEASE_TOOL, &args, None, now).await
+        }
+        None => Default::default(),
+    };
     let (view, notify, request_id) = conn
-        .run(move |c| q_request_lease(c, &connection, &ask, now))
+        .run(move |c| q_request_lease(c, &connection, &ask, &routed, now))
         .await
         .map_err(|e| (status_of(&e), Json(json!({"error": e.message()}))))?;
     super::reviews::notify(pool.inner(), &notify, &request_id);
@@ -198,14 +225,17 @@ mod tests {
         let mut c = db();
         pilot(&mut c);
         let lee = conn_of("lee", "conn-lee");
-        assert!(q_request_lease(&mut c, &lee, &ask("acme"), 100).is_err());
+        assert!(q_request_lease(&mut c, &lee, &ask("acme"), &Default::default(), 100).is_err());
         let mut bad_key = ask("acme/api");
         bad_key.box_key = "short".into();
-        assert!(q_request_lease(&mut c, &lee, &bad_key, 100).is_err());
-        let (v, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), 100).unwrap();
+        assert!(q_request_lease(&mut c, &lee, &bad_key, &Default::default(), 100).is_err());
+        let (v, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), &Default::default(), 100).unwrap();
         assert_eq!((v.state.as_str(), v.sealed), (lease_state::PENDING, None));
         assert!(q_lease_view(&mut c, &conn_of("lee", "conn-other"), &v.id).is_err(), "another connection");
-        assert!(q_request_lease(&mut c, &conn_of("bob", "conn-bob"), &ask("acme/api"), 100).is_err(), "not a member");
+        assert!(
+            q_request_lease(&mut c, &conn_of("bob", "conn-bob"), &ask("acme/api"), &Default::default(), 100).is_err(),
+            "not a member"
+        );
     }
 
     #[test]
@@ -213,8 +243,8 @@ mod tests {
         let mut c = db();
         pilot(&mut c);
         let lee = conn_of("lee", "conn-lee");
-        let (pending, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), 100).unwrap();
-        let (issued, _, _) = q_request_lease(&mut c, &lee, &ask("acme/web"), 100).unwrap();
+        let (pending, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), &Default::default(), 100).unwrap();
+        let (issued, _, _) = q_request_lease(&mut c, &lee, &ask("acme/web"), &Default::default(), 100).unwrap();
         // The executor issues one.
         let l = reins_org_request::q_lease(&mut c, "o1", &issued.id).unwrap().unwrap();
         reins_org_request::q_set_lease_issued(&mut c, "o1", &l.uuid, "sealed", l.expires_at, 101).unwrap();
@@ -234,7 +264,7 @@ mod tests {
         let mut c = db();
         pilot(&mut c);
         let lee = conn_of("lee", "conn-lee");
-        let (v, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), 100).unwrap();
+        let (v, _, _) = q_request_lease(&mut c, &lee, &ask("acme/api"), &Default::default(), 100).unwrap();
         q_revoke_for_deprovision(&mut c, "o1", "lee", 110).unwrap();
         assert!(!reins_org_request::q_set_lease_issued(&mut c, "o1", &v.id, "sealed", 900, 111).unwrap());
         // A credential minted in the race is still queued for revocation upstream.

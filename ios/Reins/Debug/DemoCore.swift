@@ -377,6 +377,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
+    func orgPasskeys() async throws -> [OrgPasskeyView] { [] }
+
+    func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
+
     func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
     func ssoBegin(serverUrl: String) async throws -> SsoStart {

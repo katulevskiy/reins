@@ -40,7 +40,7 @@ use toml::Spanned;
 use crate::context::{Facts, Zone};
 use crate::effects::{EffectKind, Level};
 use crate::matrix::{Cell, Issuer, Matrix, Rule, Then, When};
-use crate::org::{ORG_POLICY_VERSION, OrgPolicy, OrgRule, PostureRule, ReviewClass, ReviewSpec, Reviewers};
+use crate::org::{Hours, ORG_POLICY_VERSION, OrgPolicy, OrgRule, PostureRule, ReviewClass, ReviewSpec, Reviewers};
 
 /// The files a policy repo is read from; anything else in the repo is ignored.
 pub const MAIN_FILE: &str = "reins-policy.toml";
@@ -70,9 +70,6 @@ pub fn check_size(files: &BTreeMap<String, String>) -> Result<(), String> {
     }
     Ok(())
 }
-
-/// Words for what needs O3's routing (relationship reviewers, rule filters, escalation).
-const NEEDS_O3: &str = "needs O3 (routing): not available yet";
 
 /// One stage as written: `pilot`, `25%`, `100%` (or `everyone`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
@@ -180,8 +177,15 @@ struct ReviewSrc {
     class: Spanned<String>,
     #[serde(default)]
     window: Option<Spanned<String>>,
+    /// Who it escalates to, step by step, when a window passes unanswered (reviewer expressions).
     #[serde(default)]
-    escalate: Option<Spanned<toml::Value>>,
+    escalate: Vec<Spanned<String>>,
+    /// Breaks quiet hours.
+    #[serde(default)]
+    urgent: bool,
+    /// A time-boxed approval: valid this long after the decision.
+    #[serde(default)]
+    approval_valid: Option<Spanned<String>>,
 }
 
 #[derive(Deserialize)]
@@ -276,8 +280,6 @@ struct RuleSrc {
     /// Unix seconds: the rule stops applying then.
     #[serde(default)]
     not_after: Option<i64>,
-    #[serde(default)]
-    escalate: Option<Spanned<toml::Value>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -293,17 +295,32 @@ struct WhenSrc {
     resource: Option<String>,
     #[serde(default)]
     connection: Option<String>,
-    // O3's filters: refused until O3 ships them.
+    /// Only requests by these members (emails).
     #[serde(default)]
-    members: Option<Spanned<toml::Value>>,
+    members: Vec<Spanned<String>>,
+    /// Permits only: the agent gave a reason.
     #[serde(default)]
-    require_reason: Option<Spanned<toml::Value>>,
+    require_reason: bool,
+    /// It applies only outside every one of these windows.
     #[serde(default)]
-    outside_hours: Option<Spanned<toml::Value>>,
+    outside_hours: Vec<HoursSrc>,
+    /// Deny and review only: a payment of at least this many minor units (in `currency`, when named).
     #[serde(default)]
-    min_amount: Option<Spanned<toml::Value>>,
+    min_amount: Option<u64>,
     #[serde(default)]
-    new_party: Option<Spanned<toml::Value>>,
+    currency: Option<String>,
+    /// Deny and review only: a party the org's facts don't know.
+    #[serde(default)]
+    new_party: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HoursSrc {
+    days: Vec<Spanned<String>>,
+    start: String,
+    end: String,
+    tz: String,
 }
 
 // --- Compiling ---------------------------------------------------------------------------------------------------
@@ -376,32 +393,62 @@ pub fn format_duration(secs: u64) -> String {
 /// - `requester`;
 /// - `any of <Group>` (the group's name);
 /// - `role: <role>` (`security_admin`, or its label, `Security admin`);
-/// - `person: <email>[, <email>…]`.
+/// - `person: <email>[, <email>…]`;
+/// - `manager`, `code owners`, `on-call: <alias>`, `resource owner: <tag>`, `backup of <Group>`;
+/// - `A OR B` (anyone either admits; flat).
 ///
-/// Relationship and on-call reviewers (`manager`, `code owners`, `on-call: …`, `resource owner: …`, `backup of …`) and
-/// `A OR B` need O3. Two obligations on one request are two rules: there is no `AND`.
+/// Two obligations on one request are two rules: there is no `AND`.
 pub fn parse_reviewers(expr: &str) -> Result<Reviewers, String> {
     let e = expr.trim();
     let lower = e.to_ascii_lowercase();
-    if lower == "requester" {
-        return Ok(Reviewers::Requester);
-    }
-    if lower.contains(" or ")
-        || lower == "manager"
-        || lower == "code owners"
-        || ["on-call:", "resource owner:", "backup of "].iter().any(|p| lower.starts_with(p))
-    {
-        return Err(format!("{e:?} {NEEDS_O3}"));
-    }
     if lower.contains(" and ") {
         return Err("two reviews on one request are two rules (there is no AND)".to_owned());
     }
-    if let Some(rest) = strip_prefix_ci(e, "any of ") {
-        let group = rest.trim();
-        if group.is_empty() {
-            return Err("name the group: any of <Group>".to_owned());
+    if lower.contains(" or ") {
+        let mut parts = Vec::new();
+        let mut rest = e;
+        while let Some(at) = rest.to_ascii_lowercase().find(" or ") {
+            parts.push(parse_one(&rest[..at])?);
+            rest = &rest[at + 4..];
         }
-        return Ok(Reviewers::Group(group.to_owned()));
+        parts.push(parse_one(rest)?);
+        return Ok(Reviewers::AnyOf(parts));
+    }
+    parse_one(e)
+}
+
+fn parse_one(expr: &str) -> Result<Reviewers, String> {
+    let e = expr.trim();
+    let lower = e.to_ascii_lowercase();
+    match lower.as_str() {
+        "requester" => return Ok(Reviewers::Requester),
+        "manager" => return Ok(Reviewers::Manager),
+        "code owners" => return Ok(Reviewers::CodeOwners),
+        _ => {}
+    }
+    let named = |rest: &str, what: &str| {
+        let v = rest.trim();
+        if v.is_empty() {
+            Err(format!("name the {what}"))
+        } else {
+            Ok(v.to_owned())
+        }
+    };
+    if let Some(rest) = strip_prefix_ci(e, "any of ") {
+        return named(rest, "group: any of <Group>").map(Reviewers::Group);
+    }
+    if let Some(rest) = strip_prefix_ci(e, "backup of ") {
+        return named(rest, "group: backup of <Group>").map(Reviewers::BackupOf);
+    }
+    if let Some(rest) = strip_prefix_ci(e, "on-call:") {
+        return named(rest, "schedule: on-call: <alias>").map(|alias| Reviewers::OnCall {
+            alias,
+        });
+    }
+    if let Some(rest) = strip_prefix_ci(e, "resource owner:") {
+        return named(rest, "tag: resource owner: <tag>").map(|tag| Reviewers::ResourceOwner {
+            tag,
+        });
     }
     if let Some(rest) = strip_prefix_ci(e, "role:") {
         let r = rest.trim();
@@ -418,7 +465,10 @@ pub fn parse_reviewers(expr: &str) -> Result<Reviewers, String> {
         }
         return Ok(Reviewers::Members(people));
     }
-    Err(format!("{e:?} isn't a reviewer (requester, any of <Group>, role: <role>, person: <email>)"))
+    Err(format!(
+        "{e:?} isn't a reviewer (requester, any of <Group>, role: <role>, person: <email>, manager, code owners, \
+on-call: <alias>, resource owner: <tag>, backup of <Group>)"
+    ))
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
@@ -434,6 +484,16 @@ pub fn reviewers_text(r: &Reviewers) -> String {
         Reviewers::Group(g) => format!("any of {g}"),
         Reviewers::Role(role) => format!("role: {}", role.as_str()),
         Reviewers::Members(m) => format!("person: {}", m.join(", ")),
+        Reviewers::Manager => "manager".to_owned(),
+        Reviewers::CodeOwners => "code owners".to_owned(),
+        Reviewers::OnCall {
+            alias,
+        } => format!("on-call: {alias}"),
+        Reviewers::ResourceOwner {
+            tag,
+        } => format!("resource owner: {tag}"),
+        Reviewers::BackupOf(g) => format!("backup of {g}"),
+        Reviewers::AnyOf(list) => list.iter().map(reviewers_text).collect::<Vec<_>>().join(" OR "),
     }
 }
 
@@ -500,10 +560,26 @@ fn zone_name(z: Zone) -> &'static str {
 }
 
 fn review_spec(src: &ReviewSrc, e: &mut Errs<'_>) -> Option<ReviewSpec> {
-    if let Some(esc) = &src.escalate {
-        e.span(esc, format!("escalate {NEEDS_O3}"));
-        return None;
+    let mut escalate = Vec::new();
+    for step in &src.escalate {
+        match parse_reviewers(step.get_ref()) {
+            Ok(r) => escalate.push(r),
+            Err(m) => {
+                e.span(step, m);
+                return None;
+            }
+        }
     }
+    let approval_valid_secs = match &src.approval_valid {
+        None => None,
+        Some(v) => match parse_duration(v.get_ref()) {
+            Ok(s) => Some(s),
+            Err(m) => {
+                e.span(v, m);
+                return None;
+            }
+        },
+    };
     let reviewers = match parse_reviewers(src.reviewers.get_ref()) {
         Ok(r) => r,
         Err(m) => {
@@ -537,6 +613,9 @@ fn review_spec(src: &ReviewSrc, e: &mut Errs<'_>) -> Option<ReviewSpec> {
         distinct_persons: src.distinct_persons.unwrap_or(true),
         class,
         window_secs,
+        escalate,
+        urgent: src.urgent,
+        approval_valid_secs,
     };
     // The same checks the policy itself makes, at this table's line.
     let mut probe = OrgPolicy::empty("x");
@@ -609,23 +688,24 @@ fn rollout_plan(src: Option<&RolloutSrc>, e: &mut Errs<'_>) -> RolloutPlanSource
 
 fn rule_of(org: &str, src: &RuleSrc, e: &mut Errs<'_>) -> Option<OrgRule> {
     let when_src = src.when.as_ref();
+    let mut outside_hours = Vec::new();
     if let Some(w) = when_src {
-        for (name, v) in [
-            ("members", &w.members),
-            ("require_reason", &w.require_reason),
-            ("outside_hours", &w.outside_hours),
-            ("min_amount", &w.min_amount),
-            ("new_party", &w.new_party),
-        ] {
-            if let Some(v) = v {
-                e.span(v, format!("{name} {NEEDS_O3}"));
-                return None;
+        for h in &w.outside_hours {
+            let mut days = Vec::new();
+            for d in &h.days {
+                let Ok(day) = d.get_ref().trim().parse::<chrono::Weekday>() else {
+                    e.span(d, format!("{:?} isn't a day (Mon to Sun)", d.get_ref()));
+                    return None;
+                };
+                days.push(day);
             }
+            outside_hours.push(Hours {
+                days,
+                start: h.start.trim().to_owned(),
+                end: h.end.trim().to_owned(),
+                tz: h.tz.trim().to_owned(),
+            });
         }
-    }
-    if let Some(esc) = &src.escalate {
-        e.span(esc, format!("escalate {NEEDS_O3}"));
-        return None;
     }
     let mut when = When::default();
     let mut ok = true;
@@ -674,8 +754,8 @@ fn rule_of(org: &str, src: &RuleSrc, e: &mut Errs<'_>) -> Option<OrgRule> {
     if !ok {
         return None;
     }
-    Some(OrgRule {
-        rule: Rule {
+    let mut out = OrgRule::new(
+        Rule {
             id: src.id.get_ref().clone(),
             issuer: Issuer::Org(org.to_owned()),
             when,
@@ -685,7 +765,16 @@ fn rule_of(org: &str, src: &RuleSrc, e: &mut Errs<'_>) -> Option<OrgRule> {
             explain: src.explain.clone(),
         },
         review,
-    })
+    );
+    if let Some(w) = when_src {
+        out.members = w.members.iter().map(|m| m.get_ref().trim().to_ascii_lowercase()).collect();
+        out.require_reason = w.require_reason;
+        out.min_amount_minor = w.min_amount;
+        out.currency = w.currency.as_ref().map(|c| c.trim().to_ascii_uppercase());
+        out.new_party = w.new_party;
+    }
+    out.outside_hours = outside_hours;
+    Some(out)
 }
 
 fn is_rules_file(path: &str) -> bool {
@@ -826,24 +915,54 @@ fn lower_keys(m: BTreeMap<String, Zone>) -> BTreeMap<String, Zone> {
     m.into_iter().map(|(k, v)| (k.trim().to_ascii_lowercase(), v)).collect()
 }
 
-/// Maps the reviewers' names the files use to the ids the server keeps, or back: `group` maps a group, `person` a
-/// member. Stops at the first name either refuses.
+/// Maps the reviewers' names the files use to the ids the server keeps, or back: `group` maps a group (`any of`,
+/// `backup of`), `person` a member (`person:`, a rule's `members`). Stops at the first name either refuses.
 pub fn map_reviewers(
     policy: &mut OrgPolicy,
     mut group: impl FnMut(&str) -> Result<String, String>,
     mut person: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<(), String> {
-    let specs =
-        std::iter::once(&mut policy.cell_review).chain(policy.rules.iter_mut().filter_map(|r| r.review.as_mut()));
-    for spec in specs {
-        match &mut spec.reviewers {
-            Reviewers::Group(g) => *g = group(g)?,
+    fn one(
+        r: &mut Reviewers,
+        group: &mut impl FnMut(&str) -> Result<String, String>,
+        person: &mut impl FnMut(&str) -> Result<String, String>,
+    ) -> Result<(), String> {
+        match r {
+            Reviewers::Group(g) | Reviewers::BackupOf(g) => *g = group(g)?,
             Reviewers::Members(list) => {
                 for m in list.iter_mut() {
                     *m = person(m)?;
                 }
             }
-            Reviewers::Requester | Reviewers::Role(_) => {}
+            Reviewers::AnyOf(list) => {
+                for x in list.iter_mut() {
+                    one(x, group, person)?;
+                }
+            }
+            Reviewers::Requester
+            | Reviewers::Role(_)
+            | Reviewers::Manager
+            | Reviewers::CodeOwners
+            | Reviewers::OnCall {
+                ..
+            }
+            | Reviewers::ResourceOwner {
+                ..
+            } => {}
+        }
+        Ok(())
+    }
+    for rule in &mut policy.rules {
+        for m in &mut rule.members {
+            *m = person(m)?;
+        }
+    }
+    let specs =
+        std::iter::once(&mut policy.cell_review).chain(policy.rules.iter_mut().filter_map(|r| r.review.as_mut()));
+    for spec in specs {
+        one(&mut spec.reviewers, &mut group, &mut person)?;
+        for step in &mut spec.escalate {
+            one(step, &mut group, &mut person)?;
         }
     }
     Ok(())
@@ -877,6 +996,15 @@ fn review_inline(spec: &ReviewSpec) -> String {
     parts.push(format!("class = {}", q(class)));
     if spec.window_secs != 0 {
         parts.push(format!("window = {}", q(&format_duration(spec.window_secs))));
+    }
+    if !spec.escalate.is_empty() {
+        parts.push(format!("escalate = {}", list(spec.escalate.iter().map(reviewers_text))));
+    }
+    if spec.urgent {
+        parts.push("urgent = true".to_owned());
+    }
+    if let Some(v) = spec.approval_valid_secs {
+        parts.push(format!("approval_valid = {}", q(&format_duration(v))));
     }
     format!("{{ {} }}", parts.join(", "))
 }
@@ -1019,6 +1147,37 @@ pub fn render(policy: &OrgPolicy, plan: &RolloutPlanSource) -> BTreeMap<String, 
         if let Some(c) = &w.connection {
             when.push(format!("connection = {}", q(c)));
         }
+        if !r.members.is_empty() {
+            when.push(format!("members = {}", list(r.members.iter().cloned())));
+        }
+        if r.require_reason {
+            when.push("require_reason = true".to_owned());
+        }
+        if !r.outside_hours.is_empty() {
+            let hours: Vec<String> = r
+                .outside_hours
+                .iter()
+                .map(|h| {
+                    format!(
+                        "{{ days = {}, start = {}, end = {}, tz = {} }}",
+                        list(h.days.iter().map(|d| format!("{d:?}"))),
+                        q(&h.start),
+                        q(&h.end),
+                        q(&h.tz)
+                    )
+                })
+                .collect();
+            when.push(format!("outside_hours = [{}]", hours.join(", ")));
+        }
+        if let Some(m) = r.min_amount_minor {
+            when.push(format!("min_amount = {m}"));
+        }
+        if let Some(c) = &r.currency {
+            when.push(format!("currency = {}", q(c)));
+        }
+        if r.new_party {
+            when.push("new_party = true".to_owned());
+        }
         if !when.is_empty() {
             let _ = writeln!(out, "when = {{ {} }}", when.join(", "));
         }
@@ -1136,7 +1295,32 @@ mod tests {
             exclude_requester: false,
             class: ReviewClass::Instant,
             window_secs: 90,
+            escalate: Vec::new(),
+            urgent: false,
+            approval_valid_secs: None,
         };
+        // O3's escalation, filters and windows render and read back too.
+        {
+            let r = &mut p.rules[1];
+            r.members = vec!["kim@acme.com".into()];
+            r.outside_hours = vec![Hours {
+                days: vec![chrono::Weekday::Mon, chrono::Weekday::Fri],
+                start: "09:00".into(),
+                end: "17:30".into(),
+                tz: "Europe/Berlin".into(),
+            }];
+            r.min_amount_minor = Some(50_000);
+            r.currency = Some("EUR".into());
+            r.new_party = true;
+        }
+        if let Some(spec) = p.rules[2].review.as_mut() {
+            spec.escalate = vec![
+                Reviewers::Manager,
+                Reviewers::AnyOf(vec![Reviewers::CodeOwners, Reviewers::BackupOf("Security".into())]),
+            ];
+            spec.urgent = true;
+            spec.approval_valid_secs = Some(3600);
+        }
         p.rules[0].review.as_mut().unwrap().reviewers =
             Reviewers::Members(vec!["kim@acme.com".into(), "lee@acme.com".into()]);
         p.rules[0].rule.not_after = Some(2_000_000_000);
@@ -1193,15 +1377,19 @@ mod tests {
             assert_eq!(e[0].file, file, "{text}: {e:?}");
             assert!(e[0].message.contains("unknown"), "{text}: {e:?}");
         }
-        // O3's filters and escalation are refused by name until O3 ships them.
+        // O3's filters and escalation are read, and checked as the policy checks them.
+        let ok =
+            "[[rule]]\nid = \"a\"\nwhen = { min_amount = 100, currency = \"usd\", new_party = true }\ndeny = true\n";
+        let c = compile(&with(&[("rules/a.toml", ok)])).unwrap();
+        let a = c.policy.rules.iter().find(|r| r.rule.id == "a").unwrap();
+        assert_eq!((a.min_amount_minor, a.currency.as_deref(), a.new_party), (Some(100), Some("USD"), true));
         for text in [
-            "[[rule]]\nid = \"a\"\nwhen = { min_amount = 100 }\ndeny = true\n",
+            // require_reason is for permits only.
             "[[rule]]\nid = \"a\"\nwhen = { require_reason = true }\ndeny = true\n",
-            "[[rule]]\nid = \"a\"\nreview = { reviewers = \"manager\", class = \"instant\" }\n",
-            "[[rule]]\nid = \"a\"\nreview = { reviewers = \"requester\", class = \"instant\", escalate = \"1h\" }\n",
+            "[[rule]]\nid = \"a\"\nwhen = { outside_hours = [{ days = [\"Funday\"], start = \"09:00\", end = \"17:00\", tz = \"UTC\" }] }\ndeny = true\n",
+            "[[rule]]\nid = \"a\"\nreview = { reviewers = \"requester\", class = \"instant\", escalate = [\"nobody\"] }\n",
         ] {
-            let e = errors(&with(&[("rules/a.toml", text)]));
-            assert!(e[0].message.contains("needs O3"), "{text}: {e:?}");
+            assert!(!errors(&with(&[("rules/a.toml", text)])).is_empty(), "{text}");
         }
         // Exactly one outcome.
         for text in ["[[rule]]\nid = \"a\"\n", "[[rule]]\nid = \"a\"\ndeny = true\npermit = true\n"] {
@@ -1219,24 +1407,34 @@ mod tests {
             parse_reviewers("person: Kim@acme.com, lee@acme.com"),
             Ok(Reviewers::Members(vec!["kim@acme.com".into(), "lee@acme.com".into()]))
         );
-        for bad in ["", "any of ", "role: wizard", "person: kim", "everyone", "any of A and any of B"] {
+        for bad in ["", "any of ", "role: wizard", "person: kim", "everyone", "any of A and any of B", "on-call: "] {
             assert!(parse_reviewers(bad).is_err(), "{bad}");
         }
-        for o3 in [
-            "manager",
-            "code owners",
-            "on-call: payments",
-            "resource owner: db",
-            "backup of Security",
-            "any of A OR any of B",
-        ] {
-            assert!(parse_reviewers(o3).unwrap_err().contains("needs O3"), "{o3}");
-        }
+        assert_eq!(
+            parse_reviewers("manager OR any of Security or on-call: payments"),
+            Ok(Reviewers::AnyOf(vec![
+                Reviewers::Manager,
+                Reviewers::Group("Security".into()),
+                Reviewers::OnCall {
+                    alias: "payments".into()
+                }
+            ]))
+        );
         for r in [
             Reviewers::Requester,
             Reviewers::Group("Security".into()),
             Reviewers::Role(Role::Auditor),
             Reviewers::Members(vec!["a@x.com".into()]),
+            Reviewers::Manager,
+            Reviewers::CodeOwners,
+            Reviewers::OnCall {
+                alias: "payments".into(),
+            },
+            Reviewers::ResourceOwner {
+                tag: "db".into(),
+            },
+            Reviewers::BackupOf("Security".into()),
+            Reviewers::AnyOf(vec![Reviewers::Manager, Reviewers::BackupOf("Security".into())]),
         ] {
             assert_eq!(parse_reviewers(&reviewers_text(&r)), Ok(r));
         }

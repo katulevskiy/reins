@@ -28,6 +28,9 @@ struct State {
     /// The user the next authorize signs in (the person at the browser).
     signing_in: Option<User>,
     authentication_method: Option<String>,
+    /// The organization AuthKit routed an SSO sign-in to, when the authorize request named none (O3: a member's
+    /// console sign-in).
+    sso_organization: Option<String>,
     codes: HashMap<String, Issued>,
     /// WorkOS organizations: id -> their verified domains.
     organizations: HashMap<String, Vec<String>>,
@@ -69,7 +72,8 @@ impl Respond for Authorize {
     fn respond(&self, req: &Request) -> ResponseTemplate {
         let q = query(req);
         let provider = q.get("provider").map(String::as_str);
-        let organization = q.get("organization_id").cloned();
+        let organization =
+            q.get("organization_id").cloned().or_else(|| self.0.lock().expect("state").sso_organization.clone());
         if q.get("client_id").map(String::as_str) != Some(CLIENT_ID)
             || q.get("response_type").map(String::as_str) != Some("code")
             || !(matches!(provider, Some("authkit" | "GoogleOAuth" | "GitHubOAuth")) || organization.is_some())
@@ -318,6 +322,13 @@ impl FakeWorkos {
     }
 
     /// The WorkOS sessions handed out so far, oldest first.
+    /// Later sign-ins come through `organization`'s SSO, as AuthKit routes a work address by its domain.
+    pub fn sign_in_via_sso(&self, organization: &str) {
+        let mut st = self.state.lock().expect("state");
+        st.authentication_method = Some("SSO".to_owned());
+        st.sso_organization = Some(organization.to_owned());
+    }
+
     pub fn sessions(&self) -> Vec<String> {
         self.state.lock().expect("state").sessions.clone()
     }

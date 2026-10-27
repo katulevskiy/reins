@@ -321,8 +321,8 @@ mod tests {
     }
 
     fn with_review(mut p: OrgPolicy, resource: &str) -> OrgPolicy {
-        p.rules.push(OrgRule {
-            rule: Rule {
+        p.rules.push(OrgRule::new(
+            Rule {
                 id: "prod-review".into(),
                 issuer: Issuer::Org("o1".into()),
                 when: When {
@@ -334,15 +334,18 @@ mod tests {
                 accepted: false,
                 explain: "Production needs Security".into(),
             },
-            review: Some(ReviewSpec {
+            Some(ReviewSpec {
                 reviewers: Reviewers::Group("sec".into()),
                 quorum: 1,
                 distinct_persons: true,
                 exclude_requester: true,
                 class: ReviewClass::Deferred,
                 window_secs: 0,
+                escalate: Vec::new(),
+                urgent: false,
+                approval_valid_secs: None,
             }),
-        });
+        ));
         p.revision += 1;
         p
     }
@@ -355,6 +358,7 @@ mod tests {
             tool: "github_create_issue",
             args,
             now: at,
+            reason: None,
         }
     }
 
@@ -449,8 +453,8 @@ mod tests {
     fn cases_replay_at_their_own_time() {
         let mut p = acme();
         // A deny that lapsed at t = 1003.
-        p.rules.push(OrgRule {
-            rule: Rule {
+        p.rules.push(OrgRule::new(
+            Rule {
                 id: "freeze".into(),
                 issuer: Issuer::Org("o1".into()),
                 when: When::default(),
@@ -459,8 +463,8 @@ mod tests {
                 accepted: false,
                 explain: "Code freeze".into(),
             },
-            review: None,
-        });
+            None,
+        ));
         let h = history(&p, &REPOS);
         let r = simulate_org(&h, &BTreeMap::new(), &p, &p);
         assert_eq!(r.drift, 0, "each case at its own time, not now");

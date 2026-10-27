@@ -81,6 +81,8 @@ pub enum Tab {
     Requests,
     Audit,
     Executors,
+    /// O3: routing, channels, SLA, templates.
+    Routing,
 }
 
 /// What every signed-in page shows in its header.
@@ -116,6 +118,7 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
                 tab(Tab::Requests, format!("{up}{}/requests", e(id)), "Requests"),
                 tab(Tab::Audit, format!("{up}{}/audit", e(id)), "Audit"),
                 tab(Tab::Executors, format!("{up}{}/executors", e(id)), "Executors"),
+                tab(Tab::Routing, format!("{up}{}/routing", e(id)), "Routing"),
             ]
             .concat(),
             None => tab(Tab::Home, up.to_owned(), "Orgs"),
@@ -419,13 +422,7 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
             "Bind the policy repo".to_owned(),
             field("Policy repo", "current", &e(&format!("{repo} · {default_branch}"))),
         ),
-        AdminAction::SetGithubReader {
-            app_id,
-            installation_id,
-        } => (
-            "Set the GitHub reader".to_owned(),
-            field("GitHub reader", "current", &e(&format!("app {app_id} · installation {installation_id}"))),
-        ),
+        other => (e(&action_title(other)), String::new()),
     };
     format!("<div>{title}</div>{fields}")
 }
@@ -491,10 +488,40 @@ pub fn action_title(action: &AdminAction) -> String {
             repo,
             ..
         } => format!("Policy repo: {repo}"),
+        AdminAction::SetManager {
+            manager,
+            ..
+        } => if manager.is_some() {
+            "Set a manager"
+        } else {
+            "Clear a manager"
+        }
+        .to_owned(),
+        AdminAction::SetGroupRouting {
+            ..
+        } => "Group backup and window".to_owned(),
         AdminAction::SetGithubReader {
             app_id,
             ..
-        } => format!("GitHub reader: app {app_id}"),
+        } => format!("GitHub reader app {app_id}"),
+        AdminAction::SetOnCallSource {
+            alias,
+            provider,
+            ..
+        } => format!("On-call {alias} ({})", provider.label()),
+        AdminAction::SetApprovalChannel {
+            channel: kind,
+            enabled,
+            ..
+        } => format!(
+            "{} reviews {}",
+            kind.label(),
+            if *enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ),
     }
 }
 

@@ -439,6 +439,7 @@ async fn world() -> World {
         org: org.clone(),
         issuer: pin(&keys.issuer),
         decision: pin(&keys.decision),
+        web_origin: reins_executor::config::web_origin(&server.base),
     };
     let decision_key = pins.decision.clone();
     let pem = reins_executor::connectors::testing::test_pem();
@@ -468,6 +469,8 @@ async fn world() -> World {
             &[("csrf", &csrf(&page)), ("app_id", "2"), ("installation_id", &READER_INSTALLATION.to_string())],
         )
         .await;
+    // Who approves is security-relevant: Dana confirms on her phone, Kim approves on his.
+    assert_eq!(dana.answer(true, |r| r.own).await, 1);
     assert_eq!(kim.answer(true, |r| r.title.contains("GitHub reader")).await, 1);
     let page = browser
         .post(
@@ -511,6 +514,16 @@ async fn issues(ai: &mut AiClient, repo: &str, n: usize) {
 
 fn now() -> i64 {
     reins_executor::now()
+}
+
+/// Waits for the next whole second and returns it: requests made from then on are this step's, not earlier ones made
+/// in the same second.
+async fn next_second() -> i64 {
+    let next = now() + 1;
+    while now() < next {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    next
 }
 
 /// Waits (the controller ticks with the sweeper, every 15 s) for the rollout to reach `seq` or `state`.
@@ -580,7 +593,7 @@ when = { resource = \"acme/vault-*\" }\nreview = { reviewers = \"role: security_
     assert_ne!(candidate, stable);
 
     // ---- 4-6. Pilot (Lee) → 25% → everyone, as each stage's dwell passes with enough decisions and green guards.
-    let stage_start = now();
+    let stage_start = next_second().await;
     issues(&mut w.lee_ai, "acme/api", 3).await;
     issues(&mut w.kim_ai, "acme/api", 3).await;
     for (who, want) in [("lee@acme.com", &candidate), ("kim@acme.com", &stable)] {
@@ -591,14 +604,14 @@ when = { resource = \"acme/vault-*\" }\nreview = { reviewers = \"role: security_
         }
     }
     wait_rollout(&w, "stage 25%", |r| r.2 == 2).await;
-    let stage_start = now();
+    let stage_start = next_second().await;
     issues(&mut w.lee_ai, "acme/api", 3).await;
     issues(&mut w.kim_ai, "acme/api", 3).await;
     for (_, _, snapshot, _, seq) in requests_of(&w.server, "lee@acme.com", stage_start) {
         assert_eq!((snapshot.as_str(), seq), (candidate.as_str(), Some(2)), "the pilot stays on the candidate");
     }
     wait_rollout(&w, "everyone", |r| r.2 == 3).await;
-    let stage_start = now();
+    let stage_start = next_second().await;
     issues(&mut w.lee_ai, "acme/api", 3).await;
     issues(&mut w.kim_ai, "acme/api", 3).await;
     for (_, _, snapshot, _, seq) in requests_of(&w.server, "kim@acme.com", stage_start) {

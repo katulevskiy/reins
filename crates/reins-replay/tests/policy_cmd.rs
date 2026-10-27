@@ -90,6 +90,7 @@ fn simulate_matches_the_library() {
                 tool: "github_create_issue",
                 args: &args,
                 now: 100 + i64::try_from(i).unwrap(),
+                reason: None,
             };
             let v = evaluate_managed(&req, &base, None);
             Retained {
