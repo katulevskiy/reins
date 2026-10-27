@@ -118,13 +118,17 @@ for name, text in workflows.items():
 job = release.split("\n  ios-testflight:\n", 1)[1].split("\n\n  # ", 1)[0]
 check("actions/cache" not in job and "rust-cache" not in job, "TestFlight restores no Actions cache")
 check("core-cache.sh fetch iphoneos-release" in job, "TestFlight fetches the published Release core")
-# The prune: its own job holds actions: write; CI and iOS call it on main.
+# The prune: its own job holds actions: write. It runs on its own (hourly, and after CI and iOS runs on main), never
+# inside CI: scripts/wait-for-ci.sh waits for CI's whole result, so a prune there could hold back or fail a release.
 prune_workflow = workflows["cache-prune.yml"]
 check("permissions: {}" in prune_workflow and prune_workflow.count("actions: write") == 1, "actions: write in one job")
 check("python3 scripts/prune-caches.py" in prune_workflow, "the script")
-for name in ("ci.yml", "ios.yml"):
-    caller = workflows[name].split("\n  cache-prune:\n", 1)[1].split("\n\n", 1)[0]
-    check("uses: ./.github/workflows/cache-prune.yml" in caller and "actions: write" in caller
-          and "github.ref == 'refs/heads/main'" in caller and "pull_request" in caller, f"{name} calls the prune")
+check("workflows: [CI, iOS]" in prune_workflow and "branches: [main]" in prune_workflow
+      and "github.event.workflow_run.event != 'pull_request'" in prune_workflow, "after main's CI and iOS runs")
+check("concurrency:" not in prune_workflow.split("\njobs:\n", 1)[1], "a prune run is never cancelled")
+check("workflow_call" not in prune_workflow, "no workflow calls it")
+for name, text in workflows.items():
+    check("cache-prune.yml" not in text or name == "cache-prune.yml" or "(.github/workflows/cache-prune.yml)" in text,
+          f"{name} runs no prune")
 
 print(f"{checks} cache checks passed")

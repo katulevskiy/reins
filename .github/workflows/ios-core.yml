@@ -114,6 +114,12 @@ jobs:
     if: needs.plan.outputs.missing != '[]'
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
+    # A newer push to main cancels an older push's build of the same variant (its core's sources changed again; the
+    # newer run builds the newer hash). The release of the older commit then builds its own core in the TestFlight job,
+    # after publication, so publishing never waits for this. Calls and hand runs are never cancelled.
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('ios-core-main-{0}', matrix.platform) || format('ios-core-{0}-{1}', github.run_id, matrix.platform) }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     strategy:
       fail-fast: false
       matrix:

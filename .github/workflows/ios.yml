@@ -29,13 +29,14 @@ on:
 permissions:
   contents: read
 
-# One group per pull request: a newer run of the same pull request replaces its pending run (GitHub keeps one pending
-# run per group), and pull requests no longer replace each other's queued runs. A run in progress is not cancelled.
-# Pushes to main share one group, and a newer push cancels the older run (its UI shards included): the newer commit
-# has every change of the older one. A nightly or hand run keeps its own group per commit and is not cancelled.
+# One group per pull request, and a newer push to it cancels its older run, in progress or queued: only the newest
+# commit's result counts, and a stale run's queued macOS jobs would otherwise take runners ahead of a release's.
+# Pull requests never cancel each other's runs. Pushes to main share one group, and a newer push cancels the older run
+# (its UI shards included): the newer commit has every change of the older one. A nightly or hand run keeps its own
+# group per commit and is not cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main' || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -353,6 +354,9 @@ jobs:
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.shard != 'unit' }}
+    permissions:
+      contents: read
+      actions: read # the release runs and their jobs (Yield to a release)
     strategy:
       fail-fast: false
       # Three at a time on a main push or a hand run. The nightly uses all five.
@@ -366,8 +370,40 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # max-parallel starts the later shards as the first ones end, long after macos-gate-tests passed, and a queued job
+      # takes a free runner in turn with the release's. So each UI shard asks again with its runner in hand, and steps
+      # aside (a warning, no tests: every later step needs the plan) while a release run wants a macOS runner: "macOS
+      # builds" not created yet or queued, or "TestFlight upload" queued. A backlog of shards then drains in seconds
+      # instead of holding the release back. The unit shard (it gates the iOS check) runs in the first batch, right after
+      # the gate, and never steps aside. An API error runs the shard.
+      - name: Yield to a release
+        id: yield
+        if: matrix.shard != 'unit'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -uo pipefail
+          wants=""
+          if runs="$(gh api "repos/$GH_REPO/actions/workflows/release.yml/runs?per_page=30" \
+            --jq '.workflow_runs[] | select(.status != "completed") | .id')"; then
+            for id in $runs; do
+              found="$(gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq '
+                (if any(.jobs[]; .name == "macOS builds") then empty else "macOS builds is not created yet" end),
+                (.jobs[] | select((.name == "macOS builds" or .name == "TestFlight upload")
+                  and (.status | test("^(requested|waiting|pending|queued)$"))) | "\(.name) is \(.status)")')" || continue
+              [[ -n "$found" ]] && wants+="release run $id: ${found//$'\n'/, }. "
+            done
+          fi
+          if [[ -n "$wants" ]]; then
+            echo "::warning title=iOS UI tests (${SHARD})::Skipped: a release waits for a macOS runner. $wants"
+            echo "Skipped the ${SHARD} shard: a release waits for a macOS runner. $wants" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Plan this shard
         id: plan
+        if: steps.yield.outputs.skip != 'true'
         env:
           SHARD: ${{ matrix.shard }}
           CLASSES: ${{ needs.changes.outputs.ui }}
@@ -416,16 +452,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Deletes the caches this run superseded (.github/workflows/cache-prune.yml), on main only, once the core and the build
-  # (which write the simulator core's and the Swift caches) are done. Its own job holds actions: write.
-  cache-prune:
-    name: Prune caches
-    needs: [ios-core, ios-build]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    uses: ./.github/workflows/cache-prune.yml # zizmor: ignore[self-repository] the same commit's prune
-    permissions:
-      actions: write # delete superseded caches
-      contents: read
 
   # The check to require. Shards are skipped when the lane is off, which would leave a required shard
   # pending; this job passes in that case and fails when the unit shard, the build, the core, or the lane selector

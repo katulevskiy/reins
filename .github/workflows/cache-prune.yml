@@ -9,7 +9,8 @@ name: Cache prune
 #     written from main only.
 #   - this prune (scripts/prune-caches.py): a family's superseded entries (a key whose Cargo.lock, Package.resolved or
 #     sources hash changed) and other refs' idle caches, deleted once nothing restores them, rather than left to push
-#     out a live one. ci.yml and ios.yml call it at the end of their runs on main; the hourly run catches the rest.
+#     out a live one. It runs when a CI or iOS run on main ends (workflow_run: a run of its own, so neither CI's result,
+#     which publication waits for, nor iOS's depends on it), and every hour.
 #
 # Budget (decimal GB, sizes of 10-27): CI's Rust caches (server and core 0.73, desktop UI 0.84, desktop macOS 0.73 and
 # Windows 0.91, Android natives 0.48 x 2, iOS simulator core 0.82), Gradle 0.96, the Swift cache about 1.3, Robolectric
@@ -25,20 +26,24 @@ on:
         description: List what would be deleted, delete nothing
         type: boolean
         default: false
-  workflow_call:
+  # Main's own workflow file, with main checked out: nothing of the run that ended is read but its name and event.
+  workflow_run: # zizmor: ignore[dangerous-triggers] reads no artifact, ref or text of the triggering run
+    workflows: [CI, iOS]
+    types: [completed]
+    branches: [main]
 
 permissions: {}
 
 jobs:
   prune:
     name: Prune Actions caches
-    # Main's own workflow only (a call from a pull request's run never reaches here: its callers check the ref too).
-    if: github.ref == 'refs/heads/main'
+    # Main only; a pull request's run (also one from a fork's branch named main) never starts it. Two at once are
+    # harmless (a cache already deleted is skipped), so no concurrency group: none of these runs is ever cancelled.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    concurrency:
-      group: cache-prune
-      cancel-in-progress: false
     permissions:
       actions: write # list and delete the repository's caches
       contents: read # the script

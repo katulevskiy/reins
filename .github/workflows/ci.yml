@@ -602,14 +602,3 @@ jobs:
           name: android-test-reports-${{ matrix.id }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore
-
-  # Deletes the caches this run superseded (.github/workflows/cache-prune.yml), on main only, once the jobs that write
-  # caches are done. Its own job holds actions: write; nothing else here does.
-  cache-prune:
-    name: Prune caches
-    needs: [rust, desktop-linux, desktop-macos, desktop-windows, android-native, android-release-smoke, android]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    uses: ./.github/workflows/cache-prune.yml # zizmor: ignore[self-repository] the same commit's prune
-    permissions:
-      actions: write # delete superseded caches
-      contents: read

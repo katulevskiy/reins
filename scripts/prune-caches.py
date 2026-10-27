@@ -135,10 +135,13 @@ def main():
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write("## Actions caches\n\n" + text + "\n")
+    # Warnings only: a failed delete is retried by the next run, and this job never fails a run anything waits for.
     if size(keep) > LIMIT - HEADROOM:
         print(f"::warning::The caches kept take {gb(size(keep))} of {gb(LIMIT)}: a run that writes new ones "
               "will make GitHub evict the least recently used (a release's first)")
-    return 1 if failed else 0
+    if failed:
+        print(f"::warning::{failed} caches could not be deleted; the next run tries again")
+    return 0
 
 
 if __name__ == "__main__":
