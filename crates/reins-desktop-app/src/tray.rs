@@ -1,8 +1,9 @@
 //! The tray (Windows, Linux) or menu bar (macOS) icon, as the Next menu bar board draws it (`DeskNext-MenuBar.png`):
-//! the shield in ink while Reins is on (on macOS with how many wait, or a pause's clock, beside it), and on the
-//! field's colour when something needs you: orange while a request waits on the phone, red while git is paused, amber
-//! when Reins needs the user (not paired, or the background service is not running). On
-//! macOS the ink shield is a template image (the menu bar colours it); the coloured ones are drawn as they are.
+//! the Reins R while Reins is on (in ink on macOS, with how many wait, or a pause's clock, beside it; on a running mode's
+//! colour while one runs), and a status shield on the field's colour when something needs you: orange while a request
+//! waits on the phone, red while git is paused, amber when Reins needs the user (not paired, or the background service
+//! is not running). On macOS the ink R is a template image (the menu bar colours it); the coloured ones are drawn as
+//! they are.
 //!
 //! Native menus cannot be styled, so the menu follows the board in words and order: two status lines (the first opens
 //! the window: "Reins is on" over "Dana's iPhone approves", or what waits), "Pause git" with the board's lengths (15
@@ -188,7 +189,7 @@ pub(crate) fn decode(png_bytes: &[u8]) -> Result<Pixels, String> {
     })
 }
 
-/// Whether the icon for `look` is a macOS template image: only the ink shield; the coloured states keep their colour.
+/// Whether the icon for `look` is a macOS template image: only the ink R; the coloured states keep their colour.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn templated(look: Look) -> bool {
     look == Look::On
@@ -209,7 +210,7 @@ fn templated_shown(shown: &Shown) -> bool {
     templated(shown.look) && shown.mode.is_none()
 }
 
-/// A running mode's icon: the shield on its field's colour.
+/// A running mode's icon: the R on its field's colour.
 fn mode_pixels(mode: ModeLook) -> Result<Pixels, String> {
     let bytes: &[u8] = match (cfg!(target_os = "macos"), mode) {
         (true, ModeLook::Bypass) => include_bytes!("../assets/icons/tray-bypass.png"),
@@ -222,7 +223,7 @@ fn mode_pixels(mode: ModeLook) -> Result<Pixels, String> {
     decode(bytes)
 }
 
-/// The icon for `look`: on macOS the menu bar's size (the ink shield a template image, the rest coloured plates), the
+/// The icon for `look`: on macOS the menu bar's size (the ink R a template image, the rest coloured plates), the
 /// tray's elsewhere.
 fn pixels(look: Look) -> Result<Pixels, String> {
     let bytes: &[u8] = match (cfg!(target_os = "macos"), look) {
@@ -339,7 +340,7 @@ mod imp {
             if self.shown.as_ref().is_none_or(|s| (s.look, s.mode) != (shown.look, shown.mode)) {
                 match icon_for(shown) {
                     Ok(i) => {
-                        // The ink shield is a template image on macOS (the menu bar colours it); the coloured
+                        // The ink R is a template image on macOS (the menu bar colours it); the coloured
                         // states are drawn as they are.
                         #[cfg(target_os = "macos")]
                         let set = if super::templated_shown(shown) {
