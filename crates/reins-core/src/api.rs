@@ -169,6 +169,17 @@ impl ReinsCore {
         .await
     }
 
+    /// The tag this account's pushes carry (`None` signed out): the profile a push is for.
+    pub async fn push_tag(&self) -> Result<Option<String>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.push_tag().await
+        })
+        .await
+    }
+
     /// Whether `server_url` offers organizations ("Add work account" is shown only then).
     pub async fn orgs_offered(&self, server_url: String) -> Result<bool, CoreError> {
         let runtime = Arc::clone(&self.runtime);

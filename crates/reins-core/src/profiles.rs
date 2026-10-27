@@ -324,9 +324,26 @@ impl ProfileRegistry {
         let dir = self.profiles_dir().join(&id);
         // `id` is one this registry made (`work-` and hex), so the path stays under `profiles/`.
         if dir.starts_with(self.profiles_dir()) && dir.exists() {
-            std::fs::remove_dir_all(&dir).map_err(|e| CoreError::storage(format!("profile data: {e}")))?;
+            remove_profile_dir(&dir)?;
         }
         Ok(())
+    }
+}
+
+/// Deletes a removed profile's data. A core that was just dropped can still be finishing a write (a database
+/// journal), so a directory that refills while it's being emptied is retried a few times.
+fn remove_profile_dir(dir: &Path) -> Result<(), CoreError> {
+    let mut tries = 0;
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty && tries < 10 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(CoreError::storage(format!("profile data: {e}"))),
+        }
     }
 }
 

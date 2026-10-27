@@ -218,6 +218,10 @@ async fn activity_and_accounts_never_cross_profiles() {
     assert!(work_accounts.iter().any(|a| a.account == "dana-acme"));
     assert!(!work_accounts.iter().any(|a| a.account == "dana-personal"));
     assert_eq!(personal.session().await.unwrap().unwrap().email, PERSONAL);
+    // Each profile knows the tag of its own account's pushes, and they differ.
+    let (p, w) = (personal.push_tag().await.unwrap().unwrap(), work.push_tag().await.unwrap().unwrap());
+    assert_eq!(p, reins_proto::pairing::push_profile_tag(PERSONAL));
+    assert_ne!(p, w);
     assert_eq!(work.session().await.unwrap().unwrap().email, WORK);
 }
 

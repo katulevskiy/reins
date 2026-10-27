@@ -166,6 +166,15 @@ impl Engine {
         Ok(response.is_ok_and(|r| r.status().is_success()))
     }
 
+    /// The tag the server puts on this account's pushes ([`reins_proto::pairing::push_profile_tag`]); `None` signed
+    /// out. A phone with a work profile routes a push to the profile whose tag it carries.
+    pub async fn push_tag(&self) -> Result<Option<String>, CoreError> {
+        let Ok(session) = self.session() else {
+            return Ok(None);
+        };
+        Ok(Some(reins_proto::pairing::push_profile_tag(&session.account_user_id().await?)))
+    }
+
     /// Starts an "Add work account" sign-in: like `sso_begin`, sent to the org that verified `domain`.
     pub fn sso_begin_work(&self, server_url: &str, domain: &str) -> Result<crate::types::SsoStart, CoreError> {
         let server = crate::http::ServerUrl::parse(server_url)?;
