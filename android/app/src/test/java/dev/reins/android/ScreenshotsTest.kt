@@ -382,7 +382,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.activity = (20 downTo 7).map { id ->
             TestData.entry(id.toLong(), if (id % 2 == 0) "read" else "search", "released", 1u, at = now - 60L * (21 - id))
         } + core.activity
-        val halo = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Halo)
+        val halo = dev.reins.android.design.WallpaperChoice.of(dev.reins.android.design.Wallpaper.Halo)
         dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = halo, wallpaperLight = halo))
         try {
             launch()
@@ -662,10 +662,11 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("tabSettings")
         tap("openWallpaper")
         await("wallpaperPreview")
-        frames()
+        // The Effect row's pictures are made off the main thread, which the test clock does not wait for.
+        settleWallpaper()
         shoot("next-wallpaper-picker")
         tap("wallpaperFor:light")
-        frames()
+        settleWallpaper()
         shoot("next-wallpaper-picker-light")
         // An image that ships as it was takes any effect: Eyes (picked with its scanlines) in halftone.
         tap("wallpaper:Eyes")
@@ -677,6 +678,11 @@ abstract class ScreenshotsBase(private val suffix: String) {
         }
         shoot("next-wallpaper-effect")
         dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice())
+    }
+
+    private fun settleWallpaper() = repeat(4) {
+        Thread.sleep(500)
+        frames()
     }
 
     /** Activity with only history: the art stays open; then the same with transparency reduced (solid panes). */
@@ -700,7 +706,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun nextActivityRuins() {
         history()
         core.pending = listOf(TestData.pending("req1", "write", 1u, waitUntil = now + 40, label = "M2A", conn = "c1", service = "github", account = "octo-cat", op = "push", opTitle = "Push to a branch"))
-        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Ruins), wallpaperLight = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Torii)))
+        dev.reins.android.design.Appearance.set(context, dev.reins.android.design.AppearanceChoice(wallpaperDark = dev.reins.android.design.WallpaperChoice.of(dev.reins.android.design.Wallpaper.Ruins), wallpaperLight = dev.reins.android.design.WallpaperChoice(dev.reins.android.design.Wallpaper.Torii)))
         launch()
         await("pending:req1")
         frames()

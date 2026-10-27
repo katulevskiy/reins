@@ -1,8 +1,8 @@
 import Foundation
 
-/// The looks a wallpaper can take (the Settings board, 04c): any image that is not already treated
-/// (`Wallpaper.takesEffects`), shipped or your photo. Dither, Scanlines and Halftone keep the image's colours; Mono is
-/// the boards' two-tone dither in the theme's light and dark. Original leaves the image as it is.
+/// The looks a wallpaper can take (the Settings board, 04c): any image, shipped or your photo (a treated image's
+/// effects are drawn on its untreated original). Dither, Scanlines and Halftone keep the image's colours; Mono is the
+/// boards' two-tone dither in the theme's light and dark. Original leaves the image as it is.
 enum WallpaperEffect: String, CaseIterable, Identifiable {
     case original, dither, mono, scanlines, halftone
 

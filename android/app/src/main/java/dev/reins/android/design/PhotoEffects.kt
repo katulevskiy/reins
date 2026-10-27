@@ -14,8 +14,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * The looks a wallpaper can take behind Activity (Settings › Wallpaper): any image that is not already treated
- * ([Wallpaper.takesEffects]), shipped or the owner's own. Dither, Scanlines and Halftone keep the image's colours;
+ * The looks a wallpaper can take behind Activity (Settings › Wallpaper): any image, shipped or the owner's own (a
+ * treated image's effects are drawn on its untreated original). Dither, Scanlines and Halftone keep the image's colours;
  * Mono is the boards' two-tone dither in the theme's light and dark.
  */
 enum class PhotoEffect(val label: String) {

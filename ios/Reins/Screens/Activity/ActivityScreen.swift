@@ -195,7 +195,7 @@ struct ActivityScreen: View {
             // as Settings stores it (`halo|dither|40`).
             for (flag, scheme) in [("-wallpaperDark", ColorScheme.dark), ("-wallpaperLight", .light)] {
                 guard let i = args.firstIndex(of: flag), i + 1 < args.count else { continue }
-                let choice = WallpaperChoice(rawValue: args[i + 1]) ?? Wallpaper(rawValue: args[i + 1]).map { WallpaperChoice(image: $0) }
+                let choice = WallpaperChoice(rawValue: args[i + 1]) ?? Wallpaper(rawValue: args[i + 1]).map(WallpaperChoice.of)
                 if let choice { AppGroup.defaults.set(choice.rawValue, forKey: WallpaperChoice.key(scheme)) }
             }
         }
