@@ -263,7 +263,7 @@ fn change_item(
 }
 
 /// The device answering, if it is enrolled to `org` for `user` and may decide now.
-fn deciding_device(
+pub(super) fn deciding_device(
     c: &mut DbConnInner,
     org: &str,
     user: &str,

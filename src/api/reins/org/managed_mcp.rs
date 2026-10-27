@@ -14,7 +14,7 @@ use crate::{
     CONFIG,
     api::reins::{
         mcp::{self, Action, McpHeaders},
-        mcp_routes::check_connection_rate,
+        mcp_routes::{check_connection_rate, enter_waiting},
         now_unix,
         tools::{self, ToolArgError, ToolInvocation},
     },
@@ -142,19 +142,45 @@ pub async fn post(
             }
         }
     };
-    // Wait for the answer up to the relay's wait, like a Personal call waits for the phone.
-    let deadline = Instant::now() + Duration::from_secs(CONFIG.reins_relay_wait_secs());
-    loop {
-        let (o, cid, rid) = (org.clone(), connection_id.clone(), request_id.clone());
-        let status = match conn.run(move |c| decisions::status(c, &o, &cid, &rid, now_unix())).await {
-            Ok(s) => s,
-            Err(OrgError::NotFound) => return reply(tool_error("No such request on this connection.")),
-            Err(e) => return reply(tool_error(e.message())),
-        };
-        if decisions::is_final(&status) || Instant::now() >= deadline {
-            return reply(render(&status));
+    // Wait for the answer up to the relay's wait, like a Personal call waits for the phone: within the connection's
+    // cap on waiting calls, and without holding a pooled database connection while waiting.
+    drop(conn);
+    let _waiting = match enter_waiting(connection) {
+        Ok(place) => place,
+        Err(wait) => {
+            return reply(tool_error(&format!(
+                "Too many calls of this connection are waiting. Try again in {}s.",
+                wait.as_secs().max(1)
+            )));
         }
-        decisions::wait_change(&request_id, deadline.saturating_duration_since(Instant::now())).await;
+    };
+    let deadline = Instant::now() + Duration::from_secs(CONFIG.reins_relay_wait_secs());
+    let poll = || {
+        let (o, cid, rid) = (org.clone(), connection_id.clone(), request_id.clone());
+        async move {
+            let conn = pool.get().await.map_err(|e| OrgError::Internal(format!("{e:?}")))?;
+            conn.run(move |c| decisions::status(c, &o, &cid, &rid, now_unix())).await
+        }
+    };
+    match wait_final(&request_id, deadline, poll).await {
+        Ok(status) => reply(render(&status)),
+        Err(OrgError::NotFound) => reply(tool_error("No such request on this connection.")),
+        Err(e) => reply(tool_error(e.message())),
+    }
+}
+
+/// Polls `poll` until its status is final or `deadline` passes, waking early when the request changes.
+pub async fn wait_final<F, Fut>(request_id: &str, deadline: Instant, mut poll: F) -> Result<Value, OrgError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Value, OrgError>>,
+{
+    loop {
+        let status = poll().await?;
+        if decisions::is_final(&status) || Instant::now() >= deadline {
+            return Ok(status);
+        }
+        decisions::wait_change(request_id, deadline.saturating_duration_since(Instant::now())).await;
     }
 }
 
@@ -205,5 +231,43 @@ mod tests {
         let structured = &rendered["structuredContent"];
         assert_eq!(structured["status"], "pending_review");
         assert_eq!(structured["ticket"], s.id);
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn waiting_returns_as_soon_as_the_answer_is_final_and_stops_at_the_deadline() {
+        let polls = AtomicUsize::new(0);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let done = wait_final("or_w1", deadline, || {
+            let n = polls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n < 2 {
+                    Ok(json!({"status": "approved"}))
+                } else {
+                    Ok(json!({"status": "done", "result": {}}))
+                }
+            }
+        });
+        let woke = async {
+            for _ in 0..2 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                decisions::wake("or_w1");
+            }
+        };
+        let (status, ()) = tokio::join!(done, woke);
+        assert_eq!(status.unwrap()["status"], "done");
+        assert_eq!(polls.load(Ordering::SeqCst), 3);
+        // Past the deadline it answers with what it has.
+        let past = Instant::now();
+        let status = wait_final("or_w2", past, async || Ok(json!({"status": "pending_review"}))).await.unwrap();
+        assert_eq!(status["status"], "pending_review");
+        // An error ends the wait.
+        assert!(wait_final("or_w3", deadline, async || { Err(OrgError::NotFound) }).await.is_err());
     }
 }

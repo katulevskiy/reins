@@ -36,6 +36,8 @@ CREATE TABLE reins_org_member_policies (
     body             MEDIUMTEXT NOT NULL,
     hash             CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     device_uuid      VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    version          BIGINT NOT NULL,
+    at               BIGINT NOT NULL,
     sig              TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     updated_at       BIGINT NOT NULL,
     PRIMARY KEY (org_uuid, user_uuid),

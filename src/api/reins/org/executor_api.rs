@@ -134,6 +134,8 @@ fn job_of(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, current: &str) 
     let member_policy = match &row.member_policy {
         Some(_) => reins_org_keys::q_member_policy(c, org, &row.user_uuid)?.map(|m| SignedMemberPolicy {
             body: m.body,
+            version: u64::try_from(m.version).unwrap_or(0),
+            at: m.at,
             device: m.device_uuid,
             sig: m.sig,
         }),

@@ -359,7 +359,8 @@ async fn put_member_policy(headers: Headers, conn: DbConn, body: Data<'_>) -> Ph
     Ok(Status::NoContent)
 }
 
-/// Stores a member's own policy after checking their enrolled device signed it.
+/// Stores a member's own policy after checking it: signed now (within the clock skew) by this member's enrolled device
+/// that may decide, and strictly newer than the one it replaces (an old signed policy can't be replayed).
 pub fn set_member_policy(
     c: &mut DbConnInner,
     org: &str,
@@ -367,15 +368,21 @@ pub fn set_member_policy(
     signed: &reins_proto::managed::SignedMemberPolicy,
     now: i64,
 ) -> Result<(), super::OrgError> {
-    let dev = reins_org::q_device(c, org, user, &signed.device)?
-        .filter(|d| d.revoked_at.is_none())
-        .ok_or(super::OrgError::Invalid("Enroll this phone first."))?;
-    let msg = reins_proto::managed::member_policy_message(org, user, &signed.body);
+    use super::OrgError;
+    if (now - signed.at).abs() > super::reviews::SKEW_SECS {
+        return Err(OrgError::Invalid("This phone's clock is off. Check the time and try again."));
+    }
+    let version = i64::try_from(signed.version).map_err(|_| OrgError::Invalid("That version can't be stored."))?;
+    let dev = super::reviews::deciding_device(c, org, user, &signed.device, now)?;
+    let msg = reins_proto::managed::member_policy_message(org, user, signed.version, signed.at, &signed.body);
     if !super::reviews::device_sig_ok(&dev.public_key, &signed.sig, &msg) {
-        return Err(super::OrgError::Invalid("The policy isn't signed by this device."));
+        return Err(OrgError::Invalid("The policy isn't signed by this device."));
+    }
+    if crate::db::models::reins_org_keys::q_member_policy(c, org, user)?.is_some_and(|old| old.version >= version) {
+        return Err(OrgError::Invalid("A newer policy is already set."));
     }
     let policy: reins_policy::org::MemberPolicy =
-        serde_json::from_str(&signed.body).map_err(|_| super::OrgError::Invalid("That policy can't be read."))?;
+        serde_json::from_str(&signed.body).map_err(|_| OrgError::Invalid("That policy can't be read."))?;
     let hash = policy.hash();
     crate::db::models::reins_org_keys::q_set_member_policy(
         c,
@@ -385,6 +392,8 @@ pub fn set_member_policy(
             body: signed.body.clone(),
             hash: hash.clone(),
             device_uuid: signed.device.clone(),
+            version,
+            at: signed.at,
             sig: signed.sig.clone(),
             updated_at: now,
         },
@@ -395,8 +404,61 @@ pub fn set_member_policy(
         super::audit::kinds::MEMBER_POLICY_SET,
         Some(user),
         None,
-        &json!({"hash": hash, "device": signed.device}),
+        &json!({"hash": hash, "device": signed.device, "version": signed.version}),
         now,
     )?;
     Ok(())
+}
+
+#[cfg(all(test, sqlite))]
+mod member_policy_tests {
+    use reins_proto::managed::{SignedMemberPolicy, member_policy_message};
+
+    use super::*;
+    use crate::api::reins::org::{
+        OrgError,
+        decisions::tests::pilot,
+        reviews::tests::{Phone, enroll},
+        testing::db,
+    };
+
+    fn signed(phone: &Phone, version: u64, at: i64) -> SignedMemberPolicy {
+        let body = r#"{"matrix":null,"rules":[]}"#.to_owned();
+        SignedMemberPolicy {
+            sig: phone.sign(&member_policy_message("o1", "lee", version, at, &body)),
+            body,
+            version,
+            at,
+            device: phone.device.clone(),
+        }
+    }
+
+    #[test]
+    fn an_old_signed_policy_cannot_be_replayed() {
+        let mut c = db();
+        pilot(&mut c);
+        let lee = enroll(&mut c, "o1", "lee", "lee-phone", Some(false), 100);
+        let v1 = signed(&lee, 1, 100);
+        set_member_policy(&mut c, "o1", "lee", &v1, 100).unwrap();
+        set_member_policy(&mut c, "o1", "lee", &signed(&lee, 2, 101), 101).unwrap();
+        assert_eq!(
+            set_member_policy(&mut c, "o1", "lee", &v1, 102),
+            Err(OrgError::Invalid("A newer policy is already set."))
+        );
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&lee, 2, 103), 103).is_err(), "not strictly newer");
+        // Signed long ago.
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&lee, 9, 100), 100 + 301).is_err());
+        // Another version under the same signature.
+        let mut forged = signed(&lee, 3, 104);
+        forged.version = 4;
+        assert!(set_member_policy(&mut c, "o1", "lee", &forged, 104).is_err());
+    }
+
+    #[test]
+    fn a_device_that_may_not_decide_cannot_set_it() {
+        let mut c = db();
+        pilot(&mut c);
+        let rooted = enroll(&mut c, "o1", "lee", "lee-phone", Some(true), 100);
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&rooted, 1, 100), 100).is_err());
+    }
 }

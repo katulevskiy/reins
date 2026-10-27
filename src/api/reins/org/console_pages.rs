@@ -66,7 +66,7 @@ Q6 11.17 6 12t-.59 1.41Q4.83 14 4 14Zm0-6q-.83 0-1.41-.59Q2 6.83 2 6t.59-1.41Q3.
 1.41Q4.83 8 4 8Z";
 }
 
-fn svg(path: &str) -> String {
+pub(super) fn svg(path: &str) -> String {
     format!("<svg class=\"i\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"{path}\"/></svg>")
 }
 
@@ -77,6 +77,10 @@ pub enum Tab {
     Overview,
     Members,
     Events,
+    Policy,
+    Requests,
+    Audit,
+    Executors,
 }
 
 /// What every signed-in page shows in its header.
@@ -108,6 +112,10 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
                 tab(Tab::Overview, format!("{up}{}", e(id)), "Overview"),
                 tab(Tab::Members, format!("{up}{}/members", e(id)), "Members"),
                 tab(Tab::Events, format!("{up}{}/events", e(id)), "Events"),
+                tab(Tab::Policy, format!("{up}{}/policy", e(id)), "Policy"),
+                tab(Tab::Requests, format!("{up}{}/requests", e(id)), "Requests"),
+                tab(Tab::Audit, format!("{up}{}/audit", e(id)), "Audit"),
+                tab(Tab::Executors, format!("{up}{}/executors", e(id)), "Executors"),
             ]
             .concat(),
             None => tab(Tab::Home, up.to_owned(), "Orgs"),
@@ -144,7 +152,7 @@ pub fn page(title: &str, frame: Option<&Frame<'_>>, body: &str, up: &str) -> Str
     )
 }
 
-fn hidden_csrf(csrf: &str) -> String {
+pub(super) fn hidden_csrf(csrf: &str) -> String {
     format!("<input type=\"hidden\" name=\"csrf\" value=\"{}\">", e(csrf))
 }
 
