@@ -11,12 +11,13 @@ pub const MAX_LINES: usize = 12;
 
 /// The level of a write or a delete at `p` (01 §2.5; 08 R2: without an enforced net, a delete in workspace source is
 /// L1 only when git can bring it back).
-fn path_level(p: &PathRef, delete: bool) -> Level {
+pub(super) fn path_level(p: &PathRef, delete: bool) -> Level {
     match &p.area {
         Area::Generated | Area::Scratch => Level::L0,
         Area::Source if !delete || p.recoverable => Level::L1,
-        Area::Unknown => Level::L1,
-        Area::Source | Area::Home | Area::System | Area::Remote(_) => Level::L3,
+        // Somewhere not known: a write is what it is anywhere, a delete may take anything (01 §2.4).
+        Area::Unknown if !delete => Level::L1,
+        Area::Source | Area::Unknown | Area::Home | Area::System | Area::Remote(_) => Level::L3,
     }
 }
 
@@ -66,7 +67,7 @@ pub fn level_of(e: &Effect) -> Level {
             default_branch,
             ..
         } => {
-            if default_branch.unwrap_or(false) {
+            if default_branch.unwrap_or(true) {
                 Level::L3
             } else {
                 Level::L1
@@ -233,6 +234,24 @@ impl Analysis {
                 unique.push(e);
             }
         }
+        let mut certainty = certainty;
+        let mut unresolved = unresolved;
+        // A branch that may be the default: taken as it, and not read with certainty.
+        if unique.iter().any(|e| {
+            matches!(
+                e,
+                Effect::GitPush {
+                    default_branch: None,
+                    ..
+                } | Effect::GitRefDelete {
+                    default_branch: None,
+                    ..
+                }
+            )
+        }) {
+            certainty = Certainty::None;
+            unresolved.push("whether the branch is the default one".to_owned());
+        }
         let level = unique.iter().map(level_of).max().unwrap_or(Level::L0);
         let mut floor: Vec<Floor> = unique.iter().filter_map(floor_of).collect();
         if certainty == Certainty::None {
@@ -280,12 +299,25 @@ impl Analysis {
         Summary {
             level: self.level,
             certainty: self.certainty,
-            lines: self.lines(),
-            unresolved: self.unresolved.iter().take(MAX_LINES).cloned().collect(),
+            lines: self.lines().iter().map(|l| bounded(l)).collect(),
+            unresolved: self.unresolved.iter().take(MAX_LINES).map(|l| bounded(l)).collect(),
             floor: self.floor.clone(),
             labels: self.labels.iter().map(|l| (*l).to_owned()).collect(),
         }
     }
+}
+
+/// The longest line a summary keeps, in characters.
+pub const MAX_LINE: usize = 200;
+
+/// `line`, cut to [`MAX_LINE`] characters.
+fn bounded(line: &str) -> String {
+    if line.chars().count() <= MAX_LINE {
+        return line.to_owned();
+    }
+    let mut cut: String = line.chars().take(MAX_LINE - 1).collect();
+    cut.push('\u{2026}');
+    cut
 }
 
 /// An analysis as the activity log keeps and shows it.

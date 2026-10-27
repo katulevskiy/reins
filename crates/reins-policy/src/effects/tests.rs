@@ -169,7 +169,7 @@ fn git_subcommands() {
     assert_eq!(level("git push origin main"), Level::L2);
     assert_eq!(level("git push origin --delete feat/x"), Level::L1);
     assert_eq!(level("git push origin :main"), Level::L3);
-    assert_eq!(level("git clean -fdx"), Level::L1);
+    assert_eq!(level("git clean -fdx"), Level::L3, "untracked files are not in git");
     assert_eq!(level("git -C /home/me/Documents/dev/app worktree remove .claude/worktrees/a"), Level::L1);
     assert_eq!(
         level("git -C /home/me/Documents/dev/app worktree remove --force .claude/worktrees/a"),

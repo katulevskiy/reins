@@ -134,6 +134,11 @@ pub enum Part {
     Default(String, Word),
     /// `${…}` with an operation this reader does not model (`${x%/*}`, `${#x}`): its value is unknown.
     Param(String),
+    /// `${name:+word}`, `${name%word}`, … whose word runs commands (`${x:+$(…)}`): its value is unknown, its word
+    /// is walked for what it runs.
+    Op(String, Word),
+    /// `$name`, `${name}` outside quotes: split into words when it holds spaces.
+    Split(String),
     /// `$(…)` or backticks.
     CmdSub(Script),
     /// `<(…)`, `>(…)`: the name of a pipe.
@@ -169,11 +174,11 @@ impl Word {
         for p in &self.0 {
             match p {
                 Part::Lit(t) | Part::Quoted(t) | Part::Glob(t) => s.push_str(t),
-                Part::Var(n) => {
+                Part::Var(n) | Part::Split(n) => {
                     s.push('$');
                     s.push_str(n);
                 }
-                Part::Default(n, _) | Part::Param(n) => {
+                Part::Default(n, _) | Part::Param(n) | Part::Op(n, _) => {
                     s.push_str("${");
                     s.push_str(n);
                     s.push('}');
@@ -614,7 +619,10 @@ impl Parser {
                 self.i += kw.as_deref().map_or(0, str::len);
                 self.blanks();
                 if self.at("((") {
-                    let _header: String = self.until_double_paren();
+                    let header: String = self.until_double_paren();
+                    if header.contains("$(") || header.contains('`') {
+                        self.problem("a for loop whose header runs commands".to_owned());
+                    }
                     self.separators(true);
                     let body = self.loop_body();
                     let redirects = self.redirects_after();
@@ -1052,7 +1060,11 @@ impl Parser {
                             }
                         }
                     }
-                    parts.push(Part::Quoted(self.s[start..self.i].iter().collect()));
+                    let text: String = self.s[start..self.i].iter().collect();
+                    if text.contains("$(") || text.contains('`') || text.contains("<(") || text.contains(">(") {
+                        self.problem("an array whose words run commands".to_owned());
+                    }
+                    parts.push(Part::Quoted(text));
                     continue;
                 }
                 break;
@@ -1093,7 +1105,18 @@ impl Parser {
                         None => {}
                     }
                 }
-                '$' => self.dollar(parts, false),
+                '$' => {
+                    self.dollar(parts, false);
+                    // Outside quotes a variable's value is split into words.
+                    if let Some(Part::Var(name)) = parts.last()
+                        && name != "@"
+                        && name != "*"
+                    {
+                        let name = name.clone();
+                        parts.pop();
+                        parts.push(Part::Split(name));
+                    }
+                }
                 '`' => {
                     self.i += 1;
                     let script = self.backticks();
@@ -1494,6 +1517,12 @@ fn param(inner: &str, depth: usize) -> Part {
             return Part::Default(name.to_owned(), w);
         }
     }
+    // Any other operation whose word runs commands: walked, its value unknown.
+    if rest.contains("$(") || rest.contains('`') || rest.contains("<(") {
+        let word = rest.trim_start_matches([':', '+', '?', '%', '#', '/', '^', ',']);
+        let (w, _) = parse_double_quoted_at(word, depth);
+        return Part::Op(inner.to_owned(), w);
+    }
     Part::Param(inner.to_owned())
 }
 
@@ -1503,8 +1532,8 @@ fn assignment(w: &Word) -> Option<(String, Word)> {
         return None;
     };
     let (name, value) = first.split_once('=')?;
-    let name = name.strip_suffix('+').unwrap_or(name);
-    if !valid_name(name) {
+    // `NAME+=value` keeps its `+`: the walker appends.
+    if !valid_name(name.strip_suffix('+').unwrap_or(name)) {
         return None;
     }
     let mut parts = Vec::new();
@@ -1614,7 +1643,7 @@ fn fill_word(w: &mut Word, bodies: &[Option<String>]) {
     for p in &mut w.0 {
         match p {
             Part::CmdSub(s) | Part::ProcSub(s) => fill_script(s, bodies),
-            Part::Default(_, w) => fill_word(w, bodies),
+            Part::Default(_, w) | Part::Op(_, w) => fill_word(w, bodies),
             Part::Brace(alts) => {
                 for a in alts {
                     fill_word(a, bodies);

@@ -34,9 +34,18 @@ const ENV: &[&str] = &[
 ];
 
 /// The worktree `cwd` is in (the folder holding `.git`), found from its files.
+///
+/// Only a repository inside one of `roots` counts: a `.git` an agent plants in a folder above (`~/.git`) must not make
+/// that folder a worktree whose deletes git brings back.
 #[must_use]
-pub fn worktree_of(cwd: &Path) -> Option<String> {
-    cwd.ancestors().find(|d| d.join(".git").exists()).map(|d| d.to_string_lossy().into_owned())
+pub fn worktree_of(cwd: &Path, roots: &[String], home: &str) -> Option<String> {
+    let top = cwd.ancestors().find(|d| d.join(".git").exists())?;
+    let top_text = top.to_string_lossy().into_owned();
+    roots
+        .iter()
+        .map(|r| effects::normalize(r, "/", home))
+        .any(|r| top_text.starts_with(&format!("{}/", r.trim_end_matches('/'))))
+        .then_some(top_text)
 }
 
 /// The workspace for a request run in `cwd`: the configured roots and scratch folders, and the worktree `cwd` is in
@@ -45,7 +54,7 @@ pub fn worktree_of(cwd: &Path) -> Option<String> {
 pub fn workspace(config: &Config, cwd: Option<&Path>) -> Workspace {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let mut worktrees = Vec::new();
-    if let Some(top) = cwd.and_then(worktree_of) {
+    if let Some(top) = cwd.and_then(|c| worktree_of(c, &config.workspace.roots, &home)) {
         worktrees.push(format!("{top}/.claude/worktrees/*"));
         worktrees.push(top);
     }
@@ -158,9 +167,11 @@ mod tests {
 
     #[test]
     fn a_command_in_a_worktree_is_read_with_its_facts() {
-        let dir = std::env::temp_dir().join(format!("reins-consequences-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("reins-consequences-{}", std::process::id()));
+        let dir = root.join("app");
         std::fs::create_dir_all(dir.join(".git")).unwrap();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.workspace.roots = vec![root.to_string_lossy().into_owned()];
         let cwd = dir.to_string_lossy().into_owned();
         let env = |k: &str| (k == "TMPDIR").then(|| "/tmp".to_owned());
         let ctx = context(&config, Some(&cwd), &env, None);
@@ -172,6 +183,20 @@ mod tests {
         assert!(s.level <= effects::Level::L1, "inside the worktree: recoverable from git: {s:?}");
         assert!(of_action(&config, &Action::Other, Some(&cwd), None).is_none());
         assert!(guarded_action(&config, &Action::Command("rm -rf target".to_owned()), Some(&cwd), None).is_some());
-        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_planted_git_folder_outside_the_roots_is_no_worktree() {
+        let root = std::env::temp_dir().join(format!("reins-planted-{}", std::process::id()));
+        let inside = root.join("Documents");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(&inside).unwrap();
+        let mut config = Config::default();
+        config.workspace.roots = vec![root.join("dev").to_string_lossy().into_owned()];
+        assert_eq!(worktree_of(&inside, &config.workspace.roots, ""), None);
+        let ctx = context(&config, Some(&inside.to_string_lossy()), &|_| None, None);
+        assert!(ctx.workspace.worktrees.is_empty(), "{:?}", ctx.workspace.worktrees);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

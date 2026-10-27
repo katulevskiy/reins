@@ -206,7 +206,7 @@ pub enum Effect {
 }
 
 /// A request's consequence level (01 §2.3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Level {
     /// Undoable: nothing is lost or seen by anyone else.
     L0,
@@ -232,7 +232,7 @@ impl Level {
 }
 
 /// How well the engine read a request (01 §2.4). Ordered from best to worst.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Certainty {
     /// Every effect is known exactly.
     Full,
@@ -254,7 +254,7 @@ impl Certainty {
 }
 
 /// The always-ask floor (08 R4): hard reviews whatever the level or the matrix says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Floor {
     /// A private key, a cloud credential, a keystore or a token file is read into the agent's context.
     SecretRead,
@@ -292,3 +292,37 @@ impl Floor {
         }
     }
 }
+
+/// Reads a value as a newer build may have written it: a name this build doesn't know reads as `$worst`.
+macro_rules! lenient {
+    ($ty:ident, $worst:ident, [$($v:ident),+ $(,)?]) => {
+        impl<'de> Deserialize<'de> for $ty {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let name = String::deserialize(d)?;
+                Ok(match name.as_str() {
+                    $(stringify!($v) => Self::$v,)+
+                    _ => Self::$worst,
+                })
+            }
+        }
+    };
+}
+
+lenient!(Level, L3, [L0, L1, L2, L3]);
+lenient!(Certainty, None, [Full, Partial, None]);
+lenient!(
+    Floor,
+    Unreadable,
+    [
+        SecretRead,
+        SecretOut,
+        SecretRelease,
+        AccountListing,
+        ExecutableUpload,
+        Money,
+        Publish,
+        Permission,
+        MassMessage,
+        Unreadable
+    ]
+);

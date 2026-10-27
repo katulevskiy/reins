@@ -114,11 +114,22 @@ impl Workspace {
         }
     }
 
+    /// `path` is a worktree's root or a folder holding one: deleting it takes the history with it.
+    #[must_use]
+    pub fn holds_worktree(&self, path: &str) -> bool {
+        path.starts_with('/') && self.worktrees.iter().any(|w| holds(path, &self.expand(w)))
+    }
+
     /// A delete of `path` can be brought back from git: it is inside (or is) a known worktree, or the daemon reported
     /// it tracked, and it is not the repository's own `.git`.
     #[must_use]
     pub fn recoverable(&self, path: &str) -> bool {
-        if !path.starts_with('/') || path.split('/').any(|p| p == ".git") {
+        // The repository's own `.git`, or a pattern that names it (`.*`).
+        if !path.starts_with('/')
+            || path
+                .split('/')
+                .any(|p| p == ".git" || (p.starts_with('.') && p.contains(['*', '?', '[']) && glob(p, ".git")))
+        {
             return false;
         }
         let path = literal_prefix(path);
@@ -164,6 +175,13 @@ fn depth_within(path: &str, root: &str) -> Option<usize> {
 
 fn within(path: &str, root: &str) -> bool {
     depth_within(path, root).is_some()
+}
+
+/// Whether `path` is `root` or a folder above it (`root`'s parts match as globs).
+fn holds(path: &str, root: &str) -> bool {
+    let p: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let r: Vec<&str> = root.split('/').filter(|s| !s.is_empty()).collect();
+    p.len() <= r.len() && p.iter().zip(&r).all(|(a, b)| glob(b, a))
 }
 
 /// A path made absolute and lexical: `~` is `home`, a relative path is joined to `cwd`, `.` and empty parts dropped,

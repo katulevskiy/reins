@@ -1,6 +1,7 @@
 {
   "recall": 1.0,
   "known_fp_asked": 0,
-  "full_certainty": 0.9701897018970189,
-  "asks": 43
+  "full_certainty": 0.9105691056910569,
+  "asks": 51,
+  "ask_rate": 0.06265356265356266
 }

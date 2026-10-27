@@ -36,7 +36,9 @@ pub struct Policy {
     pub friends: [Cell; 4],
     pub work: [Cell; 4],
     pub outside: [Cell; 4],
-    /// Ask whenever certainty is `Partial` (P2 gives these to the model's risk head instead).
+    /// Ask whenever certainty is `Partial`. Off, as 01 §2.4 has it: a Partial request's level is already its worst
+    /// plausible effect in the workspace (at least L1) and the zone's cell decides; the model's risk rating (P2) is what
+    /// may force an ask. On, the recorded corpus asks 11.2% and 11 known false positives return.
     #[serde(default)]
     pub ask_on_partial: bool,
 }
@@ -99,6 +101,7 @@ pub fn engine_context(ctx: &Context, case: &Case) -> EngineContext {
     };
     let mut c = EngineContext::new(case.cwd.as_deref().unwrap_or_default(), workspace);
     c.default_branch.clone_from(&ctx.default_branch);
+    c.branch.clone_from(&case.branch);
     for (k, v) in &ctx.env {
         c.env.entry(k.clone()).or_insert_with(|| v.clone());
     }

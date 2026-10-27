@@ -45,6 +45,25 @@ pub fn sql_change(sql: &str) -> Option<InfraChange> {
                 }
                 plain.push_str(" '' ");
             }
+            // `/* … */` is a space; MySQL runs what is in `/*! … */`.
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let runs = chars.peek() == Some(&'!');
+                let mut prev = ' ';
+                let mut inner = String::new();
+                for q in chars.by_ref() {
+                    if prev == '*' && q == '/' {
+                        break;
+                    }
+                    inner.push(q);
+                    prev = q;
+                }
+                plain.push(' ');
+                if runs {
+                    plain.push_str(inner.trim_start_matches('!').trim_end_matches('*'));
+                    plain.push(' ');
+                }
+            }
             '-' if chars.peek() == Some(&'-') => {
                 for q in chars.by_ref() {
                     if q == '\n' {
@@ -60,10 +79,9 @@ pub fn sql_change(sql: &str) -> Option<InfraChange> {
     let words: Vec<&str> =
         upper.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect();
     let pair = |a: &str, b: &[&str]| words.windows(2).any(|w| w[0] == a && b.contains(&w[1]));
-    if pair(
-        "DROP",
-        &["TABLE", "DATABASE", "SCHEMA", "INDEX", "VIEW", "USER", "ROLE", "COLUMN", "OWNED", "COLLECTION", "KEYSPACE"],
-    ) || words.contains(&"TRUNCATE")
+    // Any DROP drops something (a function, a trigger, a policy, a publication…).
+    if words.contains(&"DROP")
+        || words.contains(&"TRUNCATE")
         || pair("DELETE", &["FROM"])
         || words.iter().any(|w| matches!(*w, "FLUSHALL" | "FLUSHDB" | "DROPDATABASE"))
         || upper.contains(".DROP(")
@@ -147,7 +165,31 @@ pub(super) fn database(w: &mut Walk<'_>, program: &str, args: &[Exp], input: &In
         out
     };
     let url_host = args.iter().find_map(|a| super::programs::url_host(&a.text));
-    let host = value_of(args, &["-h", "--host"]).filter(|_| !sqlite).or(url_host);
+    // A conninfo string (`'host=db dbname=x'`).
+    let conninfo = |key: &str| {
+        positional.iter().find_map(|a| {
+            a.text
+                .split_whitespace()
+                .find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')).map(str::to_owned))
+        })
+    };
+    let env_host = match program {
+        "psql" | "pg_dump" | "pg_restore" | "dropdb" | "createdb" | "pgcli" => w.var_state("PGHOST"),
+        "mysql" | "mysqldump" | "mysqladmin" | "mariadb" | "mycli" => w.var_state("MYSQL_HOST"),
+        _ => None,
+    };
+    let mut host = value_of(args, &["-h", "--host"])
+        .filter(|_| !sqlite)
+        .or(url_host)
+        .or_else(|| conninfo("host"))
+        .or_else(|| env_host.clone().flatten());
+    // A host or a service named where this can't see: any database.
+    let service = conninfo("service").is_some()
+        || (program.starts_with("pg") || program == "psql") && w.var_state("PGSERVICE").is_some();
+    if service || matches!(env_host, Some(None)) || host.as_deref().is_some_and(|h| h.contains(super::shell::UNKNOWN)) {
+        w.lower(Certainty::Partial, format!("which database {program} connects to"));
+        host = Some("a database not known".to_owned());
+    }
     let (target, local) = if sqlite {
         match positional.first() {
             Some(db) => {
