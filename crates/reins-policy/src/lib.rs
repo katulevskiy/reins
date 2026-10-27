@@ -11,6 +11,7 @@ mod evaluate;
 mod grant;
 pub mod guard;
 pub mod matrix;
+pub mod org;
 mod pattern;
 mod scope;
 pub mod shell;
