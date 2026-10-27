@@ -319,7 +319,8 @@ fn validate(
             if *identity == IdentityKind::GithubOrg && !github_org.as_deref().is_some_and(github_login_ok) {
                 return Err(OrgError::Invalid("Name the GitHub organization (its login)."));
             }
-            if !binding.is_some_and(|b| b.proves(id, directory)) {
+            let github = github_org.as_deref().filter(|_| *identity == IdentityKind::GithubOrg);
+            if !binding.is_some_and(|b| b.proves(id, directory, github)) {
                 return Err(OrgError::Invalid("WorkOS hasn't confirmed this organization and directory."));
             }
             Ok(())
@@ -641,8 +642,9 @@ mod tests {
             directory_id: None,
             github_org: None,
         };
-        let proof = VerifiedBinding::for_tests("org_01ABC", None);
+        let proof = VerifiedBinding::for_tests("org_01ABC", None, None);
         assert!(matches!(propose(&mut c, "o1", "u1", &sso, Some(&proof), 2), Err(OrgError::Invalid(_))));
+        let proof = VerifiedBinding::for_tests("org_01ABC", None, Some("acme-inc"));
         let gh = AdminAction::SetIdentity {
             identity: IdentityKind::GithubOrg,
             workos_org_id: Some("org_01ABC".to_owned()),
@@ -671,7 +673,7 @@ mod tests {
             propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), None, 1),
             Err(OrgError::Invalid(_))
         ));
-        let other = VerifiedBinding::for_tests("org_A", Some("directory_B"));
+        let other = VerifiedBinding::for_tests("org_A", Some("directory_B"), None);
         assert!(matches!(
             propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), Some(&other), 1),
             Err(OrgError::Invalid(_))
@@ -683,12 +685,12 @@ mod tests {
             github_org: None,
         };
         assert!(matches!(propose(&mut c, "o1", "u1", &google, None, 1), Err(OrgError::Invalid(_))));
-        let proof = VerifiedBinding::for_tests("org_A", Some("directory_A"));
+        let proof = VerifiedBinding::for_tests("org_A", Some("directory_A"), None);
         propose(&mut c, "o1", "u1", &sso("org_A", Some("directory_A")), Some(&proof), 1).unwrap();
         // A pending change is re-checked on approval: the approver must bring the proof too.
         add_member(&mut c, "o1", "m2", "u2", ACTIVE_STATUS);
         grant(&mut c, "o1", SUBJECT_MEMBER, "m2", Role::OrgOwner);
-        let proof_b = VerifiedBinding::for_tests("org_B", None);
+        let proof_b = VerifiedBinding::for_tests("org_B", None, None);
         let id = pending(propose(&mut c, "o1", "u1", &sso("org_B", None), Some(&proof_b), 2).unwrap());
         assert!(approve(&mut c, "o1", &id, "u2", None, 3).is_err());
         approve(&mut c, "o1", &id, "u2", Some(&proof_b), 3).unwrap();
@@ -700,13 +702,13 @@ mod tests {
         add_org(&mut c, "o2");
         add_member(&mut c, "o2", "n1", "v1", ACTIVE_STATUS);
         grant(&mut c, "o2", SUBJECT_MEMBER, "n1", Role::OrgOwner);
-        let proof = VerifiedBinding::for_tests("org_01ABC", Some("directory_01X"));
+        let proof = VerifiedBinding::for_tests("org_01ABC", Some("directory_01X"), None);
         propose(&mut c, "o1", "u1", &sso("org_01ABC", Some("directory_01X")), Some(&proof), 1).unwrap();
         assert!(matches!(
             propose(&mut c, "o2", "v1", &sso("org_01ABC", Some("directory_01X")), Some(&proof), 2),
             Err(OrgError::Taken(_))
         ));
-        let proof2 = VerifiedBinding::for_tests("org_02DEF", Some("directory_01X"));
+        let proof2 = VerifiedBinding::for_tests("org_02DEF", Some("directory_01X"), None);
         assert!(matches!(
             propose(&mut c, "o2", "v1", &sso("org_02DEF", Some("directory_01X")), Some(&proof2), 2),
             Err(OrgError::Taken(_))

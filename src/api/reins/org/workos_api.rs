@@ -3,7 +3,8 @@
 //! SSO sign-ins) or directory (and get its SCIM users and groups). A binding counts only when WorkOS itself says:
 //!
 //! - the WorkOS organization lists one of the tenant's **verified** domains, verified on the WorkOS side too;
-//! - the directory belongs to that WorkOS organization.
+//! - the directory belongs to that WorkOS organization;
+//! - for a GitHub-org identity, GitHub says the console user is an admin of that GitHub organization.
 //!
 //! [`VerifiedBinding`] can only be made by [`verify_binding`] (or a test), and `admin::propose`/`admin::approve`
 //! refuse an SSO identity without one that matches. The database adds the last word: one tenant per WorkOS
@@ -92,34 +93,54 @@ pub fn api() -> Arc<dyn WorkosDirectoryApi> {
 pub struct VerifiedBinding {
     pub workos_org_id: String,
     pub directory_id: Option<String>,
+    /// The GitHub organization GitHub said the console user administers.
+    pub github_org: Option<String>,
     _proof: (),
 }
 
 impl VerifiedBinding {
     #[cfg(test)]
-    pub fn for_tests(workos_org_id: &str, directory_id: Option<&str>) -> Self {
+    pub fn for_tests(workos_org_id: &str, directory_id: Option<&str>, github_org: Option<&str>) -> Self {
         Self {
             workos_org_id: workos_org_id.to_owned(),
             directory_id: directory_id.map(str::to_owned),
+            github_org: github_org.map(str::to_owned),
             _proof: (),
         }
     }
 
-    /// Whether this proves exactly `workos_org_id` and `directory_id`.
+    /// Whether this proves exactly `workos_org_id`, `directory_id` and `github_org` (case-insensitive: GitHub's).
     #[must_use]
-    pub fn proves(&self, workos_org_id: &str, directory_id: Option<&str>) -> bool {
-        self.workos_org_id == workos_org_id && self.directory_id.as_deref() == directory_id
+    pub fn proves(&self, workos_org_id: &str, directory_id: Option<&str>, github_org: Option<&str>) -> bool {
+        let github = match (self.github_org.as_deref(), github_org) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        };
+        self.workos_org_id == workos_org_id && self.directory_id.as_deref() == directory_id && github
     }
 }
 
 /// Asks WorkOS whether `workos_org_id` (and `directory_id`) belong with a tenant whose verified domains are
-/// `tenant_domains`.
+/// `tenant_domains`; with `github`, the GitHub organization and GitHub's answer about the console user, who must be
+/// its admin.
 pub async fn verify_binding(
     api: &dyn WorkosDirectoryApi,
     workos_org_id: &str,
     directory_id: Option<&str>,
     tenant_domains: &[String],
+    github: Option<(&str, super::github::GithubAnswer)>,
 ) -> Result<VerifiedBinding, OrgError> {
+    if let Some((_, answer)) = github
+        && answer
+            != (super::github::GithubAnswer::Member {
+                admin: true,
+            })
+    {
+        return Err(OrgError::Invalid(
+            "Sign in to this console with GitHub, as an owner of that GitHub organization, to connect it.",
+        ));
+    }
     if tenant_domains.is_empty() {
         return Err(OrgError::Invalid("Verify a domain before connecting SSO."));
     }
@@ -142,6 +163,7 @@ pub async fn verify_binding(
     Ok(VerifiedBinding {
         workos_org_id: workos_org_id.to_owned(),
         directory_id: directory_id.map(str::to_owned),
+        github_org: github.map(|(org, _)| org.to_owned()),
         _proof: (),
     })
 }
@@ -188,15 +210,48 @@ mod tests {
     async fn a_binding_needs_a_shared_verified_domain_and_its_own_directory() {
         let w = workos();
         let acme = ["acme.com".to_owned()];
-        let b = verify_binding(&w, "org_ACME", Some("directory_ACME"), &acme).await.unwrap();
-        assert!(b.proves("org_ACME", Some("directory_ACME")));
-        assert!(!b.proves("org_ACME", None));
+        let b = verify_binding(&w, "org_ACME", Some("directory_ACME"), &acme, None).await.unwrap();
+        assert!(b.proves("org_ACME", Some("directory_ACME"), None));
+        assert!(!b.proves("org_ACME", None, None));
         // Another customer's WorkOS organization, or its directory under ours.
-        assert!(verify_binding(&w, "org_EVIL", None, &acme).await.is_err());
-        assert!(verify_binding(&w, "org_ACME", Some("directory_EVIL"), &acme).await.is_err());
-        assert!(verify_binding(&w, "org_NOPE", None, &acme).await.is_err());
-        assert!(verify_binding(&w, "org_ACME", Some("directory_NOPE"), &acme).await.is_err());
+        assert!(verify_binding(&w, "org_EVIL", None, &acme, None).await.is_err());
+        assert!(verify_binding(&w, "org_ACME", Some("directory_EVIL"), &acme, None).await.is_err());
+        assert!(verify_binding(&w, "org_NOPE", None, &acme, None).await.is_err());
+        assert!(verify_binding(&w, "org_ACME", Some("directory_NOPE"), &acme, None).await.is_err());
         // A tenant without a verified domain binds nothing.
-        assert!(verify_binding(&w, "org_ACME", None, &[]).await.is_err());
+        assert!(verify_binding(&w, "org_ACME", None, &[], None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_github_org_needs_its_admin() {
+        use super::super::github::GithubAnswer;
+        let w = workos();
+        let acme = ["acme.com".to_owned()];
+        for not_admin in [
+            GithubAnswer::Member {
+                admin: false,
+            },
+            GithubAnswer::NotMember,
+            GithubAnswer::Unknown,
+        ] {
+            assert!(verify_binding(&w, "org_ACME", None, &acme, Some(("acme-inc", not_admin))).await.is_err());
+        }
+        let b = verify_binding(
+            &w,
+            "org_ACME",
+            None,
+            &acme,
+            Some((
+                "acme-inc",
+                GithubAnswer::Member {
+                    admin: true,
+                },
+            )),
+        )
+        .await
+        .unwrap();
+        assert!(b.proves("org_ACME", None, Some("Acme-Inc")));
+        assert!(!b.proves("org_ACME", None, Some("other")));
+        assert!(!b.proves("org_ACME", None, None));
     }
 }

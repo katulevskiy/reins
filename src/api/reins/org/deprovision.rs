@@ -14,7 +14,6 @@ use std::{
     time::Instant,
 };
 
-use diesel::Connection;
 use serde_json::json;
 
 use super::{
@@ -22,7 +21,7 @@ use super::{
     invariants::{EndPlan, OnLastOwner},
 };
 use crate::db::{
-    DbConn, DbConnInner, DbPool,
+    DbConnInner, DbPool,
     models::{
         UserId,
         reins_org::{self, CutOff, SUBJECT_MEMBER, state},
@@ -38,7 +37,9 @@ pub enum Reason {
     DirectoryDelete,
     /// An admin removed them (a two-person change).
     AdminRemoval,
-    /// Their identity provider no longer counts them (a Team org's GitHub membership).
+    /// Their identity provider no longer counts them (a Team org's GitHub membership), confirmed by a periodic sync
+    /// (later; never from one sign-in's answer).
+    #[allow(dead_code, reason = "the periodic provider sync that confirms twice comes later")]
     ProviderMembershipLost,
 }
 
@@ -213,32 +214,11 @@ pub async fn finish(removal: Removal, pool: Option<&DbPool>) -> TicketOutcome {
     outcome
 }
 
-/// Both parts, for one member.
-pub async fn deprovision(
-    conn: &DbConn,
-    pool: Option<&DbPool>,
-    org: &str,
-    user: &str,
-    reason: Reason,
-    actor: Option<&str>,
-    now: i64,
-) -> Result<bool, OrgError> {
-    let (o, u, a) = (org.to_owned(), user.to_owned(), actor.map(str::to_owned));
-    let removal = conn.run(move |c| c.transaction(|c| q_deprovision(c, &o, &u, reason, a.as_deref(), now))).await?;
-    match removal {
-        Some(removal) => {
-            finish(removal, pool).await;
-            Ok(true)
-        }
-        None => Ok(false),
-    }
-}
-
 #[cfg(all(test, sqlite))]
 mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+    use diesel::{Connection, ExpressionMethods, QueryDsl, RunQueryDsl};
 
     use super::super::testing::*;
     use super::*;

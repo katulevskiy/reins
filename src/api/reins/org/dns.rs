@@ -1,6 +1,7 @@
-//! TXT lookups for domain verification. Production asks the system resolver (hickory); the HTTP tests, which cannot
-//! publish DNS records, give the answers in `REINS_TEST_DNS_TXT` (`name=value;name=value`), honoured only together
-//! with the loopback test switch (`outbound::ALLOW_LOOPBACK_ENV`), which the server warns about at launch.
+//! TXT lookups for domain verification. Production asks the system resolver (hickory); the end-to-end tests, which
+//! cannot publish DNS records, write the answers to the file `REINS_TEST_DNS_TXT_FILE` names (`name=value` lines,
+//! read at every lookup), honoured only together with the loopback test switch (`outbound::ALLOW_LOOPBACK_ENV`),
+//! which the server warns about at launch.
 
 use std::sync::{Arc, LazyLock};
 
@@ -58,15 +59,28 @@ impl TxtResolver for StaticTxt {
     }
 }
 
-/// The variable the HTTP tests set (see the module docs).
-pub const TEST_TXT_ENV: &str = "REINS_TEST_DNS_TXT";
+/// The variable the end-to-end tests set (see the module docs).
+pub const TEST_TXT_FILE_ENV: &str = "REINS_TEST_DNS_TXT_FILE";
+
+/// TXT records from a file of `name=value` lines, read at every lookup (tests).
+pub struct FileTxt(std::path::PathBuf);
+
+#[rocket::async_trait]
+impl TxtResolver for FileTxt {
+    async fn txt(&self, name: &str) -> Result<Vec<String>, String> {
+        let text = std::fs::read_to_string(&self.0).unwrap_or_default();
+        StaticTxt::parse(&text.replace('\n', ";")).txt(name).await
+    }
+}
 
 static RESOLVER: LazyLock<Arc<dyn TxtResolver>> = LazyLock::new(|| {
     if super::super::outbound::allow_loopback()
-        && let Ok(spec) = std::env::var(TEST_TXT_ENV)
+        && let Ok(path) = std::env::var(TEST_TXT_FILE_ENV)
     {
-        warn!("`{TEST_TXT_ENV}` is set: domain verification reads fixed TXT records. This is for tests only");
-        return Arc::new(StaticTxt::parse(&spec));
+        warn!(
+            "`{TEST_TXT_FILE_ENV}` is set: domain verification reads TXT records from a file. This is for tests only"
+        );
+        return Arc::new(FileTxt(path.into()));
     }
     match TokioResolver::builder(TokioRuntimeProvider::default()).and_then(|b| b.build()) {
         Ok(r) => Arc::new(HickoryTxt(r)),

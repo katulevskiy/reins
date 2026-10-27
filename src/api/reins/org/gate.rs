@@ -202,7 +202,6 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         return Ok(Decision::Personal);
     }
     let existing_uuid = existing.map(|u| u.uuid.to_string());
-    let existing_user = existing_uuid.clone();
     let domain_org = org_of_domain(&user.email, conn).await;
     let loaded = conn
         .run(move |c| -> Result<Option<(OrgFacts, Existing)>, diesel::result::Error> {
@@ -238,49 +237,25 @@ pub async fn check(user: &OIDCAuthenticatedUser, existing: Option<&User>, conn: 
         return Ok(Decision::Personal);
     };
     let workos = user.workos.clone().unwrap_or_default();
+    // GitHub's answer: only a definite active membership counts as a member. "Not a member" and "unknown" both refuse
+    // this sign-in, and neither removes anyone here (removal is the directory's, an admin's or a confirmed sync's).
     let mut github_member = None;
     if org.identity == IdentityKind::GithubOrg
         && workos.method.as_deref() == Some("GitHubOAuth")
         && let (Some(token), Some(gh_org)) =
             (workos.provider_token.as_deref(), github_org_of(&org.org_uuid, conn).await)
     {
-        github_member = match super::github::checker().is_member(token, &gh_org).await {
-            Ok(m) => Some(m),
-            Err(e) => {
-                warn!("GitHub membership check for org {}: {e}", org.org_uuid);
-                None
-            }
-        };
+        let answer = super::github::checker().membership(token, &gh_org).await;
+        if answer == super::github::GithubAnswer::Unknown {
+            warn!("GitHub membership check for org {}: no definite answer", org.org_uuid);
+        }
+        github_member = Some(answer.is_member());
     }
     let facts = SignInFacts {
         method: workos.method.as_deref(),
         organization_id: workos.organization_id.as_deref(),
         github_member,
     };
-    // A Team org on GitHub follows GitHub's membership (08 R11): a member GitHub no longer counts is removed now, at
-    // their sign-in through the org, before being refused.
-    if github_member == Some(false)
-        && existing
-            == (Existing::Member {
-                active: true,
-            })
-        && let Some(user) = existing_user
-    {
-        let now = super::super::now_unix();
-        if let Err(e) = super::deprovision::deprovision(
-            conn,
-            None,
-            &org.org_uuid,
-            &user,
-            super::deprovision::Reason::ProviderMembershipLost,
-            None,
-            now,
-        )
-        .await
-        {
-            warn!("Org {}: could not remove a member GitHub no longer counts: {e:?}", org.org_uuid);
-        }
-    }
     match decide(Some(&org), existing, &facts) {
         Ok(d) => Ok(d),
         Err(message) => {

@@ -36,7 +36,7 @@ button{height:34px;padding:0 14px;border:0;border-radius:999px;background:var(--
 font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}a.button{display:inline-flex;height:34px;align-items:center;padding:0 14px;border-radius:999px;\
 background:var(--ink);color:var(--paper);font-weight:600;text-decoration:none}button.quiet{background:var(--sunken);\
 color:var(--ink)}button.danger{background:var(--dwash);color:var(--bad)}\
-.flash{padding:10px 14px;border-radius:12px;background:var(--vwash);color:var(--violet)}\
+.changed{color:var(--ink);font-weight:600}.flash{padding:10px 14px;border-radius:12px;background:var(--vwash);color:var(--violet)}\
 .flash.bad{background:var(--dwash);color:var(--bad)}.banner{padding:12px 14px;border-radius:12px;\
 background:var(--wwash);color:var(--warn);display:flex;gap:8px;align-items:center}\
 .row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}\
@@ -224,49 +224,136 @@ pub struct OverviewView {
     pub can_set_up: bool,
     /// Names for the members and groups pending changes mention.
     pub names: std::collections::HashMap<String, String>,
+    /// The roles members (by membership) and groups hold now.
+    pub roles: std::collections::HashMap<String, Vec<Role>>,
 }
 
 fn name_of<'a>(names: &'a std::collections::HashMap<String, String>, id: &'a str) -> &'a str {
     names.get(id).map_or(id, String::as_str)
 }
 
-/// One line for a change, as admins read it.
-pub fn describe(action: &AdminAction, names: &std::collections::HashMap<String, String>) -> String {
-    let subject = |s: &Subject| match s {
-        Subject::Member(id) => e(name_of(names, id)),
-        Subject::Group(id) => format!("group {}", e(name_of(names, id))),
+fn or_dash(v: Option<&str>) -> String {
+    v.filter(|v| !v.is_empty()).map_or_else(|| "—".to_owned(), e)
+}
+
+/// One field of a change: its value now, and what the change makes it (all escaped by the caller).
+fn field(label: &str, old: &str, new: &str) -> String {
+    let changed = if old == new {
+        ""
+    } else {
+        " changed"
     };
-    match action {
+    format!(
+        "<div class=\"meta{changed}\">{label}: <span class=\"mono\">{old}</span> &rarr; <span class=\"mono\">{new}</span></div>"
+    )
+}
+
+fn roles_text(roles: Option<&Vec<Role>>) -> String {
+    match roles {
+        Some(r) if !r.is_empty() => r.iter().map(|r| r.label()).collect::<Vec<_>>().join(", "),
+        _ => "none".to_owned(),
+    }
+}
+
+/// A change as its approver must see it: what it is, and every field it sets, from its value now to the new one.
+pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
+    let names = &v.names;
+    let subject = |s: &Subject| match s {
+        Subject::Member(id) => (e(name_of(names, id)), v.roles.get(id)),
+        Subject::Group(id) => (format!("group {}", e(name_of(names, id))), v.roles.get(id)),
+    };
+    let (title, fields) = match action {
         AdminAction::GrantRole {
             subject: s,
             role,
-        } => format!("Make {} {}", subject(s), role.label()),
-        AdminAction::RevokeRole {
+        }
+        | AdminAction::RevokeRole {
             subject: s,
             role,
-        } => format!("Remove {} from {}", role.label(), subject(s)),
+        } => {
+            let (who, roles) = subject(s);
+            let now = roles_text(roles);
+            let mut after: Vec<Role> = roles.cloned().unwrap_or_default();
+            let grant = matches!(action, AdminAction::GrantRole { .. });
+            if grant {
+                after.push(*role);
+            } else {
+                after.retain(|r| r != role);
+            }
+            after.sort();
+            after.dedup();
+            let title = if grant {
+                format!("Give {} to {who}", role.label())
+            } else {
+                format!("Take {} from {who}", role.label())
+            };
+            (title, field("Roles", &e(&now), &e(&roles_text(Some(&after)))))
+        }
         AdminAction::SetIdentity {
             identity,
-            ..
-        } => format!("Sign in with {}", identity.label()),
+            workos_org_id,
+            directory_id,
+            github_org,
+        } => (
+            "Change how members sign in".to_owned(),
+            [
+                field("Sign-in", v.identity.label(), identity.label()),
+                field("WorkOS organization", &or_dash(v.workos_org_id.as_deref()), &or_dash(workos_org_id.as_deref())),
+                field("Directory", &or_dash(v.directory_id.as_deref()), &or_dash(directory_id.as_deref())),
+                field("GitHub organization", &or_dash(v.github_org.as_deref()), &or_dash(github_org.as_deref())),
+            ]
+            .concat(),
+        ),
         AdminAction::SetTier {
             tier,
-        } => format!("Change the plan to {}", tier.label()),
+        } => ("Change the plan".to_owned(), field("Plan", v.tier.label(), tier.label())),
         AdminAction::RemoveDomain {
             domain,
-        } => format!("Remove the domain {}", e(domain)),
+        } => {
+            let verified = v.domains.iter().find(|d| d.domain == *domain).is_some_and(|d| d.verified);
+            (
+                format!("Remove the domain {}", e(domain)),
+                field(
+                    "Domain",
+                    &format!(
+                        "{} ({})",
+                        e(domain),
+                        if verified {
+                            "verified"
+                        } else {
+                            "pending"
+                        }
+                    ),
+                    "removed",
+                ),
+            )
+        }
         AdminAction::RemoveMember {
             member,
-        } => format!("Remove {}", e(name_of(names, member))),
+        } => (
+            format!("Remove {}", e(name_of(names, member))),
+            field("Roles", &e(&roles_text(v.roles.get(member))), "none, signed out everywhere"),
+        ),
         AdminAction::SetTwoPerson {
             on,
-        } => (if *on {
-            "Turn two-person approval on"
-        } else {
-            "Turn two-person approval off"
-        })
-        .to_owned(),
-    }
+        } => (
+            "Two-person approval".to_owned(),
+            field(
+                "Two-person",
+                if v.two_person {
+                    "on"
+                } else {
+                    "off"
+                },
+                if *on {
+                    "on"
+                } else {
+                    "off"
+                },
+            ),
+        ),
+    };
+    format!("<div>{title}</div>{fields}")
 }
 
 pub fn overview(frame: &Frame<'_>, v: &OverviewView) -> String {
@@ -405,7 +492,7 @@ value=\"{c}\"><button class=\"quiet\" type=\"submit\">Reject</button></form>",
             }
             format!(
                 "<tr><td>{}</td><td class=\"meta\">{}</td><td>{buttons}</td></tr>",
-                describe(&ch.action, &v.names),
+                describe(&ch.action, v),
                 e(&ch.proposed_by)
             )
         })
@@ -642,7 +729,73 @@ mod tests {
             }],
             can_set_up: true,
             names: [("m2".to_owned(), "<script>lee</script>".to_owned())].into_iter().collect(),
+            roles: [("m2".to_owned(), vec![Role::SecurityAdmin])].into_iter().collect(),
         }
+    }
+
+    #[test]
+    fn the_approver_sees_every_field_of_the_change() {
+        let mut v = view();
+        v.identity = IdentityKind::Sso;
+        v.workos_org_id = Some("org_OLD".to_owned());
+        v.changes[0].action = AdminAction::SetIdentity {
+            identity: IdentityKind::Sso,
+            workos_org_id: Some("org_NEW<x>".to_owned()),
+            directory_id: Some("directory_NEW".to_owned()),
+            github_org: None,
+        };
+        let html = overview(&frame(), &v);
+        for part in [
+            "Sign-in",
+            "SSO (SAML or OIDC)",
+            "org_OLD",
+            "org_NEW&lt;x&gt;",
+            "Directory",
+            "directory_NEW",
+            "GitHub organization",
+        ] {
+            assert!(html.contains(part), "{part}");
+        }
+        assert!(!html.contains("org_NEW<x>"));
+        // A removal shows what the member holds now.
+        assert!(overview(&frame(), &view()).contains("Security admin"));
+        // Every kind of action shows its fields.
+        for action in [
+            AdminAction::SetTier {
+                tier: Tier::Team,
+            },
+            AdminAction::SetTwoPerson {
+                on: false,
+            },
+            AdminAction::RemoveDomain {
+                domain: "acme.com".to_owned(),
+            },
+            AdminAction::GrantRole {
+                subject: Subject::Member("m2".to_owned()),
+                role: Role::Auditor,
+            },
+            AdminAction::RevokeRole {
+                subject: Subject::Member("m2".to_owned()),
+                role: Role::SecurityAdmin,
+            },
+        ] {
+            let d = describe(&action, &view());
+            assert!(d.contains("&rarr;"), "{d}");
+        }
+        assert!(
+            describe(
+                &AdminAction::SetTier {
+                    tier: Tier::Team
+                },
+                &view()
+            )
+            .contains("Business")
+        );
+        let grant = AdminAction::GrantRole {
+            subject: Subject::Member("m2".to_owned()),
+            role: Role::Auditor,
+        };
+        assert!(describe(&grant, &view()).contains("Security admin, Auditor"));
     }
 
     #[test]

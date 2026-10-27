@@ -4,7 +4,9 @@
 //! - **Sign-in** reuses the apps' SSO path: the browser goes to `/identity/connect/authorize` with client id
 //!   `reins-console` (so the browser-binding cookie and PKCE apply), comes back to `/reins/org/callback`, and the code
 //!   is exchanged here. The org gate and the passkey rule apply as for the apps; only an existing Reins account gets
-//!   in (sign in on the phone first).
+//!   in (sign in on the phone first). The console has no two-factor step, so an account with two-factor sign-in
+//!   enabled is refused here rather than let in on SSO alone. A GitHub sign-in's token stays in the server-side
+//!   session, for GitHub's word that the admin owns the GitHub organization they connect.
 //! - **Sessions** live in memory: a random id in an HttpOnly cookie (`SameSite=Lax`, so the sign-in's redirect brings
 //!   it back), 30 minutes idle, 8 hours at most, a new id once signed in. Every form carries the session's CSRF token.
 //! - **Authority** is checked again on every page and every action, from the database: nothing in the session says
@@ -78,6 +80,8 @@ struct Session {
     csrf: String,
     /// While signing in: the state and PKCE verifier sent to `/identity/connect/authorize`.
     pending: Option<(String, String)>,
+    /// The GitHub token of a GitHub sign-in (never sent to the browser).
+    github_token: Option<String>,
     flash: Option<(String, bool)>,
     created: i64,
     last: i64,
@@ -117,6 +121,7 @@ fn new_session(now: i64) -> (String, Session) {
         email: String::new(),
         csrf: random_token(),
         pending: None,
+        github_token: None,
         flash: None,
         created: now,
         last: now,
@@ -132,6 +137,7 @@ struct Signed {
     user: String,
     email: String,
     csrf: String,
+    github_token: Option<String>,
     flash: Option<(String, bool)>,
 }
 
@@ -150,6 +156,7 @@ fn signed(cookies: &CookieJar<'_>, now: i64) -> Option<Signed> {
         user,
         email: s.email.clone(),
         csrf: s.csrf.clone(),
+        github_token: s.github_token.clone(),
         flash: s.flash.take(),
     })
 }
@@ -351,6 +358,11 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
     if !user.enabled {
         return refused("This account can't sign in.");
     }
+    if two_factor_refused(&crate::db::models::TwoFactor::find_by_user(&user.uuid, &conn).await) {
+        return refused(
+            "This account uses two-step sign-in, which the console can't ask for yet. Use an admin account without it.",
+        );
+    }
     let decision = match super::gate::check(&user_infos, Some(&user), &conn).await {
         Ok(d) => d,
         Err(e) => return refused(&e.message().to_owned()),
@@ -365,12 +377,32 @@ async fn callback(code: String, state: String, cookies: &CookieJar<'_>, secure: 
     // A new session id once signed in.
     let now = now_unix();
     let (new_sid, _) = new_session(now);
+    let github_token = user_infos
+        .workos
+        .as_ref()
+        .filter(|w| w.method.as_deref() == Some("GitHubOAuth"))
+        .and_then(|w| w.provider_token.clone());
     if let Some(s) = sessions().get_mut(&new_sid) {
         s.user = Some(user.uuid.to_string());
         s.email.clone_from(&user.email);
+        s.github_token = github_token;
     }
     put_cookie(cookies, new_sid, secure.https);
     Err(to_home())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn accounts_with_two_step_sign_in_are_refused() {
+        use crate::db::models::{TwoFactor, TwoFactorType};
+        let user = crate::db::models::UserId::from("u1".to_owned());
+        assert!(!super::two_factor_refused(&[]));
+        let mut totp = TwoFactor::new(user, TwoFactorType::Authenticator, String::new());
+        assert!(super::two_factor_refused(std::slice::from_ref(&totp)));
+        totp.enabled = false;
+        assert!(!super::two_factor_refused(&[totp]));
+    }
 }
 
 #[derive(FromForm)]
@@ -477,10 +509,13 @@ async fn overview(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             })
             .collect();
         let mut names = HashMap::new();
+        let mut roles = HashMap::new();
         for m in reins_org::q_members(c, &o)? {
             names.insert(m.uuid.to_string(), email_of(c, m.user_uuid.as_ref())?);
+            roles.insert(m.uuid.to_string(), reins_org::q_granted_roles(c, &o, m.uuid.as_ref())?);
         }
         for (id, gname, _) in reins_org::q_groups(c, &o)? {
+            roles.insert(id.clone(), reins_org::q_subject_roles(c, &o, reins_org::SUBJECT_GROUP, &id)?);
             names.insert(id, gname);
         }
         let changes = admin::pending_for(c, &o, &u)?
@@ -509,6 +544,7 @@ async fn overview(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             changes,
             can_set_up: can(c, &o, &u, Capability::SetUpOrg)?,
             names,
+            roles,
         })
     })
     .await;
@@ -601,17 +637,24 @@ fn opt(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
 
-/// WorkOS's word that the binding of a `SetIdentity` is this tenant's ([`workos_api`]); `None` for other actions.
+/// Whether an account with these second factors is refused by the console (it has no two-factor step yet).
+fn two_factor_refused(factors: &[crate::db::models::TwoFactor]) -> bool {
+    factors.iter().any(|f| f.enabled)
+}
+
+/// WorkOS's (and for a GitHub org, GitHub's) word that the binding of a `SetIdentity` is this tenant's
+/// ([`workos_api`]); `None` for other actions. `github_token`: the console user's GitHub sign-in.
 async fn binding_for(
     conn: &DbConn,
     org: &str,
     action: &AdminAction,
+    github_token: Option<&str>,
 ) -> Result<Option<workos_api::VerifiedBinding>, OrgError> {
     let AdminAction::SetIdentity {
         identity,
         workos_org_id: Some(workos_org_id),
         directory_id,
-        ..
+        github_org,
     } = action
     else {
         return Ok(None);
@@ -628,7 +671,18 @@ async fn binding_for(
     })
     .await?;
     let directory = directory_id.as_deref().filter(|_| *identity == IdentityKind::Sso && scim);
-    workos_api::verify_binding(workos_api::api().as_ref(), workos_org_id, directory, &domains).await.map(Some)
+    let github = match (identity, github_org.as_deref()) {
+        (IdentityKind::GithubOrg, Some(gh)) => {
+            let answer = match github_token {
+                Some(token) => super::github::checker().membership(token, gh).await,
+                None => super::github::GithubAnswer::Unknown,
+            };
+            Some((gh, answer))
+        }
+        (IdentityKind::GithubOrg, None) => return Err(OrgError::Invalid("Name the GitHub organization (its login).")),
+        _ => None,
+    };
+    workos_api::verify_binding(workos_api::api().as_ref(), workos_org_id, directory, &domains, github).await.map(Some)
 }
 
 #[post("/reins/org/<org>/identity", data = "<form>")]
@@ -654,7 +708,7 @@ async fn set_identity(
         directory_id: opt(&form.directory_id),
         github_org: opt(&form.github_org),
     };
-    let r = match binding_for(&conn, org, &action).await {
+    let r = match binding_for(&conn, org, &action, s.github_token.as_deref()).await {
         Ok(binding) => propose(&conn, pool, org, &s.user, action, binding).await,
         Err(e) => Err(e),
     };
@@ -937,7 +991,7 @@ async fn approve_change(
     })
     .await;
     let result = match action {
-        Ok(action) => match binding_for(&conn, org, &action).await {
+        Ok(action) => match binding_for(&conn, org, &action, s.github_token.as_deref()).await {
             Ok(binding) => {
                 let (o, ch, u, now) = (org.to_owned(), form.change.clone(), s.user.clone(), now_unix());
                 match run(&conn, move |c| admin::approve(c, &o, &ch, &u, binding.as_ref(), now)).await {
