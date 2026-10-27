@@ -132,6 +132,8 @@ SSO_SIGNUPS_MATCH_EMAIL=true        # an existing account with the same (WorkOS-
 # SSO_AUTHORIZE_EXTRA_PARAMS="screen_hint=sign-up"   # extra AuthKit parameters
 # REINS_WORKOS_SYNC_SECS=30
 # REINS_WORKOS_WEBHOOK_SECRET=...
+# REINS_ORGS_ENABLED=true           # Reins for organizations (Managed work profiles), see below
+# REINS_WORKOS_DSYNC_SECS=20        # how often directory (SCIM) events are read without a webhook
 ```
 
 In the WorkOS dashboard (or through its API), add `https://<domain>/identity/connect/oidc-signin` to the redirect
@@ -162,6 +164,15 @@ How it fits together:
   signed in with it. Point a WorkOS webhook at `https://<domain>/reins/workos/webhook` with
   `REINS_WORKOS_WEBHOOK_SECRET` set to make this immediate; the webhook only wakes the sync, which still reads the
   events API.
+- **Organizations** (`REINS_ORGS_ENABLED=true`, off by default). Admins sign in at `https://<domain>/reins/org`
+  (add it nowhere in WorkOS: the console comes back through `/identity/connect/oidc-signin` like the apps). An org is
+  created from its founder's work account and claims that email's domain; it counts once a TXT record
+  `reins-domain-verification=<token>` is published at `_reins-challenge.<domain>`. Sign-in is bound to a WorkOS
+  organization (SSO for Business, Google or GitHub for Team) that WorkOS itself says holds one of the org's verified
+  domains, and Business provisions members from that organization's directory: the same webhook wakes the
+  directory sync, which reads `dsync.*` events every `REINS_WORKOS_DSYNC_SECS` otherwise (keep it under 60, the
+  deprovisioning target). A GitHub-org identity needs GitHub's `read:org` scope on the WorkOS GitHub connection, with
+  provider tokens returned. See [security model](security-model.md#organizations-managed-work-profiles).
 - **Deleting an account in the app** (Settings → Delete account) deletes the WorkOS user too
   (`DELETE /user_management/users/<id>` with `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET`), before the account
   itself; while WorkOS cannot, nothing is deleted and the app says to try again. Without WorkOS (password accounts, or
