@@ -1,54 +1,167 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
-/// Settings > Wallpaper (the Settings board, 04b), quiet: one wallpaper for dark and one for light, picked from the eight
-/// shipped ones or your own photo. The choice is kept under `Wallpaper.key(scheme)` in the app group, where
-/// `WallpaperLayer` reads it.
+/// Settings > Wallpaper (the Settings board, 04b and 04c), quiet: for dark and for light, three separate settings
+/// (`WallpaperChoice`): the image (the eight shipped ones or your photo), the effect over it and the fade. A small
+/// Activity shows the result; every change applies at once. The choice is kept under `WallpaperChoice.key(scheme)` in
+/// the app group, where `WallpaperLayer` reads it; your photo is kept as picked (`OwnWallpaper`), so its effect and fade
+/// can change later.
 struct WallpaperScreen: View {
-    @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.feedback) private var feedback
-    @AppStorage(Wallpaper.key(.dark), store: AppGroup.defaults) private var dark = Wallpaper.defaultFor(.dark).rawValue
-    @AppStorage(Wallpaper.key(.light), store: AppGroup.defaults) private var light = Wallpaper.defaultFor(.light).rawValue
-    /// Which theme's wallpaper is being picked: Dark first, as the board opens.
+    @AppStorage(WallpaperChoice.key(.dark), store: AppGroup.defaults) private var dark = WallpaperChoice.initial(.dark)
+    @AppStorage(WallpaperChoice.key(.light), store: AppGroup.defaults) private var light = WallpaperChoice.initial(.light)
+    @AppStorage(OwnWallpaper.revisionKey(.dark), store: AppGroup.defaults) private var darkPhoto = 0
+    @AppStorage(OwnWallpaper.revisionKey(.light), store: AppGroup.defaults) private var lightPhoto = 0
+    /// Which theme's wallpaper is being set: Dark first, as the board opens.
     @State private var picking: ColorScheme? = .dark
-    /// Bumped when the page shows again, so a photo saved meanwhile is drawn.
-    @State private var appeared = 0
+    @State private var item: PhotosPickerItem?
+    @State private var importing = false
+    @State private var error: String?
+    /// The art last drawn for the preview, kept while the next renders.
+    @State private var preview: WallpaperArt.Drawn?
+    /// The current image with each effect, and which image (theme, photo) they were drawn from.
+    @State private var thumbs: (source: ThumbSource, images: [WallpaperEffect: CGImage])?
+    /// Your photo, small, for its tile.
+    @State private var photoThumb: (source: ThumbSource, image: UIImage)?
 
     private var scheme: ColorScheme { picking ?? systemScheme }
+    private var choice: WallpaperChoice { scheme == .dark ? dark : light }
+    private var photo: Int { scheme == .dark ? darkPhoto : lightPhoto }
 
-    private var chosen: Wallpaper {
-        Wallpaper(rawValue: scheme == .dark ? dark : light) ?? .defaultFor(scheme)
+    private struct ThumbSource: Hashable {
+        var image: Wallpaper
+        var dark: Bool
+        var photo: Int
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(minimum: 80, maximum: 104), spacing: 12, alignment: .top), count: 3)
-
     var body: some View {
+        let hasPhoto = OwnWallpaper.exists(scheme)
+        let art = WallpaperArt.shown(choice, photo: photo, scheme: scheme, hasPhoto: hasPhoto)
+        let source = ThumbSource(image: art.choice.image, dark: art.dark, photo: art.photo)
+        let ownSource = ThumbSource(image: .own, dark: art.dark, photo: photo)
         QuietPage("Wallpaper") {
             SchemeSegments(scheme: Binding(get: { scheme }, set: { picking = $0 }))
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                ForEach(Wallpaper.shipped) { wallpaper in
-                    tile(wallpaper)
+            PhonePreview(image: (art.ready() ?? preview.flatMap { $0.art.dark == art.dark ? $0 : nil })?.image, dark: art.dark)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 22)
+                .padding(.bottom, 8)
+            SectionHeader("Image", quiet: true)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(Wallpaper.shipped) { wallpaper in
+                        ImageChoice(wallpaper: wallpaper, image: wallpaper.image(scheme), selected: art.choice.image == wallpaper) {
+                            pick(wallpaper)
+                        }
+                    }
+                    if hasPhoto {
+                        let thumb = photoThumb.flatMap { $0.source == ownSource ? $0.image : nil }
+                        ImageChoice(wallpaper: .own, image: thumb, selected: art.choice.image == .own) { pick(.own) }
+                    }
+                    PhotosPicker(selection: $item, matching: .images, photoLibrary: .shared()) {
+                        OwnPhotoTile(replacing: hasPhoto, busy: importing)
+                    }
+                    .buttonStyle(PressDimsStyle())
+                    .disabled(importing)
+                    .accessibilityLabel(hasPhoto ? "Replace your photo" : "Your photo")
+                    .accessibilityIdentifier("ownWallpaper")
                 }
-                if OwnWallpaper.load(scheme) != nil {
-                    tile(.own).id("own-\(appeared)")
-                }
-                OwnPhotoTile {
-                    model.show(.ownWallpaper(dark: scheme == .dark))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+            SectionHeader("Effect", quiet: true)
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(WallpaperEffect.allCases) { effect in
+                    EffectChoice(effect: effect, thumb: thumbs.flatMap { $0.source == source ? $0.images[effect] : nil }, selected: choice.effect == effect) {
+                        guard choice.effect != effect else { return }
+                        feedback.play(.selection)
+                        update { $0.effect = effect }
+                    }
+                    if effect != WallpaperEffect.allCases.last { Spacer(minLength: 4) }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            HStack(spacing: 12) {
+                GlyphIcon(.appearance, size: 16).foregroundStyle(Palette.inkMeta).accessibilityHidden(true)
+                Slider(value: Binding(get: { choice.fade }, set: { value in update { $0.fade = value } }), in: 0...1) { editing in
+                    if !editing { feedback.play(.selection) }
+                }
+                .tint(Palette.violet)
+                .accessibilityLabel("Fade")
+                .accessibilityIdentifier("wallpaperFade")
+                Text("Fade").font(RFont.sans(13)).foregroundStyle(Palette.ink2).accessibilityHidden(true)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            if let error { QuietBanner(text: error) }
         }
-        .onAppear { appeared += 1 }
+        .onChange(of: item) { _, picked in
+            guard let picked else { return }
+            item = nil
+            let scheme = scheme
+            Task { await importPhoto(picked, for: scheme) }
+        }
+        .task(id: art) {
+            if let drawn = await art.drawn() { preview = drawn }
+        }
+        .task(id: source) {
+            let images = await Task.detached(priority: .utility) { WallpaperArt.thumbs(source.image, dark: source.dark) }.value
+            if !Task.isCancelled { thumbs = (source, images) }
+        }
+        .task(id: hasPhoto ? ownSource : nil) {
+            guard hasPhoto else { return }
+            let dark = ownSource.dark
+            let image = await Task.detached(priority: .utility) {
+                OwnWallpaper.load(dark ? .dark : .light)?.preparingThumbnail(of: CGSize(width: 208, height: 270))
+            }.value
+            if !Task.isCancelled, let image { photoThumb = (ownSource, image) }
+        }
     }
 
-    private func tile(_ wallpaper: Wallpaper) -> some View {
-        WallpaperChoice(wallpaper: wallpaper, scheme: scheme, selected: chosen == wallpaper) {
-            guard chosen != wallpaper else { return }
+    private func update(_ change: (inout WallpaperChoice) -> Void) {
+        if scheme == .dark { change(&dark) } else { change(&light) }
+    }
+
+    private func pick(_ wallpaper: Wallpaper) {
+        guard choice.image != wallpaper else { return }
+        feedback.play(.selection)
+        update { $0.image = wallpaper }
+    }
+
+    /// Keeps a picked photo for the theme as it is (upright, at most 2,000 px) and chooses it, keeping the effect.
+    /// A photo needs a fade into the page: with none set, it opens with the default.
+    private func importPhoto(_ picked: PhotosPickerItem, for scheme: ColorScheme) async {
+        error = nil
+        importing = true
+        defer { importing = false }
+        do {
+            guard let data = try await picked.loadTransferable(type: Data.self) else {
+                error = "That photo could not be opened."
+                return
+            }
+            let saved = await Task.detached(priority: .userInitiated) { () -> Bool in
+                guard let image = UIImage(data: data), let upright = WallpaperRender.upright(image, maxSide: 2_000) else { return false }
+                return (try? OwnWallpaper.save(upright, scheme)) != nil
+            }.value
+            guard saved else {
+                feedback.play(.error)
+                error = "That photo could not be opened."
+                return
+            }
+            let revision = Int(Date().timeIntervalSince1970 * 1_000)
+            if scheme == .dark { darkPhoto = revision } else { lightPhoto = revision }
+            var next = scheme == .dark ? dark : light
+            next.image = .own
+            if next.hundredths == 0 { next.fade = WallpaperRender.defaultFade }
+            if scheme == .dark { dark = next } else { light = next }
             feedback.play(.selection)
-            if scheme == .dark { dark = wallpaper.rawValue } else { light = wallpaper.rawValue }
+        } catch {
+            feedback.play(.error)
+            self.error = error.userMessage
         }
     }
 }
@@ -96,41 +209,78 @@ struct SchemeSegments: View {
     }
 }
 
-/// A wallpaper as a small portrait, its top showing (the board's `thumb`): ringed in violet with a check when chosen,
+/// The art behind a small Activity, in a phone's frame: what the page will look like.
+private struct PhonePreview: View {
+    var image: UIImage?
+    var dark: Bool
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 30, style: .continuous)
+        let paper = dark ? Color(uiColor: UIColor(hex: 0x121215)) : Color(uiColor: UIColor(hex: 0xF6F6F8))
+        let bar = dark ? Color(uiColor: UIColor(hex: 0x1C1C21)) : Color.white
+        ZStack(alignment: .topLeading) {
+            paper
+            if let image {
+                Image(uiImage: image).resizable().interpolation(.medium).frame(width: 220, height: 282)
+            }
+            Text("Activity")
+                .font(RFont.fixedSans(20, .medium))
+                .tracking(-0.4)
+                .foregroundStyle(dark ? .white : Palette.onFieldInk)
+                .padding(.leading, 14)
+                .padding(.top, 26)
+            VStack(spacing: 6) {
+                ForEach(0..<4, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 9, style: .continuous).fill(bar).frame(height: 30)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 190)
+        }
+        .frame(width: 220, height: 400)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Color(uiColor: UIColor(hex: 0x111114)), lineWidth: 5).padding(-5))
+        .shadow(color: .black.opacity(0.35), radius: 20, y: 20)
+        .environment(\.colorScheme, dark ? .dark : .light)
+        .accessibilityHidden(true)
+    }
+}
+
+/// An image as a small portrait, its top showing (the board's `thumb`): ringed in violet with a check when chosen,
 /// its name under it.
-private struct WallpaperChoice: View {
+private struct ImageChoice: View {
     var wallpaper: Wallpaper
-    var scheme: ColorScheme
+    var image: UIImage?
     var selected: Bool
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                WallpaperThumb(wallpaper: wallpaper, scheme: scheme, side: nil, radius: 16)
-                    .aspectRatio(104 / 135, contentMode: .fit)
+                WallpaperThumb(image: image, width: 72, radius: 14)
                     .overlay {
                         if selected {
-                            RoundedRectangle(cornerRadius: 18.5, style: .continuous).strokeBorder(Palette.violet, lineWidth: 2.5).padding(-2.5)
+                            RoundedRectangle(cornerRadius: 16.5, style: .continuous).strokeBorder(Palette.violet, lineWidth: 2.5).padding(-2.5)
                         } else {
-                            RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1)
                         }
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if selected {
-                            GlyphIcon(.check, size: 13)
+                            GlyphIcon(.check, size: 12)
                                 .foregroundStyle(.white)
-                                .frame(width: 22, height: 22)
+                                .frame(width: 20, height: 20)
                                 .background(Palette.violetFill, in: Circle())
-                                .padding(6)
+                                .padding(5)
                         }
                     }
                 Text(wallpaper.title)
-                    .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.ink2)
+                    .font(RFont.sans(11.5, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Palette.ink : Palette.ink2)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
+            .frame(width: 72)
             .contentShape(Rectangle())
         }
         .buttonStyle(PressDimsStyle())
@@ -140,46 +290,101 @@ private struct WallpaperChoice: View {
     }
 }
 
-/// The dashed tile that opens "Your photo".
+/// The dashed tile that picks your photo, or a new one in its place.
 private struct OwnPhotoTile: View {
-    var action: () -> Void
-    @Environment(\.feedback) private var feedback
+    var replacing: Bool
+    var busy: Bool
 
     var body: some View {
-        Button {
-            action()
-            feedback.defaultTap()
-        } label: {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+        VStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Palette.rule2, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                .aspectRatio(104 / 135, contentMode: .fit)
+                .frame(width: 72, height: 72 * 135 / 104)
                 .overlay {
-                    VStack(spacing: 6) {
-                        GlyphIcon(.plus, size: 22)
-                        Text("Your photo").font(RFont.sans(13, .semibold)).multilineTextAlignment(.center)
-                    }
-                    .foregroundStyle(Palette.ink2)
+                    if busy { ProgressView() } else { GlyphIcon(.plus, size: 20) }
                 }
-                .contentShape(Rectangle())
+            Text(replacing ? "Replace" : "Your photo")
+                .font(RFont.sans(11.5))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .buttonStyle(PressDimsStyle())
-        .accessibilityLabel("Your photo")
-        .accessibilityIdentifier("ownWallpaper")
+        .foregroundStyle(Palette.ink2)
+        .frame(width: 72)
+        .contentShape(Rectangle())
     }
 }
 
-/// A wallpaper's image cut to a rounded tile, its top showing; `side` fixes a square (the Settings row's 32 pt), nil
-/// fills what it is given.
-struct WallpaperThumb: View {
-    var wallpaper: Wallpaper
-    var scheme: ColorScheme
-    var side: CGFloat?
-    var radius: CGFloat
+/// An effect as a small square of the current image with it applied, its name under it; the chosen one is ringed in
+/// violet.
+private struct EffectChoice: View {
+    var effect: WallpaperEffect
+    var thumb: CGImage?
+    var selected: Bool
+    var action: () -> Void
 
     var body: some View {
-        let image = wallpaper.image(scheme) ?? Wallpaper.defaultFor(scheme).image(scheme)
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Color.clear
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        if let thumb {
+                            Image(decorative: thumb, scale: 1).resizable().scaledToFill()
+                                // As the board's `object-position: 50% 20%`: the face, not the middle.
+                                .offset(y: 8)
+                        }
+                    }
+                    .background(Palette.paperSunken)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 16.5, style: .continuous).strokeBorder(Palette.violet, lineWidth: 2.5).padding(-2.5)
+                        } else {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1)
+                        }
+                    }
+                Text(effect.title)
+                    .font(RFont.sans(11.5, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Palette.ink : Palette.ink2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(width: 60)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressDimsStyle())
+        .accessibilityLabel(effect.title)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityIdentifier("effect:\(effect.rawValue)")
+    }
+}
+
+/// An image cut to a rounded tile, its top showing: a portrait `width` wide (the Image row's 104 × 135), or a square
+/// `side` (the Settings row's 32 pt).
+struct WallpaperThumb: View {
+    var image: UIImage?
+    var width: CGFloat
+    var height: CGFloat
+    var radius: CGFloat
+
+    init(image: UIImage?, width: CGFloat, radius: CGFloat) {
+        self.init(image: image, width: width, height: width * 135 / 104, radius: radius)
+    }
+
+    init(image: UIImage?, side: CGFloat, radius: CGFloat) {
+        self.init(image: image, width: side, height: side, radius: radius)
+    }
+
+    private init(image: UIImage?, width: CGFloat, height: CGFloat, radius: CGFloat) {
+        self.image = image
+        self.width = width
+        self.height = height
+        self.radius = radius
+    }
+
+    var body: some View {
         Color.clear
-            .frame(width: side, height: side)
+            .frame(width: width, height: height)
             .overlay(alignment: .top) {
                 if let image {
                     Image(uiImage: image).resizable().interpolation(.medium).scaledToFill()
@@ -188,5 +393,26 @@ struct WallpaperThumb: View {
             .background(Palette.paperSunken)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .accessibilityHidden(true)
+    }
+}
+
+/// The theme's wallpaper as it is drawn (its effect and fade), as a small square: the Settings row's tile.
+struct ChosenWallpaperThumb: View {
+    var scheme: ColorScheme
+    var side: CGFloat
+    var radius: CGFloat
+    @AppStorage(WallpaperChoice.key(.dark), store: AppGroup.defaults) private var dark = WallpaperChoice.initial(.dark)
+    @AppStorage(WallpaperChoice.key(.light), store: AppGroup.defaults) private var light = WallpaperChoice.initial(.light)
+    @AppStorage(OwnWallpaper.revisionKey(.dark), store: AppGroup.defaults) private var darkPhoto = 0
+    @AppStorage(OwnWallpaper.revisionKey(.light), store: AppGroup.defaults) private var lightPhoto = 0
+    @State private var drawn: WallpaperArt.Drawn?
+
+    var body: some View {
+        let isDark = scheme == .dark
+        let art = WallpaperArt.shown(isDark ? dark : light, photo: isDark ? darkPhoto : lightPhoto, scheme: scheme, hasPhoto: OwnWallpaper.exists(scheme))
+        WallpaperThumb(image: (art.ready() ?? drawn.flatMap { $0.art.dark == isDark ? $0 : nil })?.image, side: side, radius: radius)
+            .task(id: art) {
+                if let made = await art.drawn() { drawn = made }
+            }
     }
 }

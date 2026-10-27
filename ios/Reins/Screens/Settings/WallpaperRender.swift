@@ -1,16 +1,18 @@
 import CoreGraphics
 import CoreImage
 import SwiftUI
+import UIKit
 
-/// The treatments "Your photo" offers (the Settings board, 04c), as the shipped wallpapers were treated.
+/// The treatments any wallpaper can take, a shipped one or your photo (the Settings board, 04c), as the shipped
+/// wallpapers were treated. Original leaves the image as it is.
 enum WallpaperEffect: String, CaseIterable, Identifiable {
-    case photo, dither, scanlines, halftone, colour
+    case original, dither, scanlines, halftone, colour
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .photo: "Photo"
+        case .original: "Original"
         case .dither: "Dither"
         case .scanlines: "Scanlines"
         case .halftone: "Halftone"
@@ -19,13 +21,13 @@ enum WallpaperEffect: String, CaseIterable, Identifiable {
     }
 }
 
-/// Turns a photo into a wallpaper, all on the phone: filled to the wallpaper's 780 × 1000 (390 × 500 pt), aligned to
+/// Turns an image (a shipped wallpaper or a photo) into a wallpaper, all on the phone: filled to the wallpaper's 780 × 1000 (390 × 500 pt), aligned to
 /// its top, treated with an effect (plain pixel code, and Core Image for the colour one), and faded into the page's
 /// paper at the bottom (the fade is baked, as in the shipped art). Pure: no state, safe off the main thread.
 enum WallpaperRender {
     static let size = CGSize(width: 780, height: 1000)
-    /// The fade the page opens with.
-    static let defaultFade = 0.55
+    /// The fade a new photo opens with (a shipped image has its own, and adds none by default).
+    static let defaultFade = 0.65
 
     /// The page's paper the fade runs into, in 0...255.
     static func paper(dark: Bool) -> (r: UInt8, g: UInt8, b: UInt8) { dark ? (0x12, 0x12, 0x15) : (0xF6, 0xF6, 0xF8) }
@@ -34,7 +36,7 @@ enum WallpaperRender {
         let w = max(1, Int(size.width)), h = max(1, Int(size.height))
         guard var px = Pixels(fill: source, width: w, height: h) else { return nil }
         switch effect {
-        case .photo: break
+        case .original: break
         case .dither: dither(&px, dark: dark)
         case .scanlines: scanlines(&px)
         case .halftone: halftone(&px, dark: dark)
@@ -44,8 +46,18 @@ enum WallpaperRender {
         return px.image()
     }
 
-    /// Where the fade starts, as a share of the height from the top: later with less fade.
-    static func fadeStart(_ amount: Double) -> Double { 0.85 - 0.55 * min(1, max(0, amount)) }
+    /// A photo the right way up and no bigger than `maxSide`, as the effects expect it: what is kept of your photo.
+    static func upright(_ image: UIImage, maxSide: CGFloat) -> CGImage? {
+        let scale = min(1, maxSide / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }.cgImage
+    }
+
+    /// Where the fade starts, as a share of the height from the top: later with less fade, none at 0.
+    static func fadeStart(_ amount: Double) -> Double { 1 - 0.7 * min(1, max(0, amount)) }
 
     // MARK: Effects
 
