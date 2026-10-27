@@ -135,6 +135,8 @@ pub fn q_deprovision(
     // Account-wide on purpose: this account is this org's alone (`reins_org_members`, one org per account).
     let cut = reins_org::q_cut_off_user(c, user)?;
     let enrolled_devices = reins_org::q_revoke_devices(c, org, user, now)?;
+    // O3: their web passkeys go with their phones.
+    crate::db::models::reins_org_routing::q_revoke_passkeys_of(c, org, user, now)?;
     // O2: their credential leases die now (the executor revokes the issued ones upstream), and their open requests and
     // review answers go.
     let leases = super::leases::q_revoke_for_deprovision(c, org, user, now)?;

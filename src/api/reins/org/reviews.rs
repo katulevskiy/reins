@@ -12,8 +12,8 @@ use reins_policy::org::{
 };
 use reins_proto::{
     managed::{
-        RequestBody, ReviewAnswer, ReviewDecision, ReviewItem, ReviewSignature, ReviewSubject, change_digest,
-        review_message,
+        RequestBody, ReviewAnswer, ReviewDecision, ReviewItem, ReviewSignature, ReviewSubject, WebAuthnError,
+        WebAuthnProof, change_digest, channel_allowed, review_message, webauthn_challenge, webauthn_signed_bytes,
     },
     org::{AdminAction, Role},
 };
@@ -41,6 +41,147 @@ pub fn device_sig_ok(spki_b64: &str, sig_b64: &str, msg: &[u8]) -> bool {
         return false;
     };
     ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_ASN1, point).verify(msg, &sig).is_ok()
+}
+
+/// How a signed web approval's signature is stored: `webauthn:` and its signature with the assertion's data.
+const WEB_SIG: &str = "webauthn:";
+
+/// A stored signature: a device's, or a web approval's with its assertion.
+fn stored_sig(text: &str) -> (String, Option<WebAuthnProof>) {
+    let Some(json) = text.strip_prefix(WEB_SIG) else {
+        return (text.to_owned(), None);
+    };
+    let v: Value = serde_json::from_str(json).unwrap_or_default();
+    let proof = WebAuthnProof {
+        authenticator_data: v["authenticator_data"].as_str().unwrap_or_default().to_owned(),
+        client_data_json: v["client_data_json"].as_str().unwrap_or_default().to_owned(),
+    };
+    (v["sig"].as_str().unwrap_or_default().to_owned(), Some(proof))
+}
+
+/// A signed web approval's answer (O3): a passkey's WebAuthn assertion over [`webauthn_challenge`] of the review
+/// message.
+#[derive(Clone, Debug)]
+pub struct WebAnswer {
+    pub decision: ReviewDecision,
+    pub at: i64,
+    /// DER ECDSA P-256, base64.
+    pub signature: String,
+    pub proof: WebAuthnProof,
+}
+
+/// The server's web origin and relying party id, where web approvals and passkeys are asserted.
+#[must_use]
+pub fn web_origin() -> (String, String) {
+    let rp =
+        url::Url::parse(&crate::CONFIG.domain()).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
+    (crate::CONFIG.domain_origin(), rp)
+}
+
+/// Answers request `id` as `user` with a signed web approval from their confirmed passkey `credential` (05 §6: L0–L2
+/// only, SSO plus a device-bound passkey). The decision service checks what an executor will check again.
+pub fn answer_web(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    credential: &str,
+    id: &str,
+    ans: &WebAnswer,
+    now: i64,
+) -> Result<Answered, OrgError> {
+    use diesel::Connection;
+    if (now - ans.at).abs() > SKEW_SECS {
+        return Err(OrgError::Invalid("This page is too old. Open the link again."));
+    }
+    if ans.decision == ReviewDecision::Propose {
+        return Err(OrgError::Invalid("Approve or deny."));
+    }
+    c.transaction(|c| {
+        if member_of(c, org, user)?.is_none() {
+            return Err(OrgError::NotFound);
+        }
+        let key = crate::db::models::reins_org_routing::q_usable_passkeys(c, org, user)?
+            .into_iter()
+            .find(|p| p.credential_id == credential)
+            .ok_or(OrgError::Invalid("Confirm this passkey on your phone first."))?;
+        let row = reins_org_request::q_request(c, org, id)?.ok_or(OrgError::NotFound)?;
+        if row.state != request_state::REVIEWING || row.expires_at <= now {
+            return Err(OrgError::Invalid("This was already decided."));
+        }
+        let trace: Value = serde_json::from_str(&row.trace).unwrap_or_default();
+        if !channel_allowed(trace["level"].as_str().unwrap_or_default()) {
+            return Err(OrgError::Invalid("Open the Reins app to decide this."));
+        }
+        let msg = review_message(org, ReviewSubject::Request, id, &row.digest, ans.decision, &row.snapshot, ans.at);
+        let (origin, rp_id) = web_origin();
+        let signed = webauthn_signed_bytes(&ans.proof, &webauthn_challenge(&msg), &origin, &rp_id).map_err(|e| {
+            OrgError::Invalid(match e {
+                WebAuthnError::Synced => "Use a security key or a device-bound passkey.",
+                WebAuthnError::NotVerified => "Unlock your passkey to approve.",
+                _ => "The passkey didn't sign this review.",
+            })
+        })?;
+        if !device_sig_ok(&key.passkey, &ans.signature, &signed) {
+            return Err(OrgError::Invalid("The passkey didn't sign this review."));
+        }
+        let (groups, roles) = standing(c, org, user)?.ok_or(OrgError::NotFound)?;
+        let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
+        let resolved = routing::stored(row.resolved.as_deref());
+        if !obligations
+            .iter()
+            .any(|o| o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id)))
+        {
+            return Err(OrgError::Forbidden);
+        }
+        let stored = format!(
+            "{WEB_SIG}{}",
+            json!({"sig": ans.signature, "authenticator_data": ans.proof.authenticator_data,
+                   "client_data_json": ans.proof.client_data_json})
+        );
+        let fresh = reins_org_request::q_insert_approval(
+            c,
+            &ReinsOrgApproval {
+                subject_uuid: id.to_owned(),
+                user_uuid: user.to_owned(),
+                decision: ans.decision.as_str().to_owned(),
+                org_uuid: org.to_owned(),
+                device_uuid: credential.to_owned(),
+                at: ans.at,
+                sig: stored,
+                obligation: None,
+            },
+        )?;
+        if !fresh {
+            return Err(OrgError::Invalid("You already answered this."));
+        }
+        let kind = if ans.decision == ReviewDecision::Approve {
+            audit::kinds::REVIEW_APPROVED
+        } else {
+            audit::kinds::REVIEW_DENIED
+        };
+        audit::record(
+            c,
+            org,
+            kind,
+            Some(user),
+            Some(id),
+            &json!({"request": {"id": id, "digest": row.digest}, "policy": {"snapshot": row.snapshot},
+                    "channel": "web",
+                    "decided_by": [{"member": user, "passkey": credential, "sig": ans.signature, "at": ans.at}]}),
+            now,
+        )?;
+        match weigh(c, org, &row)? {
+            (Met::Yes, signatures) => {
+                decisions::finalize(c, org, &row, signatures, now)?;
+                Ok(Answered::Approved)
+            }
+            (Met::Denied, _) => {
+                decisions::deny(c, org, &row, user, now)?;
+                Ok(Answered::Denied)
+            }
+            (Met::Waiting(_), _) => Ok(Answered::Recorded),
+        }
+    })
 }
 
 /// What answering did.
@@ -144,13 +285,14 @@ fn weigh_counted(
         };
         let approve = a.decision == ReviewDecision::Approve.as_str();
         if approve {
+            let (sig, webauthn) = stored_sig(&a.sig);
             signatures.push(ReviewSignature {
                 member: a.user_uuid.clone(),
                 device: a.device_uuid.clone(),
                 decision: ReviewDecision::Approve,
                 at: a.at,
-                sig: a.sig.clone(),
-                webauthn: None,
+                sig,
+                webauthn,
             });
         }
         people.push((a.user_uuid, groups, roles, approve));

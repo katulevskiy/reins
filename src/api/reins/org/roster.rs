@@ -62,6 +62,13 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
             .order(reins_org_devices::device_uuid.asc())
             .load(c)?;
         let manager = managers.get(&user).cloned();
+        let passkeys = reins_org_routing::q_usable_passkeys(c, org, &user)?
+            .into_iter()
+            .map(|p| reins_proto::managed::RosterPasskey {
+                credential_id: p.credential_id,
+                key: p.passkey,
+            })
+            .collect();
         members.push(RosterMember {
             user,
             email,
@@ -76,7 +83,7 @@ pub fn build(c: &mut DbConnInner, org: &str, policy: Option<&OrgPolicy>, now: i6
                 })
                 .collect(),
             manager,
-            passkeys: Vec::new(),
+            passkeys,
         });
     }
     Ok(Roster {

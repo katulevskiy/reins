@@ -48,6 +48,12 @@ pub mod kinds {
     pub const REVIEW_ESCALATED: &str = "review.escalated";
     /// O3: managers, group backups, on-call sources, channels or the GitHub reader changed (a two-person change).
     pub const ROUTING_CHANGED: &str = "routing.changed";
+    /// O3: a review answered through a signed web approval link (the link spent).
+    pub const WEB_APPROVAL: &str = "review.web";
+    /// O3: a member's web passkey added (unconfirmed), confirmed on their phone, or revoked.
+    pub const PASSKEY_ADDED: &str = "passkey.added";
+    pub const PASSKEY_CONFIRMED: &str = "passkey.confirmed";
+    pub const PASSKEY_REVOKED: &str = "passkey.revoked";
     pub const REQUEST_CANCELLED: &str = "request.cancelled";
     pub const REQUEST_EXECUTED: &str = "request.executed";
     pub const REQUEST_FAILED: &str = "request.failed";

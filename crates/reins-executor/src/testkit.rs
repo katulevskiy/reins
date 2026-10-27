@@ -24,6 +24,8 @@ pub const LEE: &str = "u-lee";
 pub const KIM: &str = "u-kim";
 pub const SAM: &str = "u-sam";
 pub const CONNECTION: &str = "c1";
+/// The server's web origin, where web approvals are asserted.
+pub const WEB_ORIGIN: &str = "https://reins.example";
 
 const P256_SPKI_PREFIX: [u8; 26] = [
     0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce,
@@ -82,6 +84,25 @@ impl Device {
     pub fn sign(&self, msg: &[u8]) -> String {
         data_encoding::BASE64.encode(self.pair.sign(&SystemRandom::new(), msg).unwrap().as_ref())
     }
+
+    /// A soft WebAuthn authenticator: an assertion of `challenge` at `origin`, with these flags (UP|UV = 0x05).
+    pub fn assert(&self, challenge: &str, origin: &str, flags: u8) -> (String, reins_proto::managed::WebAuthnProof) {
+        let b64 = data_encoding::BASE64URL_NOPAD;
+        let rp = origin.split("://").nth(1).unwrap_or_default().split(':').next().unwrap_or_default();
+        let mut auth = reins_proto::canon::sha256(rp.as_bytes()).to_vec();
+        auth.push(flags);
+        auth.extend_from_slice(&[0, 0, 0, 1]);
+        let client = json!({"type": "webauthn.get", "challenge": challenge, "origin": origin}).to_string();
+        let mut signed = auth.clone();
+        signed.extend_from_slice(&reins_proto::canon::sha256(client.as_bytes()));
+        (
+            self.sign(&signed),
+            reins_proto::managed::WebAuthnProof {
+                authenticator_data: b64.encode(&auth),
+                client_data_json: b64.encode(client.as_bytes()),
+            },
+        )
+    }
 }
 
 /// The org: Lee (the requester, group `eng`), Kim (group `sec`, a passing device) and Sam (group `sec`, a device that
@@ -92,6 +113,11 @@ pub struct Fixture {
     pub lee: Device,
     pub kim: Device,
     pub sam: Device,
+    /// Kim's device-bound web passkey (credential `cred-kim`), and Lee's (`cred-lee`).
+    pub kim_passkey: Device,
+    pub lee_passkey: Device,
+    /// Lee's manager in the roster.
+    pub manager: Option<String>,
     pub policy: OrgPolicy,
     pub roster_at: i64,
 }
@@ -104,6 +130,9 @@ impl Fixture {
             lee: Device::new("d-lee"),
             kim: Device::new("d-kim"),
             sam: Device::new("d-sam"),
+            kim_passkey: Device::new("cred-kim"),
+            lee_passkey: Device::new("cred-lee"),
+            manager: Some(KIM.to_owned()),
             policy: acme(),
             roster_at: now(),
         }
@@ -114,6 +143,7 @@ impl Fixture {
             org: ORG.to_owned(),
             issuer: trusted("iss-1", &self.issuer),
             decision: trusted("dec-1", &self.decision),
+            web_origin: Some(WEB_ORIGIN.to_owned()),
         }
     }
 
@@ -135,15 +165,20 @@ impl Fixture {
             manager: None,
             passkeys: Vec::new(),
         };
+        let passkey = |d: &Device| reins_proto::managed::RosterPasskey {
+            credential_id: d.id.clone(),
+            key: d.spki(),
+        };
+        let mut lee = member(LEE, &["eng"], vec![Role::Member], &self.lee, true);
+        lee.manager.clone_from(&self.manager);
+        lee.passkeys = vec![passkey(&self.lee_passkey)];
+        let mut kim = member(KIM, &["sec"], vec![Role::SecurityAdmin], &self.kim, true);
+        kim.passkeys = vec![passkey(&self.kim_passkey)];
         Roster {
             org: ORG.to_owned(),
             version: 1,
             issued_at: self.roster_at,
-            members: vec![
-                member(LEE, &["eng"], vec![Role::Member], &self.lee, true),
-                member(KIM, &["sec"], vec![Role::SecurityAdmin], &self.kim, true),
-                member(SAM, &["sec"], vec![Role::Member], &self.sam, false),
-            ],
+            members: vec![lee, kim, member(SAM, &["sec"], vec![Role::Member], &self.sam, false)],
             backups: std::collections::BTreeMap::new(),
         }
     }
@@ -214,6 +249,30 @@ impl Fixture {
             at,
             sig: device.sign(&msg),
             webauthn: None,
+        }
+    }
+
+    /// `member`'s signed web approval of `record` with `passkey` (flags as asserted; 0x05 is UP|UV).
+    #[allow(clippy::unused_self)]
+    pub fn web_approve(&self, record: &DecisionRecord, member: &str, passkey: &Device, flags: u8) -> ReviewSignature {
+        let at = record.decided_at;
+        let msg = review_message(
+            ORG,
+            ReviewSubject::Request,
+            &record.request,
+            &record.digest,
+            ReviewDecision::Approve,
+            &record.snapshot,
+            at,
+        );
+        let (sig, proof) = passkey.assert(&reins_proto::managed::webauthn_challenge(&msg), WEB_ORIGIN, flags);
+        ReviewSignature {
+            member: member.to_owned(),
+            device: passkey.id.clone(),
+            decision: ReviewDecision::Approve,
+            at,
+            sig,
+            webauthn: Some(proof),
         }
     }
 

@@ -11434,6 +11434,7 @@ dependencies = [
  "rustls 0.23.44",
  "semver",
  "serde",
+ "serde_cbor_2",
  "serde_json",
  "subtle",
  "svg-hush",

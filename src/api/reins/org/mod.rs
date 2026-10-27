@@ -53,6 +53,8 @@ pub mod routing;
 pub mod scim;
 pub mod sweeper;
 pub mod tenant;
+pub mod web_approval;
+pub mod web_approval_pages;
 pub mod workos_api;
 
 use reins_proto::org::{Capability, Role, role_grants};

@@ -287,6 +287,8 @@ reins-policy = { path = "crates/reins-policy" }
 reins-audit = { path = "crates/reins-audit" }
 # Organizations (O2): Android key attestation chains
 x509-parser = "0.16.0"
+# Organizations (O3): a web passkey's attestation object (CBOR), as browsers send it
+serde_cbor_2 = "0.13.0"
 zeroize = "1.9.0"
 
 [dev-dependencies]
