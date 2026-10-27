@@ -106,6 +106,9 @@ iOS: building, running and testing need a Mac with Xcode (see [ios/README.md](io
 compilation conditions Xcode uses; run it after changing Swift and before pushing. It needs Swift (swiftly) and xtool's
 Darwin SDK, made from an Xcode .xip, so CI cannot run it: see
 [ios/README.md, "Compile check on Linux"](ios/README.md#compile-check-on-linux).
+Then `scripts/ios-job.sh` builds and tests on a macOS runner (or the Mac with `--mac`) and copies the results back:
+snapshot PNGs of the main screens, or one unit-test class. UI tests run in CI and never block a merge. See
+[docs/ios-dev.md](docs/ios-dev.md).
 
 `tools/laya` (Python): see [tools/laya/README.md](tools/laya/README.md).
 

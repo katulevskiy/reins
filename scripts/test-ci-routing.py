@@ -125,6 +125,8 @@ assert "github.event_name != 'push'" not in ios_workflow
 # A pull request must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
 assert "cancel-in-progress: false" in ios_workflow
+# Each pull request has its own group, so unrelated pull requests never replace each other's pending iOS runs.
+assert "format('pr-{0}', github.event.pull_request.number)" in ios_workflow
 # A failed shard can be retried for as long as its result bundle is retained.
 for artifact in ("ios-simulator-core", "ios-test-products"):
     block = ios_workflow.split(f"          name: {artifact}\n", 1)[1].split("\n\n", 1)[0]
@@ -133,5 +135,13 @@ for artifact in ("ios-simulator-core", "ios-test-products"):
 gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate
 assert "ios.yml" not in gate
+# UI tests never gate a merge or a release: ReinsTests has its own shard, which gates the iOS check; the UI shards
+# continue on error (the job, so the check's needs never see it, and the step, so the job stays green).
+assert "shard: [unit, autopilot, grants, onboarding, field, rest]" in ios_workflow
+assert ios_workflow.count("continue-on-error: ${{ matrix.shard != 'unit' }}") == 2
+# The agents' job and core workflows are tools: nothing waits for them.
+for name in ("ios-job", "ios-core"):
+    assert name not in gate, name
+    assert "\n  pull_request:" not in (ROOT / ".github/workflows" / f"{name}.yml").read_text(), name
 
-print(f"{len(cases) + 6} CI component-routing checks passed")
+print(f"{len(cases) + 10} CI component-routing checks passed")

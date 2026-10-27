@@ -184,6 +184,10 @@ xcodebuild test -project Reins.xcodeproj -scheme Reins -destination 'platform=iO
 xcodebuild test -project Reins.xcodeproj -scheme Reins -destination 'platform=iOS Simulator,name=iPhone 18 Pro Max' -only-testing:ReinsUITests
 ```
 
+From Linux, without a Mac: `scripts/ios-job.sh unit:SomeTests` or `scripts/ios-job.sh snapshots` (PNGs of the main
+screens, light and dark, from `ReinsTests/ScreenSnapshotTests`; `TEST_RUNNER_REINS_SNAPSHOTS=<dir>` with
+`xcodebuild test`). The fast loop, the prebuilt core and the Mac setup: [docs/ios-dev.md](../docs/ios-dev.md).
+
 `ios/scripts/live-smoke.sh` runs the real app, with the real core, against a real local server and a simulated AI
 (the `reins-e2e` harness Android's `device-smoke.sh` uses). `ios/scripts/live-onboarding.sh` creates an account
 in the real app and pairs a simulated computer by its code (`reins login`'s device flow).
