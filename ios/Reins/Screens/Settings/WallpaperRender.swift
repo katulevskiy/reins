@@ -42,7 +42,9 @@ enum WallpaperRender {
         case .halftone: halftone(&px, dark: dark)
         case .colour: colour(&px)
         }
-        fadeOut(&px, amount: fade, dark: dark)
+        // An effect redraws the whole image, a shipped one's baked fade too (Dither turns it pure black): its foot
+        // always runs into the paper, so the art never ends on a hard line. Original keeps the bottom as chosen.
+        fadeOut(&px, amount: fade, dark: dark, minimumFoot: effect == .original ? 0 : effectFoot)
         return px.image()
     }
 
@@ -55,6 +57,9 @@ enum WallpaperRender {
         format.opaque = true
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }.cgImage
     }
+
+    /// The share of the height at the bottom that an effect always fades into the paper, whatever the added fade.
+    static let effectFoot = 0.2
 
     /// Where the fade starts, as a share of the height from the top: later with less fade, none at 0.
     static func fadeStart(_ amount: Double) -> Double { 1 - 0.7 * min(1, max(0, amount)) }
@@ -141,9 +146,10 @@ enum WallpaperRender {
         px = treated
     }
 
-    /// Blends the bottom into the page's paper, from `fadeStart(amount)` down, eased.
-    static func fadeOut(_ px: inout Pixels, amount: Double, dark: Bool) {
-        let start = fadeStart(amount) * Double(px.height)
+    /// Blends the bottom into the page's paper, from `fadeStart(amount)` down (and at least the bottom `minimumFoot`),
+    /// eased.
+    static func fadeOut(_ px: inout Pixels, amount: Double, dark: Bool, minimumFoot: Double = 0) {
+        let start = min(fadeStart(amount), 1 - min(1, max(0, minimumFoot))) * Double(px.height)
         let end = Double(px.height)
         let p = paper(dark: dark)
         let target = [Double(p.r), Double(p.g), Double(p.b)]

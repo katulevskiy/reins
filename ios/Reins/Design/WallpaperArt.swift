@@ -35,10 +35,14 @@ struct WallpaperArt: Hashable {
     /// The cache's name for the art, and the frosted copy's: theme, image, effect, fade in hundredths, and for your
     /// photo its revision.
     var key: String {
-        var parts = [dark ? "dark" : "light", choice.image.rawValue, choice.effect.rawValue, "f\(choice.hundredths)"]
+        var parts = [dark ? "dark" : "light", choice.image.rawValue, choice.effect.rawValue, "f\(choice.hundredths)", "r\(Self.renderVersion)"]
         if choice.image == .own { parts.append("p\(photo)") }
         return parts.joined(separator: "_")
     }
+
+    /// Bumped when the render itself changes, so art kept from an earlier version is drawn again (2: an effect's
+    /// foot fades into the paper).
+    static let renderVersion = 2
 
     /// A shipped image as it ships: drawn from its asset, nothing rendered.
     var isAsset: Bool { choice.image != .own && choice.effect == .original && choice.hundredths == 0 }
