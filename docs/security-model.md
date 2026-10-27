@@ -688,6 +688,50 @@ org's policy, and an **executor** runs what was decided with the org's own crede
   back since.
 - **Retention.** Request bodies are kept 0, 30 (default) or 365 days, set by a device-signed two-person change.
 
+### Approval routing (O3)
+
+Org reviews name people by **relationship** as well as by group or role: the requester's manager, the repository's
+code owners, a resource's owner, whoever is on call, a group's backup. The decision service resolves them at submit
+from verified sources only (never from the agent): the directory's `manager_email` (or a two-person admin change on
+the Team tier, which has no directory; on tiers with a directory only the directory's word counts), the default
+branch's `CODEOWNERS` through the org's read-only GitHub App (logins count only when SAML or the member's own
+authorization proved them), the on-call provider's API, and the policy's signed resource tags. The requester is never
+a reviewer through any of them, and a member without a device that may decide (or a confirmed web passkey) is
+skipped, so their reviews route to others.
+
+- **Escalation adds, never removes.** An obligation nobody can satisfy (no manager on record, owners unlinked, the
+  on-call API down) escalates at once along its chain (by default the group's backup, the manager, then Security
+  admins); an unanswered one escalates when its window passes. After the last step it expires as not approved: it
+  never auto-approves and never falls to the requester. Every resolution is audited with its source and a hash of the
+  provider's answer (`review.resolved`).
+- **What executors trust.** The countersigned decision carries the resolution. An executor checks groups, roles,
+  named members, the manager and group backups against the issuer-signed roster (which now lists managers and
+  backups), and drops anyone they don't admit. **Code owners, on-call and resource owners are dynamic: an executor
+  takes them on the decision service's countersignature.** A compromised decision service could therefore name an
+  accomplice for those obligations (the audit records the evidence it claimed); groups, roles and managers it can't
+  forge.
+- **Signed web approvals (L0–L2 only).** Slack and Teams carry one line (requester, agent, effect kind, resource,
+  level, who must decide: never a body) and a one-time link: 32 random bytes stored as SHA-256, for one member and one
+  request, valid until the review's deadline or an hour. The page needs that member's own console SSO session, and
+  the answer is a WebAuthn assertion over SHA-256 of the same review message a phone signs (org, request, digest,
+  decision, snapshot, time), at the server's origin, user-verified. The passkey must be one the member registered in
+  the console and confirmed on their enrolled phone (the phone signs the key's hash and registration time; a refusal
+  is an unsigned revoke); only then is it in the issuer-signed roster, where executors verify the assertion again and
+  refuse it for anything they judge L3. L3 always needs the app: no link is issued, an old link opens "Open the Reins
+  app", and the server refuses it too.
+- **Device binding is as the browser reports.** Registration uses attestation `none`, so "device-bound" (backup
+  eligibility clear) and user verification are the authenticator's own word: a synced passkey that lies about it
+  isn't caught. This is accepted for L0–L2 web approvals; the console says so.
+- **Channels never decide.** Inbound Slack events need a valid `X-Slack-Signature` within five minutes; Teams
+  activities a Bot Framework token (issuer, the org's bot as audience, a key endorsed for the channel, the activity's
+  `serviceUrl` in the token, Microsoft's connector hosts only). Both are acknowledged and change nothing else. A Teams
+  bot is one org's, claimed by proving its secret to Microsoft; reinstalling a channel with another app or secret
+  turns it off until two admins turn it on again, and a pending proposal to turn it on is bound to the install it was
+  made for.
+- Changes to who approves (managers, backups and windows, on-call sources, channels, the GitHub reader) are
+  two-person, device-signed admin changes. Their secrets (API keys, bot tokens, the reader's key) are sealed under the
+  tenant's data key as posted and never shown again.
+
 What this doesn't do yet:
 - With `LocalKms`, the issuer key, the decision service and the database share a host: an attacker holding all
   three can sign a policy. The split 08 R5 relies on (executing a non-compliant action needs the issuer key or an

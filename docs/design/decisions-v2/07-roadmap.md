@@ -39,7 +39,7 @@ Dates are planning placeholders from today; they move with the alpha's prioritie
 | **P7 Guardianship** | notice periods, minor accounts, ward visibility | a security and abuse review passed |
 | **O1 Orgs foundation** | org tenant, domain verification, WorkOS SSO and SCIM, roles, Managed profile on phone and desktop, deprovisioning in < 60 s | a pilot org (us) is provisioned and deprovisioned end to end |
 | **O2 Decision service** | central evaluation, executors (GitHub App, Google Workspace), hash-chained audit, SIEM export, retention, BYOK | an audit export verifies with `reins-audit verify` |
-| **O3 Routing** | groups, managers, code owners, on-call (PagerDuty), escalation, SLAs, Slack/Teams approvals (L0–L2), templates | median time to decision in the pilot < 30 min |
+| **O3 Routing** | groups, managers, code owners, on-call (PagerDuty), escalation, SLAs, Slack/Teams approvals (L0–L2), templates | median time to decision in the pilot < 30 min (built 2026-10-27, branch `dv2/o3-routing`; the pilot's week on our org and its `reports/sla` median are still to be recorded here) |
 | **O4 Policy as code** | a policy repo, two-person activation, simulation, staged rollout with automatic rollback | a policy change goes from PR to 100% with simulation evidence |
 | **O5 Compliance** | Reins Cloud SOC 2 Type I, then Type II (an observation window of ≥ 3 months); dedicated and self-hosted packages | report available to Enterprise customers |
 
