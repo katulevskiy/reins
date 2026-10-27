@@ -19,9 +19,10 @@ fn replay_gate() {
     let fails = report::gate(&r, Some(&baseline));
     assert!(fails.is_empty(), "{fails:?}\n{}", report::text(&r, false));
     assert_eq!(r.real_risk_auto, 0, "no labelled risk Auto (P2)");
-    // P2's line (07 §1) is a developer ask rate ≤ 5%. With the hardened engine the matrix asks 44 of 738 (6.0%), the
-    // same as the stand-in: every one is a hard obligation (L3, unreadable, the floor), 18 of them L3 deletes in Mine
-    // that P3's nets make recoverable. The baseline's ratchet holds it from rising meanwhile.
+    // P2's line (07 §1) is a developer ask rate ≤ 5%. With the hardened engine and the review's stricter zones the
+    // matrix asks 48 of 738 (6.5%): 44 hard obligations (L3, unreadable, the floor; 18 are L3 deletes in Mine that
+    // P3's nets make recoverable) and 4 pushes after more than one `cd`, whose `origin` can't be read. The baseline's
+    // ratchet holds it from rising meanwhile.
     let rate = baseline.developer_ask_rate.expect("the baseline records the developer ask rate");
     assert!(r.developer_ask_rate <= rate + 1e-9, "developer ask rate {:.4} > {rate:.4}", r.developer_ask_rate);
 }

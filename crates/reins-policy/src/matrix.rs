@@ -158,12 +158,33 @@ fn glob(pattern: &str, value: &str) -> bool {
     }
 }
 
+/// How a rule has to cover a request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cover {
+    /// A deny or a review: it applies when any effect kind or any party matches (stricter).
+    Any,
+    /// A permit: it applies only when it covers every effect kind and every party.
+    All,
+}
+
 impl When {
-    fn matches(&self, input: &Input<'_>, kinds: &[EffectKind]) -> bool {
+    fn matches(&self, input: &Input<'_>, kinds: &[EffectKind], cover: Cover) -> bool {
+        let effects = self.effects.is_empty()
+            || match cover {
+                Cover::Any => kinds.iter().any(|k| self.effects.contains(k)),
+                Cover::All => kinds.iter().all(|k| self.effects.contains(k)),
+            };
+        let resource = self.resource.as_deref().is_none_or(|r| {
+            let parts = &input.resolved.parts;
+            match cover {
+                Cover::Any => parts.iter().any(|v| glob(r, v)),
+                Cover::All => !parts.is_empty() && parts.iter().all(|v| glob(r, v)),
+            }
+        });
         (self.zones.is_empty() || self.zones.contains(&input.resolved.zone))
             && (self.levels.is_empty() || self.levels.contains(&input.analysis.level))
-            && (self.effects.is_empty() || kinds.iter().any(|k| self.effects.contains(k)))
-            && self.resource.as_deref().is_none_or(|r| input.resolved.resource.as_deref().is_some_and(|v| glob(r, v)))
+            && effects
+            && resource
             && self.connection.as_deref().is_none_or(|c| c == input.connection)
     }
 }
@@ -215,7 +236,8 @@ impl Task {
             && (self.zones.is_empty() || self.zones.contains(&input.resolved.zone))
             && (self.effects.is_empty() || kinds.iter().all(|k| self.effects.contains(k)))
             && (self.resources.is_empty()
-                || input.resolved.resource.as_deref().is_some_and(|v| self.resources.iter().any(|r| glob(r, v))))
+                || (!input.resolved.parts.is_empty()
+                    && input.resolved.parts.iter().all(|v| self.resources.iter().any(|r| glob(r, v)))))
     }
 }
 
@@ -351,8 +373,12 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
     let mut kinds: Vec<EffectKind> = a.effects.iter().map(crate::effects::Effect::kind).collect();
     kinds.sort();
     kinds.dedup();
+    let cover = |r: &Rule| match r.then {
+        Then::Permit => Cover::All,
+        Then::Deny | Then::Review => Cover::Any,
+    };
     let mut live: Vec<&Rule> =
-        snap.rules.iter().filter(|r| r.live(input.now) && r.when.matches(input, &kinds)).collect();
+        snap.rules.iter().filter(|r| r.live(input.now) && r.when.matches(input, &kinds, cover(r))).collect();
     live.sort_by(|x, y| x.issuer.rank().cmp(&y.issuer.rank()).then_with(|| x.id.cmp(&y.id)));
     let done = |outcome: Outcome, why: Vec<Why>, explain: String| Evaluation {
         outcome,
@@ -425,7 +451,7 @@ pub fn evaluate(input: &Input<'_>, snap: &Snapshot) -> Evaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{FactKind, request_zone};
+    use crate::context::{Base, FactKind, GITHUB, request_zone};
     use crate::effects::{Context, Effect, Workspace, analyze_command, analyze_tool};
     use proptest::prelude::*;
     use serde_json::json;
@@ -443,7 +469,14 @@ mod tests {
     }
 
     fn eval(a: &Analysis, s: &Snapshot, seen: bool) -> Evaluation {
-        let r = request_zone(a, &s.facts, None);
+        let r = request_zone(
+            a,
+            &s.facts,
+            &Base {
+                bare_host: Some(GITHUB),
+                ..Base::default()
+            },
+        );
         evaluate(
             &Input {
                 analysis: a,
@@ -576,7 +609,7 @@ mod tests {
             let certainty = [Certainty::Full, Certainty::Partial, Certainty::None][cert];
             let mut a = analysis(Effect::Unknown { reason: "x".to_owned() }, certainty);
             a.level = levels[level];
-            let resolved = Resolved { zone: Zone::ALL[zone], unknown: Vec::new(), resource: None };
+            let resolved = Resolved { zone: Zone::ALL[zone], unknown: Vec::new(), resource: None, parts: Vec::new() };
             let s = snap();
             let e = evaluate(&Input { analysis: &a, resolved: &resolved, connection: "c", seen_resource: seen, now: 0 }, &s);
             prop_assert_ne!(e.outcome, Outcome::Deny);
@@ -678,6 +711,77 @@ mod tests {
             eval(&a, &s, false).outcome,
             Outcome::Ask {
                 hard: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_permit_covers_every_kind_and_every_party() {
+        let mut s = snap();
+        s.facts.set(FactKind::Person, "ann@acme.io", Zone::Work);
+        s.facts.set(FactKind::Person, "bob@acme.io", Zone::Work);
+        s.rules.push(rule(
+            "mail-ann",
+            Issuer::Owner,
+            When {
+                effects: vec![EffectKind::Message],
+                resource: Some("ann@acme.io".to_owned()),
+                ..When::default()
+            },
+            Then::Permit,
+        ));
+        let to = |list: &[&str]| analyze_tool("gmail_send", &json!({ "to": list }));
+        assert_eq!(eval(&to(&["ann@acme.io"]), &s, false).outcome, Outcome::Auto);
+        assert_eq!(
+            eval(&to(&["ann@acme.io", "bob@acme.io"]), &s, false).outcome,
+            Outcome::Ask {
+                hard: false
+            },
+            "bob isn't covered"
+        );
+        // A permit for branch deletes doesn't cover a request that also pushes.
+        s.rules.push(rule(
+            "deletes",
+            Issuer::Owner,
+            When {
+                effects: vec![EffectKind::GitRefDelete],
+                ..When::default()
+            },
+            Then::Permit,
+        ));
+        let push = analysis(
+            Effect::GitPush {
+                repo: "acme/api".to_owned(),
+                refname: "refs/heads/x".to_owned(),
+                default_branch: Some(false),
+                rewrites: Some(true),
+                commits: 1,
+            },
+            Certainty::Full,
+        );
+        let both =
+            Analysis::new([branch_delete("acme/api").effects, push.effects].concat(), Certainty::Full, Vec::new());
+        assert_eq!(
+            eval(&both, &s, false).outcome,
+            Outcome::Ask {
+                hard: false
+            }
+        );
+        assert_eq!(eval(&branch_delete("acme/api"), &s, false).outcome, Outcome::Auto);
+        // A review on one of the people still asks (any party).
+        s.rules.push(rule(
+            "ask-bob",
+            Issuer::Owner,
+            When {
+                resource: Some("bob@acme.io".to_owned()),
+                ..When::default()
+            },
+            Then::Review,
+        ));
+        assert_eq!(
+            eval(&to(&["ann@acme.io", "bob@acme.io"]), &s, false).outcome,
+            Outcome::Ask {
+                hard: true
             }
         );
     }

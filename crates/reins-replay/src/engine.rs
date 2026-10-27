@@ -104,12 +104,23 @@ pub fn analyze(ctx: &Context, case: &Case) -> Analysis {
 /// is ever written for). Arguments that name a repository inexactly give an unparsable base: Outside.
 fn base_repo(ctx: &Context, case: &Case) -> Option<String> {
     match case.kind {
-        // A command or a file hook in a known worktree: `origin` is that worktree's repository.
+        // A command or a file hook in a known worktree: `origin` is that worktree's repository, unless the command
+        // may act on another one (`git -C`, a `cd` out of it, `GIT_DIR`…).
         Kind::Command | Kind::File => {
             let cwd = case.cwd.as_deref()?;
             let ws = engine_context(ctx, case).workspace;
-            let in_worktree = ws.recoverable(&effects::normalize(cwd, cwd, &ws.home));
-            in_worktree.then(|| ctx.origin.clone()).flatten()
+            let top = worktree_top(&ws, &effects::normalize(cwd, cwd, &ws.home));
+            let at = case
+                .command
+                .as_deref()
+                .map_or(graph::RepoAt::Cwd, |c| graph::repo_at(c, cwd, top.as_deref(), &ws.home));
+            // The corpus records one `origin` for the owner's known worktrees (the desktop reads each one's own).
+            let known = match at {
+                graph::RepoAt::Cwd => top.is_some(),
+                graph::RepoAt::Dir(d) => worktree_top(&ws, &d).is_some(),
+                graph::RepoAt::Unknown => false,
+            };
+            known.then(|| ctx.origin.clone()).flatten()
         }
         Kind::GitPush | Kind::GitRead => Some(case.repo.clone().unwrap_or_default()),
         Kind::Mcp => {
@@ -120,6 +131,33 @@ fn base_repo(ctx: &Context, case: &Case) -> Option<String> {
             }
         }
         Kind::Ask => None,
+    }
+}
+
+/// The known worktree `abs` is in (`dir/*` patterns stand for each folder in `dir`), the deepest one.
+fn worktree_top(ws: &Workspace, abs: &str) -> Option<String> {
+    ws.worktrees
+        .iter()
+        .filter_map(|w| {
+            let w = effects::normalize(w, "/", &ws.home);
+            match w.strip_suffix("/*") {
+                Some(dir) => {
+                    let rest = abs.strip_prefix(&format!("{dir}/"))?;
+                    let first = rest.split('/').next().filter(|f| !f.is_empty())?;
+                    Some(format!("{dir}/{first}"))
+                }
+                None => (abs == w || abs.starts_with(&format!("{w}/"))).then_some(w),
+            }
+        })
+        .max_by_key(String::len)
+}
+
+/// The host a case's bare `owner/name` means: GitHub's for the phone's GitHub tools, none for a command (where a
+/// bare name is a remote's).
+fn bare_host(case: &Case) -> Option<&'static str> {
+    match case.kind {
+        Kind::Mcp if case.tool.as_deref().is_some_and(|t| t.starts_with("github_")) => Some(graph::GITHUB),
+        _ => None,
     }
 }
 
@@ -139,7 +177,15 @@ pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Ev
     let mut snap = policy.snapshot.clone();
     snap.facts = facts(ctx, policy);
     let base = base_repo(ctx, case);
-    let resolved = graph::request_zone(a, &snap.facts, base.as_deref());
+    let resolved = graph::request_zone(
+        a,
+        &snap.facts,
+        &graph::Base {
+            repo: base.as_deref(),
+            remotes: None,
+            bare_host: bare_host(case),
+        },
+    );
     matrix::evaluate(
         &Input {
             analysis: a,

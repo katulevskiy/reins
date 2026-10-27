@@ -113,17 +113,27 @@ pub fn zone(ctx: &Context, case: &Case, a: &Analysis) -> Zone {
 }
 
 #[test]
-fn matrix_zones_match_the_stand_in() {
+fn matrix_zones_are_never_looser_than_the_stand_in() {
     let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
     let policy = Policy::default();
-    let mut differ = Vec::new();
+    let mut stricter = Vec::new();
+    let mut looser = Vec::new();
     for case in corpus.cases.iter().filter(|c| !c.tagged("adversarial")) {
         let d = engine::decide(&corpus.context, case, &policy, EngineKind::Effects);
         let a = d.analysis.as_ref().expect("an analysis");
         let old = zone(&corpus.context, case, a);
-        if d.zone != Some(old) {
-            differ.push(format!("{} {:?}: {old:?} → {:?} · {}", case.id, case.kind, d.zone, a.lines().join(" | ")));
+        let new = d.zone.expect("a zone");
+        let line = format!("{} {:?}: {old:?} → {new:?} · {}", case.id, case.kind, a.lines().join(" | "));
+        match new.cmp(&old) {
+            std::cmp::Ordering::Greater => stricter.push(case.id.clone()),
+            std::cmp::Ordering::Less => looser.push(line),
+            std::cmp::Ordering::Equal => {}
         }
     }
-    assert!(differ.is_empty(), "{}", differ.join("\n"));
+    assert!(looser.is_empty(), "{}", looser.join("\n"));
+    // Where the graph is stricter: a remote on a host that isn't github.com (`gh-direct`), and commands that `cd`
+    // more than once, whose `origin` can't be read (the review's rule: Outside).
+    stricter.sort();
+    let known = ["593-ZcN3-XoL", "9JZnBzfbt8GP", "DzIu7YFWzuUV", "XPaCSf89MVZd", "squIutYcLgRP", "wNVSTPHsyh35"];
+    assert_eq!(stricter, known, "a new difference: look at it, then list it here");
 }
