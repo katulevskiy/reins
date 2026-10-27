@@ -60,10 +60,3 @@ extension View {
         modifier(StickyHeader(scrolled: scrolled, header: header()))
     }
 }
-
-/// How far a page has scrolled, for what follows the scroll without redrawing the whole page (Activity's wallpaper).
-@Observable
-@MainActor
-final class ScrollTracker {
-    var y: CGFloat = 0
-}
