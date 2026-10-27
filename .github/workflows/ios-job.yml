@@ -148,7 +148,8 @@ jobs:
           SWIFT: ${{ steps.swift.outputs.cache-matched-key }}
         run: |
           set -euo pipefail
-          echo "restored: ${MATCHED:-nothing of this branch}${SWIFT:+, main's Swift cache $SWIFT}"
+          echo "branch cache: ${MATCHED:-none}"
+          echo "main Swift cache: ${SWIFT:-not used}"
           du -sh derived compilation-cache spm 2>/dev/null || true
           status=0
           ios/scripts/ios-job-run.sh --out "$RUNNER_TEMP/ios-job" --run "$RUN" --device "$DEVICE" \
