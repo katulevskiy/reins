@@ -2169,6 +2169,12 @@ public protocol Notifier: AnyObject, Sendable {
      */
     func autopilotChanged(event: AutopilotEvent) 
     
+    /**
+     * Circles: a review of another account waits for this phone (the one Circle notification), or something else
+     * changed that the screens refresh quietly.
+     */
+    func circleChanged(event: CircleEvent) 
+    
 }
 open class NotifierImpl: Notifier, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -2264,6 +2270,19 @@ open func autopilotChanged(event: AutopilotEvent)  {try! rustCall() {
     uniffi_reins_core_fn_method_notifier_autopilot_changed(
             self.uniffiCloneHandle(),
         FfiConverterTypeAutopilotEvent_lower(event),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Circles: a review of another account waits for this phone (the one Circle notification), or something else
+     * changed that the screens refresh quietly.
+     */
+open func circleChanged(event: CircleEvent)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_notifier_circle_changed(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeCircleEvent_lower(event),uniffiCallStatus
     )
 }
 }
@@ -2381,6 +2400,30 @@ fileprivate struct UniffiCallbackInterfaceNotifier {
                 }
                 return uniffiObj.autopilotChanged(
                      event: try FfiConverterTypeAutopilotEvent_lift(event)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        circleChanged: { (
+            uniffiHandle: UInt64,
+            event: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeNotifier.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.circleChanged(
+                     event: try FfiConverterTypeCircleEvent_lift(event)
                 )
             }
 
@@ -3151,6 +3194,81 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func blobView(id: String) async throws  -> BlobView
     
+    /**
+     * Answers another account's request (this phone must be the approval phone).
+     */
+    func circleAnswer(reviewId: String, approve: Bool, note: String?) async throws 
+    
+    /**
+     * Ends an arrangement (either side; for a helper, leaving).
+     */
+    func circleEnd(linkId: String) async throws 
+    
+    /**
+     * Withdraws an invitation.
+     */
+    func circleInviteCancel(id: String) async throws 
+    
+    /**
+     * Confirms an accepted invitation (after comparing the code; the app asks for the hold and biometric first).
+     */
+    func circleInviteConfirm(id: String) async throws  -> CirclePerson
+    
+    /**
+     * Starts an invitation (Settings › Circles › Add): returns the link or QR code the other person opens.
+     */
+    func circleInviteCreate(draft: CircleDraft) async throws  -> CircleInviteStart
+    
+    /**
+     * Where an invitation stands; once someone answered, the six digits both phones show.
+     */
+    func circleInvitePoll(id: String) async throws  -> CircleInviteProgress
+    
+    /**
+     * Accepts an invitation (after comparing the code).
+     */
+    func circleJoinAccept(id: String) async throws 
+    
+    /**
+     * Declines an invitation.
+     */
+    func circleJoinDecline(id: String) async throws 
+    
+    /**
+     * Opens an invitation link (Settings › Circles › Join) and answers it.
+     */
+    func circleJoinOpen(link: String) async throws  -> CircleInviteView
+    
+    /**
+     * Where an invitation this phone answered stands; the terms and the code once the inviter's phone sent them.
+     */
+    func circleJoinPoll(id: String) async throws  -> CircleInviteView
+    
+    /**
+     * What watchers (or helpers) were told lately; no buttons.
+     */
+    func circleNotices() async throws  -> [CircleNoticeView]
+    
+    /**
+     * Pauses or resumes an arrangement this account made (nothing goes to the helper meanwhile).
+     */
+    func circlePause(linkId: String, paused: Bool) async throws 
+    
+    /**
+     * The arrangements this account is in, either side (`refresh`: ask the server first).
+     */
+    func circlePeople(refresh: Bool) async throws  -> [CirclePerson]
+    
+    /**
+     * Requests of other accounts waiting for this one, and those settled lately (For others). `refresh`: ask the server first.
+     */
+    func circleReviews(refresh: Bool) async throws  -> [CircleReviewView]
+    
+    /**
+     * Circles are possible here: this account has phone roles and this phone is its approval phone.
+     */
+    func circlesAvailable() async throws  -> Bool
+    
     func connections() async throws  -> [ConnectionView]
     
     /**
@@ -3397,6 +3515,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func orgChallenge() async throws  -> String
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+    func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws 
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -3411,6 +3534,19 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Reports the enrolled device's posture now (at start-up and when it changes).
      */
     func orgReportPosture(posture: PostureInput) async throws 
+    
+    /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+    func orgReviews() async throws  -> [OrgReviewView]
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+    func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws 
     
     /**
      * Whether `server_url` offers organizations ("Add work account" is shown only then).
@@ -4721,6 +4857,291 @@ open func blobView(id: String)async throws  -> BlobView  {
         )
 }
     
+    /**
+     * Answers another account's request (this phone must be the approval phone).
+     */
+open func circleAnswer(reviewId: String, approve: Bool, note: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_answer(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(reviewId),FfiConverterBool.lower(approve),FfiConverterOptionString.lower(note)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Ends an arrangement (either side; for a helper, leaving).
+     */
+open func circleEnd(linkId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_end(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Withdraws an invitation.
+     */
+open func circleInviteCancel(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_invite_cancel(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Confirms an accepted invitation (after comparing the code; the app asks for the hold and biometric first).
+     */
+open func circleInviteConfirm(id: String)async throws  -> CirclePerson  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_invite_confirm(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCirclePerson_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Starts an invitation (Settings › Circles › Add): returns the link or QR code the other person opens.
+     */
+open func circleInviteCreate(draft: CircleDraft)async throws  -> CircleInviteStart  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_invite_create(
+                        self.uniffiCloneHandle(),FfiConverterTypeCircleDraft_lower(draft)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCircleInviteStart_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where an invitation stands; once someone answered, the six digits both phones show.
+     */
+open func circleInvitePoll(id: String)async throws  -> CircleInviteProgress  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_invite_poll(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCircleInviteProgress_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Accepts an invitation (after comparing the code).
+     */
+open func circleJoinAccept(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_join_accept(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Declines an invitation.
+     */
+open func circleJoinDecline(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_join_decline(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Opens an invitation link (Settings › Circles › Join) and answers it.
+     */
+open func circleJoinOpen(link: String)async throws  -> CircleInviteView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_join_open(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(link)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCircleInviteView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where an invitation this phone answered stands; the terms and the code once the inviter's phone sent them.
+     */
+open func circleJoinPoll(id: String)async throws  -> CircleInviteView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_join_poll(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCircleInviteView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What watchers (or helpers) were told lately; no buttons.
+     */
+open func circleNotices()async throws  -> [CircleNoticeView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_notices(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeCircleNoticeView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Pauses or resumes an arrangement this account made (nothing goes to the helper meanwhile).
+     */
+open func circlePause(linkId: String, paused: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_pause(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterBool.lower(paused)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The arrangements this account is in, either side (`refresh`: ask the server first).
+     */
+open func circlePeople(refresh: Bool)async throws  -> [CirclePerson]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_people(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(refresh)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeCirclePerson.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Requests of other accounts waiting for this one, and those settled lately (For others). `refresh`: ask the server first.
+     */
+open func circleReviews(refresh: Bool)async throws  -> [CircleReviewView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circle_reviews(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(refresh)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeCircleReviewView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Circles are possible here: this account has phone roles and this phone is its approval phone.
+     */
+open func circlesAvailable()async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_circles_available(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func connections()async throws  -> [ConnectionView]  {
     return
         try  await uniffiRustCallAsync(
@@ -5684,6 +6105,25 @@ open func orgChallenge()async throws  -> String  {
 }
     
     /**
+     * Answers org review `id` with the enrolled key's `signature` over `org_review_message(org, review, approve, at)`.
+     */
+open func orgDecide(id: String, approve: Bool, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_decide(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Enrolls this device to the work account's org (06 §6): the device key from secure hardware, its signature
      * over the challenge, the platform's attestations and the posture.
      */
@@ -5731,6 +6171,47 @@ open func orgReportPosture(posture: PostureInput)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_org_report_posture(
                         self.uniffiCloneHandle(),FfiConverterTypePostureInput_lower(posture)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The org reviews waiting for this member (a work profile's), checked and described on the phone; empty for a
+     * Personal account. Answer one by signing `org_review_message(...)` with the enrolled key, then `org_decide`.
+     */
+open func orgReviews()async throws  -> [OrgReviewView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_reviews(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeOrgReviewView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
+     * `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
+     * app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
+     */
+open func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_org_set_member_policy(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(body),FfiConverterUInt64.lower(version),FfiConverterInt64.lower(at),FfiConverterString.lower(signature)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -10397,6 +10878,12 @@ public struct AskView: Equatable, Hashable {
      * The repository's default branch (its remote's), as the desktop app reported it.
      */
     public var defaultBranch: String?
+    /**
+     * The safety net the desktop app applies if this is approved (Decisions v2 P3), one line per net ("Keeps 2
+     * deleted paths in the Reins trash for 7 days"), as it reported it. Shown, read-only; it never makes a question
+     * looser. `None`: no net.
+     */
+    public var net: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10432,7 +10919,12 @@ public struct AskView: Equatable, Hashable {
          */branch: String? = nil, 
         /**
          * The repository's default branch (its remote's), as the desktop app reported it.
-         */defaultBranch: String? = nil) {
+         */defaultBranch: String? = nil, 
+        /**
+         * The safety net the desktop app applies if this is approved (Decisions v2 P3), one line per net ("Keeps 2
+         * deleted paths in the Reins trash for 7 days"), as it reported it. Shown, read-only; it never makes a question
+         * looser. `None`: no net.
+         */net: String? = nil) {
         self.question = question
         self.detail = detail
         self.topic = topic
@@ -10442,6 +10934,7 @@ public struct AskView: Equatable, Hashable {
         self.kind = kind
         self.branch = branch
         self.defaultBranch = defaultBranch
+        self.net = net
     }
 
     
@@ -10468,7 +10961,8 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
                 destructive: FfiConverterBool.read(from: &buf), 
                 kind: FfiConverterOptionString.read(from: &buf), 
                 branch: FfiConverterOptionString.read(from: &buf), 
-                defaultBranch: FfiConverterOptionString.read(from: &buf)
+                defaultBranch: FfiConverterOptionString.read(from: &buf), 
+                net: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -10482,6 +10976,7 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.branch, into: &buf)
         FfiConverterOptionString.write(value.defaultBranch, into: &buf)
+        FfiConverterOptionString.write(value.net, into: &buf)
     }
 }
 
@@ -11835,6 +12330,670 @@ public func FfiConverterTypeCardProviderView_lift(_ buf: RustBuffer) throws -> C
 #endif
 public func FfiConverterTypeCardProviderView_lower(_ value: CardProviderView) -> RustBuffer {
     return FfiConverterTypeCardProviderView.lower(value)
+}
+
+
+/**
+ * What the owner sets up (the Add screen).
+ */
+public struct CircleDraft: Equatable, Hashable {
+    public var role: CircleRole
+    public var preset: CircleScopePreset
+    /**
+     * Deferred (the usual) or Instant (the helper is at hand).
+     */
+    public var deferred: Bool
+    /**
+     * `None`: the class's default (2 min Instant, 4 h Deferred).
+     */
+    public var windowSecs: UInt64?
+    /**
+     * A delegate's window that runs out leaves the request to the owner (else: not approved).
+     */
+    public var fallBackToMe: Bool
+    /**
+     * The helper sees the card as the owner does (else a summary). Never for a watcher.
+     */
+    public var fullCards: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(role: CircleRole, preset: CircleScopePreset, 
+        /**
+         * Deferred (the usual) or Instant (the helper is at hand).
+         */deferred: Bool, 
+        /**
+         * `None`: the class's default (2 min Instant, 4 h Deferred).
+         */windowSecs: UInt64?, 
+        /**
+         * A delegate's window that runs out leaves the request to the owner (else: not approved).
+         */fallBackToMe: Bool, 
+        /**
+         * The helper sees the card as the owner does (else a summary). Never for a watcher.
+         */fullCards: Bool) {
+        self.role = role
+        self.preset = preset
+        self.deferred = deferred
+        self.windowSecs = windowSecs
+        self.fallBackToMe = fallBackToMe
+        self.fullCards = fullCards
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleDraft {
+        return
+            try CircleDraft(
+                role: FfiConverterTypeCircleRole.read(from: &buf), 
+                preset: FfiConverterTypeCircleScopePreset.read(from: &buf), 
+                deferred: FfiConverterBool.read(from: &buf), 
+                windowSecs: FfiConverterOptionUInt64.read(from: &buf), 
+                fallBackToMe: FfiConverterBool.read(from: &buf), 
+                fullCards: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleDraft, into buf: inout [UInt8]) {
+        FfiConverterTypeCircleRole.write(value.role, into: &buf)
+        FfiConverterTypeCircleScopePreset.write(value.preset, into: &buf)
+        FfiConverterBool.write(value.deferred, into: &buf)
+        FfiConverterOptionUInt64.write(value.windowSecs, into: &buf)
+        FfiConverterBool.write(value.fallBackToMe, into: &buf)
+        FfiConverterBool.write(value.fullCards, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleDraft_lift(_ buf: RustBuffer) throws -> CircleDraft {
+    return try FfiConverterTypeCircleDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleDraft_lower(_ value: CircleDraft) -> RustBuffer {
+    return FfiConverterTypeCircleDraft.lower(value)
+}
+
+
+public struct CircleInviteStart: Equatable, Hashable {
+    public var id: String
+    /**
+     * What the helper opens (a link or a QR code): `reins-circle:<server>/<secret>`.
+     */
+    public var link: String
+    public var expiresAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * What the helper opens (a link or a QR code): `reins-circle:<server>/<secret>`.
+         */link: String, expiresAt: Int64) {
+        self.id = id
+        self.link = link
+        self.expiresAt = expiresAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleInviteStart: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleInviteStart: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleInviteStart {
+        return
+            try CircleInviteStart(
+                id: FfiConverterString.read(from: &buf), 
+                link: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleInviteStart, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.link, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteStart_lift(_ buf: RustBuffer) throws -> CircleInviteStart {
+    return try FfiConverterTypeCircleInviteStart.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteStart_lower(_ value: CircleInviteStart) -> RustBuffer {
+    return FfiConverterTypeCircleInviteStart.lower(value)
+}
+
+
+/**
+ * An invitation as the helper sees it.
+ */
+public struct CircleInviteView: Equatable, Hashable {
+    public var id: String
+    /**
+     * The inviting account's email (the code, not this label, proves who it is).
+     */
+    public var inviter: String
+    public var role: CircleRole
+    /**
+     * Empty until the inviter's phone sent the terms.
+     */
+    public var scopeLine: String
+    public var deferred: Bool
+    public var windowSecs: UInt64
+    public var fullCards: Bool
+    public var code: String?
+    public var stage: CircleJoinStage
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * The inviting account's email (the code, not this label, proves who it is).
+         */inviter: String, role: CircleRole, 
+        /**
+         * Empty until the inviter's phone sent the terms.
+         */scopeLine: String, deferred: Bool, windowSecs: UInt64, fullCards: Bool, code: String?, stage: CircleJoinStage) {
+        self.id = id
+        self.inviter = inviter
+        self.role = role
+        self.scopeLine = scopeLine
+        self.deferred = deferred
+        self.windowSecs = windowSecs
+        self.fullCards = fullCards
+        self.code = code
+        self.stage = stage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleInviteView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleInviteView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleInviteView {
+        return
+            try CircleInviteView(
+                id: FfiConverterString.read(from: &buf), 
+                inviter: FfiConverterString.read(from: &buf), 
+                role: FfiConverterTypeCircleRole.read(from: &buf), 
+                scopeLine: FfiConverterString.read(from: &buf), 
+                deferred: FfiConverterBool.read(from: &buf), 
+                windowSecs: FfiConverterUInt64.read(from: &buf), 
+                fullCards: FfiConverterBool.read(from: &buf), 
+                code: FfiConverterOptionString.read(from: &buf), 
+                stage: FfiConverterTypeCircleJoinStage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleInviteView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.inviter, into: &buf)
+        FfiConverterTypeCircleRole.write(value.role, into: &buf)
+        FfiConverterString.write(value.scopeLine, into: &buf)
+        FfiConverterBool.write(value.deferred, into: &buf)
+        FfiConverterUInt64.write(value.windowSecs, into: &buf)
+        FfiConverterBool.write(value.fullCards, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterTypeCircleJoinStage.write(value.stage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteView_lift(_ buf: RustBuffer) throws -> CircleInviteView {
+    return try FfiConverterTypeCircleInviteView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteView_lower(_ value: CircleInviteView) -> RustBuffer {
+    return FfiConverterTypeCircleInviteView.lower(value)
+}
+
+
+/**
+ * Something a watcher (or a helper) is told; no buttons.
+ */
+public struct CircleNoticeView: Equatable, Hashable {
+    public var id: String
+    public var person: String
+    public var text: String
+    public var outcome: String?
+    public var at: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, person: String, text: String, outcome: String?, at: Int64) {
+        self.id = id
+        self.person = person
+        self.text = text
+        self.outcome = outcome
+        self.at = at
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleNoticeView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleNoticeView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleNoticeView {
+        return
+            try CircleNoticeView(
+                id: FfiConverterString.read(from: &buf), 
+                person: FfiConverterString.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf), 
+                outcome: FfiConverterOptionString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleNoticeView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.person, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.outcome, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleNoticeView_lift(_ buf: RustBuffer) throws -> CircleNoticeView {
+    return try FfiConverterTypeCircleNoticeView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleNoticeView_lower(_ value: CircleNoticeView) -> RustBuffer {
+    return FfiConverterTypeCircleNoticeView.lower(value)
+}
+
+
+/**
+ * One arrangement, from this account's side.
+ */
+public struct CirclePerson: Equatable, Hashable {
+    public var linkId: String
+    /**
+     * The other account's email.
+     */
+    public var peer: String
+    public var role: CircleRole
+    /**
+     * This account is the owner (the other person helps it); else this account helps them.
+     */
+    public var mine: Bool
+    public var scopeLine: String
+    public var deferred: Bool
+    public var windowSecs: UInt64
+    public var state: CircleLinkState
+    public var since: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(linkId: String, 
+        /**
+         * The other account's email.
+         */peer: String, role: CircleRole, 
+        /**
+         * This account is the owner (the other person helps it); else this account helps them.
+         */mine: Bool, scopeLine: String, deferred: Bool, windowSecs: UInt64, state: CircleLinkState, since: Int64) {
+        self.linkId = linkId
+        self.peer = peer
+        self.role = role
+        self.mine = mine
+        self.scopeLine = scopeLine
+        self.deferred = deferred
+        self.windowSecs = windowSecs
+        self.state = state
+        self.since = since
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CirclePerson: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCirclePerson: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CirclePerson {
+        return
+            try CirclePerson(
+                linkId: FfiConverterString.read(from: &buf), 
+                peer: FfiConverterString.read(from: &buf), 
+                role: FfiConverterTypeCircleRole.read(from: &buf), 
+                mine: FfiConverterBool.read(from: &buf), 
+                scopeLine: FfiConverterString.read(from: &buf), 
+                deferred: FfiConverterBool.read(from: &buf), 
+                windowSecs: FfiConverterUInt64.read(from: &buf), 
+                state: FfiConverterTypeCircleLinkState.read(from: &buf), 
+                since: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CirclePerson, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.linkId, into: &buf)
+        FfiConverterString.write(value.peer, into: &buf)
+        FfiConverterTypeCircleRole.write(value.role, into: &buf)
+        FfiConverterBool.write(value.mine, into: &buf)
+        FfiConverterString.write(value.scopeLine, into: &buf)
+        FfiConverterBool.write(value.deferred, into: &buf)
+        FfiConverterUInt64.write(value.windowSecs, into: &buf)
+        FfiConverterTypeCircleLinkState.write(value.state, into: &buf)
+        FfiConverterInt64.write(value.since, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCirclePerson_lift(_ buf: RustBuffer) throws -> CirclePerson {
+    return try FfiConverterTypeCirclePerson.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCirclePerson_lower(_ value: CirclePerson) -> RustBuffer {
+    return FfiConverterTypeCirclePerson.lower(value)
+}
+
+
+/**
+ * On the owner's card: who else decides, and how far it got ("Needs Alex too", "Alex approved, waiting for you").
+ */
+public struct CircleProgress: Equatable, Hashable {
+    /**
+     * People still to answer.
+     */
+    public var needs: [String]
+    /**
+     * People who approved.
+     */
+    public var approved: [String]
+    /**
+     * The owner's own tap is still needed.
+     */
+    public var waitingForYou: Bool
+    /**
+     * The owner approved; it runs when the others have.
+     */
+    public var youApproved: Bool
+    public var deferred: Bool
+    public var deadline: Int64
+    public var line: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * People still to answer.
+         */needs: [String], 
+        /**
+         * People who approved.
+         */approved: [String], 
+        /**
+         * The owner's own tap is still needed.
+         */waitingForYou: Bool, 
+        /**
+         * The owner approved; it runs when the others have.
+         */youApproved: Bool, deferred: Bool, deadline: Int64, line: String) {
+        self.needs = needs
+        self.approved = approved
+        self.waitingForYou = waitingForYou
+        self.youApproved = youApproved
+        self.deferred = deferred
+        self.deadline = deadline
+        self.line = line
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleProgress {
+        return
+            try CircleProgress(
+                needs: FfiConverterSequenceString.read(from: &buf), 
+                approved: FfiConverterSequenceString.read(from: &buf), 
+                waitingForYou: FfiConverterBool.read(from: &buf), 
+                youApproved: FfiConverterBool.read(from: &buf), 
+                deferred: FfiConverterBool.read(from: &buf), 
+                deadline: FfiConverterInt64.read(from: &buf), 
+                line: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleProgress, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.needs, into: &buf)
+        FfiConverterSequenceString.write(value.approved, into: &buf)
+        FfiConverterBool.write(value.waitingForYou, into: &buf)
+        FfiConverterBool.write(value.youApproved, into: &buf)
+        FfiConverterBool.write(value.deferred, into: &buf)
+        FfiConverterInt64.write(value.deadline, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleProgress_lift(_ buf: RustBuffer) throws -> CircleProgress {
+    return try FfiConverterTypeCircleProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleProgress_lower(_ value: CircleProgress) -> RustBuffer {
+    return FfiConverterTypeCircleProgress.lower(value)
+}
+
+
+/**
+ * A request of another account waiting for this one (For others).
+ */
+public struct CircleReviewView: Equatable, Hashable {
+    /**
+     * The packet's id: what `circle_answer` takes.
+     */
+    public var id: String
+    public var linkId: String
+    /**
+     * The owner's email.
+     */
+    public var person: String
+    public var role: CircleRole
+    public var title: String
+    public var subtitle: String
+    public var headline: String
+    public var service: String
+    /**
+     * The owner's agent ("ChatGPT").
+     */
+    public var agent: String
+    /**
+     * What it does ("Ask · Outside · Reaches people").
+     */
+    public var line: String
+    /**
+     * Only when the arrangement shows full cards.
+     */
+    public var detail: String?
+    public var scopeLine: String
+    public var createdAt: Int64
+    public var deadline: Int64
+    public var state: CircleReviewState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The packet's id: what `circle_answer` takes.
+         */id: String, linkId: String, 
+        /**
+         * The owner's email.
+         */person: String, role: CircleRole, title: String, subtitle: String, headline: String, service: String, 
+        /**
+         * The owner's agent ("ChatGPT").
+         */agent: String, 
+        /**
+         * What it does ("Ask · Outside · Reaches people").
+         */line: String, 
+        /**
+         * Only when the arrangement shows full cards.
+         */detail: String?, scopeLine: String, createdAt: Int64, deadline: Int64, state: CircleReviewState) {
+        self.id = id
+        self.linkId = linkId
+        self.person = person
+        self.role = role
+        self.title = title
+        self.subtitle = subtitle
+        self.headline = headline
+        self.service = service
+        self.agent = agent
+        self.line = line
+        self.detail = detail
+        self.scopeLine = scopeLine
+        self.createdAt = createdAt
+        self.deadline = deadline
+        self.state = state
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CircleReviewView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleReviewView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleReviewView {
+        return
+            try CircleReviewView(
+                id: FfiConverterString.read(from: &buf), 
+                linkId: FfiConverterString.read(from: &buf), 
+                person: FfiConverterString.read(from: &buf), 
+                role: FfiConverterTypeCircleRole.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                headline: FfiConverterString.read(from: &buf), 
+                service: FfiConverterString.read(from: &buf), 
+                agent: FfiConverterString.read(from: &buf), 
+                line: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterOptionString.read(from: &buf), 
+                scopeLine: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                deadline: FfiConverterInt64.read(from: &buf), 
+                state: FfiConverterTypeCircleReviewState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CircleReviewView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.linkId, into: &buf)
+        FfiConverterString.write(value.person, into: &buf)
+        FfiConverterTypeCircleRole.write(value.role, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterString.write(value.headline, into: &buf)
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.agent, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.scopeLine, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterInt64.write(value.deadline, into: &buf)
+        FfiConverterTypeCircleReviewState.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleReviewView_lift(_ buf: RustBuffer) throws -> CircleReviewView {
+    return try FfiConverterTypeCircleReviewView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleReviewView_lower(_ value: CircleReviewView) -> RustBuffer {
+    return FfiConverterTypeCircleReviewView.lower(value)
 }
 
 
@@ -16155,6 +17314,154 @@ public func FfiConverterTypeNewDeviceEvent_lower(_ value: NewDeviceEvent) -> Rus
 
 
 /**
+ * One review waiting for this member, as the phone shows and signs it. `lines` are built on the phone from what
+ * the digest covers, never taken from the server.
+ */
+public struct OrgReviewView: Equatable, Hashable {
+    public var id: String
+    public var kind: OrgReviewKind
+    public var orgName: String
+    /**
+     * The requester's or proposer's email.
+     */
+    public var requester: String
+    /**
+     * The agent connection's label (requests).
+     */
+    public var connection: String
+    /**
+     * The server's short title.
+     */
+    public var title: String
+    public var lines: [String]
+    /**
+     * Who must approve ("Security", "You").
+     */
+    public var requires: String
+    public var level: String
+    public var zone: String
+    /**
+     * The request or change digest the phone recomputed.
+     */
+    public var digest: String
+    /**
+     * The policy snapshot hash (requests); empty for changes.
+     */
+    public var snapshot: String
+    public var expiresAt: Int64
+    /**
+     * Your own: your request, or your change to confirm.
+     */
+    public var own: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, kind: OrgReviewKind, orgName: String, 
+        /**
+         * The requester's or proposer's email.
+         */requester: String, 
+        /**
+         * The agent connection's label (requests).
+         */connection: String, 
+        /**
+         * The server's short title.
+         */title: String, lines: [String], 
+        /**
+         * Who must approve ("Security", "You").
+         */requires: String, level: String, zone: String, 
+        /**
+         * The request or change digest the phone recomputed.
+         */digest: String, 
+        /**
+         * The policy snapshot hash (requests); empty for changes.
+         */snapshot: String, expiresAt: Int64, 
+        /**
+         * Your own: your request, or your change to confirm.
+         */own: Bool) {
+        self.id = id
+        self.kind = kind
+        self.orgName = orgName
+        self.requester = requester
+        self.connection = connection
+        self.title = title
+        self.lines = lines
+        self.requires = requires
+        self.level = level
+        self.zone = zone
+        self.digest = digest
+        self.snapshot = snapshot
+        self.expiresAt = expiresAt
+        self.own = own
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrgReviewView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewView {
+        return
+            try OrgReviewView(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeOrgReviewKind.read(from: &buf), 
+                orgName: FfiConverterString.read(from: &buf), 
+                requester: FfiConverterString.read(from: &buf), 
+                connection: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                requires: FfiConverterString.read(from: &buf), 
+                level: FfiConverterString.read(from: &buf), 
+                zone: FfiConverterString.read(from: &buf), 
+                digest: FfiConverterString.read(from: &buf), 
+                snapshot: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                own: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrgReviewView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeOrgReviewKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.orgName, into: &buf)
+        FfiConverterString.write(value.requester, into: &buf)
+        FfiConverterString.write(value.connection, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.requires, into: &buf)
+        FfiConverterString.write(value.level, into: &buf)
+        FfiConverterString.write(value.zone, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterString.write(value.snapshot, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterBool.write(value.own, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lift(_ buf: RustBuffer) throws -> OrgReviewView {
+    return try FfiConverterTypeOrgReviewView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewView_lower(_ value: OrgReviewView) -> RustBuffer {
+    return FfiConverterTypeOrgReviewView.lower(value)
+}
+
+
+/**
  * The work account's organization, as the app shows it.
  */
 public struct OrgView: Equatable, Hashable {
@@ -16755,6 +18062,10 @@ public struct PendingItem: Equatable, Hashable {
      */
     public var taskProposal: TaskView?
     /**
+     * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
+     */
+    public var circle: CircleProgress?
+    /**
      * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
      * this, not `parked_until`).
      */
@@ -16818,6 +18129,9 @@ public struct PendingItem: Equatable, Hashable {
          * An agent proposes a task: its envelope, which the owner may narrow before approving (`approve_task`).
          */taskProposal: TaskView? = nil, 
         /**
+         * Others in the owner's Circle decide it too ("Needs Alex too", "Alex approved, waiting for you").
+         */circle: CircleProgress? = nil, 
+        /**
          * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
          * this, not `parked_until`).
          */parked: Bool = false) {
@@ -16846,6 +18160,7 @@ public struct PendingItem: Equatable, Hashable {
         self.taskTitle = taskTitle
         self.batchable = batchable
         self.taskProposal = taskProposal
+        self.circle = circle
         self.parked = parked
     }
 
@@ -16890,6 +18205,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 taskTitle: FfiConverterOptionString.read(from: &buf), 
                 batchable: FfiConverterBool.read(from: &buf), 
                 taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf), 
+                circle: FfiConverterOptionTypeCircleProgress.read(from: &buf), 
                 parked: FfiConverterBool.read(from: &buf)
         )
     }
@@ -16920,6 +18236,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.taskTitle, into: &buf)
         FfiConverterBool.write(value.batchable, into: &buf)
         FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
+        FfiConverterOptionTypeCircleProgress.write(value.circle, into: &buf)
         FfiConverterBool.write(value.parked, into: &buf)
     }
 }
@@ -22996,6 +24313,707 @@ public func FfiConverterTypeCellChoice_lower(_ value: CellChoice) -> RustBuffer 
 
 
 /**
+ * What the apps hear from the core about Circles ([`crate::Notifier::circle_changed`]).
+ */
+
+public enum CircleEvent: Equatable, Hashable {
+    
+    /**
+     * A request of another account waits for this phone: the one Circle notification ("Sam: purchase $42 waiting").
+     */
+    case reviewWaiting(review: CircleReviewView
+    )
+    /**
+     * Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
+     */
+    case changed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
+    typealias SwiftType = CircleEvent
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleEvent {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .reviewWaiting(review: try FfiConverterTypeCircleReviewView.read(from: &buf)
+        )
+        
+        case 2: return .changed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleEvent, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .reviewWaiting(review):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeCircleReviewView.write(review, into: &buf)
+            
+        
+        case .changed:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleEvent_lift(_ buf: RustBuffer) throws -> CircleEvent {
+    return try FfiConverterTypeCircleEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleEvent_lower(_ value: CircleEvent) -> RustBuffer {
+    return FfiConverterTypeCircleEvent.lower(value)
+}
+
+
+
+/**
+ * Where the owner's invitation stands.
+ */
+
+public enum CircleInviteProgress: Equatable, Hashable {
+    
+    /**
+     * Nobody opened the link yet.
+     */
+    case waiting
+    /**
+     * Someone answered: both phones show `code`; waiting for them to accept.
+     */
+    case compare(code: String, helper: String
+    )
+    /**
+     * They accepted: compare `code` once more, then confirm (`circle_invite_confirm`).
+     */
+    case accepted(code: String, helper: String
+    )
+    case active(linkId: String
+    )
+    case declined
+    case expired
+    case cancelled
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleInviteProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleInviteProgress: FfiConverterRustBuffer {
+    typealias SwiftType = CircleInviteProgress
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleInviteProgress {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .compare(code: try FfiConverterString.read(from: &buf), helper: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .accepted(code: try FfiConverterString.read(from: &buf), helper: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 4: return .active(linkId: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 5: return .declined
+        
+        case 6: return .expired
+        
+        case 7: return .cancelled
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleInviteProgress, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .compare(code,helper):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(code, into: &buf)
+            FfiConverterString.write(helper, into: &buf)
+            
+        
+        case let .accepted(code,helper):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(code, into: &buf)
+            FfiConverterString.write(helper, into: &buf)
+            
+        
+        case let .active(linkId):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(linkId, into: &buf)
+            
+        
+        case .declined:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .cancelled:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteProgress_lift(_ buf: RustBuffer) throws -> CircleInviteProgress {
+    return try FfiConverterTypeCircleInviteProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleInviteProgress_lower(_ value: CircleInviteProgress) -> RustBuffer {
+    return FfiConverterTypeCircleInviteProgress.lower(value)
+}
+
+
+
+/**
+ * Where the helper's side of an invitation stands.
+ */
+
+public enum CircleJoinStage: Equatable, Hashable {
+    
+    /**
+     * Answered; waiting for the inviter's phone.
+     */
+    case opened
+    /**
+     * The terms and the code are here: compare, then accept or decline.
+     */
+    case compare
+    /**
+     * Accepted; waiting for the inviter to confirm.
+     */
+    case accepted
+    case active
+    case declined
+    case expired
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleJoinStage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleJoinStage: FfiConverterRustBuffer {
+    typealias SwiftType = CircleJoinStage
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleJoinStage {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .opened
+        
+        case 2: return .compare
+        
+        case 3: return .accepted
+        
+        case 4: return .active
+        
+        case 5: return .declined
+        
+        case 6: return .expired
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleJoinStage, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .opened:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .compare:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .accepted:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .active:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .declined:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleJoinStage_lift(_ buf: RustBuffer) throws -> CircleJoinStage {
+    return try FfiConverterTypeCircleJoinStage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleJoinStage_lower(_ value: CircleJoinStage) -> RustBuffer {
+    return FfiConverterTypeCircleJoinStage.lower(value)
+}
+
+
+
+
+public enum CircleLinkState: Equatable, Hashable {
+    
+    case active
+    /**
+     * The owner paused it: nothing goes to the helper meanwhile.
+     */
+    case paused
+    case ended
+    /**
+     * The other side's owner key changed (a recovery, a reset): nothing counts until they're invited again.
+     */
+    case suspended
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleLinkState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleLinkState: FfiConverterRustBuffer {
+    typealias SwiftType = CircleLinkState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleLinkState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .active
+        
+        case 2: return .paused
+        
+        case 3: return .ended
+        
+        case 4: return .suspended
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleLinkState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .active:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .paused:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .ended:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .suspended:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleLinkState_lift(_ buf: RustBuffer) throws -> CircleLinkState {
+    return try FfiConverterTypeCircleLinkState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleLinkState_lower(_ value: CircleLinkState) -> RustBuffer {
+    return FfiConverterTypeCircleLinkState.lower(value)
+}
+
+
+
+
+public enum CircleReviewState: Equatable, Hashable {
+    
+    case waiting
+    /**
+     * This phone approved; the owner's phone runs it.
+     */
+    case approved
+    case denied
+    case expired
+    /**
+     * The owner's side settled it (or ended or paused the arrangement) first.
+     */
+    case withdrawn
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleReviewState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleReviewState: FfiConverterRustBuffer {
+    typealias SwiftType = CircleReviewState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleReviewState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .approved
+        
+        case 3: return .denied
+        
+        case 4: return .expired
+        
+        case 5: return .withdrawn
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleReviewState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .approved:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .withdrawn:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleReviewState_lift(_ buf: RustBuffer) throws -> CircleReviewState {
+    return try FfiConverterTypeCircleReviewState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleReviewState_lower(_ value: CircleReviewState) -> RustBuffer {
+    return FfiConverterTypeCircleReviewState.lower(value)
+}
+
+
+
+/**
+ * A person's role in an arrangement (04 §1).
+ */
+
+public enum CircleRole: Equatable, Hashable {
+    
+    /**
+     * Decides instead of the owner, within the scope (either is enough).
+     */
+    case delegate
+    /**
+     * Must approve too (both).
+     */
+    case cosign
+    /**
+     * Must approve (cooperative in Personal mode).
+     */
+    case guardian
+    /**
+     * Is told; no buttons.
+     */
+    case watcher
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleRole: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleRole: FfiConverterRustBuffer {
+    typealias SwiftType = CircleRole
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleRole {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .delegate
+        
+        case 2: return .cosign
+        
+        case 3: return .guardian
+        
+        case 4: return .watcher
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleRole, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .delegate:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .cosign:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .guardian:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .watcher:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleRole_lift(_ buf: RustBuffer) throws -> CircleRole {
+    return try FfiConverterTypeCircleRole.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleRole_lower(_ value: CircleRole) -> RustBuffer {
+    return FfiConverterTypeCircleRole.lower(value)
+}
+
+
+
+/**
+ * What an arrangement covers, as the Add screen offers it.
+ */
+
+public enum CircleScopePreset: Equatable, Hashable {
+    
+    /**
+     * Everything the owner's agents do.
+     */
+    case everything
+    /**
+     * Spending money.
+     */
+    case money
+    /**
+     * Messages to Work or Outside people.
+     */
+    case messagesOutside
+    /**
+     * What can't be undone (L3).
+     */
+    case risky
+    /**
+     * Routine requests only (L0–L1): what a delegate usually handles.
+     */
+    case routine
+    /**
+     * Everything one agent (connection) does.
+     */
+    case agent(connectionId: String, label: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CircleScopePreset: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCircleScopePreset: FfiConverterRustBuffer {
+    typealias SwiftType = CircleScopePreset
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CircleScopePreset {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .everything
+        
+        case 2: return .money
+        
+        case 3: return .messagesOutside
+        
+        case 4: return .risky
+        
+        case 5: return .routine
+        
+        case 6: return .agent(connectionId: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CircleScopePreset, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .everything:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .money:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .messagesOutside:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .risky:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .routine:
+            writeInt(&buf, Int32(5))
+        
+        
+        case let .agent(connectionId,label):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(connectionId, into: &buf)
+            FfiConverterString.write(label, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleScopePreset_lift(_ buf: RustBuffer) throws -> CircleScopePreset {
+    return try FfiConverterTypeCircleScopePreset.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCircleScopePreset_lower(_ value: CircleScopePreset) -> RustBuffer {
+    return FfiConverterTypeCircleScopePreset.lower(value)
+}
+
+
+
+/**
  * Every failure the core reports to Kotlin (contracts §D). Messages never
  * contain secrets or URLs.
  */
@@ -24543,6 +26561,81 @@ public func FfiConverterTypeModelUpdateOutcome_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeModelUpdateOutcome_lower(_ value: ModelUpdateOutcome) -> RustBuffer {
     return FfiConverterTypeModelUpdateOutcome.lower(value)
+}
+
+
+
+/**
+ * What an org review is about.
+ */
+
+public enum OrgReviewKind: Equatable, Hashable {
+    
+    /**
+     * An agent's request.
+     */
+    case request
+    /**
+     * A pending admin change.
+     */
+    case change
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OrgReviewKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrgReviewKind: FfiConverterRustBuffer {
+    typealias SwiftType = OrgReviewKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrgReviewKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .request
+        
+        case 2: return .change
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OrgReviewKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .request:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .change:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lift(_ buf: RustBuffer) throws -> OrgReviewKind {
+    return try FfiConverterTypeOrgReviewKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrgReviewKind_lower(_ value: OrgReviewKind) -> RustBuffer {
+    return FfiConverterTypeOrgReviewKind.lower(value)
 }
 
 
@@ -26358,6 +28451,30 @@ fileprivate struct FfiConverterOptionTypeCardProviderView: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeCircleProgress: FfiConverterRustBuffer {
+    typealias SwiftType = CircleProgress?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCircleProgress.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCircleProgress.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeCommandPresentation: FfiConverterRustBuffer {
     typealias SwiftType = CommandPresentation?
 
@@ -27504,6 +29621,81 @@ fileprivate struct FfiConverterSequenceTypeCapabilityPermissionInput: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeCircleNoticeView: FfiConverterRustBuffer {
+    typealias SwiftType = [CircleNoticeView]
+
+    public static func write(_ value: [CircleNoticeView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCircleNoticeView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CircleNoticeView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CircleNoticeView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCircleNoticeView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCirclePerson: FfiConverterRustBuffer {
+    typealias SwiftType = [CirclePerson]
+
+    public static func write(_ value: [CirclePerson], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCirclePerson.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CirclePerson] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CirclePerson]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCirclePerson.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCircleReviewView: FfiConverterRustBuffer {
+    typealias SwiftType = [CircleReviewView]
+
+    public static func write(_ value: [CircleReviewView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCircleReviewView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CircleReviewView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CircleReviewView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCircleReviewView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClassOption: FfiConverterRustBuffer {
     typealias SwiftType = [ClassOption]
 
@@ -28046,6 +30238,31 @@ fileprivate struct FfiConverterSequenceTypeNeighbourView: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeNeighbourView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeOrgReviewView: FfiConverterRustBuffer {
+    typealias SwiftType = [OrgReviewView]
+
+    public static func write(_ value: [OrgReviewView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeOrgReviewView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [OrgReviewView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [OrgReviewView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeOrgReviewView.read(from: &buf))
         }
         return seq
     }
@@ -29086,6 +31303,38 @@ public func orgEnrollmentMessage(challenge: String) -> Data  {
     )
 })
 }
+/**
+ * The bytes the enrolled device key signs to set the member's own policy
+ * (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
+ * replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.
+ */
+public func orgMemberPolicyMessage(orgId: String, member: String, version: UInt64, at: Int64, body: String) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_member_policy_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(member),
+        FfiConverterUInt64.lower(version),
+        FfiConverterInt64.lower(at),
+        FfiConverterString.lower(body),uniffiCallStatus
+    )
+})
+}
+/**
+ * The bytes the enrolled device key signs to answer an org review (`reins_proto::managed::review_message`):
+ * approve or deny, and `Propose` to confirm your own admin change. `org_id` is the work account's org.
+ */
+public func orgReviewMessage(orgId: String, review: OrgReviewView, approve: Bool, at: Int64) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_org_review_message(
+        FfiConverterString.lower(orgId),
+        FfiConverterTypeOrgReviewView_lower(review),
+        FfiConverterBool.lower(approve),
+        FfiConverterInt64.lower(at),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -29112,6 +31361,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_func_org_enrollment_message() != 29521) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_member_policy_message() != 56035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_org_review_message() != 16415) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
@@ -29220,6 +31475,51 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_blob_view() != 35360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_answer() != 58843) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_end() != 23381) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_invite_cancel() != 7008) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_invite_confirm() != 30573) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_invite_create() != 18048) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_invite_poll() != 38045) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_join_accept() != 38398) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_join_decline() != 17292) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_join_open() != 10601) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_join_poll() != 26176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_notices() != 5983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_pause() != 9216) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_people() != 23013) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circle_reviews() != 33063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_circles_available() != 63648) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_connections() != 58172) {
@@ -29375,6 +31675,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_org_decide() != 11544) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_org_enroll() != 20244) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -29382,6 +31685,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_org_report_posture() != 59266) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_reviews() != 62660) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_org_set_member_policy() != 64873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_orgs_offered() != 4214) {
@@ -29805,6 +32114,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_notifier_autopilot_changed() != 32979) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_notifier_circle_changed() != 42496) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_ownercheck_confirm() != 63799) {
