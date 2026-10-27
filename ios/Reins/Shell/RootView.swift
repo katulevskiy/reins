@@ -43,6 +43,20 @@ struct RootView: View {
 
 /// The store is opening, or the session is being read. Someone signed in sees their main screen as it last was (the
 /// widgets' snapshot: what waited, nothing secret) instead of a spinner; the live one replaces it within moments.
+/// While the app moves to another profile (`AppHost.switchProfile`): a moment of "Switching…" on paper.
+struct SwitchingProfileView: View {
+    var body: some View {
+        VStack(spacing: 14) {
+            ProgressView().controlSize(.large).tint(Palette.violet)
+            Text("Switching…").textRole(.row).foregroundStyle(Palette.ink2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .pageBackground()
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("switchingProfile")
+    }
+}
+
 struct LoadingView: View {
     @State private var last: Snapshot?
 

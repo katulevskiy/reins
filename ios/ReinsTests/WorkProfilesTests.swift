@@ -194,3 +194,39 @@ final class AddWorkAccountTests: XCTestCase {
         XCTAssertTrue(core.enrollments.isEmpty)
     }
 }
+
+/// Switching profiles moves the app in place: the registry's active profile changes and the rebuild runs, and nothing
+/// terminates the process.
+@MainActor
+final class ProfileSwitchInPlaceTests: XCTestCase {
+    private final class Registry: ProfileRegistryProtocol, @unchecked Sendable {
+        var activeId = "personal"
+        func active() -> AccountProfile { fatalError("unused") }
+        func beginManaged(serverUrl: String) throws -> AccountProfile { fatalError("unused") }
+        func confirmManaged(id: String, orgId: String, orgName: String, email: String) throws -> AccountProfile { fatalError("unused") }
+        func list() -> [AccountProfile] { [] }
+        func notePersonal(email: String?) throws {}
+        func remove(id: String) throws {}
+        func setActive(id: String) throws { activeId = id }
+    }
+
+    func testSwitchingRebuildsInPlace() {
+        let saved = ProfileSwitch.relaunch
+        defer { ProfileSwitch.relaunch = saved }
+        var rebuilt = 0
+        ProfileSwitch.relaunch = { rebuilt += 1 }
+        let registry = Registry()
+        ProfileSwitch.switchTo("work-1", registry: registry)
+        XCTAssertEqual(registry.activeId, "work-1")
+        XCTAssertEqual(rebuilt, 1, "the switch rebuilds the app; the test process is still running, so nothing exited")
+    }
+
+    func testTheHostSwitchesToANewModelWithoutQuitting() async throws {
+        let host = try XCTUnwrap(AppHost.current, "the test host app made one")
+        let before = host.model
+        await host.switchProfile()
+        XCTAssertFalse(host.switching)
+        XCTAssertNotNil(host.model, "the profile's model is open again")
+        XCTAssertFalse(host.model === before, "a fresh model, not the old one")
+    }
+}

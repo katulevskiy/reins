@@ -59,12 +59,14 @@ struct ProfilesSection: View {
     }
 }
 
-/// Switching profiles opens the other profile's core: the app starts again on it.
+/// Switching profiles opens the other profile's core: the app moves to it in place, never by quitting.
 enum ProfileSwitch {
-    /// Tests replace the relaunch.
-    nonisolated(unsafe) static var relaunch: () -> Void = { exit(0) }
+    /// Rebuilds the app on the newly active profile (`AppHost.switchProfile`). Tests replace it.
+    nonisolated(unsafe) static var relaunch: @MainActor () -> Void = {
+        Task { @MainActor in await AppHost.current?.switchProfile() }
+    }
 
-    static func switchTo(_ id: String, registry: ProfileRegistryProtocol = WorkProfiles.registry()) {
+    @MainActor static func switchTo(_ id: String, registry: ProfileRegistryProtocol = WorkProfiles.registry()) {
         guard (try? registry.setActive(id: id)) != nil else { return }
         relaunch()
     }

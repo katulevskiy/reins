@@ -25,7 +25,13 @@ final class Arrival<Value: AnyObject> {
         }
     }
 
-    /// Only the first call counts.
+    /// Waits again for the next value (a profile switch): `wait()` and `whenSettled` hold until `settle` is called.
+    func reopen() {
+        settled = false
+        value = nil
+    }
+
+    /// Only the first call counts (until `reopen`).
     func settle(_ value: Value?) {
         guard !settled else { return }
         settled = true
