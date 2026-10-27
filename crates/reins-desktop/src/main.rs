@@ -99,6 +99,10 @@ enum Cmd {
         /// With --browser: print the sign-in link instead of opening the browser.
         #[arg(long)]
         no_browser: bool,
+        /// Sign in a work profile (`[[profiles]]` in config.toml) with its own key and session: pair it with your
+        /// work account's phone. The organization's repositories go through it.
+        #[arg(long)]
+        profile: Option<String>,
     },
     #[command(display_order = 26)]
     /// Sign this computer out: ends its connection on the server and forgets the session here.
@@ -320,6 +324,16 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
         let id = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
         out!("Key:           {}", id.fingerprint());
     }
+    for p in &config.profiles {
+        let work = paths.for_profile(&p.name);
+        out!(
+            "Work profile:  {} ({}): {}",
+            p.display(),
+            p.name,
+            server::oauth::logged_in_server(&work)
+                .unwrap_or_else(|| format!("not logged in; `reins login --profile {}`", p.name))
+        );
+    }
     out!("Listen:        {}", config.listen);
     out!("Git:           {}", git_mode(config));
     out!("AI tools:      {}", harnesses_line(paths, config));
@@ -451,6 +465,26 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             server_url,
             browser,
             no_browser,
+            profile: Some(name),
+        } => {
+            let Some(profile) = config.profiles.iter().find(|p| p.name == name) else {
+                return Err(format!(
+                    "No profile `{name}`. Add it to {}:\n\n[[profiles]]\nname = \"{name}\"\norg = \"Your org\"\ngithub_orgs = [\"your-github-org\"]",
+                    paths.config_file().display()
+                ));
+            };
+            let server = login(&paths.for_profile(&name), &server_url, browser, no_browser).await?;
+            out!(
+                "Logged in to {server} as {}. Its repositories go through your work phone from now on.",
+                profile.display()
+            );
+            Ok(())
+        }
+        Cmd::Login {
+            server_url,
+            browser,
+            no_browser,
+            profile: None,
         } => {
             let server = login(&paths, &server_url, browser, no_browser).await?;
             out!("Logged in to {server}. Your phone decides from now on.");

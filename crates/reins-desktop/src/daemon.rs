@@ -53,9 +53,39 @@ struct ModeAuthorizer {
     config: Config,
     local: Arc<LocalAuthorizer>,
     phone: Mutex<Option<(String, Arc<ReinsAuthorizer>)>>,
+    /// Work profiles' authorizers, by profile name, with the server each was made for ([`crate::profiles`]).
+    managed: Mutex<std::collections::HashMap<String, (String, Arc<ReinsAuthorizer>)>>,
 }
 
 impl ModeAuthorizer {
+    /// Who decides for `repo`: an org's repository goes through its work profile only (never the Personal phone or
+    /// the local policy, whatever the mode); anything else as before ([`Self::pick`]).
+    fn pick_for(&self, repo: &Repo) -> Result<Arc<dyn Authorizer>, Refusal> {
+        match crate::profiles::choose(&self.config, &self.paths, repo, crate::server::oauth::logged_in_server) {
+            crate::profiles::Choice::Personal => self.pick(),
+            crate::profiles::Choice::Refuse(message) => Err(Refusal::Unavailable(message)),
+            crate::profiles::Choice::Managed {
+                name,
+                paths,
+                server,
+            } => {
+                let mut managed = self.managed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some((s, a)) = managed.get(&name)
+                    && *s == server
+                {
+                    return Ok(Arc::<ReinsAuthorizer>::clone(a));
+                }
+                let identity = Arc::new(
+                    Identity::load_or_create(&paths.identity_file())
+                        .map_err(|e| Refusal::Unavailable(e.to_string()))?,
+                );
+                let a = Arc::new(ReinsAuthorizer::new(&paths, identity, &self.config).map_err(Refusal::Unavailable)?);
+                managed.insert(name, (server, Arc::clone(&a)));
+                Ok(a)
+            }
+        }
+    }
+
     fn pick(&self) -> Result<Arc<dyn Authorizer>, Refusal> {
         if self.mode == Mode::Local {
             return Ok(Arc::<LocalAuthorizer>::clone(&self.local));
@@ -84,11 +114,11 @@ impl ModeAuthorizer {
 #[async_trait::async_trait]
 impl Authorizer for ModeAuthorizer {
     async fn read(&self, repo: &Repo) -> Result<Credential, Refusal> {
-        self.pick()?.read(repo).await
+        self.pick_for(repo)?.read(repo).await
     }
 
     async fn push(&self, repo: &Repo, summary: &PushSummary, digest: &str) -> Result<Credential, Refusal> {
-        self.pick()?.push(repo, summary, digest).await
+        self.pick_for(repo)?.push(repo, summary, digest).await
     }
 
     fn describe(&self) -> String {
@@ -200,6 +230,7 @@ impl Daemon {
                 config: config.clone(),
                 local: Arc::new(LocalAuthorizer::new(&config, Arc::clone(&pending), options.prompter)?),
                 phone: Mutex::new(None),
+                managed: Mutex::default(),
             }),
         };
         if options.harden {
