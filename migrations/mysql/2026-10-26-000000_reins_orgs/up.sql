@@ -8,7 +8,7 @@
 -- Tier and sign-in of the tenant. A WorkOS organization and a WorkOS directory each belong to one tenant at most.
 -- `owner_recovery_at`: when the directory removed the last Org owner (the role is kept, the account cut off).
 CREATE TABLE reins_orgs (
-    org_uuid      CHAR(36)     NOT NULL PRIMARY KEY,
+    org_uuid      VARCHAR(40)     NOT NULL PRIMARY KEY,
     tier          VARCHAR(16)  NOT NULL,
     identity      VARCHAR(32)  NOT NULL,
     workos_org_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin UNIQUE,
@@ -25,7 +25,7 @@ CREATE TABLE reins_orgs (
 -- Domains the tenant claims; one counts once `verified_at` is set (a DNS TXT record), and one org at most verifies a
 -- domain (`reins_org_verified_domains`).
 CREATE TABLE reins_org_domains (
-    org_uuid    CHAR(36)     NOT NULL,
+    org_uuid    VARCHAR(40)     NOT NULL,
     domain      VARCHAR(253) NOT NULL,
     token       VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     verified_at BIGINT,
@@ -41,7 +41,7 @@ CREATE INDEX idx_reins_org_domains_domain ON reins_org_domains (domain);
 -- verify it at the same moment (a check-then-write in the transaction would not).
 CREATE TABLE reins_org_verified_domains (
     domain      VARCHAR(253) NOT NULL PRIMARY KEY,
-    org_uuid    CHAR(36)     NOT NULL,
+    org_uuid    VARCHAR(40)     NOT NULL,
     verified_at BIGINT       NOT NULL,
     FOREIGN KEY (org_uuid) REFERENCES organizations (uuid) ON DELETE CASCADE
 );
@@ -51,7 +51,7 @@ CREATE TABLE reins_org_verified_domains (
 -- a member of one org at most (`user_uuid` unique): a Managed account is its org's alone, and a Personal account is a
 -- different account.
 CREATE TABLE reins_org_members (
-    org_uuid        CHAR(36)    NOT NULL,
+    org_uuid        VARCHAR(40)    NOT NULL,
     user_uuid       CHAR(36)    NOT NULL UNIQUE,
     membership_uuid CHAR(36)    NOT NULL,
     state           VARCHAR(32) NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE reins_org_members (
 
 -- Roles (05 §3) of a member (`subject_id`: the membership uuid) or of a group (the group uuid).
 CREATE TABLE reins_org_roles (
-    org_uuid     CHAR(36)    NOT NULL,
+    org_uuid     VARCHAR(40)    NOT NULL,
     subject_kind VARCHAR(16) NOT NULL,
     subject_id   CHAR(36)    NOT NULL,
     role         VARCHAR(32) NOT NULL,
@@ -77,7 +77,7 @@ CREATE TABLE reins_org_roles (
 -- Admin actions waiting for a second person (`action`: reins_proto::org::AdminAction as JSON).
 CREATE TABLE reins_org_changes (
     uuid        CHAR(36)    NOT NULL PRIMARY KEY,
-    org_uuid    CHAR(36)    NOT NULL,
+    org_uuid    VARCHAR(40)    NOT NULL,
     action      TEXT        NOT NULL,
     proposed_by CHAR(36)    NOT NULL,
     proposed_at BIGINT      NOT NULL,
@@ -92,7 +92,7 @@ CREATE INDEX idx_reins_org_changes_org ON reins_org_changes (org_uuid, state);
 
 -- Devices enrolled to the tenant: the key made in secure hardware, what vouched for it, and its latest posture.
 CREATE TABLE reins_org_devices (
-    org_uuid      CHAR(36)    NOT NULL,
+    org_uuid      VARCHAR(40)    NOT NULL,
     user_uuid     CHAR(36)    NOT NULL,
     device_uuid   VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     key_algorithm VARCHAR(16) NOT NULL,
@@ -111,7 +111,7 @@ CREATE TABLE reins_org_devices (
 -- The tenant's admin events, append-only and hash-linked per org (`hash` = SHA-256 of `prev_hash` and the event), so
 -- O2's audit log can take them over and check that none was changed.
 CREATE TABLE reins_org_events (
-    org_uuid  CHAR(36)    NOT NULL,
+    org_uuid  VARCHAR(40)    NOT NULL,
     seq       BIGINT      NOT NULL,
     at        BIGINT      NOT NULL,
     kind      VARCHAR(64) NOT NULL,
