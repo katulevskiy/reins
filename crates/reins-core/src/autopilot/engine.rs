@@ -174,6 +174,8 @@ struct RiskStates {
 /// ([`overnight::gate`]); nothing else can make one.
 enum By {
     Lockdown,
+    /// An explicit rule that denies (Decisions v2: the only way anything but Lockdown denies).
+    Rule,
     Bypass,
     Autopilot,
     Overnight(Option<overnight::Proof>),
@@ -183,6 +185,7 @@ impl By {
     fn name(&self) -> &'static str {
         match self {
             Self::Lockdown => "lockdown",
+            Self::Rule => "rule",
             Self::Bypass => "bypass",
             Self::Autopilot => "autopilot",
             Self::Overnight(_) => "overnight",
@@ -303,6 +306,7 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
         neighbours: neighbour_lines(j),
         reason: s.reason.clone(),
         risk: s.risk.clone(),
+        matrix: s.matrix.clone(),
     }
 }
 
@@ -323,6 +327,7 @@ pub(crate) fn activity_note(r: &AuditRecord) -> Option<AutopilotNote> {
             && matches!(r.outcome.as_str(), "released" | "sent" | "denied")
             && r.at > unix_now() - SUGGESTION_RETENTION_SECS,
         risk: n.risk.as_ref().map(RiskNote::view),
+        matrix: n.matrix.as_ref().map(super::policy::matrix_view),
     })
 }
 
@@ -356,6 +361,7 @@ fn suggestion_view(s: &Suggestion) -> SuggestionView {
         floor: s.floor.is_some(),
         judged: j.is_some(),
         risk: s.risk.as_ref().map(RiskNote::view),
+        matrix: s.matrix.as_ref().map(super::policy::matrix_view),
     }
 }
 
@@ -753,6 +759,7 @@ impl Engine {
             decided: None,
             risk: None,
             deletes: false,
+            matrix: None,
         }
     }
 
@@ -902,6 +909,7 @@ impl Engine {
                 reason: "Always asks: a new connection is only ever approved by you".to_owned(),
                 decided: None,
                 risk: None,
+                matrix: None,
             };
             self.store.ap_put_suggestion(&s)?;
             let mut item = views::pairing_item(&pairing);
@@ -950,6 +958,28 @@ impl Engine {
             &subject.described.facts.target,
         )?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
+        // Decisions v2: what the matrix says of it (recorded in shadow; deciding in Auto once switched on).
+        let matrix = match row.kind {
+            PendingKind::Request => {
+                let parked: ParkedRequest =
+                    serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
+                match self.ap_evaluate(&parked.request, !novel, now) {
+                    Ok(Some((note, unknown))) => {
+                        if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
+                            log::warn!("Autopilot could not keep a question: {e}");
+                        }
+                        Some(note)
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        log::warn!("Autopilot could not evaluate the matrix: {e}");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        let matrix_decides = mode == AutopilotMode::Auto && matrix.as_ref().is_some_and(|m| !m.shadow);
         let mut s = Suggestion {
             deletes: false,
             request_id: subject.id.clone(),
@@ -976,6 +1006,7 @@ impl Engine {
             reason: String::new(),
             decided: None,
             risk: None,
+            matrix: matrix.clone(),
         };
 
         match mode {
@@ -985,6 +1016,24 @@ impl Engine {
                 return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Lockdown)).await;
             }
             AutopilotMode::Bypass | AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight => {}
+        }
+        if matrix_decides && let Some(m) = &matrix {
+            match m.outcome {
+                // Only an explicit rule denies.
+                reins_policy::matrix::Outcome::Deny => {
+                    s.verdict = Verdict::Deny;
+                    s.reason = m.line.clone();
+                    return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Rule)).await;
+                }
+                reins_policy::matrix::Outcome::Ask {
+                    ..
+                } => {
+                    s.reason = format!("Asks: {}", m.line);
+                    return self.ap_wait(&subject, &s);
+                }
+                // Permitted: the model is the sanity check below, and can only make it an ask.
+                reins_policy::matrix::Outcome::Auto => {}
+            }
         }
 
         // A model that rates risk reads, for the risk only, a hook's question as the action it is about, with the context
@@ -1321,6 +1370,7 @@ impl Engine {
             decided: None,
             risk: None,
             deletes: false,
+            matrix: None,
         };
         subject.choice = subject.everything.clone();
         if subject.grant {
@@ -1605,7 +1655,7 @@ impl Engine {
             let still = |m: AutopilotMode| now_mode == Some(m) && s.mode == m;
             let allowed = match &by {
                 By::Bypass => still(AutopilotMode::Bypass),
-                By::Lockdown | By::Overnight(None) => false,
+                By::Lockdown | By::Rule | By::Overnight(None) => false,
                 // Overnight's gate proved it, for this very request, and Overnight still holds for its AI
                 By::Overnight(Some(proof)) => proof.request_id() == subject.id && still(AutopilotMode::Overnight),
                 // Auto, or an Overnight without a model that rates risk (which decides like Auto): Overnight with one
@@ -2554,6 +2604,7 @@ impl Engine {
                 decided: None,
                 risk: None,
                 deletes: false,
+                matrix: None,
             });
             s.mode = AutopilotMode::Lockdown;
             "Lockdown: every request is denied".clone_into(&mut s.reason);
@@ -2607,6 +2658,7 @@ impl Engine {
             reason: String::new(),
             decided: None,
             risk: None,
+            matrix: None,
         };
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);

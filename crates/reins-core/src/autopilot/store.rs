@@ -171,6 +171,28 @@ pub struct Suggestion {
     /// It was read to delete, move away or overwrite something (the connection's last hour counts these).
     #[serde(default)]
     pub deletes: bool,
+    /// What the matrix decided, or would have decided in shadow (Decisions v2).
+    #[serde(default)]
+    pub matrix: Option<MatrixNote>,
+}
+
+/// What the matrix said of a request (`reins_policy::matrix::Evaluation`, as kept).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatrixNote {
+    pub outcome: reins_policy::matrix::Outcome,
+    pub zone: reins_policy::context::Zone,
+    pub level: reins_policy::effects::Level,
+    /// "Auto · Mine · Undoable".
+    pub line: String,
+    /// The policy snapshot's hash.
+    pub snapshot: String,
+    /// Recorded only: something else decided.
+    pub shadow: bool,
+    /// The kinds of effect it had, and the resource it acted on ("Ask me next time" writes its exception from them).
+    #[serde(default)]
+    pub kinds: Vec<reins_policy::effects::EffectKind>,
+    #[serde(default)]
+    pub resource: Option<String>,
 }
 
 /// A stored profile with its id.
