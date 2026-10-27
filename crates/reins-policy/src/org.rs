@@ -567,14 +567,25 @@ fn money_at_least(analysis: &Analysis, args: &Value, min: u64, currency: Option<
         // No currency, or one that can't be read: unknown.
         _ => return true,
     };
-    let Some(amount) = args.get("amount").or_else(|| args.get("total")) else {
+    // Every amount-like field is read (`payments_purchase_request` pays `total`; others name `amount`): they must
+    // all parse and agree, else the amount is unknown and counts as at least `min` (fails closed).
+    let fields: Vec<&Value> = AMOUNT_FIELDS.iter().filter_map(|k| args.get(*k)).collect();
+    if fields.is_empty() {
         return true;
-    };
-    match reins_proto::payments::parse_amount(amount, &code, "amount") {
-        Ok(minor) => u64::try_from(minor).map_or(true, |m| m >= min),
-        Err(_) => true,
     }
+    let mut amounts = Vec::with_capacity(fields.len());
+    for v in fields {
+        match reins_proto::payments::parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok()) {
+            Some(m) => amounts.push(m),
+            None => return true,
+        }
+    }
+    amounts.dedup();
+    amounts.len() != 1 || amounts[0] >= min
 }
+
+/// The arguments a payment's amount can be named by.
+const AMOUNT_FIELDS: &[&str] = &["amount", "total"];
 
 /// What a device must show to decide (06 §6). Checked by the decision service; executors trust the signed roster's
 /// `may_decide`.
@@ -1708,6 +1719,20 @@ mod tests {
         assert!(big(&purchase("12", Some("EUR"), None)), "another currency is unknown");
         assert!(big(&purchase("12", None, None)), "no currency is unknown");
         assert!(big(&purchase("lots", Some("USD"), None)), "an amount that can't be read is unknown");
+        // `total` is what a purchase pays: a small `amount` beside it doesn't hide it, and fields that disagree or
+        // don't parse count as above.
+        let mut both = purchase("5000", Some("USD"), None);
+        both["amount"] = json!(1);
+        assert!(big(&both), "amount 1 with total 5000");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("5000");
+        assert!(big(&both), "disagreeing fields");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("1.00");
+        assert!(!big(&both), "agreeing small fields");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("x");
+        assert!(big(&both), "one field that doesn't parse");
         // Not a payment: the rule doesn't apply.
         assert!(!rule_ids(&eval("github_create_issue", &issue("acme/api"), &p, None)).contains(&"big".into()));
         // Never on a permit (unknown would widen).
