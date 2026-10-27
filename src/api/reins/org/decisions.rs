@@ -622,28 +622,47 @@ pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
     Ok(sweep_routed(c, now, &std::collections::BTreeMap::new())?.0)
 }
 
-/// [`sweep`], escalating first (O3) with what the dynamic sources said (org → answers); returns the escalations to
-/// notify.
+/// [`sweep`], escalating first (O3) with what the dynamic sources said for each request; returns the escalations to
+/// notify. Every part runs whatever another did, and every row on its own: a row that fails is logged and skipped,
+/// never stopping deadline expiry for the others.
 pub fn sweep_routed(
     c: &mut DbConnInner,
     now: i64,
-    dynamic: &std::collections::BTreeMap<String, routing::Dynamic>,
+    prefetched: &routing::escalation::Prefetched,
 ) -> Result<(usize, Vec<routing::escalation::Swept>), OrgError> {
-    let swept = routing::escalation::escalate_due(c, now, dynamic)?;
+    use diesel::Connection;
+    let swept = routing::escalation::escalate_due(c, now, prefetched).unwrap_or_else(|e| {
+        warn!("Org sweep: escalation: {e:?}");
+        Vec::new()
+    });
     let mut n = swept.len();
-    for row in reins_org_request::q_overdue_reviews(c, now)? {
-        if expire(c, &row.org_uuid, &row, "window", now)? {
-            n += 1;
+    let mut each = |c: &mut DbConnInner,
+                    what: &str,
+                    row: &ReinsOrgRequest,
+                    f: &dyn Fn(&mut DbConnInner) -> Result<bool, OrgError>| {
+        match c.transaction(|c| f(c)) {
+            Ok(true) => n += 1,
+            Ok(false) => {}
+            Err(e) => warn!("Org {}: {what} of {} failed: {e:?}", row.org_uuid, row.uuid),
         }
+    };
+    for row in listed(reins_org_request::q_overdue_reviews(c, now), "q_overdue_reviews") {
+        each(c, "expiry", &row, &|c| expire(c, &row.org_uuid, &row, "window", now));
     }
-    for row in reins_org_request::q_lapsed_approvals(c, now)? {
-        if end(c, &row.org_uuid, &row, st::EXPIRED, now)? {
-            audit::record(c, &row.org_uuid, audit::kinds::REQUEST_EXPIRED, None, Some(&row.uuid), &json!({}), now)?;
-            n += 1;
-        }
+    for row in listed(reins_org_request::q_lapsed_approvals(c, now), "q_lapsed_approvals") {
+        each(c, "lapse", &row, &|c| {
+            let moved = end(c, &row.org_uuid, &row, st::EXPIRED, now)?;
+            if moved {
+                audit::record(c, &row.org_uuid, audit::kinds::REQUEST_EXPIRED, None, Some(&row.uuid), &json!({}), now)?;
+            }
+            Ok(moved)
+        });
     }
-    for row in reins_org_request::q_stuck(c, now - STUCK_SECS)? {
-        if reins_org_request::q_set_state(c, &row.org_uuid, &row.uuid, &[st::EXECUTING], st::UNKNOWN, now)? {
+    for row in listed(reins_org_request::q_stuck(c, now - STUCK_SECS), "q_stuck") {
+        each(c, "stuck check", &row, &|c| {
+            if !reins_org_request::q_set_state(c, &row.org_uuid, &row.uuid, &[st::EXECUTING], st::UNKNOWN, now)? {
+                return Ok(false);
+            }
             let keep = retention_secs(c, &row.org_uuid)?;
             reins_org_request::q_set_purge(c, &row.org_uuid, &row.uuid, now + keep)?;
             audit::record(
@@ -656,10 +675,18 @@ pub fn sweep_routed(
                 now,
             )?;
             wake(&row.uuid);
-            n += 1;
-        }
+            Ok(true)
+        });
     }
     Ok((n, swept))
+}
+
+/// Rows a sweep part works on; a query that fails is logged and the part skipped this pass.
+fn listed(rows: diesel::QueryResult<Vec<ReinsOrgRequest>>, what: &str) -> Vec<ReinsOrgRequest> {
+    rows.unwrap_or_else(|e| {
+        warn!("Org sweep: {what}: {e:?}");
+        Vec::new()
+    })
 }
 
 /// A member is gone (deprovisioning): their requests no executor took yet are cancelled, and their answers to reviews

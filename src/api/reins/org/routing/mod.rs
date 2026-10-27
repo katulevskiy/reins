@@ -709,6 +709,12 @@ pub(crate) mod tests {
             rule("owners", "acme/code", json!({"reviewers": "code_owners", "class": "deferred"})),
             rule("oncall", "acme/pay", json!({"reviewers": {"on_call": {"alias": "payments"}}, "class": "deferred"})),
             rule("prod", "acme/prod", json!({"reviewers": {"group": "sec"}, "class": "deferred"})),
+            rule(
+                "esc",
+                "acme/esc*",
+                json!({"reviewers": {"group": "fin"}, "escalate": ["code_owners"],
+                                            "class": "deferred"})
+            ),
         ]);
         let mut p: Value = serde_json::from_str(crate::api::reins::org::policy::DEVELOPER_BASELINE).unwrap();
         p["rules"] = rules;
