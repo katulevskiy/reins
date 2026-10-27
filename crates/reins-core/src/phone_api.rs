@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use reins_proto::device::{
     AccountDeletion, Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, PairingResult, Pending,
+    codes,
 };
 use reins_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
 use reins_proto::relay::{RelayRequest, RelayResponse};
@@ -68,6 +69,20 @@ impl ApiFailure {
                 },
             },
             Self::Core(e) => e,
+        }
+    }
+
+    /// [`Self::into_core`] for `GET /connections`: a 403 saying this phone is neither the approval device
+    /// (`not_approval_device`: an account without phone roles) nor a current member of the roster (`not_a_member`)
+    /// is [`CoreError::NotAViewer`], so the app never shows the refusal as an empty list.
+    pub fn into_connections_core(self) -> CoreError {
+        match &self {
+            Self::Status {
+                status: 403,
+                code,
+                ..
+            } if code == codes::NOT_A_MEMBER || code == codes::NOT_APPROVAL_DEVICE => CoreError::NotAViewer,
+            _ => self.into_core(),
         }
     }
 }
@@ -347,6 +362,43 @@ mod tests {
         assert!(api.register_device(&reg).await.unwrap().replaced_previous);
         assert_eq!(api.connections().await.unwrap().connections[0].client_host, "chatgpt.com");
         api.delete_connection("c1").await.unwrap();
+    }
+
+    #[test]
+    fn a_refused_connections_list_is_not_a_viewer_and_other_failures_keep_their_meaning() {
+        let status = |status: u16, code: &str| ApiFailure::Status {
+            status,
+            code: code.to_owned(),
+            message: "m".to_owned(),
+        };
+        // Neither the approval device nor a member: the list is not this phone's to read.
+        assert_eq!(status(403, codes::NOT_A_MEMBER).into_connections_core(), CoreError::NotAViewer);
+        assert_eq!(status(403, codes::NOT_APPROVAL_DEVICE).into_connections_core(), CoreError::NotAViewer);
+        // Anything else stays what it was.
+        assert_eq!(
+            status(403, codes::RATE_LIMITED).into_connections_core(),
+            CoreError::Server {
+                status: 403,
+                reason: codes::RATE_LIMITED.to_owned()
+            }
+        );
+        assert_eq!(
+            status(500, codes::NOT_A_MEMBER).into_connections_core(),
+            CoreError::Server {
+                status: 500,
+                reason: codes::NOT_A_MEMBER.to_owned()
+            }
+        );
+        assert_eq!(ApiFailure::Unauthorized.into_connections_core(), CoreError::NotLoggedIn);
+        assert_eq!(status(404, "").into_connections_core(), CoreError::NotFound);
+        // Elsewhere a 403 keeps its code (the "replaced" banner reads it from the poll).
+        assert_eq!(
+            status(403, codes::NOT_APPROVAL_DEVICE).into_core(),
+            CoreError::Server {
+                status: 403,
+                reason: codes::NOT_APPROVAL_DEVICE.to_owned()
+            }
+        );
     }
 
     #[tokio::test]

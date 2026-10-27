@@ -23,12 +23,15 @@ struct ConnectionsScreen: View {
         NextPage(bottom: 120) {
             StandardTitle("Connections")
                 .accessibilityIdentifier("connectionsTitle")
-            PlusSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
+            PlusSectionHeader(title: "AI apps", glyph: .globe, count: model.connectionsHidden ? nil : apps.count, addLabel: "Connect an AI app", addId: "connect") {
                 connecting = true
             }
             .padding(.top, -4)
             RaisedGroup {
-                if apps.isEmpty {
+                // Not this phone's to read (it neither approves nor views): where they are, never "None yet".
+                if model.connectionsHidden {
+                    HiddenRow(id: "aisHidden")
+                } else if apps.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noConnections")
                 }
                 ForEach(showAllApps ? apps : Array(apps.prefix(4)), id: \.id) { ConnectionRow(connection: $0) }
@@ -49,11 +52,13 @@ struct ConnectionsScreen: View {
                     .accessibilityIdentifier("showAllApps")
                 }
             }
-            PlusSectionHeader(title: "Computers", glyph: .laptop, count: computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
+            PlusSectionHeader(title: "Computers", glyph: .laptop, count: model.connectionsHidden ? nil : computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
                 connecting = true
             }
             RaisedGroup {
-                if computers.isEmpty {
+                if model.connectionsHidden {
+                    HiddenRow(id: "computersHidden")
+                } else if computers.isEmpty {
                     EmptyRow(text: "None yet").accessibilityIdentifier("noComputers")
                 }
                 ForEach(computers, id: \.id) { ConnectionRow(connection: $0) }
@@ -181,6 +186,30 @@ struct RowPressStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? Palette.paperSunken.opacity(0.6) : .clear)
             .contentShape(Rectangle())
+    }
+}
+
+/// In place of a group's connections when the server keeps them from this phone: they are on the approving phone (a
+/// phone sees them once that phone enrolls it as a viewer). The (?) says why.
+private struct HiddenRow: View {
+    var id: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Visible on the approving phone")
+                .font(RFont.sans(15))
+                .foregroundStyle(Palette.ink2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier(id)
+            HelpDot(
+                id: id,
+                text: "Only the phone that approves, and phones it adds as viewers, can see what is connected. This phone is signed in but is not one of them.",
+                size: 28
+            )
+        }
+        .frame(minHeight: 56)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
     }
 }
 

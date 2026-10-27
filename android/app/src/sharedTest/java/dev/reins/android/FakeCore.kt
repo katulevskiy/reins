@@ -125,6 +125,8 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var pairing: PairingView? = null
     @Volatile var grants: List<GrantView> = emptyList()
     @Volatile var connections: List<ConnectionView> = emptyList()
+    /** Thrown by [connections] instead of the list (a phone the server does not show them to). */
+    @Volatile var connectionsError: CoreException? = null
     @Volatile var activity: List<ActivityEntry> = emptyList()
     @Volatile var gmail: GmailStatus = GmailStatus.NeedsConsent
 
@@ -370,7 +372,10 @@ class FakeCore : ReinsCoreInterface {
         startingPolicy = policy
     }
 
-    override suspend fun connections() = connections
+    override suspend fun connections(): List<ConnectionView> {
+        connectionsError?.let { throw it }
+        return connections
+    }
 
     val createdGrants = CopyOnWriteArrayList<Triple<String, ApprovalKind, StandingGrant>>()
     /** The account each created grant was made for. */

@@ -137,6 +137,13 @@ class AppState {
     private val _connections = MutableStateFlow<List<ConnectionView>>(emptyList())
     val connections: StateFlow<List<ConnectionView>> = _connections.asStateFlow()
 
+    /**
+     * The server keeps the AI apps and computers to the approving phone and the phones it enrolled as viewers, and
+     * this phone is neither: Connections says where they are instead of "none".
+     */
+    private val _connectionsHidden = MutableStateFlow(false)
+    val connectionsHidden: StateFlow<Boolean> = _connectionsHidden.asStateFlow()
+
     /** Id of the newest activity entry the user has looked at. */
     private val _seenActivityId = MutableStateFlow(0L)
     val seenActivityId: StateFlow<Long> = _seenActivityId.asStateFlow()
@@ -274,6 +281,7 @@ class AppState {
             _services.value = emptyList()
             _startingPolicy.value = null
             _connections.value = emptyList()
+            _connectionsHidden.value = false
             setMcpServers(emptyList())
             _mcpNotice.value = null
             _approvalDevice.value = false
@@ -337,6 +345,13 @@ class AppState {
 
     fun setConnections(items: List<ConnectionView>) {
         _connections.value = items
+        _connectionsHidden.value = false
+    }
+
+    /** The server would not show this phone the connections ([connectionsHidden]); none are kept. */
+    fun setConnectionsHidden() {
+        _connections.value = emptyList()
+        _connectionsHidden.value = true
     }
 
     /** Activity's search words and filters, kept while the app runs (never written to disk). */

@@ -561,6 +561,9 @@ class AppContainer(private val context: Context) {
             if (state.isCurrent(epoch)) state.setConnections(connections)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: CoreException.NotAViewer) {
+            // Not this phone's to read: say where they are, never "none".
+            if (state.isCurrent(epoch)) state.setConnectionsHidden()
         } catch (e: Exception) {
             // Offline or signed out: icons fall back to names, nothing else depends on this.
         }

@@ -498,6 +498,35 @@ async fn reading_an_email_that_does_not_exist_is_an_error_that_still_counts_what
 }
 
 #[tokio::test]
+async fn a_phone_that_may_not_read_the_connections_hears_so_and_not_an_empty_list() {
+    for code in ["not_a_member", "not_approval_device"] {
+        let env = env().await;
+        Mock::given(method("GET"))
+            .and(path("/reins/api/connections"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(json!({"error": code, "message": "not this phone's to read"})),
+            )
+            .mount(&env.server)
+            .await;
+        assert_eq!(env.core.connections().await, Err(CoreError::NotAViewer), "{code}");
+    }
+    // Another refusal keeps its status and code.
+    let env = env().await;
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "forbidden", "message": "no"})))
+        .mount(&env.server)
+        .await;
+    assert_eq!(
+        env.core.connections().await,
+        Err(CoreError::Server {
+            status: 403,
+            reason: "forbidden".to_owned()
+        })
+    );
+}
+
+#[tokio::test]
 async fn a_connection_icon_choice_is_remembered_and_forgotten_with_the_connection() {
     let env = env().await;
     serve_connections(&env).await;

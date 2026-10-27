@@ -20403,6 +20403,13 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      */
     case RecoveryNeedsConfirmation(reason: String, token: String
     )
+    /**
+     * `connections`: the server shows the account's AI apps and computers only to the phone that approves and to
+     * the phones it enrolled as viewers, and this phone is neither (a second phone that signed in but was never
+     * enrolled, a removed viewer, or a replaced approval device). The list is not empty: it is not this phone's to
+     * read, so the app says where it is instead of "None yet".
+     */
+    case NotAViewer
 
     
 
@@ -20466,6 +20473,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf), 
             token: try FfiConverterString.read(from: &buf)
             )
+        case 17: return .NotAViewer
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -20551,6 +20559,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             FfiConverterString.write(reason, into: &buf)
             FfiConverterString.write(token, into: &buf)
             
+        
+        case .NotAViewer:
+            writeInt(&buf, Int32(17))
+        
         }
     }
 }
