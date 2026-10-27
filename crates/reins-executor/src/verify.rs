@@ -262,7 +262,7 @@ fn member_policy(
         (Some(s), Some(h)) => (s, h),
         _ => return Err(Refusal::UnsignedMemberPolicy),
     };
-    let msg = member_policy_message(&record.org, &record.member, &signed.body);
+    let msg = member_policy_message(&record.org, &record.member, signed.version, signed.at, &signed.body);
     let signed_ok = requester
         .devices
         .iter()
@@ -653,6 +653,10 @@ mod tests {
         // Signed by someone else's device.
         let mut j = job.clone();
         j.member_policy = Some(f.member_policy(&mine, &f.kim));
+        assert_eq!(check(&f, &j), Err(Refusal::UnsignedMemberPolicy));
+        // Its version or time changed after signing.
+        let mut j = job.clone();
+        j.member_policy.as_mut().unwrap().version += 1;
         assert_eq!(check(&f, &j), Err(Refusal::UnsignedMemberPolicy));
         // Dropped by the server.
         let mut j = job.clone();

@@ -267,9 +267,12 @@ impl Fixture {
     #[allow(clippy::unused_self)]
     pub fn member_policy(&self, policy: &MemberPolicy, device: &Device) -> SignedMemberPolicy {
         let body = canonical_json(&serde_json::to_value(policy).unwrap());
+        let (version, at) = (2, now());
         SignedMemberPolicy {
-            sig: device.sign(&member_policy_message(ORG, LEE, &body)),
+            sig: device.sign(&member_policy_message(ORG, LEE, version, at, &body)),
             body,
+            version,
+            at,
             device: device.id.clone(),
         }
     }

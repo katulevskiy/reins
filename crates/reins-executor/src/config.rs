@@ -31,20 +31,9 @@ use zeroize::Zeroizing;
 /// The longest a signed roster is trusted after it was issued (seconds).
 pub const MAX_ROSTER_AGE_SECS: i64 = 900;
 
-/// Where an executor runs (05 §5). The same binary in every mode; nothing else differs in code in O2.
-///
-/// Kept here rather than in `reins-proto` so the executor stands alone; the server has its own copy of the names.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutorMode {
-    /// Run by Reins, one per tenant (a `reins-executor@<org>.service` unit with its own state and key).
-    #[default]
-    Cloud,
-    /// Run by Reins on hardware dedicated to the org.
-    Dedicated,
-    /// Run by the org in its own network.
-    SelfHosted,
-}
+/// Where an executor runs (05 §5): `cloud`, `dedicated` or `self_hosted`. The same binary in every mode; nothing else
+/// differs in code in O2.
+pub use reins_proto::org::ExecutorMode;
 
 /// A secret, named by where it is read from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +98,10 @@ fn google_api() -> String {
     "https://www.googleapis.com".to_owned()
 }
 
+const fn cloud() -> ExecutorMode {
+    ExecutorMode::Cloud
+}
+
 const fn max_roster_age() -> i64 {
     MAX_ROSTER_AGE_SECS
 }
@@ -119,7 +112,7 @@ pub struct ExecutorConfig {
     pub server: String,
     pub org: String,
     pub executor_id: String,
-    #[serde(default)]
+    #[serde(default = "cloud")]
     pub mode: ExecutorMode,
     /// The executor's Ed25519 key (`reins-executor keygen`).
     pub key_file: PathBuf,
