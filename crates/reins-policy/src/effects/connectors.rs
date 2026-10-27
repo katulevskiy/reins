@@ -22,13 +22,29 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
 }
 
-fn repo_of(args: &Value) -> String {
+/// The repository a GitHub tool call acts on, as `owner/name`, from the arguments it will use; `None` when they
+/// don't name one exactly. With both `owner` and `repo`, `owner` decides: a `repo` of `other/x` with `owner=me` names
+/// no repository (zoned Outside), never `me`'s.
+#[must_use]
+pub fn tool_repo(args: &Value) -> Option<String> {
+    let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     match (str_arg(args, "owner"), str_arg(args, "repo")) {
-        (_, Some(r)) if r.contains('/') => r.to_owned(),
-        (Some(o), Some(r)) => format!("{o}/{r}"),
-        (None, Some(r)) => r.to_owned(),
-        _ => "a repository".to_owned(),
+        (Some(o), Some(r)) => match r.split_once('/') {
+            Some((ro, name)) if ro.eq_ignore_ascii_case(o) && valid(ro) && valid(name) => Some(format!("{ro}/{name}")),
+            Some(_) => None,
+            None if valid(o) && valid(r) => Some(format!("{o}/{r}")),
+            None => None,
+        },
+        (None, Some(r)) => match r.split_once('/') {
+            Some((o, name)) if valid(o) && valid(name) => Some(r.to_owned()),
+            _ => None,
+        },
+        _ => None,
     }
+}
+
+fn repo_of(args: &Value) -> String {
+    tool_repo(args).unwrap_or_else(|| "a repository not named exactly".to_owned())
 }
 
 fn full(effects: Vec<Effect>) -> Analysis {

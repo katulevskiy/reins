@@ -956,6 +956,13 @@ impl Reader<'_, '_> {
                     self.w.run_script(&s, Vec::new());
                 }
             }
+            Val::Strs(list) => {
+                // A command line with values the code computes: shown as far as it can be read, never certain.
+                for s in list.clone() {
+                    self.w.run_script(&s.replace(UNKNOWN, "\"$__reins_unknown__\""), Vec::new());
+                }
+                self.w.lower(Certainty::None, "a command line the code builds at run time");
+            }
             Val::List(argv) if !argv.is_empty() && !argv[0].contains(UNKNOWN) => {
                 let line = argv
                     .iter()
@@ -975,7 +982,7 @@ impl Reader<'_, '_> {
                     program: "a program the code chooses".to_owned(),
                     source: CodeSource::Unknown,
                 });
-                self.w.lower(Certainty::Partial, "a program the code runs, built at run time");
+                self.w.lower(Certainty::None, "a program the code runs, built at run time");
             }
         }
     }

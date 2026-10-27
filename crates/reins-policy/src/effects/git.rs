@@ -365,17 +365,13 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
             if ops.first().is_some_and(|o| o.text == "remove") {
                 for t in ops.iter().skip(1) {
                     let p = w.path(t);
-                    // A worktree's commits stay in the repository; uncommitted work goes with it.
-                    // A git worktree is part of the workspace wherever it is (01 §2.5), and git removes only a
-                    // worktree: its commits stay in the repository.
-                    let area = match p.area {
-                        super::model::Area::Generated | super::model::Area::Scratch => p.area.clone(),
-                        _ => super::model::Area::Source,
-                    };
+                    // Its commits stay in the repository, but `--force` drops uncommitted work too, and a path that is
+                    // not a known worktree may not be one at all: recoverable only without force, in a known
+                    // worktree. Its area is where it really is.
+                    let force = rest.iter().any(|a| a.text == "--force" || a.text == "-f" || a.text == "-ff");
                     w.effect(Effect::FileDelete {
                         paths: vec![super::model::PathRef {
-                            recoverable: true,
-                            area,
+                            recoverable: !force && p.recoverable,
                             ..p
                         }],
                         recursive: true,

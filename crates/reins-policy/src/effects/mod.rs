@@ -20,7 +20,9 @@ mod programs;
 mod shell;
 mod workspace;
 
-pub use connectors::{ToolAnnotations, analyze_files, analyze_mcp, analyze_question, analyze_tool, github_api};
+pub use connectors::{
+    ToolAnnotations, analyze_files, analyze_mcp, analyze_question, analyze_tool, github_api, tool_repo,
+};
 pub use git::{analyze_git_read, analyze_push, is_default};
 pub use infra::sql_change;
 pub use level::{ACCOUNTS, AGENT, Analysis, MASS_MESSAGE, MAX_LINES, Summary, floor_of, level_of, local_host};

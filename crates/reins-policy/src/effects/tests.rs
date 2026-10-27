@@ -170,7 +170,13 @@ fn git_subcommands() {
     assert_eq!(level("git push origin --delete feat/x"), Level::L1);
     assert_eq!(level("git push origin :main"), Level::L3);
     assert_eq!(level("git clean -fdx"), Level::L1);
-    assert_eq!(level("git -C /home/me/Documents/dev/app worktree remove --force .claude/worktrees/a"), Level::L1);
+    assert_eq!(level("git -C /home/me/Documents/dev/app worktree remove .claude/worktrees/a"), Level::L1);
+    assert_eq!(
+        level("git -C /home/me/Documents/dev/app worktree remove --force .claude/worktrees/a"),
+        Level::L3,
+        "--force drops uncommitted work"
+    );
+    assert_eq!(level("git worktree remove ~/elsewhere/wt"), Level::L3, "outside the workspace stays outside");
     assert_eq!(run("git -c core.sshCommand='sh -c x' fetch").certainty, Certainty::Partial);
 }
 
@@ -260,7 +266,7 @@ fn subprocess_literal_is_analysed() {
     assert_eq!(level("python3 -c \"import subprocess; subprocess.run(['rm', '-rf', '/home/me/x'])\""), Level::L3);
     assert_eq!(level("python3 -c \"import os; os.system('rm -rf /tmp/x')\""), Level::L0);
     let a = run("python3 -c \"import subprocess,sys; subprocess.run(sys.argv[1], shell=True)\"");
-    assert_eq!(a.certainty, Certainty::Partial);
+    assert_eq!(a.certainty, Certainty::None, "a command line the code takes from elsewhere");
 }
 
 #[test]
@@ -348,4 +354,94 @@ fn adversarial_findings() {
         Level::L3,
         "shift and \"$@\""
     );
+}
+
+/// The security review of the engine (one test per finding; the replay corpus has a case for each too).
+#[test]
+fn security_review_findings() {
+    // 1. /dev and /proc: only exact device paths are nothing; process environments and memory are secrets; /proc
+    //    links are read through.
+    for cmd in [
+        "cat /proc/self/environ",
+        "cat /proc/1234/environ",
+        "xxd /proc/1/mem",
+        "cat /proc/self/cmdline",
+        "cat /dev/sda",
+    ] {
+        assert!(run(cmd).floor.contains(&Floor::SecretRead), "{cmd}: {:?}", run(cmd));
+    }
+    assert!(run("cat /proc/self/root/home/me/.ssh/id_ed25519").floor.contains(&Floor::SecretRead));
+    assert!(run("cat /proc/thread-self/root/home/me/.aws/credentials").floor.contains(&Floor::SecretRead));
+    assert_eq!(run("cat /proc/self/cwd/.env").level, Level::L1, "the agent's own folder");
+    assert_eq!(run("cat /proc/42/cwd/notes").certainty, Certainty::Partial);
+    assert_eq!(run("echo x > /dev/null; cat /dev/urandom | head -c 8").effects, vec![]);
+    // 2. Code with values that are not in the command is never certain.
+    for cmd in [
+        "python3 -c \"$X\"",
+        "python3 -c \"import os; os.remove('$F')\"",
+        "sh -c \"rm -rf $DIR\"",
+        "bash <<EOF\nrm -rf $DIR\nEOF",
+        "ssh host-1 \"rm -rf $D\"",
+        "python3 - <<EOF\nimport shutil\nshutil.rmtree('$D')\nEOF",
+    ] {
+        let a = run(cmd);
+        assert_eq!(a.certainty, Certainty::None, "{cmd}: {a:?}");
+        assert!(a.floor.contains(&Floor::Unreadable), "{cmd}");
+    }
+    // 3. Code runners, tunnels, API clients and editors by their arguments.
+    for cmd in [
+        "elixir -e 'File.rm_rf!(\"/\")'",
+        "rails runner 'User.delete_all'",
+        "erl -eval 'os:cmd(\"x\")'",
+        "tmux send-keys -t 0 'rm -rf ~' Enter",
+        "gdb -p 1 -batch -ex 'call system(\"x\")'",
+    ] {
+        assert_eq!(run(cmd).certainty, Certainty::None, "{cmd}: {:?}", run(cmd));
+    }
+    for cmd in ["ngrok http 3000", "cloudflared tunnel run x", "make deploy", "tailscale funnel 443"] {
+        assert!(run(cmd).floor.contains(&Floor::Publish), "{cmd}: {:?}", run(cmd));
+    }
+    assert!(run("stripe charges create --amount 500").floor.contains(&Floor::Money));
+    assert_eq!(level("code --install-extension evil.ext"), Level::L3);
+    assert_eq!(level("code ."), Level::L0);
+    assert_eq!(level("hyprctl dispatch exec rm -rf ~/Documents"), Level::L3);
+    assert_eq!(level("caddy run --config Caddyfile"), Level::L2, "a server on the network");
+    assert_eq!(level("caddy file-server --listen 127.0.0.1:8080"), Level::L0);
+    // 4. Settings: only the read-only forms are nothing.
+    assert_eq!(run("defaults read com.apple.dock").effects, vec![]);
+    assert_eq!(level("defaults write com.apple.dock autohide -bool true"), Level::L1);
+    assert_eq!(run("sysctl kernel.hostname").effects, vec![]);
+    assert_eq!(level("sysctl -w kernel.randomize_va_space=0"), Level::L3);
+    assert_eq!(level("sudo sysctl vm.swappiness=10"), Level::L3);
+    assert_eq!(level("scutil --set HostName x"), Level::L3);
+    assert_eq!(run("scutil --get ComputerName").effects, vec![]);
+    assert_eq!(run("launchctl print system").effects, vec![]);
+    assert_eq!(run("launchctl load ~/Library/LaunchAgents/x.plist").certainty, Certainty::Partial);
+    // 6. A repository named two ways is no repository.
+    let a = analyze_tool("github_pr_merge", &serde_json::json!({"owner": "dkat", "repo": "victim/x", "number": 1}));
+    assert!(a.lines().iter().all(|l| !l.contains("dkat")), "{:?}", a.lines());
+    assert_eq!(tool_repo(&serde_json::json!({"owner": "dkat", "repo": "victim/x"})), None);
+    assert_eq!(tool_repo(&serde_json::json!({"owner": "dkat", "repo": "dkat/x"})), Some("dkat/x".to_owned()));
+    assert_eq!(tool_repo(&serde_json::json!({"owner": "dkat", "repo": "x"})), Some("dkat/x".to_owned()));
+    assert_eq!(tool_repo(&serde_json::json!({"repo": "victim/x"})), Some("victim/x".to_owned()));
+    assert_eq!(tool_repo(&serde_json::json!({"repo": "x"})), None);
+}
+
+#[test]
+fn sed_scripts_are_read_command_by_command() {
+    for (script, flagged) in [
+        ("s/a/b/g", false),
+        ("/work-runtime-ktx/d", false),
+        ("s/async fn x(a: u8; with)/y/", false),
+        ("s/a;w x/b/", false),
+        ("1,/re/{s/a/b/;p}", false),
+        ("s/a/b/e", true),
+        ("s/a/b/w out.txt", true),
+        ("1e rm -rf ~", true),
+        ("$w /tmp/x", true),
+        ("/x/!W f", true),
+    ] {
+        let cmd = format!("sed -i '{script}' f.txt");
+        assert_eq!(run(&cmd).certainty == Certainty::None, flagged, "{script}");
+    }
 }

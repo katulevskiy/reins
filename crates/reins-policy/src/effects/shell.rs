@@ -97,6 +97,9 @@ pub(super) enum Input {
     Decoded,
     /// Some other program's output, or a file's content not known here.
     Opaque(String),
+    /// Text with values in it that are not known ([`UNKNOWN`] where they are): what it does may be shown, but code in
+    /// it is never read with certainty.
+    Uncertain(String),
 }
 
 /// The walker's state.
@@ -351,10 +354,7 @@ impl<'a> Walk<'a> {
 
     /// Records a write to `p` (nothing for a fresh path's own creation).
     pub fn write(&mut self, p: PathRef) {
-        let t = p.path.as_str();
-        if matches!(t, "/dev/null" | "/dev/stdout" | "/dev/stderr" | "/dev/tty" | "/dev/zero")
-            || t.starts_with("/dev/fd/")
-        {
+        if device(&p.path) {
             return;
         }
         self.effect(Effect::FileWrite {
@@ -367,9 +367,7 @@ impl<'a> Walk<'a> {
         self.note(e);
         let path = self.path(e);
         let kind = file_kind(&path.path);
-        if kind == FileKind::Other
-            && (path.area.in_workspace() || path.path.starts_with("/dev/") || path.path.starts_with("/proc/"))
-        {
+        if device(&path.path) || (kind == FileKind::Other && path.area.in_workspace()) {
             // Reading the project's own files is no effect worth a line.
             return;
         }
@@ -403,6 +401,15 @@ impl<'a> Walk<'a> {
             }
         };
         let path = normalize(&text, &self.cwd, home);
+        // `/proc/self/root/x` is `/x`, `/proc/self/cwd/x` is `./x`: read through them, never as `/proc`.
+        let Some(path) = resolve_proc(&path, &self.cwd) else {
+            self.lower(Certainty::Partial, "a path through another process's folders");
+            return PathRef {
+                path,
+                area: Area::Unknown,
+                recoverable: false,
+            };
+        };
         let mut area = self.ctx.workspace.area(&path);
         if self.fresh.iter().any(|f| path == *f || path.starts_with(&format!("{f}/"))) {
             area = Area::Scratch;
@@ -509,7 +516,8 @@ impl<'a> Walk<'a> {
                 Part::CmdSub(script) => vec![self.substitution(script)],
                 Part::ProcSub(script) => {
                     self.script(script);
-                    vec![Exp::lit("/dev/fd/63")]
+                    // A pipe, named `/dev/fd/N`: its commands were read above.
+                    vec![Exp::lit("/dev/stdin")]
                 }
                 Part::Brace(words) => {
                     let mut all = Vec::new();
@@ -829,8 +837,8 @@ impl<'a> Walk<'a> {
         let exps = self.expand(&word);
         match exps.as_slice() {
             [one] if one.known() => Input::Text(one.text.clone()),
-            // Unknown values in a heredoc's text: the text is known but for them (they are rarely commands).
-            [one] => Input::Text(one.text.replace(UNKNOWN, "\u{2026}")),
+            // Unknown values in a heredoc's text: known but for them; never read as code with certainty.
+            [one] => Input::Uncertain(one.text.clone()),
             _ => Input::Opaque("a heredoc".to_owned()),
         }
     }
@@ -854,6 +862,41 @@ impl<'a> Walk<'a> {
     }
 }
 
+/// Device files that are no file: reading or writing them touches nothing. Only these exact paths: `/dev/sda`,
+/// `/dev/mem` or `/proc/self/environ` are not.
+pub(super) const DEVICES: &[&str] =
+    &["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/zero", "/dev/urandom", "/dev/random", "/dev/tty"];
+
+pub(super) fn device(path: &str) -> bool {
+    DEVICES.contains(&path)
+}
+
+/// A path through `/proc/<pid>/root` or `/proc/<pid>/cwd` as the path it reaches: `/proc/self/root/home/u/x` is
+/// `/home/u/x`, `/proc/self/cwd/x` is `x` in `cwd`. `None` for another process's working directory (not known here).
+#[must_use]
+pub fn resolve_proc(path: &str, cwd: &str) -> Option<String> {
+    let mut p = path.to_owned();
+    for _ in 0..8 {
+        let parts: Vec<&str> = p.trim_start_matches('/').split('/').collect();
+        if parts.len() < 3 || parts[0] != "proc" {
+            return Some(p);
+        }
+        let own = matches!(parts[1], "self" | "thread-self");
+        let pid = own || parts[1].chars().all(|c| c.is_ascii_digit());
+        if !pid {
+            return Some(p);
+        }
+        let rest = parts[3..].join("/");
+        p = match parts[2] {
+            "root" => format!("/{rest}"),
+            "cwd" if own && cwd.starts_with('/') => normalize(&rest, cwd, ""),
+            "cwd" => return None,
+            _ => return Some(p),
+        };
+    }
+    Some(p)
+}
+
 pub(super) fn unknown(why: String) -> Exp {
     Exp {
         text: UNKNOWN.to_string(),
@@ -868,6 +911,24 @@ pub(super) fn unknown(why: String) -> Exp {
 pub fn file_kind(path: &str) -> FileKind {
     let lower = path.to_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
+    // A process's environment, memory and arguments hold its tokens; raw memory and disks hold everything.
+    // An unknown name under /proc is any of these: the worst plausible.
+    if lower.starts_with("/proc/")
+        && (matches!(name, "environ" | "mem" | "cmdline" | "maps" | "smaps" | "auxv" | "pagemap")
+            || lower.contains('\u{2026}'))
+    {
+        return FileKind::Secret(SecretKind::Token);
+    }
+    if lower.starts_with("/dev/")
+        && (matches!(name, "mem" | "kmem" | "port")
+            || ["sd", "nvme", "hd", "vd", "xvd", "mmcblk", "dm-", "md", "disk", "loop"]
+                .iter()
+                .any(|d| name.starts_with(d))
+            || lower.starts_with("/dev/mapper/")
+            || lower.starts_with("/dev/disk/"))
+    {
+        return FileKind::Secret(SecretKind::Token);
+    }
     let in_ssh = lower.contains("/.ssh/") || lower.starts_with(".ssh/");
     if in_ssh {
         let public = name.ends_with(".pub")

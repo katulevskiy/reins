@@ -56,7 +56,14 @@ enum Replace {
 
 /// An IP address, unless it is this computer's own.
 fn ip(m: &str) -> String {
-    if m.starts_with("127.") || m == "0.0.0.0" {
+    // This computer's own, and private network addresses (every home router is 192.168.1.1): kept as they are.
+    let second = m.split('.').nth(1).and_then(|b| b.parse::<u8>().ok());
+    let private = m.starts_with("127.")
+        || m == "0.0.0.0"
+        || m.starts_with("10.")
+        || m.starts_with("192.168.")
+        || (m.starts_with("172.") && second.is_some_and(|b| (16..32).contains(&b)));
+    if private {
         m.to_owned()
     } else {
         "192.0.2.1".to_owned()
