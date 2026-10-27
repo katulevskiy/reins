@@ -2,6 +2,7 @@
 """The release gate must wait, match the tested commit, and reject failed or unavailable CI."""
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -91,8 +92,10 @@ assert "needs.android.result == 'success'" in publisher
 # assets (and the feed's repositories), installed from on both architectures.
 needs = publisher.split("    needs:\n", 1)[1].split("    if:", 1)[0]
 needed = [line.strip().removeprefix("- ") for line in needs.splitlines() if line.strip()]
-assert {"desktop-linux", "desktop", "desktop-app-linux", "desktop-app", "desktop-app-macos", "server", "docker",
+assert {"desktop-linux", "desktop", "desktop-app-linux", "desktop-app", "macos", "server", "docker",
         "android", "linux-packages", "linux-packages-amd64", "linux-packages-arm64"} <= set(needed), needed
+# Every macOS build publication waits for is the one macos job; TestFlight comes after publication.
+assert "ios-testflight" not in needed, needed
 for job in needed[1:]:
     assert f"needs.{job}.result == 'success'" in publisher, job
 # The Linux packages start once the Linux builds they package are done, not after every platform's.
@@ -117,10 +120,23 @@ for job in ("desktop-linux", "desktop", "android"):
     section = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n  ", 1)[0]
     assert "fail-fast: false" in section, job
 assert "uses: actions/upload-artifact@" not in workflow
-assert workflow.count("uses: ./.github/actions/upload-artifact") == 14
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 13
+# One macOS job before publication, on one runner: the CLI, the app's binaries and the notarized app. Its artifacts
+# keep the names publication downloads (dist-*), and nothing else in the run runs on macOS before publication.
+macos = workflow.split("\n  macos:\n", 1)[1].split("\n\n  server:\n", 1)[0]
+assert "    name: macOS builds\n" in macos and "    needs: plan\n" in macos and "runs-on: macos-15" in macos
+assert "name: dist-desktop-apple-darwin" in macos and "name: dist-app-macOS" in macos
+assert "download-artifact" not in macos and "\n    environment:" not in macos
+assert "timeout-minutes: 75 #" in macos and "timeout-minutes: 160" in macos
+jobs = re.split(r"\n  ([a-z0-9-]+):\n", workflow.split("\njobs:\n", 1)[1])
+macos_jobs = [name for name, body in zip(jobs[1::2], jobs[2::2])
+              if re.search(r"^    runs-on: .*(macos|xcode)", body.split("\n    steps:", 1)[0], re.M)]
+assert macos_jobs == ["macos", "ios-testflight"], macos_jobs
+# The release never waits for CI's macOS gate.
+assert "uses: ./.github/workflows/macos-gate.yml" not in workflow
 # The APK and the Play bundle are built on two runners and must carry the same versionCode: plan's.
 android = workflow.split("\n  android:\n", 1)[1].split("\n\n  ", 1)[0]
 assert "VERSION_CODE: ${{ needs.plan.outputs.version-code }}" in android
 assert "date -u" not in android
 assert "needs.android.outputs.version-code" not in workflow
-print("40 release CI gate and artifact retry checks passed")
+print("50 release CI gate and artifact retry checks passed")

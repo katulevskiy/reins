@@ -2,10 +2,10 @@
 """Decide which iOS UI test classes a run executes, and how the five UI shards split them.
 
 Every run has a sixth shard, unit, for ReinsTests: it gates the iOS check. The UI shards never do (ios.yml).
-A pull request runs ReinsTests plus the classes ios/ci-ui-map.txt names for its diff.
+ios.yml runs the UI shards on a push, the nightly and a hand run only, each the whole suite; a pull request runs
+ReinsTests alone. For a pull request, select still gives the classes ios/ci-ui-map.txt names for its diff.
 Longest matching prefix wins. Anything the map does not cover under ios/ (except the
-unit tests), and any shared or core path, runs the whole suite. So does a push, the
-nightly, a hand run, and a pull request labelled ios-full.
+unit tests), and any shared or core path, runs the whole suite. So does a pull request labelled ios-full.
 
   select                 print ui=ALL or ui=Class,Class from EVENT, BASE_SHA, LABELS
   select --files PATH    same, from those paths instead of git

@@ -75,10 +75,9 @@ Push notifications need APNs on the server: `REINS_APNS_KEY_FILE`, `_KEY_ID`, `_
 
 ### TestFlight
 
-Every release goes to TestFlight by itself: the release workflow's `ios-build` job archives with Xcode 27.0 on GitHub's
-`xcode-27` runner alongside the release's other builds and signs manually with the Apple Distribution certificate and
-the App Store profiles of the three targets; once the release is published, `ios-testflight` uploads it, and
-`scripts/testflight.py` sets export compliance, What to Test (the release notes), the
+Every release goes to TestFlight by itself: once the release is published, the release workflow's `ios-testflight` job
+archives with Xcode 27.0 on GitHub's `xcode-27` runner, signs manually with the Apple Distribution certificate and the
+App Store profiles of the three targets, and uploads it, and `scripts/testflight.py` sets export compliance, What to Test (the release notes), the
 groups ("Internal", and the external "Testers" by its id) and the beta review submission. Version: the release's; build
 number: the Android versionCode, kept above any build already in App Store Connect. No Mac is needed per release.
 Secrets, variables and the one-time setup: [CONTRIBUTING.md](../CONTRIBUTING.md#maintainers-testflight).

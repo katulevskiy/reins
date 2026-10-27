@@ -1,0 +1,125 @@
+name: macOS gate
+
+# CI yields the account's macOS runners to a release. The account runs five macOS jobs at once (GitHub-hosted, the
+# free tier of this public repository), and a release needs one before publication: its macos job ("macOS builds",
+# release.yml). Every macOS job in ci.yml, ios.yml, ios-core.yml and ios-job.yml needs this job, which waits while a
+# release run on main still wants a macOS runner:
+#   - its "macOS builds" job does not exist yet (the run is queued, or its plan has not finished; a run with nothing to
+#     release creates it skipped) or waits for a runner;
+#   - its "TestFlight upload" job (after publication) waits for a runner.
+# Once a release's macOS job has its runner it keeps it, so CI goes on then: waiting until it finished would only hold
+# CI back.
+#
+# It never waits more than `minutes` (60): then CI goes on, with a warning, so CI cannot wait forever on a stuck
+# release. An API error is asked again; after five in a row CI goes on. It reads the runs with the workflow's token and
+# `actions: read` only, and checks nothing out. release.yml never uses it. scripts/test-macos-gate.py tests the script.
+on:
+  workflow_call:
+    inputs:
+      wait:
+        description: Wait for a release (false passes at once; ci.yml on a push to main, which its release waits for)
+        type: boolean
+        default: true
+      minutes:
+        description: The longest wait, in minutes
+        type: number
+        default: 60
+
+permissions: {}
+
+jobs:
+  gate:
+    name: macOS runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read # the release runs and their jobs
+    steps:
+      - name: Wait while a release waits for a macOS runner
+        if: inputs.wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REINS_GATE_MINUTES: ${{ inputs.minutes }}
+        shell: python3 {0}
+        run: |
+          import json
+          import os
+          import subprocess
+          import sys
+          import time
+
+          REPO = os.environ["GH_REPO"]
+          WORKFLOW = "release.yml"
+          # release.yml's job names: its macos job, and ios-testflight after publication.
+          BUILDS = "macOS builds"
+          UPLOAD = "TestFlight upload"
+          UNFINISHED = {"requested", "waiting", "pending", "queued", "in_progress"}
+          NO_RUNNER = {"requested", "waiting", "pending", "queued"}
+          LIMIT = float(os.environ.get("REINS_GATE_MINUTES") or "60") * 60
+          POLL = float(os.environ.get("REINS_GATE_POLL_SECONDS") or "30")
+          ERRORS = int(os.environ.get("REINS_GATE_ERRORS") or "5")
+
+
+          def api(path):
+              result = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=60, check=False)
+              if result.returncode != 0:
+                  raise RuntimeError(result.stderr.strip() or f"gh api {path} exited {result.returncode}")
+              return json.loads(result.stdout)
+
+
+          def waiting():
+              """What the release runs still wait for: one line per job that wants a macOS runner."""
+              found = []
+              runs = api(f"repos/{REPO}/actions/workflows/{WORKFLOW}/runs?per_page=30")["workflow_runs"]
+              for run in runs:
+                  if run["status"] not in UNFINISHED:
+                      continue
+                  jobs = api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
+                  named = {job["name"]: job for job in jobs}
+                  label = f"release run #{run['run_number']} ({run['head_sha'][:8]})"
+                  builds = named.get(BUILDS)
+                  # GitHub creates a job once the jobs it needs are done: no job yet means plan has not finished.
+                  if builds is None:
+                      found.append(f"{label}: {BUILDS!r} is not created yet")
+                  elif builds["status"] in NO_RUNNER:
+                      found.append(f"{label}: {BUILDS!r} is {builds['status']}")
+                  upload = named.get(UPLOAD)
+                  if upload is not None and upload["status"] in NO_RUNNER:
+                      found.append(f"{label}: {UPLOAD!r} is {upload['status']}")
+              return found
+
+
+          def main():
+              start = time.monotonic()
+              errors = 0
+              waited = False
+              while True:
+                  try:
+                      found = waiting()
+                      errors = 0
+                  except (RuntimeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+                      errors += 1
+                      print(f"Could not read the release runs ({errors} of {ERRORS}): {error}")
+                      if errors >= ERRORS:
+                          print("::warning::The release runs could not be read; CI goes on without waiting for a release")
+                          return 0
+                      found = None
+                  elapsed = time.monotonic() - start
+                  if found == []:
+                      if waited:
+                          print(f"::notice::Waited {elapsed / 60:.1f} minutes for a release's macOS runner")
+                      print("No release waits for a macOS runner")
+                      return 0
+                  for line in found or []:
+                      print(f"Waiting: {line}")
+                  if elapsed >= LIMIT:
+                      print(f"::warning::A release still waits for a macOS runner after {LIMIT / 60:.0f} minutes; "
+                            "CI goes on")
+                      return 0
+                  waited = True
+                  sys.stdout.flush()
+                  time.sleep(max(0.0, min(POLL, LIMIT - elapsed)))
+
+
+          sys.exit(main())

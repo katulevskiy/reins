@@ -9,8 +9,12 @@ name: Release
 # signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
 # After the release, the aur job prepares reins-bin (optional; not published on the AUR yet), deploy-server upgrades
-# app.reins2fa.com when the release changes the server, and ios-testflight uploads the iOS app to TestFlight (built by
-# ios-build alongside the other builds; only the upload waits for publication).
+# app.reins2fa.com when the release changes the server, and ios-testflight builds the iOS app and uploads it to
+# TestFlight.
+#
+# macOS runners: the account runs five macOS jobs at once, shared with CI. A release takes one before publication (the
+# macos job: every macOS build it publishes) and one after it (ios-testflight). Pull requests' macOS jobs wait while a
+# release's macos job has no runner yet (.github/workflows/macos-gate.yml); nothing here waits for that gate.
 
 # Only main pushes and maintainer dispatches can build with release credentials.
 # Public release/image tags are updated only after CI and all required builds pass.
@@ -265,17 +269,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Standalone macOS CLI supports macOS 11; the GUI bundle requires macOS 12. Both architectures in one cargo
-          # run on one Apple silicon runner (x86_64 cross-compiled): the account runs only a few macOS jobs at once,
-          # and at the start of a release CI, the macOS app binaries and the iOS build want one too.
-          - { name: apple-darwin, targets: aarch64-apple-darwin x86_64-apple-darwin, os: macos-15, optional: false }
+          # The macOS command-line program is built in the macos job, on the one macOS runner a release takes.
           - { name: aarch64-pc-windows-msvc, targets: aarch64-pc-windows-msvc, os: windows-2025, optional: true }
     env:
       TARGETS: ${{ matrix.targets }}
       VERSION: ${{ needs.plan.outputs.version }}
       REINS_BUILD: ${{ needs.plan.outputs.build }}
       REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       # Git on the Windows runners checks text files out with CRLF; the scripts below expect the files as committed.
       - name: Check out without CRLF
@@ -303,31 +303,8 @@ jobs:
           # RUSTFLAGS reach only the program, not build scripts.
           [[ "$TARGETS" == *-windows-msvc ]] && export RUSTFLAGS="-C target-feature=+crt-static"
           cargo build --release --locked -p reins-desktop --bin reins "${args[@]}"
-      # What this runner can run: Apple silicon natively, x86_64 under Rosetta when the runner has it (otherwise only
-      # its architecture is checked). Windows on Arm cannot run on the x64 runner.
-      - name: Smoke test
-        run: |
-          read -ra targets <<<"$TARGETS"
-          for target in "${targets[@]}"; do
-            exe="target/$target/release/reins"
-            run=("$exe")
-            case "$target" in
-            aarch64-apple-darwin) ;;
-            x86_64-apple-darwin)
-              [[ "$(lipo -archs "$exe")" == x86_64 ]] || { echo "::error::$exe is not x86_64"; exit 1; }
-              if ! arch -x86_64 /usr/bin/true 2> /dev/null; then
-                echo "::notice::No Rosetta on this runner: $target not run"
-                continue
-              fi
-              run=(arch -x86_64 "$exe") ;;
-            *) echo "$target is not run here"; continue ;;
-            esac
-            out="$("${run[@]}" --version)"
-            echo "$target: $out"
-            [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
-          done
-      # A tar.gz with reins on macOS, a zip with reins.exe on Windows (what Windows opens, and what
-      # scripts/install.ps1 unpacks); the same layout inside.
+      # Windows on Arm cannot run on the x64 runner: only built here.
+      # A zip with reins.exe (what Windows opens, and what scripts/install.ps1 unpacks).
       - name: Package
         run: |
           read -ra targets <<<"$TARGETS"
@@ -344,12 +321,8 @@ jobs:
   # The Reins desktop app (crates/reins-desktop-app, GPUI) with reins inside, as installers: Reins-macOS.dmg
   # (universal), Reins-Windows-x64.msi (per user, WiX v4), Reins-Linux-x86_64.AppImage and its plain tarball, each also
   # under a versioned name. scripts/package/ builds them; the names without a version are what the website's
-  # /download/<platform> links point at (releases/latest/download/<name>).
+  # /download/<platform> links point at (releases/latest/download/<name>). The macOS one is built in the macos job.
   #
-  # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once), read
-  # from Infisical reins-release prod /signing/apple, else from the repository secrets of the same names:
-  #   MACOS_CERT_P12, MACOS_CERT_PASSWORD   the "Developer ID Application" certificate and key (.p12, base64)
-  #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID   an App Store Connect API key for notarytool
   # Windows signing, optional: WINDOWS_CERT_PFX (base64) and WINDOWS_CERT_PASSWORD.
   # The AppImage needs the glibc of the oldest supported Ubuntu, hence ubuntu-22.04. Its own job, like desktop-linux,
   # so the Linux packages do not wait for the Windows installer.
@@ -474,45 +447,65 @@ jobs:
           path: dist/*
           retention-days: 7
 
-  # Both macOS architectures in one cargo run on one Apple silicon runner, x86_64 cross-compiled (same deployment
-  # target), as the CLI's x86_64 build already was: the Intel runner took about six minutes, the Apple silicon one
-  # under two for the same build. Build scripts and proc macros are compiled once, one cache holds both (the
-  # repository's caches have 10 GB), and it takes one of the few macOS runners the account gets at once. Only bundling
-  # and signing (desktop-app-macos) come after it.
-  macos-app-native:
-    name: macOS app binaries
+  # Every macOS build the release publishes, in one job on one runner: the account runs five macOS jobs at once, shared
+  # with pull requests' CI, and each job of its own waited in that queue on its own (30 to 70 minutes a release). Once
+  # this job has its runner the release needs no other macOS runner before publication; the CI gate
+  # (.github/workflows/macos-gate.yml) holds pull requests' macOS jobs back until it has one.
+  #
+  # 1. The app and the CLI bundled in it, both architectures in one cargo run (x86_64 cross-compiled on Apple silicon:
+  #    the Intel runner took about six minutes, this one under two for the same build), with one cache for both.
+  # 2. The standalone command-line program (macOS 11; the app needs macOS 12), in the background while 3 signs and
+  #    notarizes, which is mostly waiting for Apple. It has no Rust cache (about six minutes cold for both targets; its
+  #    1.6 GB would push the caches that shorten the release out of the repository's 10 GB) and its own target folder,
+  #    outside the cached one.
+  # 3. Reins-macOS.dmg (universal): bundled, signed and notarized (scripts/package/macos.sh).
+  #
+  # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once), read
+  # from Infisical reins-release prod /signing/apple, else from the repository secrets of the same names:
+  #   MACOS_CERT_P12, MACOS_CERT_PASSWORD   the "Developer ID Application" certificate and key (.p12, base64)
+  #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID   an App Store Connect API key for notarytool
+  # No GitHub environment: the Infisical identity is bound to the main ref's OIDC subject, which an environment's job
+  # does not have. That is why the iOS app, whose signing material is the `testflight` environment's, is built in
+  # ios-testflight, after publication, and not here.
+  macos:
+    name: macOS builds
     needs: plan
     if: needs.plan.outputs.release == 'true'
     runs-on: macos-15
-    timeout-minutes: 40
+    # What the three jobs it replaces had: the CLI 45, the app binaries 40, packaging and notarization 75.
+    timeout-minutes: 160
     permissions:
       contents: read
+      id-token: write # Infisical OIDC (the Developer ID identity and notary key)
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       REINS_BUILD: ${{ needs.plan.outputs.build }}
       REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
-      MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
       - name: Install Rust toolchain
-        run: rustup toolchain install && rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup toolchain install && rustup target add aarch64-apple-darwin x86_64-apple-darwin && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
           # A new key: the native-only caches of the two former jobs each lack the other architecture, and an exact
           # hit is never saved again.
           shared-key: release-desktop-app-macOS-both
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Tags are the source of truth; the binaries report the release version.
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
       - name: Build the app and bundled CLI
+        timeout-minutes: 40
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: |
           cargo build --locked --profile release-app -p reins-desktop-app -p reins-desktop --bin reins-app --bin reins \
             --target aarch64-apple-darwin --target x86_64-apple-darwin
       # The x86_64 build runs under Rosetta when the runner has it; otherwise only its architecture is checked (the
-      # universal job checks both slices again).
+      # universal app is checked again after packaging).
       - name: Smoke test the bundled CLI
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
@@ -533,44 +526,21 @@ jobs:
           else
             echo "::notice::No Rosetta on this runner: the x86_64 CLI was not run"
           fi
-      # One artifact: aarch64-apple-darwin/release-app/... and x86_64-apple-darwin/release-app/... under target/.
-      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
-        with:
-          name: macos-app-binaries
-          compression-level: 0
-          path: |
-            target/aarch64-apple-darwin/release-app/reins-app
-            target/aarch64-apple-darwin/release-app/reins
-            target/x86_64-apple-darwin/release-app/reins-app
-            target/x86_64-apple-darwin/release-app/reins
-          retention-days: 1
-
-  desktop-app-macos:
-    name: Desktop app (macOS universal)
-    needs: [plan, macos-app-native]
-    if: needs.plan.outputs.release == 'true'
-    runs-on: macos-15
-    timeout-minutes: 75 # notarization (twice: the app, then the disk image) can take long, the first ones especially
-    permissions:
-      contents: read
-      id-token: write # Infisical OIDC (the Developer ID identity and notary key)
-    env:
-      VERSION: ${{ needs.plan.outputs.version }}
-      REINS_BUILD: ${{ needs.plan.outputs.build }}
-      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.plan.outputs.sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-app-binaries
-          path: target
-      - name: Restore executable permissions and set the version
+      # Started here, collected by "Wait for the command-line program": it compiles while the app is signed and
+      # notarized. Its exit status goes to a file; the build's output to a log printed when it is collected.
+      - name: Start the command-line program (macOS 11, in the background)
         run: |
-          chmod +x target/{aarch64,x86_64}-apple-darwin/release-app/{reins,reins-app}
-          scripts/set-desktop-version.sh "$VERSION"
+          cli="$RUNNER_TEMP/cli"
+          mkdir -p "$cli"
+          (
+            export MACOSX_DEPLOYMENT_TARGET=11.0 CARGO_TARGET_DIR="$cli/target"
+            status=0
+            cargo build --release --locked -p reins-desktop --bin reins \
+              --target aarch64-apple-darwin --target x86_64-apple-darwin || status=$?
+            echo "$status" > "$cli/status"
+          ) < /dev/null > "$cli/build.log" 2>&1 &
+          echo "$!" > "$cli/pid"
+          echo "Building the command-line program in the background (pid $!)"
       # Written to a file (not exported to later steps), read by the next step only, and removed afterwards.
       - name: Fetch the Apple signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
@@ -582,6 +552,7 @@ jobs:
           export-type: file
           file-output-path: /.apple-signing.env
       - name: Package (macOS)
+        timeout-minutes: 75 # notarization (twice: the app, then the disk image) can take long, the first ones especially
         # Signing set up and used in one step: the identity and notary key never pass through GITHUB_ENV.
         env:
           ARCHS: aarch64 x86_64
@@ -648,6 +619,49 @@ jobs:
           name: dist-app-macOS
           compression-level: 0
           path: target/package/Reins-*.dmg
+          retention-days: 7
+      # Collected after the app's upload, so a failure here never holds that artifact back.
+      - name: Wait for the command-line program
+        timeout-minutes: 45
+        run: |
+          cli="$RUNNER_TEMP/cli"
+          while [[ ! -f "$cli/status" ]]; do
+            kill -0 "$(cat "$cli/pid")" 2> /dev/null || [[ -f "$cli/status" ]] ||
+              { cat "$cli/build.log"; echo "::error::the command-line build stopped without a status"; exit 1; }
+            sleep 10
+          done
+          cat "$cli/build.log"
+          [[ "$(cat "$cli/status")" == 0 ]] || { echo "::error::the command-line build failed"; exit 1; }
+      # Apple silicon natively, x86_64 under Rosetta when the runner has it (otherwise only its architecture is
+      # checked).
+      - name: Smoke test the command-line program
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            exe="$RUNNER_TEMP/cli/target/$target/release/reins"
+            run=("$exe")
+            if [[ "$target" == x86_64-apple-darwin ]]; then
+              [[ "$(lipo -archs "$exe")" == x86_64 ]] || { echo "::error::$exe is not x86_64"; exit 1; }
+              if ! arch -x86_64 /usr/bin/true 2> /dev/null; then
+                echo "::notice::No Rosetta on this runner: $target not run"
+                continue
+              fi
+              run=(arch -x86_64 "$exe")
+            fi
+            out="$("${run[@]}" --version)"
+            echo "$target: $out"
+            [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+          done
+      # A tar.gz with reins, the layout scripts/install.sh unpacks.
+      - name: Package the command-line program
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            CARGO_TARGET_DIR="$RUNNER_TEMP/cli/target" scripts/package-cli.sh "$target" "$VERSION"
+          done
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-desktop-apple-darwin
+          compression-level: 0
+          path: dist/*.tar.gz
           retention-days: 7
 
   server:
@@ -1267,7 +1281,7 @@ jobs:
       - desktop
       - desktop-app-linux
       - desktop-app
-      - desktop-app-macos
+      - macos
       - server
       - docker
       - android
@@ -1278,7 +1292,7 @@ jobs:
       !cancelled() && needs.plan.outputs.release == 'true' &&
       needs.desktop-linux.result == 'success' && needs.desktop.result == 'success' &&
       needs.desktop-app-linux.result == 'success' && needs.desktop-app.result == 'success' &&
-      needs.desktop-app-macos.result == 'success' &&
+      needs.macos.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
       needs.android.result == 'success' &&
       needs.linux-packages.result == 'success' && needs.linux-packages-amd64.result == 'success' &&
@@ -1608,32 +1622,33 @@ jobs:
         if: always()
         run: rm -f ~/.ssh/deploy
 
-  # The iOS app on TestFlight, in two jobs. ios-build starts with the other builds: the Rust core and the signed archive
-  # (with a released Xcode), an artifact of this run kept for a day. It sends Apple nothing; it only reads the next
-  # build number from App Store Connect. ios-testflight, after this run's own publication, exports that archive for the
-  # App Store with destination upload (signing it again, so it fetches the identity and profiles too) and so uploads it
-  # to App Store Connect, then gives the build its export compliance, its What to Test
-  # (the release notes), its TestFlight groups and a beta app review submission (scripts/testflight.py). The review
-  # needs a processed build, so that job waits for Apple's processing (about three minutes). As the Play upload is: a
-  # superseded run never uploads (supersede cancels runs before publication, their iOS build too), publication never
-  # waits for either job, and a failure leaves the GitHub release as it is (rerun the failed job; a build already
-  # uploaded is not uploaded again).
+  # The iOS app on TestFlight, after this run's own publication, in one job on one macOS runner: the Rust core and the
+  # signed archive (with a released Xcode), then the archive's export for the App Store with destination upload, which
+  # uploads it to App Store Connect, then its export compliance, its What to Test (the release notes), its TestFlight
+  # groups and a beta app review submission (scripts/testflight.py). The review needs a processed build, so the job
+  # waits for Apple's processing (about three minutes). As the Play upload is: a superseded run never uploads (supersede
+  # cancels runs before publication), publication never waits for this job, and a failure leaves the GitHub release as
+  # it is (rerun the job; a build already uploaded is not uploaded again). A verify_only run on main builds and signs
+  # the archive and uploads nothing.
+  #
+  # Why after publication, not beside the other builds: its signing material is the `testflight` environment's, and the
+  # macos job's Infisical identity accepts only the main ref's OIDC subject, so the two cannot be one job; a second
+  # macOS job before publication waited in the account's macOS queue (five jobs, shared with CI) on its own. Here it
+  # waits once, after the GitHub release is out, and holds nothing of the release back.
   #
   # Uploads go one at a time, and the newest release's wins: a newer release's upload cancels an older one, waiting
   # or running (the newer build has every change of the older one; once an upload whose runner never came held the
-  # next release's TestFlight back for 87 minutes). testflight_tag runs upload on their own.
+  # next release's TestFlight back for 87 minutes). testflight_tag and verify_only runs have groups of their own.
   #
-  # Trust: only commits on main are built (checked before anything is checked out): this run's release commit, or for
-  # testflight_tag the commit of a published release tag. The upload checks again that the tag exists, names the
-  # commit built and has a published release. The Rust core and the Swift packages (pinned, checked against
-  # Package.resolved) build before any secret is in the job. The secrets are the `testflight` environment's (main only,
-  # no reviewers), each mapped only into the step that needs it, written to files under $RUNNER_TEMP/ios-signing (0700)
-  # and never to GITHUB_ENV or a command line. The certificate's files are gone once it is in the keychain
-  # (non-extractable, codesign only); the API key is written for the build number and removed before the archive, so
-  # the archive's build phases and packages see only the keychain, the profiles and the settings (a step checks). The
-  # keychain is locked after the archive (in ios-testflight, after the upload) and deleted at the end. So the build
-  # signs a main commit before CI has passed on it; nothing reaches App Store Connect before publication, which waits
-  # for that CI. The export runs no build phases and resolves no packages.
+  # Trust: only commits on main are built (checked before anything is checked out): this run's release commit, whose
+  # tag must name it and have a published release, or for testflight_tag the commit of a published release tag. The
+  # Rust core and the Swift packages (pinned, checked against Package.resolved) build before any secret is in the job.
+  # The secrets are the `testflight` environment's (main only, no reviewers), each mapped only into the step that needs
+  # it, written to files under $RUNNER_TEMP/ios-signing (0700) and never to GITHUB_ENV or a command line. The
+  # certificate's files are gone once it is in the keychain (non-extractable, codesign only); the API key is written
+  # for the build number and removed before the archive, so the archive's build phases and packages see only the
+  # keychain, the profiles and the settings (a step checks), and written again for the upload. The keychain is locked
+  # after the upload and deleted at the end. The export runs no build phases and resolves no packages.
   #
   # The runner is `xcode-27`, the GitHub image with Xcode 27 (macos-26 stops at Xcode 26.6), with its Xcode 27.0
   # selected: App Store uploads need a released Xcode, and with the 27.0 SDK the app builds without the iPhone Duo's
@@ -1652,38 +1667,40 @@ jobs:
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID  the App Store Connect API key "Reins CI"
   # Repository variables: TESTFLIGHT_EXTERNAL_GROUP_ID (the external group's id: two groups are named "Testers"),
   # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (required: Gmail, Calendar, Contacts).
-  ios-build:
-    name: iOS build
-    needs: plan
-    # Main only: this run's release (a verify_only run on main builds it too, and uploads nothing), or a maintainer's
+  ios-testflight:
+    name: TestFlight upload
+    needs: [plan, publish]
+    # Main only: after this run's own publication (or its verify_only run, which uploads nothing), or a maintainer's
     # testflight_tag run from main. The workflow has no pull_request trigger, so neither a pull request nor a fork can
     # start it.
     if: >-
       !cancelled() && github.ref == 'refs/heads/main' &&
-      (needs.plan.outputs.release == 'true' ||
+      (needs.publish.result == 'success' ||
       (github.event_name == 'workflow_dispatch' && inputs.testflight_tag != ''))
     environment: testflight
+    concurrency:
+      group: ${{ (inputs.testflight_tag || inputs.verify_only) && format('release-testflight-{0}', github.run_id) || 'release-testflight' }}
+      cancel-in-progress: true
     runs-on: xcode-27
-    timeout-minutes: 75 # a cold core (about twelve minutes), the packages, the archive and the export
+    # The build (a cold core, about twelve minutes, the packages and the archive: 75) and the upload (signing, the upload,
+    # about two minutes, and Apple's processing, about three, at most 20: 30), as the two jobs it replaces had.
+    timeout-minutes: 105
     permissions:
-      contents: read # the commit; for testflight_tag, its tag and release
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      sha: ${{ steps.release.outputs.sha }}
-      build-number: ${{ steps.number.outputs.build-number }}
-      uploaded: ${{ steps.number.outputs.uploaded }}
+      contents: read # the commit, its tag, its release and its notes
     env:
       XCODE_VERSION: "27.0"
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       BUNDLE_ID: com.reins2fa.app
     steps:
-      # Before anything is checked out: the commit must be on main, and a testflight_tag a published release's tag.
+      # Before anything is checked out: the commit must be on main, carry the release's tag (publication made it on this
+      # commit), and that release must be published; for testflight_tag, a published release's tag. A verify_only run
+      # has no tag: it builds and signs this commit and uploads nothing.
       - name: The release to build
         id: release
         env:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.testflight_tag }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
           PLAN_TAG: ${{ needs.plan.outputs.tag }}
           PLAN_VERSION: ${{ needs.plan.outputs.version }}
           PLAN_SHA: ${{ needs.plan.outputs.sha }}
@@ -1699,27 +1716,34 @@ jobs:
               sleep $(( attempt * 10 ))
             done
           }
+          manual=false
           if [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
-            tag="$INPUT_TAG"
+            manual=true
+            tag="$INPUT_TAG" sha=""
             # This run's start in minutes, as plan's versionCode is: above every release's so far.
             minimum=$(( $(date -u +%s) / 60 ))
             [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::'$tag' is not a release tag like v1.2.3"; exit 1; }
             version="${BASH_REMATCH[1]}"
+          else
+            # This run's release, which the publish job has just made.
+            tag="$PLAN_TAG" version="$PLAN_VERSION" sha="$PLAN_SHA" minimum="$PLAN_CODE"
+            [[ "$tag" == "v$version" && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+              { echo "::error::Unexpected release '$tag' ($version)"; exit 1; }
+          fi
+          if [[ "$manual" == true || "$VERIFY_ONLY" != true ]]; then
             # The tag itself (not a branch of that name), peeled to its commit.
             read -r type object < <(api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha') ||
               { echo "::error::There is no tag $tag"; exit 1; }
             if [[ "$type" == tag ]]; then
               object="$(api "repos/$GH_REPO/git/tags/$object" --jq .object.sha)"
             fi
-            sha="$object"
+            if [[ "$manual" == true ]]; then
+              sha="$object"
+            fi
+            [[ "$object" == "$sha" ]] || { echo "::error::$tag is $object, not the commit this run released ($sha)"; exit 1; }
             draft="$(api "repos/$GH_REPO/releases/tags/$tag" --jq .draft)" ||
               { echo "::error::$tag has no GitHub release"; exit 1; }
             [[ "$draft" == false ]] || { echo "::error::The release $tag is not published"; exit 1; }
-          else
-            # This run's release. Its tag does not exist yet (publication makes it; the upload waits for that).
-            tag="$PLAN_TAG" version="$PLAN_VERSION" sha="$PLAN_SHA" minimum="$PLAN_CODE"
-            [[ "$tag" == "v$version" && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-              { echo "::error::Unexpected release '$tag' ($version)"; exit 1; }
           fi
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$tag does not name a commit"; exit 1; }
           # On main: main is the commit itself or ahead of it (git merge-base --is-ancestor, checked again below).
@@ -1747,7 +1771,6 @@ jobs:
           sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
           [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] ||
             { echo "::error::Uploads need the released Xcode $XCODE_VERSION (iOS SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"; exit 1; }
-
       # The build that runs code from the repository and its dependencies, with no secret fetched yet. rust-cache
       # restores no binaries (cache-bin), and the archive below never runs cargo or rustup: its "Rust core" phases stop
       # at REINS_SKIP_CORE, before either is called.
@@ -1797,7 +1820,6 @@ jobs:
           python3 scripts/testflight.py packages \
             --resolved ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
             --checkouts "$RUNNER_TEMP/spm/checkouts"
-
       # The API key, written for this step only and removed at its end: it does not exist while the archive runs.
       - name: Build number
         id: number
@@ -1992,245 +2014,13 @@ jobs:
           build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
           [[ "$shown" == "$VERSION" && "$build" == "$BUILD_NUMBER" ]] ||
             { echo "::error::The archive is $shown ($build), not $VERSION ($BUILD_NUMBER)"; exit 1; }
-
-      # The archive as it is (a tar keeps its symbolic links and executable bits), for this run's ios-testflight.
-      - name: Pack the archive
-        if: steps.number.outputs.uploaded != 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/archive"
-          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/archive/Reins.xcarchive.tar.gz" Reins.xcarchive
-          ls -l "$RUNNER_TEMP/archive"
-      # Signing is over here: the keychain is locked now and deleted by the last step.
-      - name: Lock the keychain
-        if: always()
-        run: |
-          keychain="$RUNNER_TEMP/ios-signing/ios.keychain-db"
-          if [[ -f "$keychain" ]]; then security lock-keychain "$keychain"; fi
-      # For ios-testflight in this run only, once the release is published.
-      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
-        if: steps.number.outputs.uploaded != 'true'
-        with:
-          name: ios-archive
-          compression-level: 0
-          path: ${{ runner.temp }}/archive/Reins.xcarchive.tar.gz
-          retention-days: 1
-      - name: Remove signing material
-        if: always()
+      # For the export: signed for the App Store with the identity and profiles above, and uploaded.
+      - name: Export options
+        if: steps.number.outputs.uploaded != 'true' && inputs.verify_only != true
         run: |
           dir="$RUNNER_TEMP/ios-signing"
-          if [[ -f "$dir/ios.keychain-db" ]]; then security delete-keychain "$dir/ios.keychain-db" || true; fi
-          if [[ -f "$dir/profiles.txt" ]]; then
-            while read -r _ uuid; do
-              rm -f "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$uuid.mobileprovision" \
-                "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
-            done < "$dir/profiles.txt"
-          fi
-          rm -f "$RUNNER_TEMP/number.txt"
-          rm -rf "$dir" "$RUNNER_TEMP/archive" "$RUNNER_TEMP/Reins.xcarchive"
-
-  ios-testflight:
-    name: TestFlight upload
-    needs: [plan, publish, ios-build]
-    # Main only: after this run's own publication, or a maintainer's testflight_tag run from main; and only what this
-    # run's ios-build made.
-    if: >-
-      !cancelled() && github.ref == 'refs/heads/main' && needs.ios-build.result == 'success' &&
-      ((needs.publish.result == 'success' && inputs.verify_only != true) ||
-      (github.event_name == 'workflow_dispatch' && inputs.testflight_tag != ''))
-    environment: testflight
-    # One release upload at a time; a newer release's cancels an older one, waiting or running (see above).
-    concurrency:
-      group: ${{ inputs.testflight_tag && format('release-testflight-{0}', github.run_id) || 'release-testflight' }}
-      cancel-in-progress: true
-    runs-on: xcode-27
-    timeout-minutes: 30 # signing, the upload (about two minutes) and Apple's processing (about three; at most 20)
-    permissions:
-      contents: read # the tag, its release and its notes
-    env:
-      XCODE_VERSION: "27.0"
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
-      BUNDLE_ID: com.reins2fa.app
-    steps:
-      # Before anything is checked out: the tag publication made names the commit ios-build built, and its release is
-      # published.
-      - name: The release to upload
-        id: release
-        env:
-          MANUAL: ${{ github.event_name == 'workflow_dispatch' && inputs.testflight_tag != '' }}
-          BUILT_TAG: ${{ needs.ios-build.outputs.tag }}
-          BUILT_VERSION: ${{ needs.ios-build.outputs.version }}
-          BUILT_SHA: ${{ needs.ios-build.outputs.sha }}
-          PLAN_SHA: ${{ needs.plan.outputs.sha }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          api() { # gh api with a few tries
-            local attempt
-            for attempt in 1 2 3; do
-              gh api "$@" && return 0
-              (( attempt < 3 )) || return 1
-              sleep $(( attempt * 10 ))
-            done
-          }
-          tag="$BUILT_TAG" sha="$BUILT_SHA"
-          [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ && "${BASH_REMATCH[1]}" == "$BUILT_VERSION" ]] ||
-            { echo "::error::ios-build made '$tag' ($BUILT_VERSION)"; exit 1; }
-          version="$BUILT_VERSION"
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::ios-build names no commit"; exit 1; }
-          [[ "$MANUAL" == true || "$sha" == "$PLAN_SHA" ]] ||
-            { echo "::error::ios-build built $sha, not the commit this run released ($PLAN_SHA)"; exit 1; }
-          # The tag itself (not a branch of that name), peeled to its commit.
-          read -r type object < <(api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha') ||
-            { echo "::error::There is no tag $tag"; exit 1; }
-          if [[ "$type" == tag ]]; then
-            object="$(api "repos/$GH_REPO/git/tags/$object" --jq .object.sha)"
-          fi
-          [[ "$object" == "$sha" ]] || { echo "::error::$tag is $object, not the commit built ($sha)"; exit 1; }
-          draft="$(api "repos/$GH_REPO/releases/tags/$tag" --jq .draft)" ||
-            { echo "::error::$tag has no GitHub release"; exit 1; }
-          [[ "$draft" == false ]] || { echo "::error::The release $tag is not published"; exit 1; }
-          # On main: main is the commit itself or ahead of it (git merge-base --is-ancestor, checked again below).
-          status="$(api "repos/$GH_REPO/compare/$sha...main" --jq .status)"
-          [[ "$status" == identical || "$status" == ahead ]] ||
-            { echo "::error::$tag ($sha) is not on main ($status)"; exit 1; }
-          { echo "tag=$tag"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
-          echo "::notice::TestFlight: Reins $version ($tag, $sha)"
-      # The scripts and the Info.plist the export compliance is read from; nothing is built.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ steps.release.outputs.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require the commit to be on main
-        env:
-          SHA: ${{ steps.release.outputs.sha }}
-        run: |
-          [[ "$(git rev-parse HEAD)" == "$SHA" ]] || { echo "::error::Checked out $(git rev-parse HEAD), not $SHA"; exit 1; }
-          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on origin/main"; exit 1; }
-      - name: Require the released Xcode
-        run: |
-          xcodebuild -version
-          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
-          [[ "$xcode" == "$XCODE_VERSION" ]] ||
-            { echo "::error::Uploads need the released Xcode $XCODE_VERSION at $DEVELOPER_DIR; found Xcode $xcode"; exit 1; }
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.ios-build.outputs.uploaded != 'true'
-        with:
-          name: ios-archive
-          path: ${{ runner.temp }}/archive
-      - name: Unpack the archive
-        if: needs.ios-build.outputs.uploaded != 'true'
-        run: |
-          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/archive/Reins.xcarchive.tar.gz"
-          rm -rf "$RUNNER_TEMP/archive"
-      # The .p12 is opened with its password read from a file, repackaged for the keychain with a throwaway password,
-      # imported non-extractable (-x) for codesign only, and every file of it removed before this step ends. The
-      # keychain and import passwords on these command lines are random, made here, and nothing else runs meanwhile.
-      - name: Signing identity
-        if: needs.ios-build.outputs.uploaded != 'true'
-        env:
-          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
-          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          umask 077
-          dir="$RUNNER_TEMP/ios-signing"
-          trap 'rm -f "$dir/dist.p12" "$dir/dist.pass" "$dir/dist.pem" "$dir/import.p12" "$dir/import.pass" "$dir/export-check.p12"' EXIT
-          python3 scripts/testflight.py secrets --need cert --out "$dir"
-          unset IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD
-          team="$(cat "$dir/team")"
-          # Keychain Access exports with modern (PBES2) or legacy (RC2, 3DES) algorithms: OpenSSL needs -legacy for
-          # the latter; macOS's LibreSSL reads both.
-          opened=false
-          for tool in "openssl pkcs12" "openssl pkcs12 -legacy" "/usr/bin/openssl pkcs12"; do
-            # shellcheck disable=SC2086 # the tool and its options, split on purpose
-            if $tool -in "$dir/dist.p12" -passin "file:$dir/dist.pass" -nodes -out "$dir/dist.pem" 2> /dev/null; then
-              opened=true
-              break
-            fi
-          done
-          rm -f "$dir/dist.p12" "$dir/dist.pass"
-          [[ "$opened" == true ]] || { echo "::error::IOS_DIST_CERT_P12 does not open with IOS_DIST_CERT_PASSWORD"; exit 1; }
-          transient="$(openssl rand -hex 16)"
-          echo "::add-mask::$transient"
-          printf '%s' "$transient" > "$dir/import.pass"
-          # Again as PKCS#12, with the algorithms every macOS keychain reads.
-          exported=false
-          for tool in /usr/bin/openssl openssl; do
-            if "$tool" pkcs12 -export -in "$dir/dist.pem" -out "$dir/import.p12" -passout "file:$dir/import.pass" \
-              -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1; then
-              exported=true
-              break
-            fi
-          done
-          rm -f "$dir/dist.pem" "$dir/import.pass"
-          [[ "$exported" == true ]] || { echo "::error::Could not repackage the distribution identity for the keychain"; exit 1; }
-          keychain="$dir/ios.keychain-db"
-          pass="$(openssl rand -hex 16)"
-          echo "::add-mask::$pass"
-          security create-keychain -p "$pass" "$keychain"
-          if ! security unlock-keychain -p "$pass" "$keychain" 2> /dev/null; then
-            # The xcode-27 image does not unlock a keychain made with a password (actions/runner-images#14837). This
-            # one lives in the job's temporary folder and is deleted at the end.
-            echo "::warning::The keychain did not unlock with its password; using one without (runner-images#14837)"
-            security delete-keychain "$keychain"
-            pass=""
-            security create-keychain -p "$pass" "$keychain"
-            security unlock-keychain -p "$pass" "$keychain"
-          fi
-          security set-keychain-settings -lut 21600 "$keychain"
-          security import "$dir/import.p12" -k "$keychain" -f pkcs12 -x -P "$transient" -T /usr/bin/codesign
-          rm -f "$dir/import.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          identity="$(security find-identity -v -p codesigning "$keychain" |
-            awk -v team="($team)" '/"Apple Distribution: / && index($0, team) { print $2; exit }')"
-          [[ -n "$identity" ]] || { echo "::error::IOS_DIST_CERT_P12 holds no Apple Distribution identity of team $team"; exit 1; }
-          printf '%s\n' "$identity" > "$dir/identity"
-          # The private key must not leave the keychain (perl's alarm: an access prompt must not hang the job).
-          if perl -e 'alarm 30; exec @ARGV' security export -k "$keychain" -t identities -f pkcs12 -P unused \
-            -o "$dir/export-check.p12" > /dev/null 2>&1 && [[ -s "$dir/export-check.p12" ]]; then
-            echo "::error::The distribution key can be exported from the keychain"
-            exit 1
-          fi
-      - name: Provisioning profiles
-        if: needs.ios-build.outputs.uploaded != 'true'
-        env:
-          IOS_PROFILE_APP: ${{ secrets.IOS_PROFILE_APP }}
-          IOS_PROFILE_WIDGETS: ${{ secrets.IOS_PROFILE_WIDGETS }}
-          IOS_PROFILE_NOTIFICATIONS: ${{ secrets.IOS_PROFILE_NOTIFICATIONS }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          umask 077
-          dir="$RUNNER_TEMP/ios-signing"
-          python3 scripts/testflight.py secrets --need profiles --out "$dir"
           team="$(cat "$dir/team")"
           identity="$(cat "$dir/identity")"
-          # Xcode 16 and later read profiles from UserData; older tools from MobileDevice.
-          installed=("$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" "$HOME/Library/MobileDevice/Provisioning Profiles")
-          mkdir -p "${installed[@]}"
-          # Manual signing for the three targets: each gets its profile through its TARGET_NAME (package targets get
-          # none). Applied with -xcconfig, above the project's automatic signing.
-          {
-            echo "CODE_SIGN_STYLE = Manual"
-            echo "DEVELOPMENT_TEAM = $team"
-            echo "REINS_TEAM = $team"
-            echo "CODE_SIGN_IDENTITY = $identity"
-            echo "OTHER_CODE_SIGN_FLAGS = --keychain $dir/ios.keychain-db"
-            # shellcheck disable=SC2016 # an Xcode build setting reference, not a shell one
-            echo 'PROVISIONING_PROFILE_SPECIFIER = $(REINS_PROFILE_$(TARGET_NAME))'
-          } > "$dir/signing.xcconfig"
-          : > "$dir/profiles.txt"
-          for entry in "Reins $BUNDLE_ID" "ReinsWidgets $BUNDLE_ID.widgets" "ReinsNotifications $BUNDLE_ID.notifications"; do
-            read -r target bundle <<<"$entry"
-            security cms -D -i "$dir/$target.mobileprovision" > "$dir/$target.plist" ||
-              { echo "::error::The profile for $target is not a provisioning profile (base64 of the .mobileprovision)"; exit 1; }
-            uuid="$(python3 scripts/testflight.py profile --plist "$dir/$target.plist" --bundle-id "$bundle" --team "$team")"
-            for folder in "${installed[@]}"; do cp "$dir/$target.mobileprovision" "$folder/$uuid.mobileprovision"; done
-            rm -f "$dir/$target.mobileprovision" "$dir/$target.plist"
-            echo "REINS_PROFILE_$target = $uuid" >> "$dir/signing.xcconfig"
-            echo "$bundle $uuid" >> "$dir/profiles.txt"
-          done
           python3 - "$dir" "$team" "$identity" <<'PY'
           import plistlib, sys
           directory, team, identity = sys.argv[1:]
@@ -2250,6 +2040,7 @@ jobs:
               plistlib.dump(options, handle)
           PY
       - name: App Store Connect key
+        if: inputs.verify_only != true
         env:
           AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
@@ -2259,17 +2050,18 @@ jobs:
           umask 077
           python3 scripts/testflight.py secrets --need asc --out "$RUNNER_TEMP/ios-signing"
       # A rerun after the upload went through finds the build in App Store Connect and does not upload it again. The
-      # export signs the archive for the App Store and, with destination upload, sends the build to App Store Connect,
-      # as the release did when one job built and uploaded. The key is a file; its id and issuer id (identifiers,
-      # masked) are the only parts on the command line. The export runs no build phases and resolves no packages.
+      # export signs the archive for the App Store and, with destination upload, sends the build to App Store Connect.
+      # The key is a file; its id and issuer id (identifiers, masked) are the only parts on the command line. The export
+      # runs no build phases and resolves no packages.
       - name: Upload to App Store Connect
         id: upload
+        if: inputs.verify_only != true
         env:
           VERSION: ${{ steps.release.outputs.version }}
-          BUILD_NUMBER: ${{ needs.ios-build.outputs.build-number }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
         run: |
           dir="$RUNNER_TEMP/ios-signing"
-          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::No build number from ios-build"; exit 1; }
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::No build number"; exit 1; }
           set -a
           source "$dir/asc.env"
           set +a
@@ -2280,7 +2072,7 @@ jobs:
             exit 0
           fi
           archive="$RUNNER_TEMP/Reins.xcarchive"
-          [[ -d "$archive" ]] || { echo "::error::ios-build left no archive to upload"; exit 1; }
+          [[ -d "$archive" ]] || { echo "::error::No archive to upload"; exit 1; }
           plist="$archive/Products/Applications/Reins.app/Info.plist"
           shown="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
           build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
@@ -2298,6 +2090,7 @@ jobs:
           keychain="$RUNNER_TEMP/ios-signing/ios.keychain-db"
           if [[ -f "$keychain" ]]; then security lock-keychain "$keychain"; fi
       - name: TestFlight
+        if: inputs.verify_only != true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -2333,7 +2126,7 @@ jobs:
                 "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
             done < "$dir/profiles.txt"
           fi
-          rm -f "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/again.txt"
+          rm -f "$RUNNER_TEMP/number.txt" "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/again.txt"
           rm -rf "$dir" "$RUNNER_TEMP/archive" "$RUNNER_TEMP/export" "$RUNNER_TEMP/Reins.xcarchive"
 
   # reins-bin is not on the AUR yet. Its PKGBUILD and .SRCINFO are written from the

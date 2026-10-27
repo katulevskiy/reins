@@ -3,6 +3,7 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -122,9 +123,11 @@ for path in (
 assert 'cron: "17 3 * * *"' in ios_workflow
 assert "41 5 * * 1" not in ios_workflow
 assert "github.event_name != 'push'" not in ios_workflow
-# A pull request must not take every macOS runner. The nightly still may.
+# A main push or a hand run must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
-assert "cancel-in-progress: false" in ios_workflow
+# Pushes to main share one group, and a newer push cancels the older run; nothing else is cancelled.
+assert "github.event_name == 'push' && 'main'" in ios_workflow
+assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in ios_workflow
 # Each pull request has its own group, so unrelated pull requests never replace each other's pending iOS runs.
 assert "format('pr-{0}', github.event.pull_request.number)" in ios_workflow
 # A failed shard can be retried for as long as its result bundle is retained.
@@ -136,12 +139,48 @@ gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate
 assert "ios.yml" not in gate
 # UI tests never gate a merge or a release: ReinsTests has its own shard, which gates the iOS check; the UI shards
-# continue on error (the job, so the check's needs never see it, and the step, so the job stays green).
-assert "shard: [unit, autopilot, grants, onboarding, field, rest]" in ios_workflow
+# continue on error (the job, so the check's needs never see it, and the step, so the job stays green). A pull request
+# runs the unit shard only (three macOS jobs: core, build, unit); the UI shards run on main, nightly and by hand.
+assert ("shard: ${{ fromJSON(github.event_name == 'pull_request' && '[\"unit\"]' || "
+        "'[\"unit\", \"autopilot\", \"grants\", \"onboarding\", \"field\", \"rest\"]') }}") in ios_workflow
 assert ios_workflow.count("continue-on-error: ${{ matrix.shard != 'unit' }}") == 2
+pull_request = ios_workflow.split("\n  pull_request:\n", 1)[1].split("\n  workflow_dispatch:", 1)[0]
+assert "labeled" not in pull_request, pull_request
+assert "github.event_name != 'pull_request'" in ios_workflow.split("- name: Select UI tests", 1)[1].split("run:", 1)[0]
 # The agents' job and core workflows are tools: nothing waits for them.
 for name in ("ios-job", "ios-core"):
     assert name not in gate, name
     assert "\n  pull_request:" not in (ROOT / ".github/workflows" / f"{name}.yml").read_text(), name
 
-print(f"{len(cases) + 10} CI component-routing checks passed")
+# Every macOS job of CI needs a Linux gate job that waits while a release waits for its macOS runner
+# (.github/workflows/macos-gate.yml, with actions: read only); the release itself never waits for it.
+GATE = "uses: ./.github/workflows/macos-gate.yml"
+gated = 0
+for name in ("ci", "ios", "ios-core", "ios-job"):
+    text = (ROOT / ".github/workflows" / f"{name}.yml").read_text()
+    parts = re.split(r"\n  ([a-z0-9-]+):\n", text.split("\njobs:\n", 1)[1])
+    jobs = dict(zip(parts[1::2], parts[2::2]))
+    gates = {job for job, body in jobs.items() if GATE in body}
+    assert gates, name
+    for job in gates:
+        permissions = jobs[job].split("    permissions:\n", 1)[1].split("\n    with:", 1)[0]
+        assert permissions.split("#", 1)[0].split() == ["actions:", "read"], (name, job, permissions)
+    for job, body in jobs.items():
+        head = body.split("\n    steps:", 1)[0]
+        if re.search(r"^    runs-on: .*(macos|xcode|IOS_RUNNER)", head, re.M):
+            needs = re.search(r"^    needs: (.*)$", head, re.M)
+            assert needs and set(re.findall(r"[a-z0-9-]+", needs.group(1))) & gates, (name, job)
+            gated += 1
+assert gated == 6, gated
+# ci.yml's gate passes at once on a push to main: the release of that commit waits for that run.
+assert "wait: ${{ github.event_name != 'push' }}" in (ROOT / ".github/workflows/ci.yml").read_text()
+# ios-job.yml calls ios-core.yml, whose gate needs actions: read from its caller too.
+ios_job = (ROOT / ".github/workflows/ios-job.yml").read_text()
+assert "      actions: read" in ios_job.split("\n  core:\n", 1)[1].split("\n  run:\n", 1)[0]
+release = (ROOT / ".github/workflows/release.yml").read_text()
+assert GATE not in release
+gate = (ROOT / ".github/workflows/macos-gate.yml").read_text()
+assert "\n  workflow_call:\n" in gate and "runs-on: ubuntu-latest" in gate and "actions/checkout" not in gate
+assert gate.split("\n    permissions:\n", 1)[1].split("\n    steps:", 1)[0].split("#", 1)[0].split() == ["actions:", "read"]
+
+print(f"{len(cases) + 22} CI component-routing checks passed")
