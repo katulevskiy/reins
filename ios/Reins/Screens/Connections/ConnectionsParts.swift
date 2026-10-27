@@ -333,7 +333,7 @@ struct FocalFact<Trailing: View>: View {
                 .font(mono ? RFont.mono(13.5) : RFont.sans(15))
                 .foregroundStyle(Palette.ink)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(mono ? .middle : .tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.layoutDirection, .leftToRight)
             trailing

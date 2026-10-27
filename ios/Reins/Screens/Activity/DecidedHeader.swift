@@ -164,7 +164,7 @@ struct GlyphFact: View {
                 .font(mono ? RFont.mono(14) : RFont.sans(15.5, .medium))
                 .foregroundStyle(tint ?? Palette.ink)
                 .lineLimit(2)
-                .truncationMode(.middle)
+                .truncationMode(mono ? .middle : .tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if chevron { RowChevron() }
         }

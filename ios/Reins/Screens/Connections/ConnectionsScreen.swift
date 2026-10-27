@@ -21,8 +21,6 @@ struct ConnectionsScreen: View {
 
     var body: some View {
         NextPage(bottom: 120) {
-            StandardTitle("Connections")
-                .accessibilityIdentifier("connectionsTitle")
             PlusSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
                 connecting = true
             }
@@ -70,6 +68,11 @@ struct ConnectionsScreen: View {
                 ForEach(reach, id: \.service) { ServiceRow(service: $0) }
                 ForEach(model.mcpServers, id: \.id) { McpRow(server: $0) }
             }
+        }
+        .stickyHeader {
+            StandardTitle("Connections")
+                .accessibilityIdentifier("connectionsTitle")
+                .padding(.bottom, 8)
         }
         .overlay(alignment: .bottom) {
             // The fade under the floating tab bar.
@@ -242,7 +245,7 @@ private struct ServiceRow: View {
                         .font(RFont.sans(15))
                         .foregroundStyle(Palette.ink2)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                         .environment(\.layoutDirection, .leftToRight)
                 } else {
                     HStack(spacing: 4) {

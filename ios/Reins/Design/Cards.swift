@@ -411,13 +411,20 @@ struct CompactBanner: View {
         .padding(.top, 2)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
+        .background(alignment: .top) {
+            // A top field: it runs up under the status bar and the Dynamic Island to the very edge, and only its bottom
+            // corners round. It sits in a scroll view, where ignoring the safe area cannot reach above the content's
+            // top, so the colour reaches up itself (far enough for a pull to refresh). Two bars stack: the one above
+            // is drawn over this one's reach (`zIndex` at the call site), so they read as one field.
             FieldSurface(kind: tint == Palette.danger ? .delete : .warn)
                 .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 26, bottomTrailingRadius: 26, style: .continuous))
-                .ignoresSafeArea(edges: .top)
+                .padding(.top, -Self.reach)
         }
         .accessibilityElement(children: .contain)
     }
+
+    /// How far a bar's colour reaches above it.
+    static let reach: CGFloat = 400
 
     /// The kit's glyph for the symbol a caller names.
     static func glyph(_ symbol: String) -> Glyph {

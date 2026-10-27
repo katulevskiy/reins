@@ -27,6 +27,10 @@ struct ActivityScreen: View {
     @State private var searchOpen = false
     /// How tall the warn fields above the header are (0 with none).
     @State private var warningsHeight: CGFloat = 0
+    /// How far the river has scrolled, for the wallpaper (read there only, so scrolling never redraws the page).
+    @State private var scroll = ScrollTracker()
+    /// Something has scrolled under the pinned header (its glass shows).
+    @State private var headerScrolled = false
     /// The river's days, from the core's stamps of every entry; nil until read (the days of what is loaded until then).
     @State private var days: [ActivityDay]?
     /// The entries read for each opened day, by day.
@@ -94,12 +98,10 @@ struct ActivityScreen: View {
         let wallpaper = wallpaperShown
         ScrollViewReader { proxy in
             ScrollView {
-                // The warnings are often empty: outside the lazy stack, whose first rows must have a size.
                 VStack(alignment: .leading, spacing: 0) {
-                    VStack(spacing: 0) { warnings }
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { warningsHeight = $0 }
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        header.id("top")
+                        // The header and what is broken stay pinned above (`stickyHeader`); this marks the top for Latest.
+                        Color.clear.frame(height: 1).id("top")
                         if !searchOpen && (filtersShown || !model.activityFilters.isEmpty) {
                             ActivityFilterBar(filters: filtersBinding, facets: facets)
                                 .padding(.top, 14)
@@ -114,14 +116,33 @@ struct ActivityScreen: View {
                     }
                 }
                 .padding(.bottom, 32)
+                Color.clear.frame(height: 1).id("end")
+            }
+            .stickyHeader(scrolled: headerScrolled) {
+                // What is broken runs into the top as a field; the title row stays under it while the river scrolls.
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(spacing: 0) { warnings }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { warningsHeight = $0 }
+                    header.padding(.bottom, 8)
+                }
             }
             .scrollDismissesKeyboard(.immediately)
+            #if DEBUG
+            // `-scrollEnd` (screenshots): scroll down after opening, the header pinned over the river.
+            .task {
+                guard ProcessInfo.processInfo.arguments.contains("-scrollEnd") else { return }
+                try? await Task.sleep(for: .seconds(2))
+                withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+            }
+            #endif
             .accessibilityContainer("activityList")
             .refreshable {
                 await model.refreshPending()
                 feedback.play(.refresh)
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
+                scroll.y = y
+                if (y > 1) != headerScrolled { headerScrolled = y > 1 }
                 atTop = y < 24
                 let far = y > 900
                 if far != away { withAnimation(.smooth) { away = far } }
@@ -179,10 +200,10 @@ struct ActivityScreen: View {
         .background {
             ZStack {
                 Palette.paper.ignoresSafeArea()
-                if wallpaper { WallpaperLayer().transition(.opacity) }
+                // The art scrolls away with the page (the rows' glass follows it through `Backdrop`).
+                if wallpaper { WallpaperLayer(scroll: scroll).transition(.opacity) }
             }
         }
-        .statusBarBackdrop(shown: !wallpaper || !atTop)
         .foldOverlay(model.fold)
         .signalMenuHost()
         .rootNavigationBar()
@@ -278,11 +299,12 @@ struct ActivityScreen: View {
 
     /// What is broken, as the warn field at the top of the screen.
     @ViewBuilder private var warnings: some View {
-        if model.deviceReplaced {
+        if model.deviceReplaced || AppModel.demoReplaced {
             CompactBanner(text: "Another phone approves", symbol: "iphone.slash", button: "Settings", label: "Reins · This phone") {
                 model.select(.settings)
             }
             .accessibilityIdentifier("replacedBanner")
+            .zIndex(4)
         }
         if model.registrationError != nil {
             CompactBanner(
@@ -299,9 +321,11 @@ struct ActivityScreen: View {
                 }
             }
             .accessibilityIdentifier("registrationBanner")
+            .zIndex(3)
         }
-        NotificationsOffCard()
-        ScreenLockBanner(compact: true)
+        // Each bar's colour reaches up under the one above it, so a stack reads as one field.
+        NotificationsOffCard().zIndex(2)
+        ScreenLockBanner(compact: true).zIndex(1)
     }
 
     /// Browsing: what waits (or what to connect, or the open art), then the river.
@@ -748,24 +772,5 @@ struct SyncNoticeRow: View {
         .padding(.horizontal, 24)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("syncNoticeBanner")
-    }
-}
-
-extension View {
-    /// Paper behind the status bar, fading into the page: rows scroll on beneath it and never run under the clock.
-    /// For a root page without a navigation bar whose content is a plain scroll view (a list brings its own).
-    func statusBarBackdrop(shown: Bool = true) -> some View {
-        overlay(alignment: .top) {
-            VStack(spacing: 0) {
-                Palette.paper
-                    .ignoresSafeArea(edges: .top)
-                    .frame(height: 0)
-                LinearGradient(colors: [Palette.paper, Palette.paper.opacity(0)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 10)
-            }
-            .opacity(shown ? 1 : 0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
     }
 }

@@ -139,6 +139,15 @@ final class AppModel {
     private(set) var autopilot: AutopilotSettings?
     private(set) var seenActivityId: Int64 = 0
     /// The server said another phone became the approval device.
+    /// `-demoReplaced` (screenshots): the demo as if another phone had become the approval device.
+    static var demoReplaced: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-demo") && ProcessInfo.processInfo.arguments.contains("-demoReplaced")
+        #else
+        false
+        #endif
+    }
+
     private(set) var deviceReplaced = false
     /// This phone currently receives approval requests.
     private(set) var approvalDevice = false
@@ -598,7 +607,7 @@ final class AppModel {
             // Offline: the current account keeps its last decrypted view.
         }
         guard epoch == accountEpoch else { return }
-        deviceReplaced = DeviceStatus.replaced
+        deviceReplaced = DeviceStatus.replaced || Self.demoReplaced
         onPendingChanged?(pending)
         maybePresent()
         publish()
@@ -623,7 +632,7 @@ final class AppModel {
             // Busy or offline: the next wake or the front reads it.
         }
         guard epoch == accountEpoch else { return }
-        deviceReplaced = DeviceStatus.replaced
+        deviceReplaced = DeviceStatus.replaced || Self.demoReplaced
         onPendingChanged?(pending)
         publish()
     }

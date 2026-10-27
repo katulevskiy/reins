@@ -14,9 +14,6 @@ struct SettingsScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(title: "Settings") { EmptyView() }
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 20)
                 AccountCardSection()
                 PagesGroup()
                 SecurityGroup()
@@ -28,6 +25,12 @@ struct SettingsScreen: View {
                 #endif
             }
             .padding(.bottom, 24)
+        }
+        .stickyHeader {
+            PageHeader(title: "Settings") { EmptyView() }
+                .frame(minHeight: 44)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
         }
         .pageBackground()
         .navigationTitle("Settings")
@@ -180,7 +183,7 @@ private struct AccountCard: View {
                         .font(RFont.sans(16.5, .semibold))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                         .environment(\.layoutDirection, .leftToRight)
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 12) { tags }

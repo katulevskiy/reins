@@ -39,10 +39,9 @@ struct GroupSlice: ViewModifier {
             }
             .background {
                 if glass {
-                    ZStack {
-                        Rectangle().fill(.ultraThinMaterial)
-                        Rectangle().fill(dark ? Color(red: 30 / 255, green: 30 / 255, blue: 36 / 255).opacity(0.4) : Color.white.opacity(0.4))
-                    }
+                    // The shared glass: every slice draws the same blurred art at its place on screen, so the rows of a
+                    // day read as one pane with no seam between them.
+                    FrostedGlass()
                 } else {
                     Palette.paperRaised
                 }
