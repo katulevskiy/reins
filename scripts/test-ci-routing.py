@@ -129,12 +129,12 @@ assert "github.event_name == 'push' && 'main'" in ios_workflow
 assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in ios_workflow
 # Pull requests run iOS in ci.yml (one macOS job), not here.
 assert "\n  pull_request:" not in ios_workflow.split("\njobs:\n", 1)[0]
-# A UI shard that max-parallel starts late asks again (scripts/ci/admit.py --yield), and skips its tests while anyone
-# else wants a macOS runner; the unit shard and a hand run's shards never do. Every later step needs the plan, which a
+# A UI shard of a push to main that max-parallel starts late asks again (scripts/ci/admit.py --yield), and skips its
+# tests while anyone else wants a macOS runner; the unit shard, the nightly's and a hand run's shards never do. Every later step needs the plan, which a
 # yielding shard skips.
 shards = ios_workflow.split("\n  ios-test:\n", 1)[1].split("\n\n  # ", 1)[0]
 yield_step = shards.split("      - name: Step aside\n", 1)[1].split("\n      - name: ", 1)[0]
-assert "if: matrix.shard != 'unit' && github.event_name != 'workflow_dispatch'" in yield_step
+assert "if: matrix.shard != 'unit' && github.event_name == 'push'" in yield_step
 assert "scripts/ci/admit.py --yield" in yield_step
 assert "if: steps.yield.outputs.skip != 'true'" in shards.split("      - name: Plan this shard\n", 1)[1].split("\n      - ", 1)[0]
 assert shards.index("Step aside") < shards.index("Plan this shard")
@@ -179,9 +179,8 @@ for name in ("ci", "ios", "ios-core", "ios-job"):
     gates = {job for job, body in jobs.items() if GATE in body}
     assert gates, name
     for job in gates:
-        # Only ci.yml's gate may pass at once (on a push to main: that commit's release waits for CI). Every iOS gate
-        # waits, on main too; ios.yml's are background except on a hand run.
-        assert name == "ci" or "wait:" not in jobs[job], (name, job)
+        # No gate passes at once any more: main's CI calls none. ios.yml's are background except on a hand run.
+        assert "wait:" not in jobs[job], (name, job)
         assert name != "ios" or "background: ${{ github.event_name != 'workflow_dispatch' }}" in jobs[job], (name, job)
         permissions = jobs[job].split("    permissions:\n", 1)[1].split("\n    with:", 1)[0]
         granted = [line.split("#", 1)[0].split() for line in permissions.splitlines()]
@@ -194,8 +193,15 @@ for name in ("ci", "ios", "ios-core", "ios-job"):
             assert needs and set(re.findall(r"[a-z0-9-]+", needs.group(1))) & gates, (name, job)
             gated += 1
 assert gated == 7, gated
-# ci.yml's gate passes at once on a push to main: the release of that commit waits for that run.
-assert "wait: ${{ github.event_name != 'push' }}" in (ROOT / ".github/workflows/ci.yml").read_text()
+# ci.yml calls no gate on a push to main: the release of that commit waits for that run. Its macOS jobs run whatever
+# the gate did (it is a queue, not a check), unless the run was cancelled; CI result ignores the gate.
+ci_jobs = dict(zip(*[iter(re.split(r"\n  ([a-z0-9-]+):\n", (ROOT / ".github/workflows/ci.yml").read_text()
+                               .split("\njobs:\n", 1)[1])[1:])] * 2))
+assert "if: needs.plan.outputs.macos != '0' && github.event_name != 'push'" in ci_jobs["admit"]
+for job in ("desktop-macos", "ios"):
+    assert ("!cancelled() && needs.plan.result == 'success' && needs.admit.result != 'cancelled' &&"
+            in ci_jobs[job]), job
+assert 'job != "admit"' in ci_jobs["result"]
 # Publication waits for CI's whole result (scripts/wait-for-ci.sh): CI calls no other workflow that could wait or fail.
 ci_text = (ROOT / ".github/workflows/ci.yml").read_text()
 assert set(re.findall(r"uses: \./\.github/workflows/([a-z0-9-]+\.yml)", ci_text)) == {"macos-gate.yml"}

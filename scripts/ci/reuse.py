@@ -15,8 +15,14 @@ A suite's inputs (the same list decides whether a change selects the suite at al
     their Rust sources name with a relative path (include_str!("../../tests/fixtures/x"),
     CARGO_MANIFEST_DIR joined with "../.." and a path constant), found by scanning the sources on every run.
 
-Git object ids identify the contents, so the fingerprint is the hash of the sorted (path, object id) list from
-`git ls-tree` on the checked-out commit: no file is read except the Rust sources that are scanned.
+Git object ids identify the contents, so the fingerprint is the hash of the sorted (path, mode, object id) list from
+`git ls-tree` on the checked-out commit: no file is read except the Rust sources that are scanned. A suite's variant
+(the iOS runner and Xcode, from repository variables) is part of it too.
+
+The scan fails closed: a CARGO_MANIFEST_DIR that is not directly joined with a string literal (or concatenated with
+one), or a bare "../.." not then joined with a path constant of the same file, makes the suite read the whole
+repository. A path a source names counts whether or not it exists, so deleting or renaming a file a source still names
+selects that suite.
 
 Which passes count: a pull request trusts its own earlier runs and main's; main trusts only main's; manual runs, the
 schedule and the `ci:full` label reuse nothing. If a pull request changes a Rust build file that no selected suite's
@@ -47,12 +53,17 @@ ROOT_PACKAGE = "vaultwarden"
 ROOT_INPUTS = ["src/**", "build.rs", "migrations/**", "tests/**", "diesel.toml", "rustfmt.toml"]
 ROOT_SCAN = ["src", "tests", "build.rs"]
 
-# The workspace packages each Rust suite builds (their dependencies are added).
-EVERY_PACKAGE_BUT_THE_APP = [ROOT_PACKAGE, "macros", "reins-proto", "reins-policy", "reins-core", "reins-e2e",
-                             "reins-desktop", "reins-laya", "reins-replay"]
-SUITE_PACKAGES: dict[str, list[str]] = {
-    "rust": EVERY_PACKAGE_BUT_THE_APP,
-    "clippy": EVERY_PACKAGE_BUT_THE_APP,
+
+
+class AllBut(tuple):
+    """Every workspace package (read from the manifests, so a new member is in) except these."""
+
+
+# The workspace packages each Rust suite builds (their dependencies are added). The server and core tests and clippy
+# build the whole workspace but the desktop app (`--workspace --exclude reins-desktop-app`).
+SUITE_PACKAGES: dict[str, list[str] | AllBut] = {
+    "rust": AllBut(["reins-desktop-app"]),
+    "clippy": AllBut(["reins-desktop-app"]),
     "replay": ["reins-replay"],
     "desktop-linux": ["reins-desktop-app"],
     "desktop-macos": ["reins-desktop", "reins-desktop-app"],
@@ -77,24 +88,28 @@ SUITE_INPUTS: dict[str, list[str]] = {
     # The job runs scripts/install.ps1 against the test build.
     "desktop-windows": ["scripts/install.ps1"],
     "android": ["android/**", "scripts/build-android-native.sh", "scripts/check-android-apk.py"],
-    "ios": ["ios/**", "scripts/ios-ui-plan.py"],
+    # ios.yml and the workflows it shares the core with: a pull request that changes them runs its iOS job.
+    "ios": ["ios/**", "scripts/ios-ui-plan.py", ".github/workflows/ios.yml", ".github/workflows/ios-core.yml",
+            ".github/workflows/ios-job.yml"],
 }
 
 SUITES = list(SUITE_INPUTS)
 
-# A ../ path that names something (a bare "../.." names no file); "/../x" as in
-# concat!(env!("CARGO_MANIFEST_DIR"), "/../x") too.
+# A ../ path (a bare "../.." names no file); "/../x" as in concat!(env!("CARGO_MANIFEST_DIR"), "/../x") too.
 RELATIVE_PATH = re.compile(r'"/?((?:\.\./)+[^"\\\n{}./][^"\\\n{}]*)"')
-# The package directory's parent reached in code. The scan follows one form, a join of a "../" literal and then of a
-# string constant of the same file (`.join("../..").join(PALETTE_FIXTURE)`); a suite whose sources do anything else
-# reads the whole repository (fail closed).
-UNFOLLOWABLE = re.compile(r'CARGO_MANIFEST_DIR[^;]{0,200}?(?:\.parent\(\)|\.ancestors\(\)|join\(\s*"(?:\.\./?)+"\s*\))')
-JOINED_CONSTANT = re.compile(r'CARGO_MANIFEST_DIR"\)\s*\)\s*\.join\(\s*"((?:\.\./?)+)"\s*\)\s*\.join\(\s*([A-Z][A-Z0-9_]*)\s*\)')
+# Every use of CARGO_MANIFEST_DIR must be one of these, or the file's suites read the whole repository:
+#   Path::new(env!("CARGO_MANIFEST_DIR")).join("<literal>")      (and PathBuf::from)
+#   Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(CONSTANT), CONSTANT a string const of the same file
+#   concat!(env!("CARGO_MANIFEST_DIR"), "<literal>")
+MANIFEST_DIR = re.compile(r"CARGO_MANIFEST_DIR")
+JOINED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*\)\s*\.join\(\s*"([^"\\\n]*)"\s*\)(?:\s*\.join\(\s*([A-Z][A-Z0-9_]*)\s*\))?')
+CONCATENATED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"\\\n]*)"')
+BARE_PARENT = re.compile(r"^(?:\.\.?/?)+$")
 CONSTANT = re.compile(r'\bconst\s+([A-Z][A-Z0-9_]*)\s*:\s*&(?:\'static\s+)?str\s*=\s*"([^"\\\n]+)"\s*;')
 EVERYTHING = ["**"]
-# Parent reaches the scan cannot follow but that are known: file -> (how many reaches it has, the workspace packages
-# they read). reins-e2e builds the server binary from the repository root. scripts/test-ci-reuse.py checks that each
-# file still has exactly that many reaches; one more makes its suites read the whole repository again.
+# Uses the scan cannot follow but that are known: file -> (how many such uses it has, the workspace packages they
+# read). reins-e2e builds the server binary from the repository root. scripts/test-ci-reuse.py checks that each file
+# still has exactly that many; one more makes its suites read the whole repository again.
 KNOWN_PARENT_READS: dict[str, tuple[int, list[str]]] = {
     "crates/reins-e2e/src/server.rs": (1, [ROOT_PACKAGE]),
 }
@@ -119,14 +134,16 @@ def matches(path: str, patterns: list[str]) -> bool:
 
 
 def tree_index(root: str = ".", treeish: str = "HEAD") -> dict[str, str]:
-    """path -> git object id for every file of `treeish` (submodules: their commit)."""
+    """path -> "mode:object id" for every file of `treeish` (submodules: their commit). The mode counts: an
+    executable bit decides whether a script runs."""
     out = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-z", "--full-tree", treeish],
                          check=True, capture_output=True).stdout.decode()
     index = {}
     for entry in out.split("\0"):
         if entry:
             meta, path = entry.split("\t", 1)
-            index[path] = meta.split()[2]
+            mode, _, oid = meta.split()
+            index[path] = f"{mode}:{oid}"
     return index
 
 
@@ -176,6 +193,15 @@ class Workspace:
                             found.add(by_dir[target_dir])
             self.deps[by_dir[member]] = found
 
+    def packages(self, spec) -> list[str]:
+        """A suite's packages: a list, or AllBut(...) of the workspace's."""
+        if isinstance(spec, AllBut):
+            missing = [p for p in spec if p not in self.dirs]
+            if missing:
+                raise KeyError(f"not workspace packages: {', '.join(missing)}")
+            return sorted(p for p in self.dirs if p not in spec)
+        return list(spec)
+
     def closure(self, packages: list[str]) -> set[str]:
         """The packages in `packages` and everything they depend on."""
         seen: set[str] = set()
@@ -220,30 +246,31 @@ class Workspace:
         return [p for p in index if p.endswith(".rs") and p.startswith(top + "/")]
 
     def _named_paths(self, top: str, index: dict[str, str]) -> set[str]:
-        """Every existing path a Rust file of the package at `top` names with a ../ path."""
+        """Every path in the repository a Rust file of the package at `top` names with a ../ path, existing or not
+        ("*": a use the scan cannot follow)."""
         cache = self.__dict__.setdefault("_named", {})
         if top in cache:
             return cache[top]
         named: set[str] = set()
         for path in self._rust_files(top, index):
             text = self.read(path)
-            rel_dir = posixpath.dirname(path) or "."
-            if UNFOLLOWABLE.search(text):
-                followed = followed_joins(text, top, index)
+            followed, unfollowed = manifest_dir_uses(text, top)
+            named |= followed
+            if unfollowed:
                 known = KNOWN_PARENT_READS.get(path)
-                if followed is not None:
-                    named |= followed
-                elif known and len(UNFOLLOWABLE.findall(text)) == known[0]:
+                if known and unfollowed == known[0]:
                     named |= {PACKAGE_MARK + package for package in known[1]}
                 else:
                     named.add("*")
+            rel_dir = posixpath.dirname(path) or "."
             for literal in RELATIVE_PATH.findall(text):
-                # include_str!/include_bytes! resolve from the file, CARGO_MANIFEST_DIR from the package.
-                for base in (rel_dir, top):
-                    target = posixpath.normpath(posixpath.join(base, literal))
-                    if not target.startswith("..") and exists(target, index):
-                        named.add(target)
-                        break
+                # include_str!/include_bytes! resolve from the file, CARGO_MANIFEST_DIR from the package. A path that
+                # exists from one of them is that one; one that exists from neither (deleted, renamed, or not a
+                # path at all) counts from both, so a change there selects the suite.
+                candidates = [posixpath.normpath(posixpath.join(base, literal)) for base in (rel_dir, top)]
+                candidates = [c for c in candidates if not c.startswith("..")]
+                present = [c for c in candidates if exists(c, index)]
+                named |= set(present[:1] or candidates)
         cache[top] = named
         return named
 
@@ -253,22 +280,36 @@ def read_file(path: str) -> str:
         return f.read()
 
 
-def followed_joins(text: str, top: str, index: dict[str, str]) -> set[str] | None:
-    """The paths of `.join("../..").join(CONSTANT)` uses, if every parent reach in `text` is one; else None."""
+def manifest_dir_uses(text: str, top: str) -> tuple[set[str], int]:
+    """(the repository paths the CARGO_MANIFEST_DIR uses in `text` name, how many uses the scan cannot follow)."""
     constants = dict(CONSTANT.findall(text))
-    reaches = len(UNFOLLOWABLE.findall(text))
-    joins = JOINED_CONSTANT.findall(text)
-    if len(joins) != reaches:
-        return None
-    found = set()
-    for up, name in joins:
-        if name not in constants:
-            return None
-        target = posixpath.normpath(posixpath.join(top, up, constants[name]))
-        if target.startswith("..") or not exists(target, index):
-            return None
-        found.add(target)
-    return found
+    found: set[str] = set()
+    unfollowed = 0
+    for use in MANIFEST_DIR.finditer(text):
+        start = use.start()
+        joined = JOINED.match(text, start)
+        concatenated = CONCATENATED.match(text, start)
+        if joined:
+            literal, constant = joined.group(1), joined.group(2)
+            if BARE_PARENT.match(literal):
+                if constant is None or constant not in constants:
+                    unfollowed += 1
+                    continue
+                literal = posixpath.join(literal, constants[constant])
+        elif concatenated:
+            literal = concatenated.group(1).lstrip("/")
+            if BARE_PARENT.match(literal):
+                unfollowed += 1
+                continue
+        else:
+            unfollowed += 1
+            continue
+        target = posixpath.normpath(posixpath.join(top, literal))
+        if target.startswith(".."):
+            unfollowed += 1
+        else:
+            found.add(target)
+    return found, unfollowed
 
 
 def exists(path: str, index: dict[str, str]) -> bool:
@@ -301,7 +342,7 @@ def suite_inputs(suites: list[str], index: dict[str, str], workspace: Workspace)
         dirs: set[str] = set()
         if suite in SUITE_PACKAGES:
             patterns = patterns + RUST_COMMON
-            packages = workspace.closure(SUITE_PACKAGES[suite])
+            packages = workspace.closure(workspace.packages(SUITE_PACKAGES[suite]))
             refs = workspace.references(packages, index)
             # Packages a known parent reach reads (and their dependencies) are inputs as a whole.
             read = {r[len(PACKAGE_MARK):] for r in refs if r.startswith(PACKAGE_MARK)}
@@ -312,8 +353,8 @@ def suite_inputs(suites: list[str], index: dict[str, str], workspace: Workspace)
                 refs = {r for r in refs if not r.startswith(PACKAGE_MARK)}
             own, dirs = workspace.inputs(packages)
             patterns = patterns + own
-            extra[suite] = sorted(r if r != "*" else "the whole repository (a path built from "
-                                  "CARGO_MANIFEST_DIR's parent)" for r in refs)
+            extra[suite] = sorted(r if r != "*" else "the whole repository (a CARGO_MANIFEST_DIR use the scan "
+                                  "cannot follow)" for r in refs)
             if "*" in refs:
                 patterns = patterns + EVERYTHING
                 refs.discard("*")

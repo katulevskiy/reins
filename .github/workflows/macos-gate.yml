@@ -6,21 +6,19 @@ name: macOS gate
 # runners are free for all the jobs it gates:
 #   - releases come first: a release run whose "macOS builds" job does not exist yet holds a runner, and its queued
 #     jobs ("macOS builds", "TestFlight upload") are busy runners like any other;
-#   - main's CI passes at once (`wait: false`): that commit's release waits for CI's result;
+#   - main's CI calls no gate: that commit's release waits for CI's result;
 #   - then pull requests labelled ci:lock, then ci:priority, then everyone else, first come, first served;
 #   - background runs (ios.yml on main and at night) go last, only when nobody else waits, and leave a runner free.
 # The request is in this job's name ("admit [macos=2] #232"), where every other gate reads it: nothing is written
 # anywhere, so a pull request from a fork (read-only token) takes part. release.yml never uses this gate.
 #
-# It never waits more than `minutes` (180), and goes on after five API errors in a row or when the API rate limit is
-# out for more than ten minutes: admission never blocks CI. scripts/test-ci-admit.py tests the script.
+# It never waits more than `minutes` (180), and goes on after any error, when the API rate limit is out for more than
+# ten minutes, or when fewer than 500 requests are left (the rest is for the release's wait for CI): admission never
+# blocks CI. Under sustained load a background run may rarely be admitted; the nightly runs every UI test anyway.
+# scripts/test-ci-admit.py tests the script.
 on:
   workflow_call:
     inputs:
-      wait:
-        description: Wait for runners (false passes at once; ci.yml on a push to main, which its release waits for)
-        type: boolean
-        default: true
       macos:
         description: The macOS jobs this gate lets go
         type: number
@@ -42,7 +40,7 @@ permissions: {}
 
 jobs:
   gate:
-    name: "admit [macos=${{ inputs.macos }}${{ !inputs.wait && ' front' || inputs.background && ' bg' || '' }}]${{ inputs.pr != '' && format(' #{0}', inputs.pr) || '' }}"
+    name: "admit [macos=${{ inputs.macos }}${{ inputs.background && ' bg' || '' }}]${{ inputs.pr != '' && format(' #{0}', inputs.pr) || '' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 200
     permissions:
@@ -59,7 +57,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CI_MACOS: ${{ inputs.macos }}
-          CI_CLASS: ${{ !inputs.wait && 'front' || inputs.background && 'bg' || 'normal' }}
+          CI_CLASS: ${{ inputs.background && 'bg' || 'normal' }}
           CI_PR: ${{ inputs.pr }}
           CI_MACOS_LABELS: ${{ vars.IOS_RUNNER || 'xcode-27' }}
           CI_BUDGET_MACOS: ${{ vars.CI_BUDGET_MACOS }}

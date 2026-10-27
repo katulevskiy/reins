@@ -94,7 +94,12 @@ def main() -> int:
     head = pr["head"]["sha"]
 
     if any(label["name"] == LOCK_LABEL for label in pr.get("labels", [])):
-        request("DELETE", f"/repos/{repo}/issues/{number}/labels/{quote(LOCK_LABEL)}")
+        # Removed and added again, which restarts its CI_LOCK_HOURS. If the removal fails the old lock stays; the
+        # label is still added below (a no-op then), and the cancellations still help.
+        try:
+            request("DELETE", f"/repos/{repo}/issues/{number}/labels/{quote(LOCK_LABEL)}")
+        except OSError as error:
+            print(f"::warning::could not remove {LOCK_LABEL} to restart it: {error}")
     request("POST", f"/repos/{repo}/issues/{number}/labels", {"labels": [LOCK_LABEL]})
     lines = [f"### CI emergency for #{number}", "", f"Locked: `{LOCK_LABEL}` added to #{number}."]
 
@@ -108,8 +113,12 @@ def main() -> int:
     recent = request("GET", f"/repos/{repo}/actions/workflows/ci.yml/runs?head_sha={head}&per_page=20")["workflow_runs"]
     rerun = to_rerun(active + recent, head)
     if rerun:
-        request("POST", f"/repos/{repo}/actions/runs/{rerun['id']}/rerun")
-        lines.append(f"Re-ran #{number}'s CI run {rerun['id']}.")
+        try:
+            request("POST", f"/repos/{repo}/actions/runs/{rerun['id']}/rerun")
+            lines.append(f"Re-ran #{number}'s CI run {rerun['id']}.")
+        except OSError as error:
+            print(f"::warning::could not re-run CI run {rerun['id']}: {error}")
+            lines.append(f"Could not re-run #{number}'s CI run {rerun['id']} ({error}): re-run it by hand.")
     else:
         lines.append(f"#{number}'s CI is running or passed; nothing to re-run.")
     lines += ["", f"Remove `{LOCK_LABEL}` (or merge or close #{number}) to release the runners."]

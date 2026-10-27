@@ -241,8 +241,8 @@ You must be logged in on the Mac, because the simulator runs in your GUI session
   release.
 - Every macOS job waits for free runners first (`.github/workflows/macos-gate.yml`; see
   [the CI reference](reference/ci.md#admission)). Releases come first. `ios.yml` on main and at night is background
-  work: it waits until nobody else wants a runner, and each UI shard skips its tests while anyone does. The nightly
-  runs every shard.
+  work: it waits until nobody else wants a runner, and each UI shard of a push to main skips its tests while anyone
+  does. The nightly never steps aside and runs every shard.
 
 `scripts/test-ci-routing.py` checks all of this.
 

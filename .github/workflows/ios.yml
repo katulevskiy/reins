@@ -386,11 +386,12 @@ jobs:
       # (scripts/ci/admit.py --yield), and steps aside (a warning, no tests: every later step needs the plan) while
       # anyone else wants a macOS runner: a release whose "macOS builds" is not created yet, a queued macOS job of CI, a
       # release or an iOS job, or a run waiting for admission. A backlog of shards then drains in seconds instead of
-      # holding pull requests and releases back; the nightly runs every shard. A hand run's shards (someone is waiting
-      # for them) and the unit shard never step aside. An API error runs the shard.
+      # holding pull requests and releases back. Only a push to main's shards step aside: the nightly always runs every
+      # test, a hand run's shards have someone waiting for them, and the unit shard gates the iOS check. An API error
+      # runs the shard.
       - name: Step aside
         id: yield
-        if: matrix.shard != 'unit' && github.event_name != 'workflow_dispatch'
+        if: matrix.shard != 'unit' && github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CI_MACOS_LABELS: ${{ vars.IOS_RUNNER || 'xcode-27' }}

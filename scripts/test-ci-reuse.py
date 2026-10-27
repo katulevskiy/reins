@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tests scripts/ci/reuse.py: suite inputs from the Cargo graph, the source scan, fingerprints and pass lookups."""
 
+import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -169,6 +171,56 @@ class ReuseTest(unittest.TestCase):
             reuse.KNOWN_PARENT_READS.clear()
             reuse.KNOWN_PARENT_READS.update(saved)
 
+    def test_manifest_dir_uses(self):
+        uses = reuse.manifest_dir_uses
+        self.assertEqual(uses('Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/x.json")', "crates/c"),
+                         ({"crates/c/testdata/x.json"}, 0))
+        self.assertEqual(uses('concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/x.json")', "crates/c"),
+                         ({"design/x.json"}, 0))
+        self.assertEqual(uses('const F: &str = "design/x.json";\n'
+                              'PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(F)', "crates/c"),
+                         ({"design/x.json"}, 0))
+        # Anything else fails closed: a variable, a runtime lookup, a bare parent, a path outside the repository.
+        for text in ('Path::new(env!("CARGO_MANIFEST_DIR")).join(name)',
+                     'std::env::var("CARGO_MANIFEST_DIR").unwrap()',
+                     'Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")',
+                     'Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(UNKNOWN)',
+                     'Path::new(env!("CARGO_MANIFEST_DIR")).parent()',
+                     'Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x")'):
+            self.assertEqual(uses(text, "crates/c")[1], 1, text)
+
+    def test_a_deleted_reference_still_selects(self):
+        repo = Repo(WORKSPACE)
+        (repo.root / "design/x.json").unlink()
+        repo.commit()
+        _, extra, inputs = repo.keys(["sa"])
+        self.assertIn("design/x.json", extra["sa"])
+        self.assertTrue(reuse.covered("design/x.json", inputs))
+
+    def test_mode_and_variant_change_the_key(self):
+        repo = Repo(WORKSPACE)
+        before, _, _ = repo.keys(["sa"])
+        os.chmod(repo.root / "crates/b/src/lib.rs", 0o755)
+        repo.commit()
+        after, _, _ = repo.keys(["sa"])
+        self.assertNotEqual(before["sa"], after["sa"])
+        index = reuse.tree_index(str(repo.root))
+        ws = reuse.Workspace(str(repo.root))
+        one, _, _ = reuse.suite_keys(["sa"], index, ws, {"sa": "xcode=27.0"})
+        two, _, _ = reuse.suite_keys(["sa"], index, ws, {"sa": "xcode=27.1"})
+        self.assertNotEqual(one["sa"], two["sa"])
+
+    def test_all_but_takes_new_members(self):
+        files = dict(WORKSPACE)
+        files["Cargo.toml"] = files["Cargo.toml"].replace('"crates/c"]', '"crates/c", "crates/d"]')
+        files["crates/d/Cargo.toml"] = '[package]\nname = "d"\n'
+        files["crates/d/src/lib.rs"] = ""
+        repo = Repo(files)
+        ws = reuse.Workspace(str(repo.root))
+        self.assertEqual(ws.packages(reuse.AllBut(["a"])), ["b", "c", "d", "vaultwarden"])
+        with self.assertRaises(KeyError):
+            ws.packages(reuse.AllBut(["gone"]))
+
     def test_passed_jobs_only_from_trusted_refs(self):
         caches = {"actions_caches": [
             {"key": "k-rust", "ref": "refs/heads/main"},
@@ -202,9 +254,23 @@ class RepositoryTest(unittest.TestCase):
         self.assertTrue(reuse.covered("crates/reins-policy/src/lib.rs", {"desktop-macos": inputs["desktop-macos"]}))
         self.assertTrue(reuse.covered("src/main.rs", {"rust": inputs["rust"]}))
         self.assertFalse(reuse.covered("docs/README.md", inputs))
+        # Every workspace member cargo knows is built by some suite (cargo metadata, when cargo is here: the checks
+        # job installs the toolchain first).
+        members = {p for p in workspace.dirs}
+        if shutil.which("cargo"):
+            metadata = json.loads(subprocess.run(
+                ["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline"], cwd=ROOT, check=True,
+                capture_output=True, text=True).stdout)
+            members = {p["name"] for p in metadata["packages"]}
+            self.assertEqual(members, set(workspace.dirs))
+        built = set()
+        for suite, spec in reuse.SUITE_PACKAGES.items():
+            built |= workspace.closure(workspace.packages(spec))
+        self.assertEqual(members - built, set())
         for path, (count, packages) in reuse.KNOWN_PARENT_READS.items():
             text = (ROOT / path).read_text()
-            self.assertEqual(len(reuse.UNFOLLOWABLE.findall(text)), count, path)
+            top = next(d for d in workspace.dirs.values() if d != "." and path.startswith(d + "/"))
+            self.assertEqual(reuse.manifest_dir_uses(text, top)[1], count, path)
             for package in packages:
                 self.assertIn(package, workspace.dirs)
 

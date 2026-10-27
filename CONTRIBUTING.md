@@ -87,10 +87,10 @@ function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` wit
 
 CI (`.github/workflows/ci.yml`) runs once per pull request update and on every push to `main`, not on pushes
 to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Its `plan` job
-(`scripts/ci/plan.py`) runs the suites whose inputs the change touches, taken from the Cargo graph (a `reins-core`
-change runs the server, Android and iOS suites, not the desktop ones), and skips a suite that already passed on the same
-inputs. On a pull request the desktop macOS job runs only when the change can be macOS specific; add the `ci:full`
-label and re-run to run it anyway. The one check to look at is **CI result**. macOS jobs wait for free runners in
+(`scripts/ci/plan.py`) runs, on a pull request, the suites whose inputs the change touches, taken from the Cargo graph
+(a `reins-core` change runs the server, Android and iOS suites, not the desktop ones), and on `main` every suite.
+Either way it skips a suite that already passed on the same inputs. On a pull request the desktop macOS job runs only
+when the change can be macOS specific; add the `ci:full` label and re-run to run it anyway. The one check to look at is **CI result**. macOS jobs wait for free runners in
 turn (`macos-gate.yml`, releases first); `ci:priority` moves a pull request to the front, and the **CI emergency**
 workflow locks the runners for one. See [docs/reference/ci.md](docs/reference/ci.md). Caches (Rust,
 Gradle, Robolectric, the Android native outputs) are written only by runs on `main`, pushes and a weekly run that

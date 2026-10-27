@@ -38,7 +38,7 @@ class ParseTest(unittest.TestCase):
     def test_gate_names(self):
         self.assertEqual(admit.parse_gate("macOS admission / admit [macos=2] #123"), (2, "normal", 123))
         self.assertEqual(admit.parse_gate("Yield to releases / admit [macos=1 bg]"), (1, "bg", None))
-        self.assertEqual(admit.parse_gate("admit [macos=1 front]"), (1, "front", None))
+        self.assertIsNone(admit.parse_gate("admit [macos=1 front]"))  # main's CI has no gate
         self.assertEqual(admit.parse_gate("admit [macos=40] #1"), (admit.MAX_REQUEST, "normal", 1))
         self.assertIsNone(admit.parse_gate("iOS"))
 
@@ -135,9 +135,13 @@ class DecideTest(unittest.TestCase):
         s.busy = 1
         self.assertTrue(admit.decide(s.waiters[0], s, 5).admit)
 
-    def test_front_never_waits(self):
-        s = admit.Snapshot(busy=5, release=2, waiters=[waiter(ME, "10:00", 1, "front")])
-        self.assertTrue(admit.decide(s.waiters[0], s, 5).admit)
+    def test_polling(self):
+        self.assertEqual(admit.poll_interval(0, "normal", 5000), 60)
+        self.assertEqual(admit.poll_interval(2, "normal", 5000), 180)
+        self.assertEqual(admit.poll_interval(9, "normal", 5000), 300)
+        self.assertEqual(admit.poll_interval(0, "bg", 5000), 120)
+        self.assertEqual(admit.poll_interval(0, "normal", 900), 300)
+        self.assertGreaterEqual(admit.QUOTA_RESERVE, 500)
 
     def test_own_request_merges_this_runs_gates(self):
         s = admit.Snapshot(waiters=[waiter(ME, "10:05", 1), waiter(ME, "10:01", 1), waiter(2, "10:03", 1)])
@@ -163,8 +167,123 @@ class WorkflowTest(unittest.TestCase):
         # The gate's name is what every other gate parses.
         gate = (ROOT / ".github/workflows/macos-gate.yml").read_text()
         self.assertIn("name: \"admit [macos=${{ inputs.macos }}", gate)
-        for name in ("admit [macos=2] #232", "admit [macos=1 bg]", "admit [macos=1 front]"):
+        for name in ("admit [macos=2] #232", "admit [macos=1 bg]"):
             self.assertIsNotNone(admit.parse_gate(f"macOS admission / {name}"), name)
+
+
+class FakeApi:
+    def __init__(self, routes):
+        self.routes = routes
+        self.paths = []
+        self.remaining = 5000
+        self.requests = 0
+
+    def get(self, path):
+        self.paths.append(path)
+        for prefix, value in self.routes.items():
+            if path.startswith(prefix):
+                return value(path) if callable(value) else value
+        raise AssertionError(path)
+
+
+class ReaderTest(unittest.TestCase):
+    def test_one_runs_list_per_poll_and_runs_of_its_workflows_only(self):
+        runs = [dict(run(5), workflow_id=1, created_at="2026-10-27T11:00:00Z"),
+                dict(run(6, "cla.yml"), workflow_id=9, created_at="2026-10-27T11:00:00Z"),
+                dict(run(7, status="completed"), workflow_id=1, created_at="2026-10-27T11:00:00Z")]
+        api = FakeApi({
+            "/repos/o/r/actions/workflows?": {"workflows": [{"id": 1, "path": ".github/workflows/ci.yml"},
+                                                             {"id": 9, "path": ".github/workflows/cla.yml"}]},
+            "/repos/o/r/actions/runs?": {"workflow_runs": runs},
+            "/repos/o/r/actions/runs/5/jobs": {"jobs": [mac()]},
+            "/repos/o/r/actions/runs/5": dict(run(5, status="completed"), workflow_id=1),
+        })
+        reader = admit.Reader(api, "o/r", set())
+        self.assertEqual(reader.snapshot(ME, labels=False).busy, 1)
+        self.assertEqual(sum("/actions/runs?" in p for p in api.paths), 1)
+        self.assertFalse(any("/runs/6/" in p for p in api.paths))  # the CLA check's jobs are never read
+        # Next poll: run 5 has dropped off the latest page; it is read on its own, once.
+        api.routes["/repos/o/r/actions/runs?"] = {"workflow_runs": []}
+        api.paths.clear()
+        self.assertEqual(reader.snapshot(ME, labels=False).busy, 0)
+        self.assertEqual(api.paths, ["/repos/o/r/actions/runs?per_page=100&page=1", "/repos/o/r/actions/runs/5"])
+
+    def test_only_the_oldest_lock_holds(self):
+        def events(path):
+            number = int(path.split("/issues/", 1)[1].split("/", 1)[0])
+            added = {3: "2026-10-27T09:00:00Z", 4: "2026-10-27T08:00:00Z"}[number]
+            return [{"event": "labeled", "label": {"name": admit.LOCK_LABEL}, "created_at": added}]
+        api = FakeApi({
+            "/repos/o/r/actions/workflows?": {"workflows": []},
+            "/repos/o/r/actions/runs?": {"workflow_runs": []},
+            f"/repos/o/r/issues?state=open&labels={admit.quote(admit.LOCK_LABEL)}": [
+                {"number": 3, "pull_request": {}}, {"number": 4, "pull_request": {}}],
+            f"/repos/o/r/issues?state=open&labels={admit.quote(admit.PRIORITY_LABEL)}": [],
+            "/repos/o/r/issues/": events,
+        })
+        saved = admit.time.time
+        admit.time.time = lambda: NOW
+        try:
+            snap = admit.Reader(api, "o/r", set()).snapshot(ME)
+        finally:
+            admit.time.time = saved
+        self.assertEqual((snap.locked, snap.priority), ({4}, {3}))
+
+
+class FailOpenTest(unittest.TestCase):
+    def test_anything_unexpected_lets_the_run_go(self):
+        saved = admit.wait
+        admit.wait = lambda: 1 / 0
+        try:
+            self.assertEqual(admit.main(), 0)
+        finally:
+            admit.wait = saved
+
+
+class EmergencyTest(unittest.TestCase):
+    def test_what_it_cancels_and_reruns(self):
+        import emergency
+        runs = [dict(run(1, head="mine"), status="in_progress"),
+                dict(run(2, head="other"), status="queued"),
+                dict(run(3, event="push", head="main"), status="in_progress"),
+                dict(run(4, head="old"), status="completed")]
+        self.assertEqual([r["id"] for r in emergency.to_cancel(runs, "mine")], [2])  # never main, never its own
+        ios = [dict(run(5, "ios.yml", "push")), dict(run(6, "ios.yml", "schedule")),
+               dict(run(7, "ios.yml", "workflow_dispatch"))]
+        self.assertEqual([r["id"] for r in emergency.background(ios)], [5, 6])
+        done = [dict(run(8, head="mine"), status="completed", conclusion="failure"),
+                dict(run(9, head="mine"), status="completed", conclusion="success")]
+        self.assertEqual(emergency.to_rerun(done[:1], "mine")["id"], 8)
+        self.assertIsNone(emergency.to_rerun(done, "mine"))  # the latest passed
+        self.assertIsNone(emergency.to_rerun(runs, "mine"))  # one is running
+
+    def test_a_failed_label_removal_or_rerun_is_a_warning(self):
+        import emergency
+        calls = []
+
+        def request(method, path, body=None):
+            calls.append((method, path))
+            if method == "DELETE" or path.endswith("/rerun"):
+                raise OSError("HTTP 500")
+            if path.endswith("/pulls/12"):
+                return {"state": "open", "head": {"sha": "mine"}, "labels": [{"name": emergency.LOCK_LABEL}]}
+            if "/runs?head_sha=" in path:
+                return {"workflow_runs": [dict(run(8, head="mine"), status="completed", conclusion="failure")]}
+            if "/runs?status=" in path:
+                return {"workflow_runs": []}
+            return None
+        saved = (emergency.request, dict(emergency.os.environ))
+        emergency.request = request
+        emergency.os.environ.update({"GITHUB_REPOSITORY": "o/r", "PR": "12", "CANCEL_BACKGROUND": "false"})
+        emergency.os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        try:
+            self.assertEqual(emergency.main(), 0)
+        finally:
+            emergency.request = saved[0]
+            emergency.os.environ.clear()
+            emergency.os.environ.update(saved[1])
+        self.assertIn(("POST", "/repos/o/r/issues/12/labels"), calls)
+        self.assertIn(("POST", "/repos/o/r/actions/runs/8/rerun"), calls)
 
 
 class YieldTest(unittest.TestCase):

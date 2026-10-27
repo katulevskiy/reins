@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Tests scripts/ci/plan.py against this repository's real suite inputs, and checks ci.yml runs what it plans."""
 
+import json
+import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +73,9 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(run(["ios/Reins/App/ReinsApp.swift"]), {"ios"})
         self.assertEqual(run(["scripts/ios-ui-plan.py"]), {"ios"})
         self.assertEqual(run(["scripts/build-android-native.sh"]), {"android"})
+        # The iOS workflows a pull request's iOS job shares the core and the runner setup with.
+        for workflow in ("ios.yml", "ios-core.yml", "ios-job.yml"):
+            self.assertEqual(run([f".github/workflows/{workflow}"]), {"ios"}, workflow)
 
     def test_ios_runs_here_on_pull_requests_and_manual_runs_only(self):
         self.assertIn("ios", run(["ios/Reins/App/ReinsApp.swift"], "full", "workflow_dispatch"))
@@ -98,6 +104,75 @@ class SelectTest(unittest.TestCase):
         self.assertTrue(plan.docker([{"filename": ".github/workflows/ci.yml"}]))
         self.assertTrue(plan.docker(None))
         self.assertFalse(plan.docker([{"filename": "src/main.rs"}]))
+
+
+class UncoveredTest(unittest.TestCase):
+    def test_an_uncovered_build_file_runs_every_rust_suite(self):
+        self.assertEqual(run(["crates/reins-new/src/lib.rs"]), set(reuse.SUITE_PACKAGES))
+
+
+class RunTest(unittest.TestCase):
+    """plan_run and main against a fake API, on this repository's tree."""
+
+    def setUp(self):
+        self.saved = (plan.api, dict(os.environ), os.getcwd())
+        os.chdir(ROOT)
+        self.dir = tempfile.TemporaryDirectory(prefix="reins-ci-plan-", dir=os.environ.get("TMPDIR"))
+        os.environ.update({"GITHUB_REPOSITORY": "o/r", "GITHUB_OUTPUT": f"{self.dir.name}/out",
+                           "GITHUB_STEP_SUMMARY": f"{self.dir.name}/summary"})
+
+    def tearDown(self):
+        plan.api = self.saved[0]
+        os.environ.clear()
+        os.environ.update(self.saved[1])
+        os.chdir(self.saved[2])
+        self.dir.cleanup()
+
+    def fake(self, files, passed_on_main):
+        def api(path):
+            if "/compare/" in path:
+                return {"files": [{"filename": f} for f in files]}
+            if "/actions/caches?" in path:
+                key = path.split("key=", 1)[1].split("-&", 1)[0]
+                suite = next(s for s in plan.SUITE_JOBS if key.startswith(f"ci-pass-v1-{s}-"))
+                if suite in passed_on_main:
+                    return {"actions_caches": [{"key": f"{key}-{job}", "ref": "refs/heads/main"}
+                                               for job, _ in plan.SUITE_JOBS[suite]]}
+                return {"actions_caches": []}
+            raise AssertionError(path)
+        plan.api = api
+
+    def test_main_goes_by_fingerprint_not_by_diff(self):
+        os.environ["GITHUB_REF"] = "refs/heads/main"
+        # A docs-only push: a suite that has not passed on main on these inputs still runs (a red suite reruns on
+        # every later push until it passes); one that has is reused.
+        self.fake(["docs/README.md"], passed_on_main={"rust", "clippy", "packages"})
+        out = plan.plan_run("push", {"before": "a" * 40, "after": "b" * 40})
+        suites = json.loads(out["suites"])
+        self.assertFalse(suites["rust"] or suites["clippy"] or suites["packages"])
+        self.assertTrue(suites["android"] and suites["desktop-macos"] and suites["replay"])
+        self.assertFalse(suites["ios"])
+        self.assertEqual(out["macos"], "1")
+        self.assertEqual(out["docker"], "false")
+
+    def test_any_failure_runs_everything(self):
+        os.environ["GITHUB_EVENT_NAME"] = "pull_request"
+        os.environ["GITHUB_EVENT_PATH"] = f"{self.dir.name}/missing.json"
+        plan.main()
+        out = dict(line.split("=", 1) for line in Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines())
+        self.assertTrue(all(json.loads(out["suites"]).values()))
+        self.assertEqual((out["keys"], out["macos"], out["docker"]), ("{}", "2", "true"))
+
+        def broken(path):
+            raise RuntimeError("boom")
+        plan.api = broken
+        Path(f"{self.dir.name}/event.json").write_text('{"pull_request": {"number": 7}}')
+        os.environ["GITHUB_EVENT_PATH"] = f"{self.dir.name}/event.json"
+        Path(os.environ["GITHUB_OUTPUT"]).write_text("")
+        plan.main()
+        out = dict(line.split("=", 1) for line in Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines())
+        self.assertTrue(all(json.loads(out["suites"]).values()))
+        self.assertEqual(out["pr"], "7")
 
 
 class ReuseAndRequestTest(unittest.TestCase):

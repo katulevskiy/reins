@@ -2,15 +2,21 @@
 
 Pull requests and `main` go through one workflow, [`ci.yml`](../../.github/workflows/ci.yml). Its jobs, in order:
 
-1. **plan** ([`scripts/ci/plan.py`](../../scripts/ci/plan.py)) lists the changed files and picks the suites the
-   change needs. It drops the suites that already passed on the same inputs (see [Reuse](#reuse)) and counts the
-   macOS jobs the rest will start.
+1. **plan** ([`scripts/ci/plan.py`](../../scripts/ci/plan.py)) picks the suites the run needs:
+   - on a pull request, the suites whose inputs the change touches;
+   - on `main`, every suite, unless `main` already passed it on the same inputs.
+
+   It drops the suites that already passed on the same inputs (see [Reuse](#reuse)) and counts the macOS jobs the rest
+   will start. If anything goes wrong, it runs every suite and reuses nothing.
 2. **macOS admission** ([`macos-gate.yml`](../../.github/workflows/macos-gate.yml), running
    [`scripts/ci/admit.py`](../../scripts/ci/admit.py)) waits until macOS runners are free for all of the run's macOS
-   jobs. Linux and Windows jobs don't wait for it.
+   jobs.
+   - Linux and Windows jobs don't wait for it.
+   - Pushes to `main` don't call it, because their release waits for them.
+   - The macOS jobs run even if it fails: it is a queue, not a check.
 3. **The suites** run.
-4. **CI result** passes when no suite failed or was cancelled. A skipped or reused suite counts as passed. This is the
-   one check to require.
+4. **CI result** passes when the plan succeeded and no suite failed or was cancelled. A skipped or reused suite counts
+   as passed. This is the one check to require.
 
 `ios.yml` runs iOS on `main`, at night and by hand, with the UI tests, in the background (see
 [Admission](#admission)). Releases wait for `ci.yml` on their commit ([`scripts/wait-for-ci.sh`](../../scripts/wait-for-ci.sh)),
@@ -96,8 +102,13 @@ about 8.4 GB and prunes superseded entries.
 
 ### The planner over the last 30 merged pull requests
 
-`plan.py` over their 68 pushes, each against `main` as it was then (`git merge-tree`), and over 61 pushes to `main`.
-Reuse counts only passes the recorded runs really had. Per push, mean:
+The dry run replays `plan.py` over recorded history. Reuse counts only passes the recorded runs really had.
+
+- **Pull requests:** the 68 pushes of the last 30 merged pull requests, each against `main` as it was then
+  (`git merge-tree`).
+- **`main`:** the 109 pushes since 2026-10-15. Every suite runs unless `main` passed it on the same inputs.
+
+Per push, mean:
 
 | | jobs | macOS jobs | Linux and Windows runner-min | macOS runner-min |
 |---|---|---|---|---|
@@ -105,44 +116,51 @@ Reuse counts only passes the recorded runs really had. Per push, mean:
 | Pull request, selection from the Cargo graph | 11.9 | 1.2 | 28 | 10.9 |
 | ... and the fast tier | 11.9 | 1.2 | 28 | 10.9 |
 | ... and reuse | **8.7** | **1.0** | **17** | **10.2** |
-| `main`, before | 11.9 | 0.6 | 34 | 2.5 |
-| `main`, after | 11.1 | 0.4 | 31 | 1.8 |
+| `main`, before (selection by the push's diff) | 10.9 | 0.5 | 31 | 2.3 |
+| `main`, after (every suite, unless passed on the same inputs) | 9.8 | 0.4 | 28 | 1.7 |
 
-- macOS jobs per pull request push drop from 2.9 to 1.0. The iOS chain becomes one job, so a pull request queues
-  once, not three times. The desktop macOS job stops running for `reins-core` changes: the desktop crates don't
-  depend on it.
-- macOS minutes barely drop: the iOS build and tests are the work. The gain is in waiting, and in who waits
-  (see [Admission](#admission)).
-- Reuse skipped at least one suite on 36 of 68 pushes: Linux packages 24, Android 18, server and core tests and clippy 14 each, the three
-  desktop suites 11 each.
-- The fast tier changed nothing in this sample: no pull request changed `reins-proto` or `reins-policy` without also
-  changing a desktop crate.
-- `main` reuses little: its diff already selects only what changed.
+- **macOS jobs per pull request push drop from 2.9 to 1.0.**
+  - The iOS chain becomes one job, so a pull request queues once, not three times.
+  - The desktop macOS job stops running for `reins-core` changes: the desktop crates don't depend on it.
+- **macOS minutes barely drop**, because the iOS build and tests are the work itself. The gain is in waiting, and in
+  who waits (see [Admission](#admission)).
+- **Reuse skipped at least one suite on 36 of 68 pushes.** Per suite: Linux packages 24, Android 18, server and core
+  tests 14, clippy 14, each of the three desktop suites 11.
+- **The fast tier changed nothing in this sample.** No pull request changed `reins-proto` or `reins-policy` without
+  also changing a desktop crate.
+- **`main` runs slightly less, and is safer.** Before, a red suite was skipped by the next push if that push didn't
+  touch it, and its release shipped the breakage. Now it runs again on every push until it passes.
 
 ## Which suites run
 
-A suite runs when a changed file is one of its inputs. The inputs are the same list its [reuse](#reuse) fingerprint
-hashes, so what selects a suite and what decides whether its pass still holds can't drift apart.
+On a pull request, a suite runs when a changed file is one of its inputs. The inputs are the same list its
+[reuse](#reuse) fingerprint hashes, so what selects a suite and what decides whether its pass still holds can't drift
+apart. On `main`, every suite runs unless `main` recorded a pass on its exact inputs.
 
 | Suite | Jobs | Inputs besides `ci.yml`, `macos-gate.yml` and `scripts/ci` |
 |---|---|---|
-| `rust`, `clippy` | Server and core tests (nextest + doctests), clippy | every package but the desktop app, with the lockfile, toolchain and cargo config |
+| `rust`, `clippy` | Server and core tests (nextest + doctests), clippy | every workspace package but the desktop app (read from the manifests, so a new member is in), with the lockfile, toolchain and cargo config |
 | `replay` | Replay gate | `reins-replay` and its dependencies |
 | `packages` | Linux packages and repositories | `scripts/package`, the packaging test, the installers, `release.yml`, the app's packaging files |
 | `desktop-linux` | Desktop UI on Linux | `reins-desktop-app` and its dependencies |
 | `desktop-macos` | Desktop app on macOS | `reins-desktop`, `reins-desktop-app` and their dependencies |
 | `desktop-windows` | Desktop app on Windows | the same, and `scripts/install.ps1` |
 | `android` | natives (3), unit tests (2), debug APK, minified smoke test | `reins-core` and its dependencies, `android/`, the native build script |
-| `ios` | iOS (one macOS job: the core, the build, ReinsTests) | `reins-core` and its dependencies, `ios/`, `scripts/ios-ui-plan.py` |
+| `ios` | iOS (one macOS job: the core, the build, ReinsTests) | `reins-core` and its dependencies, `ios/`, `scripts/ios-ui-plan.py`, `ios.yml`, `ios-core.yml`, `ios-job.yml` |
 
-- Rust inputs come from the Cargo graph: each suite's packages and every workspace package they depend on (path
-  dependencies of every kind).
-- Files outside those packages that the Rust sources name are inputs too. Examples:
-  `include_bytes!("../../../ios/Reins/Resources/Sounds/...")`, or `CARGO_MANIFEST_DIR` joined with `"../.."` and
-  then a path constant. The sources are scanned on every run, and the plan summary lists the files found.
-- `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and `.cargo/` run every Rust suite.
-- A change to CI itself (`ci.yml`, `macos-gate.yml`, `scripts/ci/`) runs everything.
-- Documentation, `design/` and `marketing/` run nothing but the checks job, which always runs.
+- **Rust inputs come from the Cargo graph:** each suite's packages, and every workspace package they depend on (path
+  dependencies of every kind). `scripts/test-ci-reuse.py` checks that every member `cargo metadata` lists is built by
+  some suite.
+- **Files outside those packages that the Rust sources name are inputs too.** For example:
+  - `include_bytes!("../../../ios/Reins/Resources/Sounds/...")`;
+  - `CARGO_MANIFEST_DIR` joined with `"../.."` and then a path constant.
+
+  A named path counts whether it exists or not, so deleting or renaming a file that a source still names selects the
+  suite. The sources are scanned on every run, and the plan summary lists the files found.
+- **Build files:** `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and `.cargo/` run every Rust suite. So does a
+  changed Rust build file that no suite's inputs cover.
+- **CI itself:** a change to `ci.yml`, `macos-gate.yml` or `scripts/ci/` runs everything.
+- **Docs:** documentation, `design/` and `marketing/` run nothing but the checks job, which always runs.
 
 ### Fast tier (pull requests)
 
@@ -152,9 +170,10 @@ hashes, so what selects a suite and what decides whether its pass still holds ca
   - the lockfile, toolchain or cargo config changes;
   - a change in its other crates (`reins-proto`, `reins-policy`) looks macOS specific: a macOS file name, or changed
     code (not comments) with `target_os`, `cfg(unix)`, `objc`, Cocoa, `core_foundation`, ...
-- `main` runs it for every change to its inputs.
-- To run it on a pull request anyway, add the `ci:full` label, then push or re-run CI. That also turns reuse off. The
-  repository variable `CI_PR_TIER=full` does the same for every pull request.
+- `main` runs it unless it passed on the same inputs.
+- To run it on a pull request anyway, add the `ci:full` label, then push or re-run CI. That also turns reuse off for
+  that pull request.
+- The repository variable `CI_PR_TIER=full` turns the fast tier off for every pull request, but keeps reuse.
 
 ### iOS
 
@@ -176,8 +195,11 @@ push touched:
 - a suite is skipped when the push only touched code it doesn't read.
 
 For each suite, `plan` hashes the inputs in the tree being tested ([`scripts/ci/reuse.py`](../../scripts/ci/reuse.py)).
-For a pull request, that tree is its merge with the current `main`. The hash covers the `(path, git object id)` of
-every input file.
+For a pull request, that tree is its merge with the current `main`.
+
+- The hash covers each input file's `(path, mode, git object id)`, so an executable bit counts.
+- It also covers the suite's variant: for iOS, the repository variables `IOS_RUNNER`, `IOS_XCODE_VERSION` and
+  `IOS_DEVELOPER_DIR`.
 
 When a job passes, its last step saves a tiny Actions cache entry: `ci-pass-v1-<suite>-<hash>-<job>`. `plan` skips a
 suite when every one of its jobs has such an entry on a ref it trusts:
@@ -190,37 +212,49 @@ suite when every one of its jobs has such an entry on a ref it trusts:
 
 Reuse fails closed:
 
-- If a pull request changes a Rust build file that no suite's inputs cover, nothing is reused.
-- If a suite's sources reach the package directory's parent in code the scan can't follow (`.parent()`,
-  `.ancestors()`, a bare `join("..")`), that suite counts the whole repository as its input.
-- One known reach is declared instead (`KNOWN_PARENT_READS`): `reins-e2e` builds the server from the repository root,
-  so it reads the server package. `scripts/test-ci-reuse.py` checks the file still has exactly that one reach.
+- If a pull request changes a Rust build file that no suite's inputs cover, nothing is reused, and every Rust suite
+  runs.
+- Every use of `CARGO_MANIFEST_DIR` must take one of these forms:
+  - `.join("<literal>")`;
+  - `.join("../..").join(CONSTANT)`, with `CONSTANT` a string const of the same file;
+  - `concat!(env!("CARGO_MANIFEST_DIR"), "<literal>")`.
+
+  Any other form (a variable, `.parent()`, a runtime `env::var`, a bare `"../.."`) makes the suite count the whole
+  repository as its input.
+- One such use is declared instead (`KNOWN_PARENT_READS`): `reins-e2e` builds the server from the repository root, so
+  it reads the server package. `scripts/test-ci-reuse.py` checks that the file still has exactly that one use.
 
 A pull request could fake a pass in its own runs, but it could just as well edit its own workflows. No other ref sees
 its cache entries.
 
 Limits:
 
-- A path assembled from variables isn't found by the scan. Write such references as one `../` literal, or as a join
-  of a `../` literal and a path constant, or add the path to `SUITE_INPUTS`.
+- A path assembled from variables isn't found by the scan. Write such references as one `../` literal, as a join of
+  a `../` literal and a path constant, or add the path to `SUITE_INPUTS`.
 - A test that depends on the network or on timing and passed by luck stays passed until its inputs change. Re-run with
   `ci:full` to check everything again.
 
 ## Admission
 
 GitHub starts a job as soon as a runner frees up, so a run's macOS jobs trickle in behind everyone else's. Every macOS
-job of `ci.yml`, `ios.yml`, `ios-core.yml` and `ios-job.yml` needs a gate job (`macos-gate.yml`). The gate waits until
-macOS runners are free for all of the jobs it gates. Who goes first:
+job of `ci.yml` (on pull requests and manual runs), `ios.yml`, `ios-core.yml` and `ios-job.yml` needs a gate job
+(`macos-gate.yml`). The gate waits until macOS runners are free for all of the jobs it gates. Who goes first:
 
-1. **Releases.** A release run whose "macOS builds" job doesn't exist yet holds one runner. Once that job exists, it
-   is busy like any other job, queued or running. Release runs are never gated. A queued TestFlight upload is busy too,
-   so nothing admitted after it can get ahead of it.
-2. **`main`'s CI** goes at once: the release of that commit waits for it. It still counts in everyone else's budget.
-3. Pull requests labelled **`ci:lock`**, then **`ci:priority`**.
+1. **Releases.**
+   - A release run whose "macOS builds" job doesn't exist yet holds one runner.
+   - Once that job exists, it is busy like any other job, queued or running.
+   - Release runs are never gated.
+   - A queued TestFlight upload is busy too, so nothing admitted after it can get ahead of it.
+2. **`main`'s CI** calls no gate: the release of that commit waits for it. Its macOS jobs still count in everyone
+   else's budget.
+3. **The oldest `ci:lock`**, then **`ci:priority`** (and any later `ci:lock`).
 4. **Everyone else**: pull requests, iOS jobs and core builds, first come, first served.
-5. **Background**: `ios.yml` on `main` and at night. It goes only when nobody else waits, and it leaves one runner
-   free. Its UI shards check again once they have a runner (`admit.py --yield`), and skip their tests with a warning
-   while a release, a queued job or a waiting run wants a macOS runner. The nightly runs every shard anyway.
+5. **Background**: `ios.yml` on `main` and at night.
+   - It goes only when nobody else waits, and it leaves one runner free.
+   - The UI shards of a push to `main` check again once they have a runner (`admit.py --yield`). They skip their
+     tests with a warning while a release, a queued job or a waiting run wants a macOS runner.
+   - Under sustained load, a background run may rarely be admitted, or only when `MAX_WAIT_MINUTES` lets it go.
+   - The nightly never steps aside and runs every test.
 
 A waiter goes when this fits in the budget (`CI_BUDGET_MACOS`, 5):
 
@@ -235,8 +269,7 @@ macOS job and iOS. Both start together.
 
 All the state lives in the GitHub API, so admission works with the read-only token that pull requests from forks get:
 
-- The gate's job name carries the request, for example `admit [macos=2] #232`, `admit [macos=1 bg]` or
-  `admit [macos=1 front]`.
+- The gate's job name carries the request, for example `admit [macos=2] #232` or `admit [macos=1 bg]`.
 - Busy runners are the macOS jobs (labels `macos-*` and `xcode-*`) that are queued or running in any active run.
 - A request read from another run is capped at three, since a pull request can edit its own copy of the workflows.
 
@@ -245,12 +278,13 @@ All the state lives in the GitHub API, so admission works with the read-only tok
 Adding a label needs the triage role or above, so GitHub decides who can use these. A fork's author can't label their
 own pull request.
 
-- **`ci:priority`**: the pull request's runs go to the front of the queue, behind releases and locked pull requests.
+- **`ci:priority`**: the pull request's runs go to the front of the queue, behind releases and the locked pull
+  request.
 - **`ci:lock`**: while the pull request is open, two macOS runners are kept for it, whether or not it is running
-  anything. Its runs go as soon as their runners are free. The lock ends when:
-  - the label is removed;
-  - the pull request is merged or closed;
-  - `CI_LOCK_HOURS` (6) have passed since the label was added. Add the label again to extend.
+  anything. Its runs go as soon as their runners are free.
+  - Only the oldest lock holds. A pull request labelled later counts as `ci:priority` until the first lock ends.
+  - The lock ends when the label is removed, when the pull request is merged or closed, or when `CI_LOCK_HOURS` (6)
+    have passed since the label was added. Add the label again to extend.
 - A run claims its pull request in its gate's name. The claim only counts when that pull request's head is the run's
   commit.
 - **CI emergency** ([`ci-emergency.yml`](../../.github/workflows/ci-emergency.yml)) is a workflow you start by hand
@@ -260,23 +294,30 @@ own pull request.
   - cancels `ios.yml`'s background runs, which gate nothing (turn this off with `cancel-background`);
   - re-runs the pull request's own CI if none is running and the last run didn't pass.
 
-  It never cancels `main`'s CI or a release.
+  It never cancels `main`'s CI or a release. If the label change or the re-run fails, it warns and carries on.
 
 ### Never blocking CI
 
 Admission lets the run go on anyway:
 
 - after `MAX_WAIT_MINUTES` (180);
-- after five API errors in a row;
-- when the rate limit resets more than ten minutes away.
+- after five API errors in a row, or any unexpected error;
+- when the rate limit resets more than ten minutes away;
+- when fewer than 500 API requests are left. The rest is kept for the release's wait for CI.
 
-The `GITHUB_TOKEN` gets 1,000 API requests an hour per repository (more on some plans). To stay under that,
-admission:
+The `GITHUB_TOKEN` gets 1,000 API requests an hour per repository (more on some plans). To stay under that, each
+poll:
 
-- uses conditional requests: a `304` doesn't count;
-- refetches a run's jobs only when the run changed;
-- polls less often the further back it is (30 s at the front, up to 5 min);
-- slows to 5 min when fewer than 300 requests are left.
+- lists the repository's latest runs once, plus a conditional read of any run it saw active before that has dropped
+  off that page;
+- reads the jobs only of the runs of the workflows with macOS jobs, and only when such a run changed;
+- uses conditional requests, so a `304` doesn't count;
+- comes at least a minute after the last: a minute at the front of the queue, a minute more per run ahead, five at
+  most; background runs poll every two minutes or more, and everyone every five when fewer than 1,000 requests are
+  left.
+
+`scripts/wait-for-ci.sh`, the release's wait for CI, waits out a spent rate limit until its reset (three times at
+most) instead of giving up. The publish job allows for that.
 
 Pull request runs that need macOS wait `CI_DEBOUNCE_SECONDS` (60) first. A newer push cancels the run, so a quick
 series of pushes only takes a macOS runner for the last one.
@@ -288,7 +329,7 @@ series of pushes only takes a macOS runner for the last one.
 | `CI_BUDGET_MACOS` | 5 | macOS runners all runs may hold at once |
 | `CI_ADMISSION` | on | `off`: every gate passes at once |
 | `CI_DEBOUNCE_SECONDS` | 60 | how long a pull request run waits for a newer push before asking |
-| `CI_PR_TIER` | fast | `full`: run `desktop-macos` on every pull request its files select |
+| `CI_PR_TIER` | fast | `full`: no fast tier on pull requests (reuse stays on) |
 | `CI_LOCK_HOURS` | 6 | how long a `ci:lock` label holds runners |
 
 ## What was adopted from Zeron's CI (zeronsh/zeron#1077), and what wasn't
@@ -297,9 +338,9 @@ series of pushes only takes a macOS runner for the last one.
 |---|---|
 | Measure first | Yes: above |
 | One entry workflow, `plan`, a single `CI result` | Yes. iOS on pull requests moved into `ci.yml`. `ios.yml` stays separate on `main`, because releases wait for `ci.yml` and must not wait for iOS. |
-| Admission: all of a run's runners free, first come, first served, reservation in the job name, fails open | For macOS only: Linux and Windows never queue here. Releases come first, and background work goes last and steps aside. |
+| Admission: all of a run's runners free, first come, first served, reservation in the job name, fails open | For macOS only: Linux and Windows never queue here. Releases come first, `main`'s CI is never gated, and background work goes last and steps aside. |
 | Fast PR tier | For `desktop-macos` only, the one platform suite on a scarce runner. Windows and Android run as on `main`. |
-| Reuse on unchanged inputs, failing closed | Yes, the same scheme. The inputs also drive selection, and come from the Cargo graph. |
+| Reuse on unchanged inputs, failing closed | Yes, the same scheme. The inputs also drive selection, and come from the Cargo graph. On `main` the fingerprint, not the diff, decides. |
 | Priority and lock labels, emergency workflow | Yes, in macOS terms. The emergency workflow never cancels `main` or a release. |
 | One nextest build instead of several `cargo test` builds | Already the case for server and core tests. The iOS chain became one job instead. |
 | Caches saved only from `main` | Already the case (and #229) |

@@ -11,10 +11,15 @@ $GITHUB_OUTPUT:
   tier     fast (pull requests) or full (main, manual runs, the schedule, the `ci:full` label, CI_PR_TIER=full)
   pr       the pull request number, for the admission gate's name (`ci:priority`, `ci:lock`)
 
-Selection. A suite runs when a changed file is one of its inputs: the files its fingerprint hashes (reuse.py), so
-what selects a suite and what decides whether its pass still holds are the same list. Its Rust inputs come from the
-Cargo graph: a change to reins-core runs the server, Android and iOS suites, not the desktop ones, which do not depend
-on it. Changes to CI itself (ci.yml, scripts/ci, the admission gate) run everything.
+Selection on a pull request. A suite runs when a changed file is one of its inputs: the files its fingerprint hashes
+(reuse.py), so what selects a suite and what decides whether its pass still holds are the same list. Its Rust inputs
+come from the Cargo graph: a change to reins-core runs the server, Android and iOS suites, not the desktop ones, which
+do not depend on it. Changes to CI itself (ci.yml, scripts/ci, the admission gate) run everything; a changed Rust build
+file that no suite's inputs cover runs every Rust suite.
+
+Selection on main is by fingerprint, not by the push's diff: every suite runs unless main already recorded a pass for
+its exact inputs. A suite that failed on main so runs again on every later push until it passes, and no release ships
+on a commit whose suites have not all passed on its inputs.
 
 Fast tier (pull requests). macOS runners are the only scarce ones (five for the account, shared with releases;
 docs/reference/ci.md). desktop-macos runs on a pull request only when the change can plausibly be macOS specific: the
@@ -27,7 +32,10 @@ runs it with the UI tests, in the background: releases wait for this workflow, a
 
 Reuse. A selected suite whose inputs are unchanged since all its jobs passed, on this pull request or on main, is
 skipped (counted as passed by `CI result`). Main reuses main's passes only; manual runs, the schedule and `ci:full`
-reuse nothing. A changed Rust build file that no suite's inputs cover turns reuse off for the run (fail closed).
+reuse nothing (CI_PR_TIER=full only turns the fast tier off). A changed Rust build file that no suite's inputs cover
+turns reuse off for the run (fail closed).
+
+Anything that goes wrong here (the API, the scan, a bug) runs every suite and reuses nothing: the plan never stops CI.
 """
 
 from __future__ import annotations
@@ -117,6 +125,11 @@ def paths_of(files: list[dict]) -> set[str]:
     return {f["filename"] for f in files} | {f["previous_filename"] for f in files if f.get("previous_filename")}
 
 
+def uncovered(files: list[dict], inputs: dict[str, tuple[list[str], set[str]]]) -> list[str]:
+    """Changed Rust build files no suite's inputs cover: the inputs are not understood."""
+    return sorted(p for p in paths_of(files) if matches(p, reuse.BUILD_PATHS) and not reuse.covered(p, inputs))
+
+
 def select(files: list[dict] | None, tier: str, event: str,
            inputs: dict[str, tuple[list[str], set[str]]]) -> dict[str, bool]:
     """Which suites a change needs. files: [{"filename", "previous_filename"?, "patch"?}], or None for "everything"."""
@@ -128,7 +141,11 @@ def select(files: list[dict] | None, tier: str, event: str,
             suites = {suite: True for suite in SUITE_JOBS}
         else:
             suites = {suite: any(reuse.covered(p, {suite: inputs[suite]}) for p in paths) for suite in SUITE_JOBS}
-            if tier == "fast":
+            not_understood = bool(uncovered(files, inputs))
+            if not_understood:
+                for suite in reuse.SUITE_PACKAGES:
+                    suites[suite] = True
+            if tier == "fast" and not not_understood:
                 for suite, fast_paths in FAST_PATHS.items():
                     if suites[suite]:
                         suites[suite] = (any(matches(p, fast_paths) for p in paths)
@@ -193,17 +210,34 @@ def compare_files(repo: str, base: str, head: str) -> list[dict] | None:
     return files
 
 
-def main() -> int:
-    event = os.environ["GITHUB_EVENT_NAME"]
+def write_outputs(out: dict[str, str]) -> None:
+    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+        for key, value in out.items():
+            f.write(f"{key}={value}\n")
+
+
+def summarize(text: str) -> None:
+    print(text)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(text + "\n")
+
+
+def variants() -> dict[str, str]:
+    """What a suite's result depends on besides its files: iOS builds with the runner and Xcode the repository
+    variables pick (ci.yml passes them as CI_IOS_VARIANT)."""
+    return {"ios": os.environ.get("CI_IOS_VARIANT", "")}
+
+
+def plan_run(event: str, payload: dict) -> dict[str, str]:
     repo = os.environ["GITHUB_REPOSITORY"]
     ref = os.environ.get("GITHUB_REF", "")
-    with open(os.environ["GITHUB_EVENT_PATH"]) as f:
-        payload = json.load(f)
-
     tier = "full"
     files: list[dict] | None = None
     why = ""
     trusted: set[str] = set()  # refs whose recorded passes this run may reuse
+    by_fingerprint = False  # main: every suite, unless main passed it on these exact inputs
     try:
         if event == "pull_request":
             # The pull request as it is now (not as in the event), so that adding `ci:full` and re-running works.
@@ -214,43 +248,37 @@ def main() -> int:
             else:
                 trusted = {ref, "refs/heads/main"}
                 if os.environ.get("CI_PR_TIER", "fast") == "full":
-                    why = "CI_PR_TIER=full"
+                    why = "CI_PR_TIER=full: no fast tier"
                 else:
                     tier = "fast"
             files = pull_request_files(repo, pr["number"], pr.get("changed_files", 0))
         elif event == "push":
+            by_fingerprint = True
             trusted = {"refs/heads/main"} if ref == "refs/heads/main" else set()
+            # The diff only decides the Docker checks and the summary; the suites go by fingerprint.
             files = compare_files(repo, payload.get("before", ""), payload.get("after", ""))
         # workflow_dispatch and the schedule: everything, nothing reused.
     except (OSError, KeyError, ValueError) as error:  # URLError, HTTPError, timeouts, bad JSON
         print(f"::warning::could not list the changed files ({error}); running every suite")
         files = None
 
-    keys: dict[str, str] = {}
-    extra: dict[str, list[str]] = {}
-    inputs: dict[str, tuple[list[str], set[str]]] = {}
-    try:
-        index = reuse.tree_index(".")
-        keys, extra, inputs = reuse.suite_keys(reuse.SUITES, index, reuse.Workspace("."))
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-        print(f"::warning::could not read the suites' inputs ({error}); running every suite, reusing nothing")
-        files, trusted, keys = None, set(), {}
-    selected = select(files, tier, event, inputs)
-    if trusted and files is not None:
-        uncovered = sorted(f["filename"] for f in files
-                           if matches(f["filename"], reuse.BUILD_PATHS) and not reuse.covered(f["filename"], inputs))
-        if uncovered:
-            print(f"::notice::nothing reused: no suite's inputs cover {', '.join(uncovered[:5])}")
+    index = reuse.tree_index(".")
+    keys, extra, inputs = reuse.suite_keys(reuse.SUITES, index, reuse.Workspace("."), variants())
+    selected = select(None if by_fingerprint else files, tier, event, inputs)
+    if trusted and files is not None and not by_fingerprint:
+        missing = uncovered(files, inputs)
+        if missing:
+            print(f"::notice::nothing reused: no suite's inputs cover {', '.join(missing[:5])}")
             why = (why + "; " if why else "") + "nothing reused (changed build files outside every suite's inputs)"
             trusted = set()
     passed: dict[str, set[str]] = {}
     if trusted:
         for suite, on in selected.items():
-            if on and suite in keys:
+            if on:
                 try:
                     passed[suite] = reuse.passed_jobs(api, repo, keys[suite], trusted)
                 except (OSError, KeyError, ValueError) as error:
-                    print(f"::warning::could not look up earlier passes of {suite} ({error})")
+                    print(f"::warning::could not look up earlier passes of {suite} ({error}); running it")
     reused = reused_suites(selected, passed)
     running = {suite: on and suite not in reused for suite, on in selected.items()}
     out = {
@@ -261,11 +289,9 @@ def main() -> int:
         "tier": tier,
         "pr": str(payload["pull_request"]["number"]) if event == "pull_request" else "",
     }
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        for key, value in out.items():
-            f.write(f"{key}={value}\n")
 
-    lines = [f"### CI plan: {tier} tier{f' ({why})' if why else ''}", "",
+    mode = "main: every suite unless main passed it on these inputs" if by_fingerprint else f"{tier} tier"
+    lines = [f"### CI plan: {mode}{f' ({why})' if why else ''}", "",
              f"Changed files: {'all (not listed)' if files is None else len(files)}", "",
              "| suite | runs | |", "|---|---|---|"]
     for suite, on in selected.items():
@@ -282,15 +308,48 @@ def main() -> int:
             lines.append(f"| {suite} | yes | |")
     lines += ["", f"macOS jobs: {out['macos']}"]
     reads = {path for paths in extra.values() for path in paths}
+    present = sorted(p for p in reads if reuse.exists(p, index) or p.startswith("the whole"))
     if reads:
         lines += ["", "Files outside their packages that Rust suites read (part of their inputs): "
-                  + ", ".join(f"`{p}`" for p in sorted(reads))]
-    text = "\n".join(lines)
-    print(text)
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a") as f:
-            f.write(text + "\n")
+                  + ", ".join(f"`{p}`" for p in present)
+                  + (f"; and {len(reads) - len(present)} named paths that do not exist (they count too)"
+                     if len(reads) > len(present) else "")]
+    summarize("\n".join(lines))
+    return out
+
+
+def fallback(event: str, payload: dict) -> dict[str, str]:
+    """Every suite, nothing reused, no pass recorded."""
+    running = {suite: True for suite in SUITE_JOBS}
+    if event not in IOS_EVENTS:
+        running["ios"] = False
+    pr = ""
+    if event == "pull_request":
+        try:
+            pr = str(int(payload["pull_request"]["number"]))
+        except (KeyError, TypeError, ValueError):
+            pr = ""
+    return {
+        "suites": json.dumps(running, separators=(",", ":")),
+        "keys": "{}",
+        "macos": str(macos_jobs(running)),
+        "docker": "true",
+        "tier": "full",
+        "pr": pr,
+    }
+
+
+def main() -> int:
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
+    payload: dict = {}
+    try:
+        with open(os.environ["GITHUB_EVENT_PATH"]) as f:
+            payload = json.load(f)
+        out = plan_run(event, payload)
+    except Exception as error:  # noqa: BLE001 - the plan must never stop CI
+        summarize(f"::warning::The plan failed ({error!r}): every suite runs and nothing is reused.")
+        out = fallback(event, payload)
+    write_outputs(out)
     return 0
 
 

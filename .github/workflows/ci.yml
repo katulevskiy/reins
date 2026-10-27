@@ -34,9 +34,10 @@ env:
 jobs:
   # Which suites this change needs, which of them already passed on the same inputs, and how many macOS jobs the run
   # starts (scripts/ci/plan.py; docs/reference/ci.md). Pull requests get the fast tier: desktop-macos only when the
-  # change can be macOS specific; the `ci:full` label (then re-run) or CI_PR_TIER=full runs it for every change its
-  # files select. A suite that passed on the same inputs is skipped: every suite job records its pass as its last
-  # step.
+  # change can be macOS specific; the `ci:full` label (then re-run, which also reuses nothing) or CI_PR_TIER=full runs
+  # it for every change its files select. On main every suite runs unless main already passed it on the same inputs.
+  # A suite that passed on the same inputs is skipped: every suite job records its pass as its last step. If anything
+  # goes wrong, the plan runs every suite and reuses nothing.
   plan:
     name: Plan
     runs-on: ubuntu-24.04
@@ -60,15 +61,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CI_PR_TIER: ${{ vars.CI_PR_TIER }}
+          # What the iOS job's result depends on besides its files: part of its fingerprint.
+          CI_IOS_VARIANT: ${{ vars.IOS_RUNNER }} ${{ vars.IOS_XCODE_VERSION }} ${{ vars.IOS_DEVELOPER_DIR }}
         run: python3 -I scripts/ci/plan.py
 
   # Waits until macOS runners are free for every macOS job of this run (scripts/ci/admit.py): releases first, then
-  # main's CI (which passes at once: the release of that commit waits for this run), ci:lock and ci:priority pull
-  # requests, everyone else first come, first served, and ios.yml's background runs last.
+  # ci:lock and ci:priority pull requests, everyone else first come, first served, and ios.yml's background runs last.
+  # Not on a push to main: that commit's release waits for this run, so nothing on its path waits for admission. The
+  # macOS jobs run when it failed too: it is a queue, never a check.
   admit:
     name: macOS admission
     needs: plan
-    if: needs.plan.outputs.macos != '0'
+    if: needs.plan.outputs.macos != '0' && github.event_name != 'push'
     uses: ./.github/workflows/macos-gate.yml # zizmor: ignore[self-repository] the same commit's gate
     permissions:
       actions: read # the runs and their jobs
@@ -76,7 +80,6 @@ jobs:
       pull-requests: read # ci:priority and ci:lock, and the heads of the pull requests that claim them
       issues: read # when ci:lock was added
     with:
-      wait: ${{ github.event_name != 'push' }}
       macos: ${{ fromJSON(needs.plan.outputs.macos) }}
       pr: ${{ needs.plan.outputs.pr }}
 
@@ -210,10 +213,6 @@ jobs:
       - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
       - run: cargo clippy --locked --features sqlite -- -D warnings
 
-  # Decisions v2 (docs/design/decisions-v2/07-roadmap.md §3): every change to the consequence engine, the default
-  # policy or the replay corpus is replayed against the labelled history. A labelled real risk or a case for a person
-  # not asked, a known false positive asked again, Full certainty more than half a point below
-  # crates/reins-replay/baseline.json, or an ask rate more than a point above it fails the build.
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['clippy']
         uses: actions/cache/save@v5
@@ -221,6 +220,10 @@ jobs:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['clippy'] }}-clippy
 
+  # Decisions v2 (docs/design/decisions-v2/07-roadmap.md §3): every change to the consequence engine, the default
+  # policy or the replay corpus is replayed against the labelled history. A labelled real risk or a case for a person
+  # not asked, a known false positive asked again, Full certainty more than half a point below
+  # crates/reins-replay/baseline.json, or an ask rate more than a point above it fails the build.
   replay:
     name: Replay gate (Decisions v2)
     needs: plan
@@ -273,9 +276,6 @@ jobs:
       - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
       - run: cargo test --locked -p reins-desktop-app
 
-  # The release's Linux packages and repositories (scripts/package/linux-packages.sh, linux-repos.sh, aur.sh and
-  # release-feed.sh --packages) from a fake release: built, linted, signed with a throwaway key, checked with apt and
-  # installed in Debian and Fedora containers (scripts/test-linux-packages.py). The same nfpm as release.yml.
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['desktop-linux']
         uses: actions/cache/save@v5
@@ -283,6 +283,9 @@ jobs:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-linux'] }}-desktop-linux
 
+  # The release's Linux packages and repositories (scripts/package/linux-packages.sh, linux-repos.sh, aur.sh and
+  # release-feed.sh --packages) from a fake release: built, linted, signed with a throwaway key, checked with apt and
+  # installed in Debian and Fedora containers (scripts/test-linux-packages.py). The same nfpm as release.yml.
   linux-packages:
     name: Linux packages and repositories
     needs: plan
@@ -318,7 +321,9 @@ jobs:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
     needs: [plan, admit]
-    if: fromJSON(needs.plan.outputs.suites)['desktop-macos']
+    if: >-
+      !cancelled() && needs.plan.result == 'success' && needs.admit.result != 'cancelled' &&
+      fromJSON(needs.plan.outputs.suites)['desktop-macos']
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -664,7 +669,9 @@ jobs:
   ios:
     name: iOS
     needs: [plan, admit]
-    if: fromJSON(needs.plan.outputs.suites)['ios']
+    if: >-
+      !cancelled() && needs.plan.result == 'success' && needs.admit.result != 'cancelled' &&
+      fromJSON(needs.plan.outputs.suites)['ios']
     permissions:
       contents: read
       attestations: read # core-cache.sh verifies the prebuilt core's provenance
@@ -779,8 +786,8 @@ jobs:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['ios'] }}-ios
 
-  # The one check to require: it passes when no job failed or was cancelled. A suite the plan did not select, or that
-  # already passed on the same inputs, is skipped and counts as passed.
+  # The one check to require: it passes when the plan succeeded and no other job failed or was cancelled. A suite the
+  # plan did not select, or that already passed on the same inputs, is skipped and counts as passed.
   result:
     name: CI result
     needs: [plan, admit, checks, rust, rust-clippy, replay, desktop-linux, linux-packages, desktop-macos, desktop-windows, android-native, android-release-smoke, android, ios]
@@ -788,10 +795,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      # macOS admission is a queue, not a check: the jobs it gates run (and count) whatever it did.
       - name: Result
         env:
-          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || needs.plan.result != 'success' }}
           RESULTS: ${{ toJSON(needs) }}
+        shell: python3 {0}
         run: |
-          echo "$RESULTS" | python3 -c 'import json, sys; [print(k.ljust(22), v["result"]) for k, v in json.load(sys.stdin).items()]'
-          test "$FAILED" = false
+          import json, os, sys
+          results = {job: need["result"] for job, need in json.loads(os.environ["RESULTS"]).items()}
+          for job, result in results.items():
+              print(job.ljust(22), result)
+          bad = [job for job, result in results.items() if job != "admit" and result in ("failure", "cancelled")]
+          if results["plan"] != "success" or bad:
+              print(f"::error::CI failed: {', '.join(bad) or 'plan'}")
+              sys.exit(1)

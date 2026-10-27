@@ -9,7 +9,7 @@ here (docs/reference/ci.md), so only macOS is admitted. Every macOS job of those
 Bookkeeping lives in GitHub itself, so nothing needs write access (pull requests from forks get a read-only token):
 
   - A gate's request is in its job name: "admit [macos=2] #123" (a pull request's CI run), "admit [macos=1 bg]"
-    (background: ios.yml on main and at night), "admit [macos=1 front]" (main's CI, which never waits).
+    (background: ios.yml on main and at night). Main's CI has no gate: that commit's release waits for it.
   - A gate whose job is not finished is waiting. Waiters are served by rank, then first come, first served (the
     gate job's creation time).
   - Busy: every macOS job (labels macos-* or xcode-*, or CI_MACOS_LABELS) queued or running in any active run.
@@ -18,12 +18,12 @@ Bookkeeping lives in GitHub itself, so nothing needs write access (pull requests
 Releases come first. A release run whose "macOS builds" job does not exist yet (it is planning or superseding) holds
 one runner; once that job exists it is busy like any other, queued or running. Release runs are never gated.
 
-Ranks: main's CI (front: the release of that commit waits for it, so it never waits), then pull requests labelled
-`ci:lock`, then `ci:priority`, then everything else, then background. A waiter goes when busy + reserved + what the
+Ranks: pull requests labelled `ci:lock`, then `ci:priority`, then everything else, then background. A waiter goes when busy + reserved + what the
 waiters ahead of it need + its own request fits in the budget (CI_BUDGET_MACOS, 5): nobody is overtaken on the runners
 they wait for. Background runs (ios.yml's UI tests, which never gate a merge or a release) go only when nobody else
 waits, and leave HEADROOM runners free; their UI shards ask again on their runner (`--yield`) and skip their tests while
-anyone else wants a macOS runner.
+anyone else wants a macOS runner. Under sustained load a background run may so rarely be admitted, or wait until
+MAX_WAIT_MINUTES lets it go: the nightly runs every UI test anyway.
 
 Labels need the triage role or above to add, so GitHub decides who can use them. A run claims its pull request in its
 gate's name; the claim counts only when that pull request's head is the run's commit.
@@ -31,15 +31,18 @@ gate's name; the claim counts only when that pull request's head is the run's co
   - `ci:priority`: the pull request's runs go to the front of the queue (behind locked ones and releases).
   - `ci:lock`: while the pull request is open, LOCK_MACOS runners are kept for it whether or not it runs anything, and
     its runs go first. It ends when the label goes, the pull request is merged or closed, or CI_LOCK_HOURS (6) after
-    the label was added. ci-emergency.yml adds it and cancels the other pull requests' runs.
+    the label was added. Only the oldest lock counts: a second one queues as `ci:priority`. ci-emergency.yml adds
+    it and cancels the other pull requests' runs.
 
 A pull request can edit its own copy of the workflows, so a request read from another run is capped at MAX_REQUEST.
 
-Admission never blocks CI: it lets the run go on API errors (five in a row), when the rate limit resets more than ten
-minutes away, or after MAX_WAIT_MINUTES. It uses conditional requests (a 304 does not count against the GITHUB_TOKEN's
-rate limit), refetches a run's jobs only when the run changed, and polls less often the further back it is.
+Admission never blocks CI: it lets the run go on any error (five API errors in a row, or anything unexpected), when
+the rate limit resets more than ten minutes away, when fewer than QUOTA_RESERVE requests are left (the rest is for the
+release's wait for CI, scripts/wait-for-ci.sh), or after MAX_WAIT_MINUTES. Each poll lists the repository's runs once
+(conditional requests: a 304 does not count against the GITHUB_TOKEN's rate limit), reads the jobs only of the runs of
+WORKFLOWS that changed, and comes a minute or more after the last, less often the further back it is.
 
-  admit.py            wait (environment: CI_MACOS, CI_CLASS normal|bg|front, CI_PR, CI_BUDGET_MACOS, ...)
+  admit.py            wait (environment: CI_MACOS, CI_CLASS normal|bg, CI_PR, CI_BUDGET_MACOS, ...)
   admit.py --yield    print skip=true to GITHUB_OUTPUT when a background job should step aside
 """
 
@@ -56,7 +59,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-GATE = re.compile(r"\badmit \[macos=(\d+)(?: (bg|front))?\](?: #(\d+))?")
+GATE = re.compile(r"\badmit \[macos=(\d+)(?: (bg))?\](?: #(\d+))?")
 MAX_REQUEST = 3  # ios.yml's tests gate; a pull request's CI asks for at most 2 (desktop-macos and iOS)
 LOCK_MACOS = 2  # a pull request's whole CI: desktop-macos and iOS
 HEADROOM = 1  # runners background runs leave free
@@ -68,6 +71,8 @@ NO_RUNNER = {"requested", "waiting", "pending", "queued"}
 PRIORITY_LABEL = "ci:priority"
 LOCK_LABEL = "ci:lock"
 LOCK_HOURS = 6
+QUOTA_RESERVE = 500  # API requests left for everything else (the release's wait for CI) when admission stops asking
+MIN_POLL = 60  # seconds between polls, at the front of the queue
 RANK = {"lock": 0, "priority": 1, "normal": 2, "bg": 3}
 
 
@@ -98,7 +103,7 @@ class Waiter:
     run_id: int
     key: tuple  # (created_at, job id): queue order
     need: int
-    cls: str  # normal, bg or front
+    cls: str  # normal or bg
     pr: int | None = None  # its pull request, when verified
 
 
@@ -186,8 +191,6 @@ def own_request(snap: Snapshot, run_id: int, need: int, cls: str) -> Waiter:
 
 
 def decide(me: Waiter, snap: Snapshot, budget: int) -> Decision:
-    if me.cls == "front":
-        return Decision(True, 0, 0, 0)
     used = snap.busy + snap.unseen + snap.release
     # A lock keeps LOCK_MACOS runners whether or not its pull request uses them.
     for pr in snap.locked:
@@ -197,7 +200,7 @@ def decide(me: Waiter, snap: Snapshot, budget: int) -> Decision:
     my_rank = rank(me, snap)
     if my_rank == RANK["lock"]:
         return Decision(used + need <= budget, 0, used, 0)
-    others = [w for w in snap.waiters if w.cls != "front" and w.run_id != me.run_id]
+    others = [w for w in snap.waiters if w.run_id != me.run_id]
     ahead = 0
     position = 0
     for w in others:
@@ -288,12 +291,18 @@ class Reader:
 
     REFRESH = 300  # refetch an unchanged run's jobs at least this often (seconds)
 
+    PAGES = 5  # the first poll reads back this many pages of runs, for active runs older than the latest 100
+    OLDEST = 24 * 3600  # a run queues for a day at most
+
     def __init__(self, api: Api, repo: str, extra_labels: set[str]):
         self.api = api
         self.repo = repo
         self.extra_labels = extra_labels
         self.jobs: dict[int, tuple[str, float, list[dict]]] = {}
         self.heads: dict[int, str] = {}
+        self.active: dict[int, dict] = {}  # runs of WORKFLOWS last seen active
+        self.workflow_ids: set[int] | None = None
+        self.polled = False
 
     def run_jobs(self, run: dict) -> list[dict]:
         cached = self.jobs.get(run["id"])
@@ -311,18 +320,36 @@ class Reader:
         self.jobs[run["id"]] = (run["updated_at"], now, jobs)
         return jobs
 
+    def relevant(self, run: dict) -> bool:
+        if self.workflow_ids is not None:
+            return run.get("workflow_id") in self.workflow_ids
+        return (run.get("path") or "").rsplit("/", 1)[-1] in WORKFLOWS
+
     def runs(self) -> list[dict]:
-        runs: list[dict] = []
-        for status in ("in_progress", "queued"):
-            page = 1
-            while True:
-                data = self.api.get(f"/repos/{self.repo}/actions/runs?status={status}&per_page=100&page={page}")
-                runs.extend(data["workflow_runs"])
-                if len(data["workflow_runs"]) < 100:
-                    break
-                page += 1
-        # Workflows without macOS jobs or gates (the CLA check, the cache prune) need no jobs list.
-        return [r for r in runs if (r.get("path") or "").rsplit("/", 1)[-1] in WORKFLOWS]
+        """The active runs of WORKFLOWS. One list per poll: the repository's latest 100 runs (conditional), plus a
+        conditional read of each run seen active before that has dropped off that page. The first poll reads back
+        further, to the runs a day old."""
+        if self.workflow_ids is None:
+            listed = self.api.get(f"/repos/{self.repo}/actions/workflows?per_page=100").get("workflows", [])
+            ids = {w["id"] for w in listed if (w.get("path") or "").rsplit("/", 1)[-1] in WORKFLOWS}
+            self.workflow_ids = ids or None
+        first, self.polled = not self.polled, True
+        runs: dict[int, dict] = {}
+        page = 1
+        while True:
+            batch = self.api.get(f"/repos/{self.repo}/actions/runs?per_page=100&page={page}")["workflow_runs"]
+            for run in batch:
+                runs[run["id"]] = run
+            if not first or len(batch) < 100 or page >= self.PAGES or \
+                    time.time() - stamp(batch[-1].get("created_at")) > self.OLDEST:
+                break
+            page += 1
+        for run_id in list(self.active):
+            if run_id not in runs:
+                runs[run_id] = self.api.get(f"/repos/{self.repo}/actions/runs/{run_id}")
+        active = [r for r in runs.values() if r.get("status") in ACTIVE and self.relevant(r)]
+        self.active = {r["id"]: r for r in active}
+        return active
 
     def snapshot(self, me: int, labels: bool = True) -> Snapshot:
         runs = self.runs()
@@ -330,7 +357,9 @@ class Reader:
         self.jobs = {k: v for k, v in self.jobs.items() if k in live}
         jobs = {run["id"]: self.run_jobs(run) for run in runs}
         priority = self.labelled(PRIORITY_LABEL) if labels else set()
-        locked = self.locks() if labels else set()
+        locks = self.locks() if labels else []
+        locked = set(locks[:1])
+        priority |= set(locks[1:])
         special = priority | locked
 
         def pr_of(run: dict, claimed: int) -> int | None:
@@ -356,9 +385,11 @@ class Reader:
                 return found
             page += 1
 
-    def locks(self) -> set[int]:
+    def locks(self) -> list[int]:
+        """The pull requests whose ci:lock is in force, the oldest first. Only the first holds a lock (a lock keeps
+        runners for one pull request at a time); the others count as ci:priority."""
         hours = float(os.environ.get("CI_LOCK_HOURS") or LOCK_HOURS)
-        locked = set()
+        locked: dict[int, float] = {}
         for number in self.labelled(LOCK_LABEL):
             added = None
             page = 1
@@ -371,12 +402,23 @@ class Reader:
                     break
                 page += 1
             if added and time.time() - stamp(added) < hours * 3600:
-                locked.add(number)
-        return locked
+                locked[number] = stamp(added)
+        return sorted(locked, key=lambda n: (locked[n], n))
 
 
 # The workflows with macOS jobs or gates.
 WORKFLOWS = {"ci.yml", "ios.yml", "ios-job.yml", "ios-core.yml", "release.yml"}
+
+
+def poll_interval(position: int, cls: str, remaining: int) -> int:
+    """A minute at the front, a minute more per run ahead (five at most); background two at least; five when the
+    API quota runs low."""
+    interval = min(300, MIN_POLL * (position + 1))
+    if cls == "bg":
+        interval = max(interval, 120)
+    if remaining < 1000:
+        interval = max(interval, 300)
+    return interval
 
 
 def env_int(name: str, default: int) -> int:
@@ -403,8 +445,8 @@ def yield_main() -> int:
     api = Api(os.environ["GITHUB_TOKEN"], os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     try:
         why = should_yield(Reader(api, repo, extra_labels()).snapshot(me, labels=False))
-    except (OSError, RateLimited, KeyError, ValueError) as error:
-        print(f"::warning::could not read the macOS runners ({error}); going on")
+    except Exception as error:  # noqa: BLE001 - a background job runs rather than fail
+        print(f"::warning::could not read the macOS runners ({error!r}); going on")
         return 0
     if why:
         print(f"Stepping aside: {'; '.join(why)}")
@@ -421,9 +463,17 @@ def yield_main() -> int:
 def main() -> int:
     if "--yield" in sys.argv[1:]:
         return yield_main()
+    try:
+        return wait()
+    except Exception as error:  # noqa: BLE001 - admission must never stop CI
+        summary(f"::warning::macOS admission failed ({error!r}); going on without waiting.")
+        return 0
+
+
+def wait() -> int:
     need = min(env_int("CI_MACOS", 1), MAX_REQUEST)
     cls = os.environ.get("CI_CLASS", "normal") or "normal"
-    if cls not in ("normal", "bg", "front"):
+    if cls not in ("normal", "bg"):
         print(f"::warning::unknown class {cls!r}; treated as normal")
         cls = "normal"
     if os.environ.get("CI_ADMISSION", "on").lower() in ("off", "false", "0"):
@@ -431,9 +481,6 @@ def main() -> int:
         return 0
     if need <= 0:
         summary("No macOS job to admit; going on at once.")
-        return 0
-    if cls == "front":
-        summary("Main's CI: its release waits for it, so it goes at once (it still counts in everyone's budget).")
         return 0
 
     budget = env_int("CI_BUDGET_MACOS", 5)
@@ -475,6 +522,10 @@ def main() -> int:
             time.sleep(30)
             continue
 
+        if api.remaining < QUOTA_RESERVE:
+            summary(f"::warning::Only {api.remaining} API requests left; macOS admission stops asking and goes on "
+                    "(the rest is for the release's wait for CI).")
+            return 0
         decision = decide(own_request(snap, me_run, need, cls), snap, budget)
         state = (decision.position, decision.used, decision.ahead, len(snap.waiters))
         if state != last:
@@ -492,12 +543,7 @@ def main() -> int:
         if waited > max_wait:
             summary(f"::warning::macOS admission waited {waited / 60:.0f} min; going on without waiting.")
             return 0
-        interval = 30 if decision.position == 0 else min(300, 60 * decision.position)
-        if cls == "bg":
-            interval = max(interval, 120)
-        if api.remaining < 300:
-            interval = max(interval, 300)
-        time.sleep(interval)
+        time.sleep(poll_interval(decision.position, cls, api.remaining))
 
 
 if __name__ == "__main__":
