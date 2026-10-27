@@ -11,7 +11,9 @@ use reins_replay::report::{self, Baseline};
 
 const USAGE: &str = "usage:
   reins-replay run [--engine guard|effects] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json] [--verbose] [--write-baseline]
-  reins-replay import --log FILE --labels FILE --out FILE";
+  reins-replay import --log FILE --labels FILE --out FILE
+  reins-replay policy check|render DIR
+  reins-replay policy simulate DIR --history FILE.jsonl --base DIR [--out report.json]";
 
 fn value(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|p| args.get(p + 1)).cloned()
@@ -220,6 +222,7 @@ fn main() -> ExitCode {
         Some("explain") => explain(&args[1..]),
         Some("unresolved") => unresolved(&args[1..]),
         Some("list") => list(&args[1..]),
+        Some("policy") => reins_replay::policy_cmd::main(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {

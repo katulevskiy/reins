@@ -49,6 +49,28 @@ pub const FACTS_FILE: &str = "facts.toml";
 pub const POSTURE_FILE: &str = "posture.toml";
 pub const RULES_DIR: &str = "rules/";
 
+/// The most policy files a repo may have, and their largest total size: beyond either it isn't read at all.
+pub const MAX_FILES: usize = 200;
+pub const MAX_BYTES: usize = 1024 * 1024;
+
+/// Whether `path` (relative, `/`-separated) is one of the files a policy is compiled from.
+#[must_use]
+pub fn is_policy_file(path: &str) -> bool {
+    [MAIN_FILE, MATRIX_FILE, FACTS_FILE, POSTURE_FILE].contains(&path) || is_rules_file(path)
+}
+
+/// Refuses a repo over [`MAX_FILES`] policy files or [`MAX_BYTES`] of them.
+pub fn check_size(files: &BTreeMap<String, String>) -> Result<(), String> {
+    let policy: Vec<&String> = files.iter().filter(|(p, _)| is_policy_file(p)).map(|(_, t)| t).collect();
+    if policy.len() > MAX_FILES {
+        return Err(format!("more than {MAX_FILES} policy files"));
+    }
+    if policy.iter().map(|t| t.len()).sum::<usize>() > MAX_BYTES {
+        return Err("policy files over 1 MiB".to_owned());
+    }
+    Ok(())
+}
+
 /// Words for what needs O3's routing (relationship reviewers, rule filters, escalation).
 const NEEDS_O3: &str = "needs O3 (routing): not available yet";
 
