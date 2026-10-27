@@ -403,6 +403,62 @@ pub fn describe(action: &AdminAction, v: &OverviewView) -> String {
     format!("<div>{title}</div>{fields}")
 }
 
+/// A pending change in a few words, for the reviewer's phone (the console shows more, [`overview`]).
+#[must_use]
+pub fn action_title(action: &AdminAction) -> String {
+    match action {
+        AdminAction::GrantRole {
+            role,
+            ..
+        } => format!("Give {}", role.label()),
+        AdminAction::RevokeRole {
+            role,
+            ..
+        } => format!("Take {}", role.label()),
+        AdminAction::SetIdentity {
+            identity,
+            ..
+        } => format!("Sign-in: {}", identity.label()),
+        AdminAction::SetTier {
+            tier,
+        } => format!("Plan: {}", tier.label()),
+        AdminAction::RemoveDomain {
+            domain,
+        } => format!("Remove domain {domain}"),
+        AdminAction::RemoveMember {
+            ..
+        } => "Remove a member".to_owned(),
+        AdminAction::SetTwoPerson {
+            on,
+        } => format!(
+            "Two-person approval {}",
+            if *on {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+        AdminAction::ConfirmDirectoryRemovals {
+            ..
+        } => "Remove members the directory dropped".to_owned(),
+        AdminAction::ActivatePolicy {
+            revision,
+            ..
+        } => format!("Activate policy revision {revision}"),
+        AdminAction::SetRetention {
+            days,
+        } => format!("Keep request bodies: {}", retention_text(*days)),
+        AdminAction::RegisterExecutor {
+            executor_id,
+            mode,
+            ..
+        } => format!("Register executor {executor_id} ({})", mode.as_str()),
+        AdminAction::RemoveExecutor {
+            executor_id,
+        } => format!("Remove executor {executor_id}"),
+    }
+}
+
 /// "none", "30 days", "1 year".
 #[must_use]
 pub fn retention_text(days: u32) -> String {

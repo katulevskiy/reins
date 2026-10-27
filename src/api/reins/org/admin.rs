@@ -121,7 +121,8 @@ pub fn propose(
             return Err(OrgError::Invalid("A new Org owner takes two Security admins. Ask Reins support."));
         }
         let alone = !tenant.two_person && !is_owner_recovery(c, org, action)?;
-        if alone || others == 0 {
+        // 06 §3's actions wait for the proposer's own device signature, whoever else may approve them.
+        if (alone || others == 0) && !action.needs_device_signatures() {
             let followups = apply(c, org, action, proposer, binding, now)?;
             event(
                 c,
@@ -203,6 +204,71 @@ pub fn approve(
         Ok(Some(followups))
     })?;
     expired.ok_or(OrgError::Invalid("This change expired before it was approved."))
+}
+
+/// Whether a pending change may apply on its proposer's device signature alone: two-person approval is off, or
+/// nobody else holds the capability.
+pub fn can_apply_alone(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &ReinsOrgChange,
+    action: &AdminAction,
+) -> Result<bool, OrgError> {
+    let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
+    if is_owner_recovery(c, org, action)? {
+        return Ok(false);
+    }
+    let cap = needed(c, org, action)?;
+    Ok(!tenant.two_person || other_holders(c, org, cap, &change.proposed_by)? == 0)
+}
+
+/// Applies a pending change its proposer confirmed on their device, when [`can_apply_alone`].
+pub fn apply_alone(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &str,
+    proposer: &str,
+    now: i64,
+) -> Result<Followups, OrgError> {
+    let (row, action) = load_pending(c, org, change)?;
+    if row.proposed_by != proposer || !can_apply_alone(c, org, &row, &action)? {
+        return Err(OrgError::Forbidden);
+    }
+    let cap = needed(c, org, &action)?;
+    if !can(c, org, proposer, cap)? {
+        return Err(OrgError::Forbidden);
+    }
+    validate(c, org, &action, None)?;
+    if !reins_org::q_decide(c, change, CHANGE_APPLIED, proposer, now)? {
+        return Err(OrgError::Invalid("This change was already decided."));
+    }
+    let followups = apply(c, org, &action, proposer, None, now)?;
+    event(
+        c,
+        org,
+        "change.applied",
+        Some(proposer),
+        Some(change),
+        &json!({"action": action, "sole_holder": true}),
+        now,
+    )?;
+    Ok(followups)
+}
+
+/// The console's Approve: only after the approver approved it on their enrolled phone (06 §3), which binds the
+/// approval to a device key. The console then supplies what only it can (WorkOS's word for a new sign-in).
+pub fn approve_from_console(
+    c: &mut DbConnInner,
+    org: &str,
+    change: &str,
+    approver: &str,
+    binding: Option<&VerifiedBinding>,
+    now: i64,
+) -> Result<Followups, OrgError> {
+    if !super::reviews::device_approved(c, org, change, approver)? {
+        return Err(OrgError::Invalid("Approve it on your phone first."));
+    }
+    approve(c, org, change, approver, binding, now)
 }
 
 /// Rejects a pending change (its proposer withdrawing it, or another holder of the capability).

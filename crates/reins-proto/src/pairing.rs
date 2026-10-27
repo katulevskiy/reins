@@ -75,6 +75,9 @@ pub enum PushKind {
     /// A handover concerns this phone (the id is the handover's): to the primary when a viewer asks to decide, to the
     /// new primary when the roster made it primary (`GET /reins/api/handover-bundle`).
     Handover,
+    /// An org review waits for this member (the id is the review's: an org request or an admin change). Fetch
+    /// `GET /reins/api/org/reviews`.
+    OrgReview,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.

@@ -1071,7 +1071,7 @@ async fn approve_change(
         Ok(action) => match binding_for(&conn, org, &action, s.github_token.as_deref()).await {
             Ok(binding) => {
                 let (o, ch, u, now) = (org.to_owned(), form.change.clone(), s.user.clone(), now_unix());
-                match run(&conn, move |c| admin::approve(c, &o, &ch, &u, binding.as_ref(), now)).await {
+                match run(&conn, move |c| admin::approve_from_console(c, &o, &ch, &u, binding.as_ref(), now)).await {
                     Ok(followups) => {
                         for removal in followups {
                             deprovision::finish(removal, Some(pool)).await;
@@ -1088,6 +1088,11 @@ async fn approve_change(
     };
     match result {
         Ok(()) => flash(&s.sid, "Approved and applied.", false),
+        Err(OrgError::Invalid("Approve it on your phone first.")) => {
+            // The approval is the phone's: wake it.
+            super::reviews::notify(pool.inner(), std::slice::from_ref(&s.user), &form.change);
+            flash(&s.sid, "Approve it on your phone first. We sent it there.", true);
+        }
         Err(e) => flash(&s.sid, e.message(), true),
     }
     to_org(org, "")

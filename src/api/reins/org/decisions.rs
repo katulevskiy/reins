@@ -146,6 +146,20 @@ pub fn submit(
     if !reins_proto::managed::ids_ok(&[org, user, connection, tool]) {
         return Err(OrgError::Invalid("That request can't be read."));
     }
+    // A lease is judged, digested and bound by exactly what it would mint: the arguments must be the lease's.
+    match lease {
+        Some(l) => {
+            if tool != reins_proto::managed::LEASE_TOOL
+                || *args != reins_proto::managed::lease_args(&l.repo, l.access, &l.box_key)
+            {
+                return Err(OrgError::Invalid("That lease request doesn't match what it asks for."));
+            }
+        }
+        None if tool == reins_proto::managed::LEASE_TOOL => {
+            return Err(OrgError::Invalid("That request can't be read."));
+        }
+        None => {}
+    }
     c.transaction(|c| {
         let (policy, _) = super::policy::active(c, org)?
             .ok_or(OrgError::Invalid("Your organization hasn't activated a policy yet."))?;
@@ -321,10 +335,10 @@ pub fn finalize(
             let job = LeaseJob {
                 lease: l.uuid.clone(),
                 repo: l.repo.clone(),
-                access: if l.access == "read" {
-                    reins_proto::managed::LeaseAccess::Read
-                } else {
-                    reins_proto::managed::LeaseAccess::Push
+                access: match l.access.as_str() {
+                    "read" => reins_proto::managed::LeaseAccess::Read,
+                    "push" => reins_proto::managed::LeaseAccess::Push,
+                    other => return Err(OrgError::Internal(format!("lease {} has access {other:?}", l.uuid))),
                 },
                 box_key: l.box_key.clone(),
                 expires_at: now + LEASE_SECS,
@@ -665,6 +679,73 @@ pub(crate) mod tests {
         let row = reins_org_request::q_request(&mut c, "o1", &s.id).unwrap().unwrap();
         let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap();
         assert_eq!(obligations[0].id, "prod-review");
+    }
+
+    fn lease(id: &str, repo: &str, access: reins_proto::managed::LeaseAccess) -> LeaseAsk {
+        LeaseAsk {
+            id: id.to_owned(),
+            repo: repo.to_owned(),
+            access,
+            box_key: "BOXKEY".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_lease_is_judged_by_what_it_mints() {
+        use reins_proto::managed::{LEASE_TOOL, LeaseAccess, lease_args};
+        let mut c = db();
+        pilot(&mut c);
+        let ask_lease = |c: &mut DbConnInner, l: &LeaseAsk, args: &Value| {
+            submit(c, "o1", "lee", "conn-lee", "Laptop", LEASE_TOOL, args, Some(l), 100)
+        };
+        // Harmless arguments with a lease for another repository, access or recipient: refused.
+        let prod = lease("l1", "acme/forbidden", LeaseAccess::Push);
+        for args in [
+            lease_args("acme/api", LeaseAccess::Push, "BOXKEY"),
+            lease_args("acme/forbidden", LeaseAccess::Read, "BOXKEY"),
+            lease_args("acme/forbidden", LeaseAccess::Push, "OTHER"),
+            json!({"repo": "acme/forbidden", "access": "push"}),
+        ] {
+            assert!(ask_lease(&mut c, &prod, &args).is_err(), "{args}");
+        }
+        // A lease without its lease part, or a call named as a lease: refused.
+        assert!(
+            submit(
+                &mut c,
+                "o1",
+                "lee",
+                "conn-lee",
+                "x",
+                LEASE_TOOL,
+                &lease_args("acme/api", LeaseAccess::Read, "B"),
+                None,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            submit(&mut c, "o1", "lee", "conn-lee", "x", "github_create_issue", &issue("acme/api"), Some(&prod), 100)
+                .is_err()
+        );
+        // The org's deny on the lease's repository blocks it.
+        let s = ask_lease(&mut c, &prod, &lease_args("acme/forbidden", LeaseAccess::Push, "BOXKEY")).unwrap();
+        assert_eq!(s.outcome, ManagedOutcome::Deny);
+        let l = reins_org_request::q_lease(&mut c, "o1", "l1").unwrap().unwrap();
+        assert_eq!(l.state, lease_state::DENIED);
+        // An Auto lease binds what it mints, and its digest covers the box key.
+        let ok = lease("l2", "acme/api", LeaseAccess::Push);
+        let args = lease_args("acme/api", LeaseAccess::Push, "BOXKEY");
+        let s = ask_lease(&mut c, &ok, &args).unwrap();
+        assert_eq!(s.outcome, ManagedOutcome::Auto);
+        let row = reins_org_request::q_request(&mut c, "o1", &s.id).unwrap().unwrap();
+        assert_eq!(row.digest, request_digest("o1", "lee", "conn-lee", LEASE_TOOL, &args));
+        let record: DecisionRecord =
+            serde_json::from_str::<reins_proto::managed::Envelope>(row.decision.as_deref().unwrap())
+                .unwrap()
+                .parse()
+                .unwrap();
+        let bound = record.lease.unwrap();
+        assert_eq!((bound.repo.as_str(), bound.access, bound.lease.as_str()), ("acme/api", LeaseAccess::Push, "l2"));
     }
 
     #[test]

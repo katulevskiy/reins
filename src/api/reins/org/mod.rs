@@ -45,6 +45,8 @@ pub mod policy;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod posture;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod reviews;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod roster;
 pub mod scim;
 pub mod tenant;
