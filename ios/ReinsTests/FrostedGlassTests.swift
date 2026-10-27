@@ -72,4 +72,60 @@ final class FrostedGlassTests: XCTestCase {
         let bluish = try pixel(second, Int(second.size.width) / 2, 2)
         XCTAssertGreaterThan(bluish.b, bluish.r)
     }
+
+    /// The shipped art's size: black, with a white stripe a quarter of its width down the middle.
+    private func stripe() throws -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 780, height: 1000), format: format).image { ctx in
+            UIColor.black.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 780, height: 1000))
+            UIColor.white.setFill()
+            ctx.fill(CGRect(x: 292, y: 0, width: 196, height: 1000))
+        }
+        return try XCTUnwrap(image.cgImage.map { UIImage(cgImage: $0) })
+    }
+
+    func testTheBlurIsAndroidsShareOfTheArtsWidth() {
+        // Android: σ ≈ 2.04 px on its 1/12 copy of the 780-px art (see `Backdrop.blurShare`).
+        XCTAssertEqual(Backdrop.blurShare * 780, 2.04 * 12, accuracy: 0.2)
+        XCTAssertEqual(Backdrop.blurShare * 195, 6.1, accuracy: 0.1, "the quarter copy's sigma")
+    }
+
+    func testShapesStayRecognisableThroughTheGlass() throws {
+        let copy = try XCTUnwrap(Backdrop.blur(try stripe(), dark: true))
+        XCTAssertEqual(copy.cgImage?.width, 195)
+        XCTAssertEqual(copy.cgImage?.height, 250)
+        let y = 100 // above the fade
+        // The stripe is 49 px of the copy, its edges at 73 and 122: its middle keeps all of its light (white at 0.82),
+        // 12 px (2 σ) outside it is nearly dark again. At the old σ 20 the middle was a quarter dimmer and the light
+        // spread past its edges.
+        XCTAssertGreaterThanOrEqual(try pixel(copy, 97, y).r, 195)
+        XCTAssertLessThanOrEqual(try pixel(copy, 61, y).r, 30)
+        XCTAssertLessThanOrEqual(try pixel(copy, 134, y).r, 30)
+        XCTAssertLessThanOrEqual(try pixel(copy, 5, y).r, 4)
+    }
+
+    func testTheCopyFadesIntoThePaperAtItsFoot() throws {
+        for dark in [true, false] {
+            let copy = try XCTUnwrap(Backdrop.blur(try stripe(), dark: dark))
+            let paper = WallpaperRender.paper(dark: dark)
+            let height = try XCTUnwrap(copy.cgImage?.height)
+            for x in [0, 61, 97, 134, 194] {
+                let foot = try pixel(copy, x, height - 1)
+                XCTAssertEqual(foot.r, Int(paper.r), "dark \(dark), x \(x): the last row is the page's paper")
+                XCTAssertEqual(foot.g, Int(paper.g))
+                XCTAssertEqual(foot.b, Int(paper.b))
+            }
+            // Above the fade the art shows as it is (the side unlike the paper: the stripe in dark, the black in light);
+            // halfway down the fade it is between the two.
+            let x = dark ? 97 : 5
+            let above = try pixel(copy, x, Int(Double(height) * 0.6)).r - Int(paper.r)
+            let half = try pixel(copy, x, Int(Double(height) * 0.85)).r - Int(paper.r)
+            XCTAssertGreaterThan(abs(above), 150, "dark \(dark)")
+            XCTAssertLessThan(abs(half), abs(above) * 3 / 4)
+            XCTAssertGreaterThan(abs(half), abs(above) / 4)
+        }
+    }
 }

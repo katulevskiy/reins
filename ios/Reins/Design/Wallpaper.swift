@@ -217,21 +217,66 @@ final class Backdrop {
         self.shade = shade
     }
 
-    private static let context = CIContext(options: [.useSoftwareRenderer: false])
+    /// Works on sRGB-encoded values, as Android's bitmaps do, so the same matrix and blur give the same colours.
+    private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+    private static let context = CIContext(options: [.useSoftwareRenderer: false, .workingColorSpace: sRGB])
 
-    /// A quarter-size copy blurred as the boards' glass does (40 pt at the art's size), saturated 1.9, a touch lighter
-    /// in light and darker in dark. The edges are extended before the blur, so the copy never darkens at its sides.
+    /// The blur's sigma as a share of the art's width: Android's (`Wallpapers.frosted`), so shapes behind the glass
+    /// read alike on both. Android, on the 780-px-wide art:
+    /// - scales it to 1/12 (65 px wide) with bilinear sampling, which adds next to no blur;
+    /// - box-blurs it twice, radius 2: each pass is one 5-tap box per axis, variance (5² − 1) / 12 = 2 px², so 4 px²
+    ///   in all;
+    /// - draws it back bilinearly, a 1-px tent, + 1/6 px².
+    /// So σ = √(4 + 1/6) ≈ 2.04 px of the 1/12 copy, ≈ 24.5 px of the art, 3.14 % of its width: 12.3 pt on a 390-pt
+    /// iPhone (12.9 dp on a 411-dp Android). It was σ 20 on the quarter copy here (80 px of the art, 40 pt), 3.3 times
+    /// as much, which left a blob of light with no shape. Now 0.0314 × 195 ≈ 6.1 px on the quarter copy.
+    nonisolated static let blurShare = 0.0314
+
+    /// The bottom share of the copy that fades into the page's paper (eased), ending exactly on paper, so the glass has
+    /// no edge where the art ends. The art itself fades over about its lower 40 %; Android fades the same share.
+    nonisolated static let fadeShare = 0.3
+
+    /// A quarter-size copy, saturated 1.9 and darkened to 0.82 (dark) or lifted to 1.06 (light) as Android's is (its
+    /// `ColorMatrix.setSaturation` weights, before the blur and clamped), blurred by `blurShare` of its width, and faded
+    /// into the paper over its bottom `fadeShare`. The edges are extended before the blur, so the copy never darkens at
+    /// its sides.
     static func blur(_ art: UIImage, dark: Bool) -> UIImage? {
         guard let cg = art.cgImage else { return nil }
-        let source = CIImage(cgImage: cg)
-        let small = source.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+        guard let quarter = Pixels(fill: cg, width: max(4, cg.width / 4), height: max(4, cg.height / 4))?.image() else { return nil }
+        let small = CIImage(cgImage: quarter)
         let extent = small.extent
-        let blurred = small.clampedToExtent().applyingGaussianBlur(sigma: 20).cropped(to: extent)
-        let tuned = blurred.applyingFilter("CIColorControls", parameters: [
-            kCIInputSaturationKey: 1.9, kCIInputBrightnessKey: dark ? -0.1 : 0.04,
-        ])
-        guard let out = context.createCGImage(tuned, from: extent) else { return nil }
-        return UIImage(cgImage: out)
+        let s = 1.9, k = dark ? 0.82 : 1.06
+        let r = 0.213 * (1 - s), g = 0.715 * (1 - s), b = 0.072 * (1 - s)
+        let tuned = small.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: k * (r + s), y: k * g, z: k * b, w: 0),
+            "inputGVector": CIVector(x: k * r, y: k * (g + s), z: k * b, w: 0),
+            "inputBVector": CIVector(x: k * r, y: k * g, z: k * (b + s), w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+        ]).applyingFilter("CIColorClamp")
+        let blurred = tuned.clampedToExtent().applyingGaussianBlur(sigma: blurShare * Double(extent.width)).cropped(to: extent)
+        guard let out = context.createCGImage(blurred, from: extent, format: .RGBA8, colorSpace: sRGB),
+              var px = Pixels(fill: out, width: out.width, height: out.height) else { return nil }
+        fadeIntoPaper(&px, dark: dark)
+        return px.image().map { UIImage(cgImage: $0) }
+    }
+
+    /// Blends the copy's bottom `fadeShare` into the page's paper, eased, its last row exactly paper.
+    nonisolated static func fadeIntoPaper(_ px: inout Pixels, dark: Bool) {
+        let paper = WallpaperRender.paper(dark: dark)
+        let target = [Double(paper.r), Double(paper.g), Double(paper.b)]
+        let start = Double(px.height) * (1 - fadeShare)
+        let last = Double(px.height - 1)
+        for y in max(0, Int(start.rounded(.down)))..<px.height {
+            let t = min(1, max(0, (Double(y) - start) / max(1, last - start)))
+            let e = t * t * (3 - 2 * t)
+            for x in 0..<px.width {
+                let i = px.index(x, y)
+                for c in 0..<3 {
+                    px.bytes[i + c] = UInt8(min(255, max(0, (Double(px.bytes[i + c]) * (1 - e) + target[c] * e).rounded())))
+                }
+            }
+        }
     }
 
     /// Where an image drawn aspect-filled into `box`, centred across and from the top, actually lies.
