@@ -53,6 +53,41 @@ object WorkProfiles {
     /** The badge on cards and rows: the org's name in a work profile, none in the Personal one. */
     fun badge(active: Active = this.active): String? = active.label.takeIf { active.managed }
 
+    /** A store's preferences file for [profile]: today's name for Personal, its own per work profile. */
+    fun prefsName(base: String, profile: Active): String = if (profile.managed) "$base.${profile.id}" else base
+
+    /** The profile a notification (or its action) belongs to, in its intent's extras. */
+    const val EXTRA_PROFILE = "dev.reins.android.PROFILE"
+
+    /** The profile an intent names; one without (posted before profiles existed) is the Personal one's. */
+    fun profileOf(intent: android.content.Intent?): String = intent?.getStringExtra(EXTRA_PROFILE) ?: PERSONAL.id
+
+    /** A per-install secret on the app's own notification intents: only those may switch the profile (the main
+     *  activity is exported, so any app could name a profile). */
+    const val EXTRA_PROFILE_KEY = "dev.reins.android.PROFILE_KEY"
+
+    @Volatile private var intentKey: String? = null
+
+    fun intentKey(context: Context): String = intentKey ?: synchronized(this) {
+        intentKey ?: run {
+            val prefs = context.applicationContext.getSharedPreferences("profile_intents", Context.MODE_PRIVATE)
+            prefs.getString("key", null) ?: java.security.SecureRandom().let { random ->
+                ByteArray(16).also(random::nextBytes).joinToString("") { "%02x".format(it) }
+            }.also { prefs.edit().putString("key", it).commit() }
+        }.also { intentKey = it }
+    }
+
+    /** Names [profile] on an intent of this app's, with the key that lets it switch to that profile. */
+    fun stamp(context: Context, intent: android.content.Intent, profile: String): android.content.Intent =
+        intent.putExtra(EXTRA_PROFILE, profile).putExtra(EXTRA_PROFILE_KEY, intentKey(context)).setIdentifier(profile)
+
+    /** The profile an intent of this app's own asks to open; null for one without the key. */
+    fun requestedProfile(context: Context, intent: android.content.Intent?): String? {
+        val key = intent?.getStringExtra(EXTRA_PROFILE_KEY) ?: return null
+        if (!java.security.MessageDigest.isEqual(key.toByteArray(), intentKey(context).toByteArray())) return null
+        return intent.getStringExtra(EXTRA_PROFILE)
+    }
+
     /** What the device key signs to enroll (`reins_proto::org::enrollment_message`). */
     fun enrollmentMessage(challenge: String): ByteArray = "reins/org-enroll/v1\n".toByteArray() + challenge.toByteArray()
 }
@@ -92,7 +127,8 @@ object ProfilesProvider {
             profile.dataDir,
             KeystoreKeyWrapper(WorkProfiles.dekAlias(profile.keyAlias)),
             app.container.google,
-            app.container.notifier,
+            // While it signs in, the work core posts as the work profile, quietly; it never reaches the phone's data.
+            dev.reins.android.platform.AppNotifier(context.applicationContext, profile = WorkProfiles.of(profile)) {},
             null,
             dev.reins.android.BuildConfig.TELEGRAM_API_ID,
             dev.reins.android.BuildConfig.TELEGRAM_API_HASH,

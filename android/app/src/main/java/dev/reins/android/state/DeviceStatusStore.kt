@@ -8,11 +8,16 @@ import dev.reins.android.platform.SealedPreferences
  * still waits to open the account's keys, and how far the user has read the activity list. Only touched from
  * background dispatchers.
  */
-class DeviceStatusStore(context: Context) {
+class DeviceStatusStore(
+    context: Context,
+    /** Each profile keeps its own (a work account's role is not the Personal one's). */
+    profile: dev.reins.android.profiles.WorkProfiles.Active = dev.reins.android.profiles.WorkProfiles.PERSONAL,
+) {
     private val appContext = context.applicationContext
+    private val name = dev.reins.android.profiles.WorkProfiles.prefsName("device_status", profile)
 
     /** Opened on first use, which is always on a background dispatcher. */
-    private val prefs by lazy { SealedPreferences(appContext, "device_status") }
+    private val prefs by lazy { SealedPreferences(appContext, name) }
 
     fun selectAccount(info: dev.reins.core.SessionInfo) {
         val owner = java.security.MessageDigest.getInstance("SHA-256")

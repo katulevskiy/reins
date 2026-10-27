@@ -46,6 +46,8 @@ import dev.reins.core.Verdict
  */
 class AppNotifier(
     private val context: Context,
+    /** The profile this notifier posts for, fixed when it's made: its channels, and the profile its intents name. */
+    val profile: WorkProfiles.Active = WorkProfiles.PERSONAL,
     private val settings: () -> FeedbackSettings = { FeedbackSettings() },
     private val feedback: () -> Feedback = { NoFeedback },
     /** Autopilot's state changed (a mode, a bypass ending, a pause): the app re-reads it. */
@@ -55,6 +57,10 @@ class AppNotifier(
     private val onChanged: () -> Unit,
 ) : Notifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
+
+    /** A work profile's notifications carry its id as their tag, so one profile never replaces or takes away
+     *  another's; the Personal profile's are untagged, as before. */
+    private val tag: String? = profile.id.takeIf { profile.managed }
 
     /** Notification kinds: wording, importance, chime, and a vibration (off / on pairs in ms) like the in-app haptic. */
     enum class Kind(
@@ -112,7 +118,7 @@ class AppNotifier(
     }
 
     /** The channel for [kind] as the in-app switches stand now; [silent] forces the quiet one. */
-    fun channel(kind: Kind, silent: Boolean = false): String = channel(context, kind, settings(), silent)
+    fun channel(kind: Kind, silent: Boolean = false): String = channel(context, kind, settings(), silent, profile)
 
     override fun itemPending(item: PendingItem) {
         onChanged()
@@ -176,7 +182,7 @@ class AppNotifier(
             .setTimeoutAfter(lifetimeMillis(item))
             .addExtras(android.os.Bundle().apply { putString(EXTRA_ITEM, item.id) })
             .build()
-        manager.notify(notificationId(item.id), notification)
+        manager.notify(tag, notificationId(item.id), notification)
     }
 
     /**
@@ -186,8 +192,8 @@ class AppNotifier(
      */
     fun dropStale(waiting: Set<String>, readAt: Long) {
         manager.activeNotifications
-            .filter { n -> n.postTime < readAt && n.notification.extras.getString(EXTRA_ITEM)?.let { it !in waiting } == true }
-            .forEach { manager.cancel(it.id) }
+            .filter { n -> n.tag == tag && n.postTime < readAt && n.notification.extras.getString(EXTRA_ITEM)?.let { it !in waiting } == true }
+            .forEach { manager.cancel(tag, it.id) }
     }
 
     /** How long an item's notification may stay: until the server lets it go ([ITEM_LIFETIME_SECS] after it was made). */
@@ -198,7 +204,7 @@ class AppNotifier(
         // Decided without the owner, so nothing about it needs them: no notification (a notification means something
         // to do). Whatever asked them about it is withdrawn (an ask posted while it waited, before a bypass or Lockdown
         // started), an ask open on screen closes, and the decision is in Activity.
-        manager.cancel(notificationId(decision.requestId))
+        manager.cancel(tag, notificationId(decision.requestId))
         onDecided(decision.requestId)
         onChanged()
         // In front, a denial (Lockdown, a "never" rule) gets its quiet sound so the list's change is explained; an
@@ -235,7 +241,7 @@ class AppNotifier(
             .setAutoCancel(true)
             .setContentIntent(openAutopilot())
             .build()
-        manager.notify(notificationId("paused:" + event.connectionId), notification)
+        manager.notify(tag, notificationId("paused:" + event.connectionId), notification)
     }
 
     /**
@@ -252,14 +258,14 @@ class AppNotifier(
 
     private fun showRunning(id: Int, kind: Kind, stopAction: String, color: Int, notice: AutopilotText.BypassNotice?, nowMillis: Long) {
         if (notice == null || !notice.untilOff && notice.until * 1000 <= nowMillis) {
-            manager.cancel(id)
+            manager.cancel(tag, id)
             return
         }
         if (!manager.areNotificationsEnabled()) return
         val stop = PendingIntent.getBroadcast(
             context,
             id,
-            Intent(context, BypassStopReceiver::class.java).setAction(stopAction),
+            Intent(context, BypassStopReceiver::class.java).setAction(stopAction).forProfile(),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val builder = Notification.Builder(context, channel(kind))
@@ -286,7 +292,7 @@ class AppNotifier(
             .setContentIntent(openAutopilot())
             .addAction(Notification.Action.Builder(null, "Stop now", stop).build())
             .build()
-        manager.notify(id, notification)
+        manager.notify(tag, id, notification)
     }
 
     /** The model download as a progress bar (the foreground notification of its job). */
@@ -318,11 +324,11 @@ class AppNotifier(
             .setAutoCancel(true)
             .setContentIntent(openAutopilot())
             .build()
-        manager.notify(DOWNLOAD_DONE_ID, notification)
+        manager.notify(tag, DOWNLOAD_DONE_ID, notification)
     }
 
     override fun itemResolved(id: String) {
-        manager.cancel(notificationId(id))
+        manager.cancel(tag, notificationId(id))
         onChanged()
     }
 
@@ -339,7 +345,7 @@ class AppNotifier(
             .setAutoCancel(true)
             .setContentIntent(openApp())
             .build()
-        manager.notify(REPLACED_ID, notification)
+        manager.notify(tag, REPLACED_ID, notification)
     }
 
     /** Approve or Deny from the notification ([ApprovalActionReceiver]). */
@@ -348,7 +354,8 @@ class AppNotifier(
         notificationId(id) xor if (approve) 0x1 else 0x2,
         Intent(context, ApprovalActionReceiver::class.java)
             .setAction(if (approve) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY)
-            .putExtra(EXTRA_ID, id),
+            .putExtra(EXTRA_ID, id)
+            .forProfile(),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -371,12 +378,13 @@ class AppNotifier(
                         .setAction(ACTION_OPEN_ITEM)
                         .putExtra(EXTRA_KIND, KIND_REQUEST)
                         .putExtra(EXTRA_ID, id)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        .forProfile(),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
             )
             .build()
-        manager.notify(notificationId(id), notification)
+        manager.notify(tag, notificationId(id), notification)
     }
 
     private fun openItem(item: PendingItem): PendingIntent {
@@ -393,6 +401,7 @@ class AppNotifier(
             )
             .putExtra(EXTRA_ID, item.id)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile()
         return PendingIntent.getActivity(
             context,
             notificationId(item.id),
@@ -407,6 +416,7 @@ class AppNotifier(
             .setAction(ACTION_OPEN_ACTIVITY)
             .putExtra(EXTRA_ACTIVITY_ID, activityId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile()
         val code = (activityId and 0x3FFF_FFFF).toInt() or 0x4000_0000
         return PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
@@ -417,16 +427,52 @@ class AppNotifier(
         BYPASS_ID,
         Intent(context, MainActivity::class.java)
             .setAction(ACTION_OPEN_AUTOPILOT)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .forProfile(),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
     private fun openApp(): PendingIntent = PendingIntent.getActivity(
         context,
         0,
-        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP).forProfile(),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+
+    /** Names this notifier's profile on an intent, and keeps it apart from the same intent of another profile (an
+     *  identifier counts in `filterEquals`, so one profile's pending intent never takes over the other's extras). */
+    private fun Intent.forProfile(): Intent = WorkProfiles.stamp(context, this, profile.id)
+
+    /**
+     * A push or an action for another profile than this one: says so without any detail, and opens the app on that
+     * profile (the current core never handles it).
+     */
+    fun otherProfile(target: WorkProfiles.Active, id: Int = OTHER_PROFILE_ID) {
+        if (!manager.areNotificationsEnabled()) return
+        val open = PendingIntent.getActivity(
+            context,
+            id,
+            WorkProfiles.stamp(
+                context,
+                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                target.id,
+            ),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(context, channel(context, Kind.Status, settings(), silent = false, profile = target))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(if (target.managed) target.label else "Reins")
+            .setContentText("Something waits for you. Open Reins.")
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        manager.notify(target.id, id, notification)
+    }
+
+    /** Takes away every notification of this profile (signing out), and none of another's. */
+    fun cancelOwn() {
+        manager.activeNotifications.filter { it.tag == tag }.forEach { manager.cancel(it.tag, it.id) }
+    }
 
     private fun notificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
 
@@ -506,23 +552,30 @@ class AppNotifier(
         const val DOWNLOAD_ID = 4
         private const val DOWNLOAD_DONE_ID = 5
         const val OVERNIGHT_ID = 6
+        /** The neutral "Open Reins" of a push or action for another profile ([otherProfile]). */
+        const val OTHER_PROFILE_ID = 7
 
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
         const val GROUP_AUTOPILOT = "autopilot"
 
         /** A channel id, e.g. `approvals-v2-sv` (sound and vibration), `-s`, `-v` or `-q` (quiet). */
-        fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean, prefix: String = WorkProfiles.active.channelPrefix): String =
+        fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean, prefix: String = WorkProfiles.PERSONAL.channelPrefix): String =
             prefix + "${kind.key}-v$CHANNEL_VERSION-" + (if (sound) "s" else "") + (if (vibrate) "v" else "") + (if (!sound && !vibrate) "q" else "")
 
         /** Creates (once) and returns the channel [settings] ask for: the kind's chime under its category switch, vibration under Haptics. */
-        fun channel(context: Context, kind: Kind, settings: FeedbackSettings, silent: Boolean = false): String {
+        fun channel(
+            context: Context,
+            kind: Kind,
+            settings: FeedbackSettings,
+            silent: Boolean = false,
+            profile: WorkProfiles.Active,
+        ): String {
             val sound = !silent && kind.sound != null && settings.allows(kind.category)
             val vibrate = !silent && kind.pattern != null && settings.hapticsOn
-            val id = channelId(kind, sound, vibrate)
+            val id = channelId(kind, sound, vibrate, profile.channelPrefix)
             val manager = context.getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(id) != null) return id
             // A work profile's channels are its own, grouped under the org's name; the Personal ones are as before.
-            val profile = WorkProfiles.active
             val group = if (profile.managed) profile.channelPrefix + "profile" else kind.group
             group?.let { g ->
                 if (manager.getNotificationChannelGroup(g) == null) {

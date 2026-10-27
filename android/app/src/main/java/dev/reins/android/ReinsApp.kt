@@ -31,6 +31,10 @@ class ReinsApp : Application(), Configuration.Provider {
         container.appScope.launch(Dispatchers.IO) {
             // Opens the native core (library, store, Keystore) while the UI draws; its first real use finds it ready.
             runCatching { container.core.session() }
+            // This profile's push tag, so a push for another profile on this phone is never handled by this core.
+            runCatching { container.core.pushTag() }.getOrNull()?.let {
+                dev.reins.android.push.PushRouting.remember(this@ReinsApp, container.profile.id, it)
+            }
         }
         container.appScope.launch(Dispatchers.IO) { container.notifier.createChannels() }
         container.appScope.launch(Dispatchers.Default) { dev.reins.android.design.Fonts.warm() }

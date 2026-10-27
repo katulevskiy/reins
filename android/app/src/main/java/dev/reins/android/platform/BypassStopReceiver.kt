@@ -21,6 +21,8 @@ class BypassStopReceiver : BroadcastReceiver() {
         val action = intent.action
         if (action != ACTION_STOP && action != ACTION_STOP_OVERNIGHT) return
         val container = (context.applicationContext as ReinsApp).container
+        // Another profile's Stop never stops this profile's bypass.
+        if (ApprovalActionReceiver.redirectedToProfile(container, intent)) return
         val pending = goAsync()
         container.appScope.launch {
             try {

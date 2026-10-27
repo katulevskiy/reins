@@ -22,6 +22,9 @@ class ApprovalActionReceiver : BroadcastReceiver() {
             else -> return
         }
         val container = (context.applicationContext as ReinsApp).container
+        // A notification of another profile than the one running: never answered on this core. It opens the app on
+        // its profile instead.
+        if (redirectedToProfile(container, intent)) return
         val pending = goAsync()
         container.appScope.launch {
             try {
@@ -38,6 +41,20 @@ class ApprovalActionReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        /**
+         * Whether [intent] belongs to another profile than [container]'s: then nothing is done on this core, and the
+         * notification is replaced by a plain "Open Reins" on that profile.
+         */
+        fun redirectedToProfile(container: dev.reins.android.AppContainer, intent: Intent): Boolean {
+            val target = dev.reins.android.profiles.WorkProfiles.profileOf(intent)
+            if (target == container.profile.id) return false
+            val profile = runCatching { container.profiles.list().firstOrNull { it.id == target } }.getOrNull()
+                ?.let(dev.reins.android.profiles.WorkProfiles::of)
+                ?: dev.reins.android.profiles.WorkProfiles.PERSONAL.takeIf { target == it.id }
+            if (profile != null) container.notifier.otherProfile(profile)
+            return true
+        }
+
         const val ACTION_APPROVE = "dev.reins.android.APPROVE_REQUEST"
         const val ACTION_DENY = "dev.reins.android.DENY_REQUEST"
     }

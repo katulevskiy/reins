@@ -668,6 +668,7 @@ class FakeCore : ReinsCoreInterface {
         ssoBegins.clear()
         org = null
         orgsOffered = false
+        pushTag = null
         ssoBeginWorks.clear()
         enrollments.clear()
         postures.clear()
@@ -718,6 +719,11 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var orgsOffered = false
 
     override suspend fun orgsOffered(serverUrl: String): Boolean = orgsOffered
+
+    /** The tag this account's pushes carry. */
+    @Volatile var pushTag: String? = null
+
+    override suspend fun pushTag(): String? = pushTag
 
     override suspend fun orgChallenge(): String = org?.let { "challenge-1" } ?: throw CoreException.NotFound()
 

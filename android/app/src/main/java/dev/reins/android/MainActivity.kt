@@ -124,6 +124,15 @@ class MainActivity : FragmentActivity() {
 
     /** Any app can send this activity an intent, so only a well-formed link to a really pending item opens anything. */
     private fun handleIntent(intent: Intent?) {
+        // A notification of another profile than the one running: open the app on that profile; nothing it names is
+        // looked up in this one.
+        val requested = dev.reins.android.profiles.WorkProfiles.requestedProfile(this, intent)
+        if (requested != null && requested != container.profile.id) {
+            val known = runCatching { container.profiles.list().any { it.id == requested } }.getOrDefault(false)
+            if (known) dev.reins.android.profiles.ProfileSwitch.switchTo(this, container.profiles, requested)
+            return
+        }
+        if (intent?.getStringExtra(dev.reins.android.profiles.WorkProfiles.EXTRA_PROFILE)?.let { it != container.profile.id } == true) return
         if (intent?.action == UpdateNotifier.ACTION_OPEN_UPDATE) {
             val updates = container.updates ?: return
             // The prompt sits on the main screen; an open approval sheet stays and the prompt waits for it.

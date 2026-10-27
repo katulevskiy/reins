@@ -144,8 +144,8 @@ class WorkProfileFlowTest : FlowHarness() {
     fun `a work profile posts to its own channels, grouped under the org`() {
         val manager = context.getSystemService(NotificationManager::class.java)
         val personalId = AppNotifier.channelId(AppNotifier.Kind.Approvals, sound = true, vibrate = true)
-        WorkProfiles.active = WorkProfiles.of(FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1"))
-        val workId = AppNotifier.channel(context, AppNotifier.Kind.Approvals, dev.reins.android.feedback.FeedbackSettings())
+        val acmeProfile = WorkProfiles.of(FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1"))
+        val workId = AppNotifier.channel(context, AppNotifier.Kind.Approvals, dev.reins.android.feedback.FeedbackSettings(), profile = acmeProfile)
         assertNotEquals(personalId, workId)
         assertTrue(workId, workId.startsWith("work-1.approvals-v"))
         assertEquals("Acme", manager.getNotificationChannelGroup(manager.getNotificationChannel(workId).group).name)
@@ -226,5 +226,76 @@ class WorkProfileFlowTest : FlowHarness() {
             Thread.sleep(10)
         }
         assertTrue("timed out", condition())
+    }
+
+    private val acmeProfile get() = WorkProfiles.of(FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1"))
+
+    @Test
+    fun `a notifier posts for the profile it was made for, whatever is active now`() {
+        shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val notifier = AppNotifier(context, profile = acmeProfile) {}
+        WorkProfiles.active = WorkProfiles.PERSONAL
+        notifier.itemPending(TestData.pending("r1", createdAt = System.currentTimeMillis() / 1000))
+        val posted = shadowOf(manager).activeNotifications.single()
+        assertTrue(posted.notification.channelId, posted.notification.channelId.startsWith("work-1."))
+        assertEquals("work-1", posted.tag)
+        val open = shadowOf(posted.notification.contentIntent).savedIntent
+        assertEquals("work-1", open.getStringExtra(WorkProfiles.EXTRA_PROFILE))
+        assertEquals("work-1", WorkProfiles.requestedProfile(context, open))
+        // The Personal notifier's dropping and sign-out never take a work profile's notification away.
+        container.notifier.dropStale(emptySet(), readAt = Long.MAX_VALUE)
+        container.notifier.cancelOwn()
+        assertEquals(1, shadowOf(manager).activeNotifications.size)
+    }
+
+    @Test
+    fun `only the apps own intents may switch the profile`() {
+        val forged = android.content.Intent().putExtra(WorkProfiles.EXTRA_PROFILE, "work-1")
+        assertNull(WorkProfiles.requestedProfile(context, forged))
+        forged.putExtra(WorkProfiles.EXTRA_PROFILE_KEY, "0".repeat(32))
+        assertNull(WorkProfiles.requestedProfile(context, forged))
+        val own = WorkProfiles.stamp(context, android.content.Intent(), "work-1")
+        assertEquals("work-1", WorkProfiles.requestedProfile(context, own))
+    }
+
+    @Test
+    fun `a notification action of another profile never acts on this core`() {
+        shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        registry.profiles += FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1")
+        core.pending = listOf(TestData.pending("r1"))
+        val deny = android.content.Intent(context, dev.reins.android.platform.ApprovalActionReceiver::class.java)
+            .setAction(dev.reins.android.platform.ApprovalActionReceiver.ACTION_DENY)
+            .putExtra(AppNotifier.EXTRA_ID, "r1")
+        dev.reins.android.platform.ApprovalActionReceiver().onReceive(context, android.content.Intent(deny).putExtra(WorkProfiles.EXTRA_PROFILE, "work-1"))
+        settle()
+        assertTrue(core.denials.isEmpty())
+        // It says, without detail, to open the other profile.
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val notice = shadowOf(manager).activeNotifications.single { it.tag == "work-1" }
+        assertEquals("Acme", notice.notification.extras.getString(android.app.Notification.EXTRA_TITLE))
+        // The same action of this profile goes through.
+        context.sendBroadcast(deny)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        settle()
+        assertEquals(listOf("r1"), core.denials.toList())
+    }
+
+    @Test
+    fun `a push for another profile never touches this core`() = kotlinx.coroutines.runBlocking {
+        registry.profiles += FakeRegistry.profile("work-1", ProfileKind.MANAGED, "Acme", "o1")
+        core.pushTag = "aaaaaaaaaaaaaaaa"
+        dev.reins.android.push.PushRouting.remember(context, "work-1", "bbbbbbbbbbbbbbbb")
+        val payload = dev.reins.android.push.PushPayload.parse(mapOf("t" to "replaced", "id" to "x1", "p" to "bbbbbbbbbbbbbbbb"))!!
+        assertEquals(dev.reins.android.push.PushOutcome.DONE, dev.reins.android.push.PushHandler.of(container).handle(payload))
+        assertTrue(core.pushes.isEmpty())
+        assertFalse(container.state.deviceReplaced.value)
+        // A tag nobody here knows: not this core's either.
+        dev.reins.android.push.PushHandler.of(container).handle(payload.copy(kind = "req", profileTag = "cccccccccccccccc"))
+        assertTrue(core.pushes.isEmpty())
+        // This profile's own tag, or none (an older server), is handled here.
+        dev.reins.android.push.PushHandler.of(container).handle(payload.copy(kind = "req", profileTag = "aaaaaaaaaaaaaaaa"))
+        dev.reins.android.push.PushHandler.of(container).handle(payload.copy(kind = "req", id = "x2", profileTag = null))
+        assertEquals(listOf("req:x1", "req:x2"), core.pushes.toList())
     }
 }

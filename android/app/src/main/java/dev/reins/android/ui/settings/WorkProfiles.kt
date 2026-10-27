@@ -154,6 +154,8 @@ class AddWorkAccountViewModel(private val container: AppContainer) : ViewModel()
                 container.profiles.confirmManaged(reserved.id, org.orgId, org.name, outcome.session.email)
             }
             profile = null
+            // The work account's push tag: its pushes reach this phone too, and are routed to the work profile.
+            runCatching { core.pushTag() }.getOrNull()?.let { dev.reins.android.push.PushRouting.remember(container.appContext, added.id, it) }
             val enrolled = runCatching {
                 core.registerDevice(null)
                 val challenge = core.orgChallenge()
