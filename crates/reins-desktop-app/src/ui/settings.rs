@@ -249,7 +249,7 @@ impl Root {
                 .overflow_hidden()
                 .border_1()
                 .border_color(pal.rule())
-                .child(kit::wallpaper::art(w, 0.5, 0.0).corners(6.0).thumbnail())
+                .child(kit::wallpaper::art(w, 0.5, 0.0).corners(6.0))
         };
         let grain_on = !d.saved.flat_fields;
         let look = kit::group(
@@ -443,7 +443,7 @@ impl Root {
                                 |t| t.border_2().border_color(pal.violet()),
                                 |t| t.border_1().border_color(pal.rule()),
                             )
-                            .child(kit::wallpaper::art(w, 0.5, 0.0).corners(13.0).thumbnail())
+                            .child(kit::wallpaper::art(w, 0.5, 0.0).corners(13.0))
                             .when(on, |t| {
                                 t.child(
                                     div()
