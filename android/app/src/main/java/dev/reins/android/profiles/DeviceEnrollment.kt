@@ -107,12 +107,21 @@ object Posture {
 fun orgSign(keys: DeviceKeys, profileId: String, message: ByteArray): String =
     Base64.encodeToString(keys.sign(WorkProfiles.orgKeyAlias(profileId), message), Base64.NO_WRAP)
 
-/** The bytes an org review's answer signs: the core's (`org_review_message`); tests, without the native core, replace it. */
+/**
+ * The bytes an org review's answer signs: the core's (`org_review_message`), and a web passkey's confirmation
+ * (`org_passkey_confirm_message`, over the listed key's hash and registration time); tests, without the native core,
+ * replace them.
+ */
 object OrgSigning {
     val CORE: (String, dev.reins.core.OrgReviewView, Boolean, Long) -> ByteArray =
         { org, review, approve, at -> dev.reins.core.orgReviewMessage(org, review, approve, at) }
 
     @Volatile var message: (String, dev.reins.core.OrgReviewView, Boolean, Long) -> ByteArray = CORE
+
+    val CORE_PASSKEY: (String, dev.reins.core.OrgPasskeyView, Long) -> ByteArray =
+        { org, key, at -> dev.reins.core.orgPasskeyConfirmMessage(org, key.credentialId, key.spkiHash, key.createdAt, at) }
+
+    @Volatile var passkeyMessage: (String, dev.reins.core.OrgPasskeyView, Long) -> ByteArray = CORE_PASSKEY
 }
 
 /**

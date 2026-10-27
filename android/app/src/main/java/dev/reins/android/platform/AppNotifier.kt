@@ -552,7 +552,16 @@ class AppNotifier(
      * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
      * channel; tapping opens that profile's reviews. Says nothing of the review itself.
      */
-    fun orgReview(target: WorkProfiles.Active, reviewId: String) {
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) = orgAction(target, reviewId, "A review waits for you.")
+
+    /**
+     * A web passkey the member added in the browser waits for this phone's confirmation (O3): notified like a review,
+     * opening the same screen, where its card shows the fingerprint.
+     */
+    fun orgPasskey(target: WorkProfiles.Active, credentialId: String) =
+        orgAction(target, credentialId, "Confirm your new passkey.")
+
+    private fun orgAction(target: WorkProfiles.Active, reviewId: String, text: String) {
         onChanged()
         if (!manager.areNotificationsEnabled()) return
         val open = PendingIntent.getActivity(
@@ -570,7 +579,7 @@ class AppNotifier(
         val notification = Notification.Builder(context, channel(context, Kind.Approvals, settings(), silent = false, profile = target))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (target.managed) target.label else "Reins")
-            .setContentText("A review waits for you.")
+            .setContentText(text)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setContentIntent(open)

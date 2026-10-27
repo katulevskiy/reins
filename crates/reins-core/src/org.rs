@@ -146,6 +146,16 @@ pub struct OrgReviewView {
     pub expires_at: i64,
     /// Your own: your request, or your change to confirm.
     pub own: bool,
+    /// Who else must still decide, one line per waiting obligation ("On-call: payments", "2 of Finance").
+    pub needs: Vec<String>,
+    /// Approvals so far ("1 of 2"); empty when one approval decides.
+    pub progress: String,
+    /// Where an escalation took it ("Escalated to Security admin").
+    pub step: Option<String>,
+    /// Breaks quiet hours.
+    pub urgent: bool,
+    /// The agent's reason, when it gave one (the agent's words, untrusted).
+    pub reason: Option<String>,
 }
 
 /// The longest line, title or name a review shows, in characters.
@@ -240,7 +250,95 @@ fn review_view(org_id: &str, item: ReviewItem) -> Option<OrgReviewView> {
         snapshot: item.snapshot,
         expires_at: item.expires_at,
         own: item.own,
+        needs: item.needs.iter().map(|l| shown(l)).filter(|l| !l.is_empty()).take(MAX_NEEDS).collect(),
+        progress: shown(&item.progress),
+        step: item.step.as_deref().map(shown).filter(|s| !s.is_empty()),
+        urgent: item.urgent,
+        reason: item.reason.as_deref().map(shown).filter(|s| !s.is_empty()),
     })
+}
+
+/// The most "needs" lines a review shows.
+const MAX_NEEDS: usize = 6;
+
+/// A web passkey of this member, as the server lists it (`GET /reins/api/org/passkeys`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PasskeyItem {
+    pub credential_id: String,
+    pub created_at: i64,
+    pub confirmed: bool,
+    /// SHA-256 (hex) of the key's SPKI.
+    pub spki_hash: String,
+    /// `abcd-ef01`, as the console shows it.
+    #[serde(default)]
+    pub fingerprint: String,
+}
+
+/// `POST /reins/api/org/passkeys/<id>/confirm`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PasskeyConfirm {
+    pub approve: bool,
+    pub at: i64,
+    /// DER ECDSA P-256 over [`reins_proto::managed::passkey_confirm_message`], base64.
+    pub signature: String,
+}
+
+/// A web passkey the member registered in the browser, as the phone shows and signs it. The fingerprint is built
+/// here from the key hash the confirmation signs, so what the member compares is what they vouch for.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct OrgPasskeyView {
+    pub credential_id: String,
+    /// When it was registered (Unix seconds): the confirmation signs it as `registered_at`.
+    pub created_at: i64,
+    pub confirmed: bool,
+    /// SHA-256 (hex) of the key's SPKI.
+    pub spki_hash: String,
+    /// `abcd-ef01`: the first 8 hex digits of `spki_hash`, as the console shows it.
+    pub fingerprint: String,
+}
+
+/// The longest credential id accepted (a WebAuthn credential id is at most 1023 bytes, base64url).
+const MAX_CREDENTIAL_ID: usize = 1400;
+
+/// `id` if it reads as a base64url credential id (it goes into a URL path).
+pub fn check_credential_id(id: &str) -> Result<(), CoreError> {
+    if !id.is_empty()
+        && id.len() <= MAX_CREDENTIAL_ID
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        Ok(())
+    } else {
+        Err(CoreError::invalid("malformed id"))
+    }
+}
+
+/// The passkeys the phone can vouch for: a well-formed id and key hash, and (when the server sends one) the
+/// fingerprint the console shows matches the hash. The rest are dropped, with a log line.
+#[must_use]
+pub fn passkey_views(items: Vec<PasskeyItem>) -> Vec<OrgPasskeyView> {
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let hash_ok =
+                item.spki_hash.len() == 64 && item.spki_hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+            if !hash_ok || check_credential_id(&item.credential_id).is_err() {
+                log::warn!("org passkey dropped: malformed");
+                return None;
+            }
+            let fingerprint = format!("{}-{}", &item.spki_hash[..4], &item.spki_hash[4..8]);
+            if !item.fingerprint.is_empty() && item.fingerprint != fingerprint {
+                log::warn!("org passkey dropped: its fingerprint does not match its key");
+                return None;
+            }
+            Some(OrgPasskeyView {
+                credential_id: item.credential_id,
+                created_at: item.created_at,
+                confirmed: item.confirmed,
+                spki_hash: item.spki_hash,
+                fingerprint,
+            })
+        })
+        .collect()
 }
 
 /// An admin change in a few words, read from the stored text the digest covers. Read as JSON, not as this build's
@@ -409,6 +507,42 @@ impl Engine {
         };
         let session = self.session()?;
         api_call!(&session, |api| api.org_answer(id, &answer)).map_err(org_error)
+    }
+
+    /// The web passkeys this member registered (O3), confirmed or not, checked on the phone ([`passkey_views`]); none
+    /// for a Personal account.
+    pub async fn org_passkeys(&self) -> Result<Vec<OrgPasskeyView>, CoreError> {
+        let session = self.session()?;
+        let items = api_call!(&session, |api| api.org_passkeys()).map_err(org_error)?;
+        Ok(passkey_views(items))
+    }
+
+    /// Confirms (`approve`) or refuses web passkey `id`: `signature` is the enrolled key's over
+    /// [`reins_proto::managed::passkey_confirm_message`] of the passkey's key hash and registration time, with the same
+    /// `at`. The passkey is read again first, so one that is gone is refused.
+    pub async fn org_confirm_passkey(
+        &self,
+        id: &str,
+        approve: bool,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        check_credential_id(id)?;
+        if !self.org_passkeys().await?.iter().any(|k| k.credential_id == id) {
+            return Err(CoreError::NotFound);
+        }
+        let session = self.session()?;
+        if !approve {
+            // A refusal is an unsigned revoke: a signature over the confirmation message is only ever sent to confirm,
+            // so nothing seen in a refusal could be replayed as one.
+            return api_call!(&session, |api| api.org_revoke_passkey(id)).map_err(org_error);
+        }
+        let answer = PasskeyConfirm {
+            approve,
+            at,
+            signature,
+        };
+        api_call!(&session, |api| api.org_confirm_passkey(id, &answer)).map_err(org_error)
     }
 
     /// Sets the member's own stricter policy: `body` is its canonical JSON, `version` greater than the one it replaces,
@@ -684,6 +818,120 @@ mod tests {
             signature: "MEUC".into(),
         };
         PhoneApi::new(&http, &url, "TOKEN").org_answer("or_1", &answer).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn needs_and_step_lines() {
+        let args = json!({"to": ["ext@other.com"]});
+        let mut routed = request_item("or_1", args.clone(), &args);
+        routed.needs = vec!["On-call: payments".into(), "2 of\nFinance".into(), "   ".into()];
+        routed.progress = "1 of 2".into();
+        routed.step = Some("Escalated to Security admin".into());
+        routed.urgent = true;
+        routed.reason = Some(format!("Rotate the key\n{}", "x".repeat(300)));
+        let plain = request_item("or_2", args.clone(), &args);
+        let mut blank = request_item("or_3", args.clone(), &args);
+        blank.step = Some(" ".into());
+        blank.reason = Some(String::new());
+        let views = review_views(ORG, served(&[routed, plain, blank]).await);
+        let v = &views[0];
+        // One line each, the blank one gone.
+        assert_eq!(v.needs, ["On-call: payments", "2 of Finance"]);
+        assert_eq!(v.progress, "1 of 2");
+        assert_eq!(v.step.as_deref(), Some("Escalated to Security admin"));
+        assert!(v.urgent);
+        let reason = v.reason.as_deref().unwrap();
+        assert!(reason.starts_with("Rotate the key x") && !reason.contains('\n'));
+        assert!(reason.chars().count() <= MAX_SHOWN);
+        // One approval decides: no needs, no progress, no step.
+        assert!(views[1].needs.is_empty() && views[1].progress.is_empty());
+        assert_eq!((views[1].step.as_ref(), views[1].urgent, views[1].reason.as_ref()), (None, false, None));
+        assert_eq!((views[2].step.as_ref(), views[2].reason.as_ref()), (None, None));
+        // A server without O3 sends none of them.
+        let mut old = serde_json::to_value(request_item("or_4", args.clone(), &args)).unwrap();
+        for k in ["needs", "progress", "step", "urgent", "reason"] {
+            old.as_object_mut().unwrap().remove(k);
+        }
+        let item: ReviewItem = serde_json::from_value(old).unwrap();
+        assert!(review_views(ORG, vec![item])[0].needs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_passkey_confirmation_posts_the_signature() {
+        let hash = reins_proto::managed::passkey_spki_hash("MFkwEwYH");
+        let fingerprint = reins_proto::managed::passkey_fingerprint("MFkwEwYH");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/reins/api/org/passkeys"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"credential_id": "cred_A-1", "created_at": 1_700_000_000, "confirmed": false,
+                 "spki_hash": hash, "fingerprint": fingerprint},
+                // The console would show another code than the key the phone signs: dropped.
+                {"credential_id": "cred_B", "created_at": 1, "confirmed": false, "spki_hash": hash,
+                 "fingerprint": "0000-0000"},
+                {"credential_id": "cred/C", "created_at": 1, "confirmed": false, "spki_hash": hash},
+                {"credential_id": "cred_D", "created_at": 1, "confirmed": true, "spki_hash": "nothex"},
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/reins/api/org/passkeys/cred_A-1/confirm"))
+            .and(body_json(json!({"approve": true, "at": 1_700_000_050, "signature": "MEUC"})))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (http, url) = (client().unwrap(), ServerUrl::parse(&server.uri()).unwrap());
+        let api = PhoneApi::new(&http, &url, "TOKEN");
+        let views = passkey_views(api.org_passkeys().await.unwrap());
+        assert_eq!(
+            views,
+            [OrgPasskeyView {
+                credential_id: "cred_A-1".into(),
+                created_at: 1_700_000_000,
+                confirmed: false,
+                spki_hash: hash.clone(),
+                fingerprint: fingerprint.clone(),
+            }]
+        );
+        // The fingerprint shown is the one built from the hash the confirmation signs.
+        assert_eq!(views[0].fingerprint, format!("{}-{}", &hash[..4], &hash[4..8]));
+        assert_eq!(
+            crate::profiles::org_passkey_confirm_message(
+                ORG.into(),
+                "cred_A-1".into(),
+                hash.clone(),
+                1_700_000_000,
+                1_700_000_050
+            ),
+            reins_proto::managed::passkey_confirm_message(ORG, "cred_A-1", &hash, 1_700_000_000, 1_700_000_050)
+        );
+        let answer = PasskeyConfirm {
+            approve: true,
+            at: 1_700_000_050,
+            signature: "MEUC".into(),
+        };
+        api.org_confirm_passkey("cred_A-1", &answer).await.unwrap();
+        // A malformed id never reaches the server.
+        assert!(api.org_confirm_passkey("../reviews/x", &answer).await.is_err());
+        assert!(check_credential_id(&"A".repeat(86)).is_ok(), "a 64-byte credential id");
+    }
+
+    #[tokio::test]
+    async fn a_refused_passkey_is_revoked_without_a_signature() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/reins/api/org/passkeys/cred_A-1"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (http, url) = (client().unwrap(), ServerUrl::parse(&server.uri()).unwrap());
+        PhoneApi::new(&http, &url, "TOKEN").org_revoke_passkey("cred_A-1").await.unwrap();
+        // Nothing signed went out: no confirm call at all.
+        let sent = server.received_requests().await.unwrap();
+        assert!(sent.iter().all(|r| r.method.as_str() == "DELETE" && r.body.is_empty()));
+        assert!(PhoneApi::new(&http, &url, "TOKEN").org_revoke_passkey("../x").await.is_err());
     }
 
     #[tokio::test]

@@ -59,7 +59,11 @@ struct ProfilesSection: View {
         .task {
             profiles = WorkProfiles.registry().list()
             offered = (try? await model.core.orgsOffered(serverUrl: server)) ?? false
-            if WorkProfiles.active.managed { reviews = try? await model.core.orgReviews().count }
+            if WorkProfiles.active.managed {
+                // Reviews (O2) and web passkeys to confirm (O3).
+                let passkeys = (try? await model.core.orgPasskeys().filter { !$0.confirmed }.count) ?? 0
+                reviews = (try? await model.core.orgReviews().count).map { $0 + passkeys }
+            }
         }
         .sheet(isPresented: $adding) {
             NavigationStack {
