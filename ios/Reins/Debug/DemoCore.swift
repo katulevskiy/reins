@@ -1038,6 +1038,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let id = s.pending[i].id
             guard ["req10", "req11", "req2", "req9"].contains(id) else { continue }
             s.pending[i].parkedUntil = morning
+            s.pending[i].parked = true
             s.pending[i].canDefer = false
             if id == "req10" || id == "req11" {
                 s.pending[i].taskId = demoTaskId

@@ -17,15 +17,11 @@ use crate::engine::Engine;
 use crate::store::unix_now;
 use crate::types::{PendingItem, PendingKind};
 
-/// Whether "Approve all" may cover a request the pass left with `s`: the matrix asked it softly and below L3, and
-/// nothing about it is always asked. A request the matrix doesn't read (a computer's question) takes the routine
-/// reading (`quick`).
-pub(crate) fn batchable(s: &Suggestion, quick: bool) -> bool {
-    let soft = match &s.matrix {
-        Some(m) => !m.outcome.hard() && m.level < Level::L3,
-        None => quick,
-    };
-    soft && s.floor.is_none()
+/// Whether "Approve all" may cover a request the pass left with `s`: only where the matrix asked it softly, below L3
+/// (`Suggestion::batchable`, set at that one place), and nothing about it is always asked. A closer look, a risk hold,
+/// a tripwire, a pause, the floor, a computer's question the matrix doesn't read: never.
+pub(crate) fn batchable(s: &Suggestion) -> bool {
+    s.batchable && s.floor.is_none() && s.matrix.as_ref().is_some_and(|m| !m.outcome.hard() && m.level < Level::L3)
 }
 
 impl Engine {
@@ -47,7 +43,7 @@ impl Engine {
             s.parked = Some(Parked {
                 until,
                 deadline,
-                batchable: batchable(s, subject.item.quick),
+                batchable: batchable(s),
             });
         }
         if let Some(t) = &task {
@@ -71,7 +67,8 @@ impl Engine {
             return;
         }
         item.parked_until = s.parked.as_ref().map(|p| p.until);
-        item.batchable = s.parked.as_ref().map_or_else(|| batchable(&s, item.quick), |p| p.batchable);
+        item.parked = s.parked.is_some();
+        item.batchable = s.parked.as_ref().map_or_else(|| batchable(&s), |p| p.batchable);
         if let Some(task) = &s.task {
             item.task_id = Some(task.clone());
             item.task_title = self.tasks().ok().and_then(|ts| ts.into_iter().find(|t| &t.id == task)).map(|t| t.title);
@@ -150,11 +147,18 @@ impl Engine {
             .collect();
         let mut approved = 0;
         for id in ids {
-            let choice = crate::types::ApprovalChoice {
-                selected_message_ids: Vec::new(),
-                standing: None,
+            // With what its screen preselects, as Auto would approve it (never an empty selection), and never a
+            // purchase or a standing permission (they have their own screens).
+            let Some(row) = self.store.pending_rows(now)?.into_iter().find(|r| r.id == id) else {
+                continue;
             };
-            match self.approve(&id, choice).await {
+            let Some(subject) = self.ap_subject(&row)? else {
+                continue;
+            };
+            if subject.purchase || subject.grant {
+                continue;
+            }
+            match self.approve(&id, subject.choice.clone()).await {
                 Ok(()) => approved += 1,
                 Err(e) => log::info!("Approve all left one for later: {e}"),
             }

@@ -32,7 +32,7 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             self.withdraw(item.id, keeping: item.id)
             guard let model else { return }
             // Parked by Overnight for the morning: no notification and no chime now; the morning digest says it.
-            let parked = OvernightDigestNotice.isParked(item, now: Int64(Date().timeIntervalSince1970))
+            let parked = OvernightDigestNotice.isQuiet(item)
             if model.isActive {
                 await model.refreshPending()
                 // The chime still sounds (once per request and per burst), for a phone left open on the desk; a

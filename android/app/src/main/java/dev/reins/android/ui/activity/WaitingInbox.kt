@@ -158,7 +158,7 @@ private fun TicketRow(item: PendingItem, details: PendingDetails, divider: Boole
                 detailsMaxLines = 1,
                 tag = "ticketTitle:${item.id}",
             )
-            if (item.parked(nowSeconds)) Chip("Parked", Icons.Rounded.Bedtime, c.violet, Modifier.testTag("ticketParked:${item.id}"))
+            if (item.waitsForMorning(nowSeconds)) Chip("Parked", Icons.Rounded.Bedtime, c.violet, Modifier.testTag("ticketParked:${item.id}"))
             ticket?.question?.let { question ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Chip("Why?", Icons.Rounded.QuestionAnswer, c.violet, Modifier.testTag("ticketWhy:${item.id}"))

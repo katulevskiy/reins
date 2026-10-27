@@ -425,6 +425,7 @@ pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
         batchable: false,
         task_proposal: None,
         circle: None,
+        parked: false,
         kind: PendingKind::Blob,
         id: view.id.clone(),
         title: format!("{} wants to share a file: {}", view.connection_label, view.name),
