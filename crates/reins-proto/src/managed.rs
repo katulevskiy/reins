@@ -248,12 +248,33 @@ pub fn webauthn_signed_bytes(
 }
 
 /// What a member's enrolled phone signs to confirm a web passkey as theirs: the canon encoding of
-/// (`reins/org-passkey/v1`, org, credential id, at).
+/// (`reins/org-passkey/v1`, org, credential id, SHA-256 hex of the key's SPKI, registered at, at). It binds the exact
+/// key and registration, not just an id the browser chose.
 #[must_use]
-pub fn passkey_confirm_message(org: &str, credential_id: &str, at: i64) -> Vec<u8> {
+pub fn passkey_confirm_message(
+    org: &str,
+    credential_id: &str,
+    spki_hash: &str,
+    registered_at: i64,
+    at: i64,
+) -> Vec<u8> {
     let mut c = Canon::new(contexts::ORG_PASSKEY);
-    c.str(org).str(credential_id).i64(at);
+    c.str(org).str(credential_id).str(spki_hash).i64(registered_at).i64(at);
     c.finish()
+}
+
+/// SHA-256 (hex) of a passkey's SPKI as the server stores it (base64 text, trimmed).
+#[must_use]
+pub fn passkey_spki_hash(spki_b64: &str) -> String {
+    hex32(&sha256(spki_b64.trim().as_bytes()))
+}
+
+/// The short code both the console and the phone show for a passkey, so the member confirms the key they just added:
+/// the first 8 hex digits of [`passkey_spki_hash`], as `abcd-ef01`.
+#[must_use]
+pub fn passkey_fingerprint(spki_b64: &str) -> String {
+    let h = passkey_spki_hash(spki_b64);
+    format!("{}-{}", &h[..4], &h[4..8])
 }
 
 /// Whether a review at `level` (`L0`…`L3`, as a trace records it) may be offered in Slack or Teams, as a link to the
@@ -938,7 +959,11 @@ mod tests {
         assert_eq!(data_encoding::BASE64URL_NOPAD.decode(c.as_bytes()).unwrap(), sha256(&msg));
         let deny = review_message("o", ReviewSubject::Request, "or_1", "dg", ReviewDecision::Deny, "s", 5);
         assert_ne!(webauthn_challenge(&deny), c);
-        assert_ne!(passkey_confirm_message("o", "cred", 1), passkey_confirm_message("o", "cred2", 1));
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred2", "h", 1, 2));
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred", "h2", 1, 2));
+        assert_ne!(passkey_confirm_message("o", "cred", "h", 1, 2), passkey_confirm_message("o", "cred", "h", 3, 2));
+        assert_eq!(passkey_fingerprint("AAAA").len(), 9);
+        assert_ne!(passkey_fingerprint("AAAA"), passkey_fingerprint("AAAB"));
         assert!(channel_allowed("L0") && channel_allowed("L2"));
         assert!(!channel_allowed("L3") && !channel_allowed("") && !channel_allowed("l2"));
     }

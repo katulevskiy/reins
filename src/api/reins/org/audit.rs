@@ -52,6 +52,9 @@ pub mod kinds {
     pub const WEB_APPROVAL: &str = "review.web";
     /// O3: a member's web passkey added (unconfirmed), confirmed on their phone, or revoked.
     pub const PASSKEY_ADDED: &str = "passkey.added";
+    /// O3: a Slack or Teams app's secrets posted (still off until a two-person change).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the console's channels page installs them"))]
+    pub const CHANNEL_INSTALLED: &str = "channel.installed";
     pub const PASSKEY_CONFIRMED: &str = "passkey.confirmed";
     pub const PASSKEY_REVOKED: &str = "passkey.revoked";
     pub const REQUEST_CANCELLED: &str = "request.cancelled";

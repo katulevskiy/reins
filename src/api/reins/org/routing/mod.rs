@@ -539,7 +539,7 @@ pub async fn prefetch(
     reason: Option<&str>,
     now: i64,
 ) -> (Touches, Dynamic) {
-    let (o, m, t, a) = (org.to_owned(), member.to_owned(), tool.to_owned(), args.clone());
+    let (o, member, t, a) = (org.to_owned(), member.to_owned(), tool.to_owned(), args.clone());
     let (cid, why) = (connection.to_owned(), reason.map(str::to_owned));
     let Ok(conn) = pool.get().await else {
         return (Touches::default(), Dynamic::new());
@@ -549,11 +549,11 @@ pub async fn prefetch(
             let Some((policy, _)) = super::policy::active(c, &o)? else {
                 return Ok(Vec::new());
             };
-            let member_policy = super::decisions::member_policy_of(c, &o, &m)?;
+            let member_policy = super::decisions::member_policy_of(c, &o, &member)?;
             let v = evaluate_managed(
                 &ManagedRequest {
                     org: &o,
-                    member: &m,
+                    member: &member,
                     connection: &cid,
                     tool: &t,
                     args: &a,
@@ -645,8 +645,15 @@ pub fn apply_admin(
 /// After a sweep: tells the members an escalation reached (they must act), and updates channel messages.
 pub async fn after_sweep(pool: &DbPool, swept: Vec<escalation::Swept>) {
     for s in swept {
-        if let escalation::Swept::Escalated(e) = s {
-            super::reviews::notify(pool, &e.to, &e.request);
+        match s {
+            escalation::Swept::Escalated(e) => {
+                super::channels::update_all(pool, &e.request, Some(format!("Escalated to {}", e.label))).await;
+                super::reviews::notify(pool, &e.to, &e.request);
+            }
+            escalation::Swept::Expired {
+                request,
+                ..
+            } => super::channels::update_all(pool, &request, None).await,
         }
     }
 }

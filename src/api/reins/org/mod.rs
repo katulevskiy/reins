@@ -29,6 +29,7 @@ pub mod admin;
 pub mod api;
 pub mod attest;
 pub mod audit;
+pub mod channels;
 pub mod console;
 pub mod console_managed;
 pub mod console_managed_pages;
@@ -39,7 +40,11 @@ pub mod dns;
 pub mod executor_api;
 pub mod gate;
 pub mod github;
-#[allow(dead_code, reason = "shared with O4, whose policy repo uses its writes and webhook secret")]
+#[allow(
+    dead_code,
+    clippy::type_complexity,
+    reason = "shared with O4 (kept identical), whose policy repo uses its writes and webhook secret"
+)]
 pub mod github_reader;
 pub mod invariants;
 pub mod kms;
@@ -83,6 +88,8 @@ pub fn routes() -> Vec<Route> {
     routes.extend(executor_api::routes());
     routes.extend(leases::routes());
     routes.extend(routing::sla::routes());
+    routes.extend(channels::slack::routes());
+    routes.extend(channels::teams::routes());
     routes
 }
 

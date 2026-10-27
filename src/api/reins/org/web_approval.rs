@@ -14,8 +14,8 @@
 //!   recorded one spends it.
 
 use reins_proto::managed::{
-    ReviewDecision, ReviewSubject, WebAuthnProof, channel_allowed, passkey_confirm_message, review_message,
-    webauthn_challenge,
+    ReviewDecision, ReviewSubject, WebAuthnProof, channel_allowed, passkey_confirm_message, passkey_fingerprint,
+    passkey_spki_hash, review_message, webauthn_challenge,
 };
 use rocket::{
     Route,
@@ -70,7 +70,6 @@ fn token_hash(token: &str) -> String {
 }
 
 /// The web approval link of a token.
-#[allow(dead_code, reason = "the Slack and Teams messages link to it")]
 #[must_use]
 pub fn token_url(token: &str) -> String {
     format!("{}/reins/org/approve/{token}", CONFIG.domain())
@@ -125,7 +124,7 @@ pub enum Opened {
     NotYours,
     /// L3, or no longer reviewable on the web.
     UseTheApp,
-    Card(pages::Card),
+    Card(Box<pages::Card>),
 }
 
 /// Reads the link `token` for the signed-in `user`.
@@ -167,7 +166,7 @@ pub fn open(c: &mut DbConnInner, token: &str, user: &str, now: i64) -> Result<Op
         ))
     };
     let lines = trace["lines"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-    Ok(Opened::Card(pages::Card {
+    Ok(Opened::Card(Box::new(pages::Card {
         org_name: item.org_name,
         requester: item.requester,
         connection: item.connection,
@@ -182,7 +181,7 @@ pub fn open(c: &mut DbConnInner, token: &str, user: &str, now: i64) -> Result<Op
         deny_challenge: challenge(ReviewDecision::Deny),
         passkeys,
         rp_id: reviews::web_origin().1,
-    }))
+    })))
 }
 
 /// The assertion the page posts.
@@ -205,7 +204,7 @@ pub fn answer(
     user: &str,
     form: &AssertionForm,
     now: i64,
-) -> Result<Answered, OrgError> {
+) -> Result<(Answered, String), OrgError> {
     use diesel::Connection;
     let decision = match form.decision.as_str() {
         "approve" => ReviewDecision::Approve,
@@ -243,7 +242,7 @@ pub fn answer(
             &json!({"channel": "web", "decision": decision.as_str(), "passkey": form.credential_id}),
             now,
         )?;
-        Ok(answered)
+        Ok((answered, t.request_uuid))
     })
 }
 
@@ -379,7 +378,9 @@ pub fn confirm_passkey(
         return Err(OrgError::Invalid("This phone's clock is off. Check the time and try again."));
     }
     let dev = reviews::deciding_device(c, org, user, device, now)?;
-    let msg = passkey_confirm_message(org, id, ans.at);
+    let key = store::q_passkey(c, org, id)?.filter(|k| k.user_uuid == user).ok_or(OrgError::NotFound)?;
+    // The phone signs the exact key and registration it was shown (its fingerprint), not just an id.
+    let msg = passkey_confirm_message(org, id, &passkey_spki_hash(&key.passkey), key.created_at, ans.at);
     if !reviews::device_sig_ok(&dev.public_key, &ans.signature, &msg) {
         return Err(OrgError::Invalid("The answer isn't signed by this device."));
     }
@@ -409,12 +410,29 @@ pub fn revoke_passkey(c: &mut DbConnInner, org: &str, user: &str, id: &str, now:
     Ok(())
 }
 
-/// One passkey as its member's phone lists it.
+/// One passkey as its member's phone lists it: what the confirmation signs, and the fingerprint the console shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PasskeyView {
     pub credential_id: String,
     pub created_at: i64,
     pub confirmed: bool,
+    /// SHA-256 (hex) of the key's SPKI.
+    pub spki_hash: String,
+    /// `abcd-ef01`, as the console shows it.
+    pub fingerprint: String,
+}
+
+impl PasskeyView {
+    #[must_use]
+    pub fn of(k: &ReinsOrgWebPasskey) -> Self {
+        Self {
+            credential_id: k.credential_id.clone(),
+            created_at: k.created_at,
+            confirmed: k.confirmed_at.is_some(),
+            spki_hash: passkey_spki_hash(&k.passkey),
+            fingerprint: passkey_fingerprint(&k.passkey),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -461,6 +479,7 @@ async fn approve_post(
     form: Form<AssertionForm>,
     cookies: &CookieJar<'_>,
     conn: DbConn,
+    pool: &rocket::State<DbPool>,
 ) -> Result<Custom<Page>, Redirect> {
     let form = form.into_inner();
     let base = console::base();
@@ -472,10 +491,15 @@ async fn approve_post(
     }
     let (t, u, now) = (token.to_owned(), s.user.clone(), now_unix());
     let answered = conn.run(move |c| answer(c, &t, &u, &form, now)).await;
+    if let Ok((Answered::Approved | Answered::Denied, request)) = &answered {
+        super::channels::spawn_update(pool.inner(), request, None);
+    }
+    let answered = answered.map(|(a, _)| a);
     Ok(match answered {
-        Ok(Answered::Approved | Answered::Recorded) => Custom(Status::Ok, Page(pages::done(&base, true))),
+        Ok(Answered::Approved | Answered::Recorded | Answered::Applied(_)) => {
+            Custom(Status::Ok, Page(pages::done(&base, true)))
+        }
         Ok(Answered::Denied) => Custom(Status::Ok, Page(pages::done(&base, false))),
-        Ok(Answered::Applied(_)) => Custom(Status::Ok, Page(pages::done(&base, true))),
         Err(OrgError::Forbidden) => {
             Custom(Status::Forbidden, Page(pages::message(&base, "This review is for someone else")))
         }
@@ -622,17 +646,7 @@ async fn api_passkeys(headers: Headers, conn: DbConn) -> Result<Json<Vec<Passkey
     let org = org_of(&user, &conn).await?;
     conn.run(move |c| store::q_passkeys_of(c, &org, &user))
         .await
-        .map(|keys| {
-            Json(
-                keys.into_iter()
-                    .map(|k| PasskeyView {
-                        credential_id: k.credential_id,
-                        created_at: k.created_at,
-                        confirmed: k.confirmed_at.is_some(),
-                    })
-                    .collect(),
-            )
-        })
+        .map(|keys| Json(keys.iter().map(PasskeyView::of).collect()))
         .map_err(|_| Status::InternalServerError)
 }
 
@@ -772,7 +786,7 @@ pub(crate) mod tests {
         let ans = PasskeyConfirm {
             approve: true,
             at: now,
-            signature: phones[user].sign(&passkey_confirm_message("o1", &id, now)),
+            signature: phones[user].sign(&passkey_confirm_message("o1", &id, &passkey_spki_hash(&spki), now, now)),
         };
         confirm_passkey(c, "o1", user, &phones[user].device, &id, &ans, now).unwrap();
     }
@@ -811,7 +825,7 @@ pub(crate) mod tests {
         let form = assertion(&mut c, &kim, &s.id, ReviewDecision::Approve, 202, 0x05);
         assert_eq!(answer(&mut c, &token, "lee", &form, 202).unwrap_err(), OrgError::Forbidden);
         assert!(matches!(open(&mut c, &token, "kim", 202).unwrap(), Opened::Card(_)));
-        assert!(matches!(answer(&mut c, &token, "kim", &form, 202).unwrap(), Answered::Approved));
+        assert!(matches!(answer(&mut c, &token, "kim", &form, 202).unwrap().0, Answered::Approved));
         // Once.
         assert!(matches!(open(&mut c, &token, "kim", 203).unwrap(), Opened::Gone));
         assert!(answer(&mut c, &token, "kim", &form, 203).is_err());
@@ -910,23 +924,24 @@ pub(crate) mod tests {
             OrgError::Invalid("Confirm this passkey on your phone first.")
         );
         // Someone else's phone, or Kim's signing something else, can't confirm it.
+        let hash = passkey_spki_hash(&spki);
         let wrong = PasskeyConfirm {
             approve: true,
             at: 203,
-            signature: phones["lee"].sign(&passkey_confirm_message("o1", &id, 203)),
+            signature: phones["lee"].sign(&passkey_confirm_message("o1", &id, &hash, 150, 203)),
         };
         assert!(confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &id, &wrong, 203).is_err());
         assert!(confirm_passkey(&mut c, "o1", "lee", &phones["lee"].device, &id, &wrong, 203).is_err(), "not Lee's");
         let other = PasskeyConfirm {
             approve: true,
             at: 203,
-            signature: phones["kim"].sign(&passkey_confirm_message("o1", "other", 203)),
+            signature: phones["kim"].sign(&passkey_confirm_message("o1", "other", &hash, 150, 203)),
         };
         assert!(confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &id, &other, 203).is_err());
         let ok = PasskeyConfirm {
             approve: true,
             at: 203,
-            signature: phones["kim"].sign(&passkey_confirm_message("o1", &id, 203)),
+            signature: phones["kim"].sign(&passkey_confirm_message("o1", &id, &hash, 150, 203)),
         };
         confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &id, &ok, 203).unwrap();
         let roster = crate::api::reins::org::roster::build(&mut c, "o1", None, 204).unwrap();
@@ -961,6 +976,84 @@ pub(crate) mod tests {
             assert!(answer(&mut c, &token, "kim", &f, 202).is_err());
         }
         let good = forged(&row.digest, ReviewDecision::Approve, &row.snapshot, 202);
-        assert!(matches!(answer(&mut c, &token, "kim", &good, 202).unwrap(), Answered::Approved));
+        assert!(matches!(answer(&mut c, &token, "kim", &good, 202).unwrap().0, Answered::Approved));
+    }
+
+    #[test]
+    fn a_confirmation_binds_the_exact_key_shown() {
+        let mut c = db();
+        let phones = routed_org(&mut c);
+        let (origin, rp) = reviews::web_origin();
+        // Two keys that share the first characters of their id: the phone signs the key's hash and registration
+        // time, so a confirmation for one never confirms the other.
+        let mine = Authenticator::new(b"shared-prefix-0001-mine");
+        let theirs = Authenticator::new(b"shared-prefix-0001-theirs");
+        let mut reg = |a: &Authenticator, at: i64| {
+            let (client, att) = a.register("ch", &origin, &rp, 0x05);
+            let (id, spki) = parse_registration(&a.credential_id(), &client, &att, "ch", &origin, &rp).unwrap();
+            register(&mut c, "o1", "kim", &id, &spki, at).unwrap();
+            (id, spki)
+        };
+        let (mine_id, mine_spki) = reg(&mine, 150);
+        let (theirs_id, theirs_spki) = reg(&theirs, 151);
+        let views: Vec<PasskeyView> =
+            store::q_passkeys_of(&mut c, "o1", "kim").unwrap().iter().map(PasskeyView::of).collect();
+        assert_eq!(views[0].fingerprint, passkey_fingerprint(&mine_spki));
+        assert_ne!(views[0].fingerprint, views[1].fingerprint);
+        // Signed for my key, presented for theirs: refused. A stale registration time: refused.
+        let for_mine = |at: i64, registered: i64| PasskeyConfirm {
+            approve: true,
+            at,
+            signature: phones["kim"].sign(&passkey_confirm_message(
+                "o1",
+                &theirs_id,
+                &passkey_spki_hash(&mine_spki),
+                registered,
+                at,
+            )),
+        };
+        assert!(
+            confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &theirs_id, &for_mine(200, 151), 200).is_err()
+        );
+        let stale = PasskeyConfirm {
+            approve: true,
+            at: 200,
+            signature: phones["kim"].sign(&passkey_confirm_message(
+                "o1",
+                &theirs_id,
+                &passkey_spki_hash(&theirs_spki),
+                99,
+                200,
+            )),
+        };
+        assert!(confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &theirs_id, &stale, 200).is_err());
+        let exact = PasskeyConfirm {
+            approve: true,
+            at: 200,
+            signature: phones["kim"].sign(&passkey_confirm_message(
+                "o1",
+                &mine_id,
+                &passkey_spki_hash(&mine_spki),
+                150,
+                200,
+            )),
+        };
+        confirm_passkey(&mut c, "o1", "kim", &phones["kim"].device, &mine_id, &exact, 200).unwrap();
+        let usable: Vec<String> =
+            store::q_usable_passkeys(&mut c, "o1", "kim").unwrap().into_iter().map(|k| k.credential_id).collect();
+        assert_eq!(usable, [mine_id]);
+    }
+
+    #[test]
+    fn device_binding_is_as_the_browser_reports() {
+        // With attestation `none`, BE/UV are the authenticator's own word: a registration that claims device-bound is
+        // accepted on that word (it can't be proven), and the page says so.
+        let (origin, rp) = reviews::web_origin();
+        let a = Authenticator::new(b"claims-bound");
+        let (client, att) = a.register("ch", &origin, &rp, 0x05);
+        assert!(parse_registration(&a.credential_id(), &client, &att, "ch", &origin, &rp).is_ok());
+        let html = pages::passkeys("/reins/org/", "c", "kim@acme.com", "kim", "ch", &rp, &[]);
+        assert!(html.contains("as your browser reports"), "{html}");
+        assert!(html.contains("attestation:'none'"));
     }
 }

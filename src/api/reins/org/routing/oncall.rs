@@ -161,6 +161,7 @@ fn aad(org: &str, alias: &str) -> String {
 }
 
 /// Seals and stores an on-call source's API key (the source must be set up already).
+#[cfg_attr(not(test), allow(dead_code, reason = "the console posts keys (routing page)"))]
 pub fn set_key(c: &mut DbConnInner, org: &str, alias: &str, key: &str, now: i64) -> Result<(), OrgError> {
     let key = key.trim();
     if key.is_empty() || key.len() > 512 || key.chars().any(char::is_control) {
@@ -193,7 +194,9 @@ fn source(
 }
 
 /// (org, alias) → (asked at, answer).
-static CACHE: LazyLock<Mutex<HashMap<(String, String), (i64, Resolution)>>> = LazyLock::new(Mutex::default);
+type Answers = HashMap<(String, String), (i64, Resolution)>;
+
+static CACHE: LazyLock<Mutex<Answers>> = LazyLock::new(Mutex::default);
 
 /// Who is on call for `alias` at `now`, as members.
 pub async fn current(pool: &DbPool, org: &str, alias: &str, now: i64) -> Resolution {

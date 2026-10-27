@@ -748,6 +748,11 @@ pub fn q_set_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -
 }
 
 /// O3: requests of `org` decided (or expired) in `[since, until)`, for SLA reports.
+/// O3: a request by id, whatever its org (a channel's fan-out and updates know only the id).
+pub fn q_request_any(c: &mut DbConnInner, id: &str) -> QueryResult<Option<ReinsOrgRequest>> {
+    reins_org_requests::table.filter(reins_org_requests::uuid.eq(id)).first(c).optional()
+}
+
 /// O3: every request under review (the escalation sweep).
 pub fn q_reviewing(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgRequest>> {
     reins_org_requests::table

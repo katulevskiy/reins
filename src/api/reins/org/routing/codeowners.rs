@@ -247,12 +247,11 @@ pub async fn fetch(reader: &GithubReader, repo: &str, paths: Option<&[String]>, 
         evidence: reins_proto::canon::hex32(&reins_proto::canon::sha256(format!("{}\n{}", file.0, file.1).as_bytes())),
         ..Fetched::default()
     };
-    let owners: BTreeSet<Owner> = match paths.filter(|p| p.len() <= MAX_PATHS) {
-        Some(paths) => paths.iter().flat_map(|p| owners_of(&rules, p)).collect(),
-        None => {
-            out.unresolved.push("paths unknown".to_owned());
-            default_owners(&rules).into_iter().collect()
-        }
+    let owners: BTreeSet<Owner> = if let Some(paths) = paths.filter(|p| p.len() <= MAX_PATHS) {
+        paths.iter().flat_map(|p| owners_of(&rules, p)).collect()
+    } else {
+        out.unresolved.push("paths unknown".to_owned());
+        default_owners(&rules).into_iter().collect()
     };
     for o in owners {
         match o {

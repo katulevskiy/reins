@@ -144,6 +144,7 @@ fn new_session(now: i64) -> Option<(String, Session)> {
 
 /// Takes the session `sid` if it is still signing in with exactly `state`, and gives its PKCE verifier; anything else
 /// (no session, another state, a signed-in session) is left as it was.
+#[cfg(test)]
 fn take_pending(sid: &str, state: &str) -> Option<String> {
     take_pending_with_return(sid, state).map(|(v, _)| v)
 }

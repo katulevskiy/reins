@@ -97,13 +97,11 @@ pub fn sla(c: &mut DbConnInner, org: &str, since: i64, until: i64) -> Result<(Gr
         let time = decided(&row);
         let expired = row.state == st::EXPIRED;
         let any_escalated = steps.iter().any(|s| s.step > 0);
-        for (acc, esc) in [(&mut all, any_escalated)] {
-            if let Some(t) = time {
-                acc.times.push(t);
-            }
-            acc.expired += u32::from(expired);
-            acc.escalated += u32::from(esc);
+        if let Some(t) = time {
+            all.times.push(t);
         }
+        all.expired += u32::from(expired);
+        all.escalated += u32::from(any_escalated);
         for o in &obligations {
             let g = group_of(c, org, o)?;
             let acc = groups.entry(g).or_default();
@@ -118,6 +116,7 @@ pub fn sla(c: &mut DbConnInner, org: &str, since: i64, until: i64) -> Result<(Gr
 }
 
 /// The median time to decision of reviewed requests by `members` (everyone when `None`), for O4's rollout guard.
+#[allow(dead_code, reason = "O4's staged rollout reads it")]
 pub fn median_ttd(
     c: &mut DbConnInner,
     org: &str,
@@ -127,7 +126,7 @@ pub fn median_ttd(
 ) -> Result<Option<u64>, OrgError> {
     let mut times: Vec<u64> = reins_org_request::q_finished_between(c, org, since, until)?
         .iter()
-        .filter(|r| members.is_none_or(|m| m.iter().any(|x| *x == r.user_uuid)))
+        .filter(|r| members.is_none_or(|m| m.contains(&r.user_uuid)))
         .filter_map(decided)
         .collect();
     times.sort_unstable();

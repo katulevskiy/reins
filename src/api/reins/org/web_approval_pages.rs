@@ -2,7 +2,7 @@
 //! escaped; the only script is the WebAuthn call (`navigator.credentials`), with every value it needs in data
 //! attributes.
 
-#![allow(clippy::format_push_string, reason = "small server-rendered pages")]
+#![allow(clippy::format_push_string, clippy::format_collect, reason = "small server-rendered pages")]
 
 use super::console_pages::{icon, page, svg};
 use crate::{api::reins::pages::escape_html as e, db::models::reins_org_routing::ReinsOrgWebPasskey};
@@ -127,27 +127,30 @@ pub fn passkeys(
     rp_id: &str,
     keys: &[ReinsOrgWebPasskey],
 ) -> String {
-    let rows: String = keys
-        .iter()
-        .map(|k| {
-            let state = if k.confirmed_at.is_some() {
-                "<span class=\"pill ok\">Confirmed</span>"
-            } else {
-                "<span class=\"pill\">Confirm on your phone</span>"
-            };
-            format!(
-                "<tr><td class=\"mono\">{id}</td><td>{state}</td><td><form method=\"post\" action=\"{b}passkeys/{id}/revoke\">\
-<input type=\"hidden\" name=\"csrf\" value=\"{csrf}\"><button class=\"danger\" type=\"submit\">Remove</button></form></td></tr>",
-                id = e(k.credential_id.get(..16).unwrap_or(&k.credential_id)),
-                b = e(base),
-                csrf = e(csrf),
-            )
-        })
-        .collect();
+    let mut rows = String::new();
+    for k in keys {
+        let state = if k.confirmed_at.is_some() {
+            "<span class=\"pill ok\">Confirmed</span>"
+        } else {
+            "<span class=\"pill\">Confirm on your phone</span>"
+        };
+        // The full id in the action (URL-encoded, then escaped); the label only is short.
+        let action: String = url::form_urlencoded::byte_serialize(k.credential_id.as_bytes()).collect();
+        rows.push_str(&format!(
+            "<tr><td class=\"mono\">{fp}</td><td class=\"meta\">{label}</td><td>{state}</td><td>\
+<form method=\"post\" action=\"{b}passkeys/{action}/revoke\"><input type=\"hidden\" name=\"csrf\" value=\"{csrf}\">\
+<button class=\"danger\" type=\"submit\">Remove</button></form></td></tr>",
+            fp = e(&reins_proto::managed::passkey_fingerprint(&k.passkey)),
+            label = e(k.credential_id.get(..12).unwrap_or(&k.credential_id)),
+            b = e(base),
+            action = e(&action),
+            csrf = e(csrf),
+        ));
+    }
     let exclude = serde_json::to_string(&keys.iter().map(|k| &k.credential_id).collect::<Vec<_>>()).unwrap_or_default();
     let user_id = data_encoding::BASE64URL_NOPAD.encode(user.as_bytes());
     let html = format!(
-        "<section><h1>Passkeys</h1><p class=\"meta\">Device-bound only.</p><table>{rows}</table>\
+        "<section><h1>Passkeys</h1><p class=\"meta\">Security keys and device-bound passkeys, as your browser reports.</p><table>{rows}</table>\
 <form id=\"p\" method=\"post\" action=\"{b}passkeys/new\" data-ch=\"{ch}\" data-rp=\"{rp}\" data-user=\"{uid}\" \
 data-name=\"{email}\" data-ex=\"{ex}\"><input type=\"hidden\" name=\"csrf\" value=\"{csrf}\">\
 <input type=\"hidden\" name=\"credential_id\"><input type=\"hidden\" name=\"client_data_json\">\
@@ -211,5 +214,27 @@ mod tests {
         c.passkeys.clear();
         let html = card("/reins/org/", "c", "tok", &c);
         assert!(html.contains("passkeys/new") && !html.contains("<script>"));
+    }
+
+    #[test]
+    fn revoke_uses_the_full_credential_id() {
+        let key = |id: &str| ReinsOrgWebPasskey {
+            credential_id: id.into(),
+            org_uuid: "o1".into(),
+            user_uuid: "kim".into(),
+            passkey: "AAAA".into(),
+            created_at: 1,
+            confirmed_at: Some(2),
+            confirmed_device: None,
+            revoked_at: None,
+        };
+        let long = "abcdefghijklmnop-qrstuvwxyz_0123456789";
+        let html = passkeys("/reins/org/", "c", "kim@acme.com", "kim", "ch", "reins.example", &[key(long)]);
+        assert!(html.contains(&format!("passkeys/{long}/revoke")), "{html}");
+        assert!(html.contains(&reins_proto::managed::passkey_fingerprint("AAAA")));
+        // An id with characters a URL or HTML would read differently is encoded, then escaped.
+        let odd = "a/b?c\"<d";
+        let html = passkeys("/reins/org/", "c", "kim@acme.com", "kim", "ch", "reins.example", &[key(odd)]);
+        assert!(html.contains("passkeys/a%2Fb%3Fc%22%3Cd/revoke"), "{html}");
     }
 }

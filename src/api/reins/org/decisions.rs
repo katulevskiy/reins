@@ -159,6 +159,7 @@ impl Default for Extra<'_> {
 pub const MAX_REASON: usize = reins_policy::org::MAX_REASON;
 
 /// Evaluates and records one Managed request of `user` through `connection` (its id and label).
+#[cfg(test)]
 #[allow(clippy::too_many_arguments, reason = "one request's parts")]
 pub fn submit(
     c: &mut DbConnInner,
@@ -618,6 +619,7 @@ pub fn expire(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, why: &str, 
 }
 
 /// The sweeper's part: expires overdue reviews and lapsed approvals, and marks stuck executions unknown.
+#[cfg(test)]
 pub fn sweep(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
     Ok(sweep_routed(c, now, &std::collections::BTreeMap::new())?.0)
 }

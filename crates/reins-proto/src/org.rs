@@ -473,6 +473,9 @@ impl AdminAction {
             }
             | Self::ConfirmDirectoryRemovals {
                 ..
+            }
+            | Self::SetManager {
+                ..
             } => {
                 if touches_privileged {
                     Capability::AssignAdmins
@@ -504,15 +507,6 @@ impl AdminAction {
             | Self::SetApprovalChannel {
                 ..
             } => Capability::ManageConnections,
-            Self::SetManager {
-                ..
-            } => {
-                if touches_privileged {
-                    Capability::AssignAdmins
-                } else {
-                    Capability::ManageMembers
-                }
-            }
         }
     }
 

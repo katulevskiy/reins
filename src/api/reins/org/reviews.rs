@@ -212,6 +212,16 @@ fn standing(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<Standin
     Ok(Some((reins_org::q_groups_of(c, &membership)?, reins_org::q_roles_of(c, org, &membership)?)))
 }
 
+/// A user's email (empty when none).
+pub fn email_of_user(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
+    email_of(c, user)
+}
+
+/// An agent connection's label (empty when none).
+pub fn connection_label_of(c: &mut DbConnInner, connection: &str) -> Result<String, OrgError> {
+    connection_label(c, connection)
+}
+
 fn email_of(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
     use crate::db::schema::users;
     use diesel::prelude::*;
@@ -269,12 +279,11 @@ pub fn met(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<Met,
     Ok(weigh(c, org, row)?.0)
 }
 
+/// Whether the obligations are met, the signatures so far, and how many eligible approvals each obligation has.
+type Weighed = (Met, Vec<ReviewSignature>, std::collections::BTreeMap<String, usize>);
+
 /// [`weigh`], with how many eligible approvals each obligation has.
-fn weigh_counted(
-    c: &mut DbConnInner,
-    org: &str,
-    row: &ReinsOrgRequest,
-) -> Result<(Met, Vec<ReviewSignature>, std::collections::BTreeMap<String, usize>), OrgError> {
+fn weigh_counted(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<Weighed, OrgError> {
     let resolved: ResolvedSets = routing::stored(row.resolved.as_deref());
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
     let mut people: Vec<(String, Vec<String>, Vec<Role>, bool)> = Vec::new();
@@ -705,6 +714,10 @@ pub fn device_approved(c: &mut DbConnInner, org: &str, id: &str, user: &str) -> 
 
 /// Wakes the approval phones of `users`: a review waits for them (they must act, so this notifies).
 pub fn notify(pool: &DbPool, users: &[String], subject: &str) {
+    // O3: requests also reach the org's Slack and Teams, after the push (L3 without a link).
+    if subject.starts_with("or_") && !users.is_empty() {
+        super::channels::spawn_fan_out(pool, subject, users);
+    }
     for user in users {
         crate::api::reins::push::spawn_push(
             pool.clone(),
