@@ -84,12 +84,10 @@ fn quoting_survives_the_rewrite() {
         "rm -rf 'my dir' \"other dir\" plain",
         "rm -f $'a\\tb'",
         "rm -rf ./*.log",
-        "rm -rf \"$(pwd)/old\"",
-        "X=1 rm -rf old >/dev/null 2>&1",
-        "{ rm -rf old; }",
-        "(rm -rf old)",
-        "if true; then rm -rf old; fi",
-        "x=$(rm -rfv old)",
+        "rm -rf old >/dev/null 2>&1",
+        "ls && rm -rf old || echo failed",
+        "rm -rfv old | tail -1",
+        "rm -rf ~/Documents/dev/notes/old",
     ] {
         let p = plan(c).unwrap_or_else(|| panic!("a net for {c}"));
         let at = c.find("rm").unwrap();
@@ -99,26 +97,56 @@ fn quoting_survives_the_rewrite() {
     }
 }
 
+/// Fail closed by design: only scripts of plain simple commands from the allowlist are netted. Everything else keeps its
+/// level (each form here was a way around a denylist).
 #[test]
-fn loops_and_functions_are_rewritten_once() {
-    let c = "for d in a b c; do rm -rf \"$d\"; done";
-    let p = plan(c).expect("a net");
-    assert_eq!(p.rewritten.matches("net run").count(), 1);
-    assert_eq!(p.netted_paths.len(), 3, "{p:?}");
-    let c = "clean() { rm -rf \"$1\"; }; clean a; clean b";
-    let p = plan(c).expect("a net");
-    assert_eq!(p.rewritten.matches("net run").count(), 1);
-    assert_eq!(p.after.level, Level::L1, "{p:?}");
+fn only_plain_allowlisted_scripts_are_netted() {
+    for c in [
+        // computed words, assignments, arithmetic
+        "rm -rf \"$(pwd)/old\"",
+        "rm -rf \"$D\"",
+        "X=1 rm -rf old",
+        "x=1; rm -rf old",
+        "let HOME=1; rm -rf old",
+        "(( HOME = 1 )); rm -rf old",
+        "rm -rf old$((1))",
+        // compound commands, functions, subshells, substitutions
+        "{ rm -rf old; }",
+        "(rm -rf old)",
+        "if true; then rm -rf old; fi",
+        "for d in a b c; do rm -rf \"$d\"; done",
+        "clean() { rm -rf \"$1\"; }; clean a",
+        "x=$(rm -rfv old)",
+        "rm -rf old <(true)",
+        // programs off the list, and the ones that run code or set variables
+        "sh -c 'rm -rf older'; rm -rf old",
+        "find old -delete; rm -rf old",
+        "mapfile -C 'rm() { :; }' -c 1 a < f; rm -rf old",
+        "printf -v x %s; rm -rf old",
+        "printf -vHOME %s; rm -rf old",
+        "printf \"$f\" x; rm -rf old",
+        "set -- \"$x\"; rm -rf old",
+        "read x; rm -rf old",
+        "eval x; rm -rf old",
+        "cargo build && rm -rf old",
+        // a heredoc
+        "cat <<EOF > f\nx\nEOF\nrm -rf old",
+    ] {
+        let p = plan(c);
+        assert!(p.is_none(), "{c}: {p:?}");
+    }
+    assert!(plan("printf '%s\\n' done; rm -rf old; ls").is_some(), "plain printf and ls are fine");
 }
 
 #[test]
 fn masking_attributes_netted_deletes() {
-    let p = plan("rm -rf old; sh -c 'rm -rf older'").expect("a net for the first");
-    assert_eq!(p.netted_paths, vec!["/home/me/Documents/dev/notes/old".to_owned()]);
-    assert_eq!(p.after.level, Level::L3, "the sh -c delete keeps its level: {p:?}");
-    // The same path deleted another way too: not netted.
-    let p = plan("rm -rf old; find old -delete");
-    assert!(p.is_none_or(|p| p.after.level == Level::L3));
+    // Two deletes, each by an `rm` of its own: both netted, and nothing else is.
+    let p = plan("rm -rf old && rm -f notes.md").expect("a net");
+    assert_eq!(p.netted_paths.len(), 2, "{p:?}");
+    assert_eq!(p.after.level, Level::L1);
+    // A delete the net doesn't run (git without a nettable shape) keeps its level.
+    let p = plan("rm -rf old; git rm -rq --cached x");
+    assert!(p.is_none_or(|p| p.netted_paths == vec!["/home/me/Documents/dev/notes/old".to_owned()]));
 }
 
 #[test]
@@ -227,11 +255,14 @@ fn git_nets_are_planned() {
     assert_eq!(p.netted_refs.len(), 1);
     let p = plan_command("git status && git reset --hard origin/x", &c, &disk(), RUNNER).expect("a net");
     assert_eq!(p.rewritten, format!("git status && {}git reset --hard origin/x", pre()));
-    // The replay's own shape: a loop of worktree removals, branch deletes, and scratch deletes.
-    let cmd = "cd ~/Documents/dev/app && for w in a b; do git worktree remove --force ~/Documents/dev/$w && echo ok; done; git branch -D x y 2>&1 | grep -c Deleted; rm -rf ~/Documents/dev/tmp/a";
+    // The history's shape, written out: worktree removals, a branch delete and a scratch delete.
+    let cmd = "cd ~/Documents/dev/app && git worktree remove --force ~/Documents/dev/a && git worktree remove --force ~/Documents/dev/b; git branch -D x y 2>&1 | grep -c Deleted; rm -rf ~/Documents/dev/tmp/a";
     let p = plan_command(cmd, &c, &disk(), RUNNER).expect("a net");
-    assert_eq!(p.rewritten.matches("net run").count(), 2, "{}", p.rewritten);
+    assert_eq!(p.rewritten.matches("net run").count(), 3, "{}", p.rewritten);
     assert!(p.before.level == Level::L3 && p.after.level <= Level::L1, "{p:?}");
+    // The same in a loop (`$w`): not netted.
+    let looped = "for w in a b; do git worktree remove --force ~/Documents/dev/$w; done";
+    assert!(plan_command(looped, &c, &disk(), RUNNER).is_none());
     // Not a shape: untouched.
     assert!(plan_command("git worktree remove ../w", &c, &disk(), RUNNER).is_none());
 }
@@ -403,9 +434,7 @@ fn environment_the_command_sets_is_never_trusted() {
         let p = plan(c);
         assert!(p.is_none(), "{c}: {p:?}");
     }
-    assert!(plan("FOO=1 rm -rf old").is_some(), "other names are fine");
-    assert!(plan("printf '%s' \"$x\"; set -e; rm -rf old").is_some(), "printf without -v, set -e");
-    assert!(plan("local d=\"$1\"; read -r line < f; rm -rf old").is_some(), "ordinary names are fine");
+    assert!(plan("FOO=1 rm -rf old").is_none(), "no assignment at all");
 }
 
 #[test]

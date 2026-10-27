@@ -430,103 +430,49 @@ fn visit_command(c: &Command, f: &mut dyn FnMut(&Command)) {
     }
 }
 
-/// Programs that change what a command word runs, or run text as code: with any of them in a script, nothing in it
-/// is netted (an alias, a disabled builtin, a function made by `eval` or a sourced file could make `rm`, `git` or the
-/// net's own prefix run something else).
-const SHADOWING: &[&str] = &["eval", "source", ".", "alias", "unalias", "enable", "hash", "builtin", "command", "trap"];
+/// The command words a netted script may hold: the netted programs, and commands that can't change what a later
+/// command word runs or where it looks (no builtin that sets variables, defines functions or aliases, or runs text).
+const ALLOWED: &[&str] = &[
+    "rm", "git", "cd", "pwd", "echo", "printf", "ls", "test", "[", "true", "false", ":", "mkdir", "cat", "grep", "wc",
+    "head", "tail", "sleep", "du", "df",
+];
 
-/// Whether `script` could give a netted command word, or the net's own prefix, another meaning. When in doubt it
-/// says yes: the request then keeps its level, which is the safe outcome.
-/// - a function named `word`, `reins`, the reins program's file name, a name with a `/` (bash allows one, and it would
-///   take a quoted absolute path), or one of [`SHADOWING`], anywhere (substitutions and function bodies included);
-/// - any of [`SHADOWING`] run anywhere;
-/// - a command word that is not literal (`$E`, `$(…)`): it could be any of them.
-fn shadowed(script: &Script, word: &str, reins: &str) -> bool {
-    let base = reins.rsplit('/').next().unwrap_or(reins);
-    // Where `reins` and its store are found, or what the net's programs read: set by the command, they are the
-    // agent's. `env NAME=…`, `export NAME=…` and the like count too.
-    let sensitive = |name: &str| {
-        name.starts_with("REINS_")
-            || name == "HOME"
-            || name.starts_with("XDG_")
-            || name == "PATH"
-            || name.starts_with("GIT_")
-    };
-    let mut found = false;
-    visit_script(script, &mut |c: &Command| match c {
-        Command::Function {
-            name,
-            ..
-        } => {
-            if name == word
-                || name == "reins"
-                || name == base
-                || name.contains('/')
-                || SHADOWING.contains(&name.as_str())
-            {
-                found = true;
-            }
-        }
-        Command::Simple(s) if s.assigns.iter().any(|(n, _)| sensitive(n)) => found = true,
-        // Other ways to set them, read failing closed: builtins that set or rename variables (`read`, `mapfile`,
-        // `readarray`, `printf -v`, `wait -p`, `getopts`, `unset`, and `declare`/`local`/`typeset`/`export`/`readonly`
-        // with namerefs), and `set -a`/`set -o allexport` (every later assignment exported).
-        Command::Simple(s) if sets_variables(s, &sensitive) => found = true,
-        Command::For {
-            var,
-            ..
-        } if sensitive(var) => found = true,
-        Command::Simple(s)
-            if s.words
-                .iter()
-                .skip(1)
-                .filter_map(Word::literal)
-                .any(|w| w.split_once('=').is_some_and(|(n, _)| sensitive(n)))
-                && s.words.first().and_then(Word::literal).is_some_and(|p| {
-                    matches!(p.as_str(), "env" | "export" | "declare" | "typeset" | "local" | "readonly")
-                }) =>
-        {
-            found = true;
-        }
-        Command::Simple(s) => match s.words.first().map(Word::literal) {
-            Some(Some(w)) if SHADOWING.contains(&w.as_str()) || w == reins || w == base || w == "reins" => {
-                found = true;
-            }
-            Some(None) => found = true,
-            _ => {}
-        },
-        _ => {}
-    });
-    found
+/// A word with nothing computed in it: literal text, quoted text, a glob or a leading `~` (expanded by the shell from
+/// names and the environment the script can't change, since it assigns nothing).
+fn plain_word(w: &Word) -> bool {
+    w.0.iter().all(|p| matches!(p, Part::Lit(_) | Part::Quoted(_) | Part::Glob(_) | Part::Tilde(_)))
 }
 
-/// Whether the simple command `s` may set a variable `sensitive` names, read failing closed:
-/// - `read`, `mapfile`, `readarray`, `wait`, `getopts`, `unset`: any word naming one (as a part of it too:
-///   `-raHOME`), or a word that isn't literal (a name computed at run time);
-/// - `printf`: any option word with `v` (`-v NAME`, `-vNAME`);
-/// - `declare`, `local`, `typeset`, `export`, `readonly`: any option with `n` (a nameref), or a name that is one or
-///   isn't literal;
-/// - `set`: `-a` in any option group, or `allexport`.
-fn sets_variables(s: &Simple, sensitive: &dyn Fn(&str) -> bool) -> bool {
-    let Some(Some(program)) = s.words.first().map(Word::literal) else {
-        return false;
-    };
-    let words: Vec<Option<String>> = s.words.iter().skip(1).map(Word::literal).collect();
-    let names_one = |w: &str| ["HOME", "PATH", "REINS_", "XDG_", "GIT_"].iter().any(|n| w.contains(n)) || sensitive(w);
-    let option = |w: &str| w.starts_with('-') && !w.starts_with("--") && w.len() > 1;
-    match program.as_str() {
-        "read" | "mapfile" | "readarray" | "wait" | "getopts" | "unset" => {
-            words.iter().any(|w| w.as_deref().is_none_or(names_one))
-        }
-        "printf" => words.iter().flatten().any(|w| option(w) && w.contains('v')),
-        "declare" | "local" | "typeset" | "export" | "readonly" => s.words.iter().skip(1).any(|w| {
-            let text = w.display();
-            let name = text.split('=').next().unwrap_or_default();
-            (option(&text) && text.contains('n')) || name.starts_with('$') || name.contains("$(") || names_one(name)
-        }),
-        "set" => words.iter().flatten().any(|w| w == "allexport" || (option(w) && w.contains('a'))),
-        _ => false,
-    }
+/// Whether a script may be netted at all. Fail closed by design: every command in it is a simple command whose words
+/// are all plain ([`plain_word`]) and whose program is in [`ALLOWED`], with no assignment, no heredoc, and only plain
+/// redirection targets; lists, pipelines, `&&` and `||` join them. No function, loop, conditional, subshell,
+/// substitution or arithmetic; `printf -v` and `test`/`[` with `-v` (they set or read variables by name) are out too.
+/// Anything else keeps its level and is asked as it would be without a net.
+fn allowed(script: &Script) -> bool {
+    script.0.iter().all(|ao| {
+        ao.pipelines.iter().all(|p| {
+            p.commands.iter().all(|c| match c {
+                Command::Simple(s) => {
+                    let Some(Some(program)) = s.words.first().map(Word::literal) else {
+                        return false;
+                    };
+                    let options_ok = !matches!(program.as_str(), "printf")
+                        || s.words
+                            .iter()
+                            .skip(1)
+                            .filter_map(Word::literal)
+                            .all(|w| !(w.starts_with('-') && w.contains('v')));
+                    ALLOWED.contains(&program.as_str())
+                        && options_ok
+                        && s.assigns.is_empty()
+                        && s.heredocs.is_empty()
+                        && s.words.iter().all(plain_word)
+                        && s.redirects.iter().all(|r| plain_word(&r.target))
+                }
+                _ => false,
+            })
+        })
+    })
 }
 
 /// Places in `text` where `word` stands alone as a token: after the start, a blank, `;&|(){}!` or a backtick, and
@@ -604,7 +550,7 @@ pub fn rewrite(
         return None;
     }
     let original = ast::parse(command);
-    if !original.complete || shadowed(&original.script, word, r.reins) {
+    if !original.complete || !allowed(&original.script) {
         return None;
     }
     let pre = prefix(r);

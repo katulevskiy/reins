@@ -75,9 +75,9 @@ fn nets_keep_recall_and_lower_the_ask_rate() {
     assert!((nets.recall - 1.0).abs() < f64::EPSILON, "{}", report::text(&nets, false));
     assert_eq!(nets.known_fp_asked, 0);
     assert!(nets.asks < plain.asks, "nets lower the asks: {} vs {}", nets.asks, plain.asks);
-    // At least a fifth of the developer asks go (P3 measured 44 → 34, with the recording computer's disks and only the
-    // worktrees its context lists; the corpus doesn't know which removed folders were worktrees then).
-    assert!(nets.developer_asks * 5 <= plain.developer_asks * 4, "{}", report::text(&nets, false));
+    // Nets net only plain scripts (an allowlist of commands, every word plain): of the recorded history that is a few
+    // deletes, since most real ones share a line with builds and tools (P3 measured 44 → 41 developer asks).
+    assert!(nets.developer_asks < plain.developer_asks, "{}", report::text(&nets, false));
     for case in corpus.cases.iter().filter(|c| c.tagged("nets")) {
         let d = reins_replay::engine::decide(&corpus.context, case, &nets_policy, EngineKind::Effects);
         let human = case.tagged("real_risk");
