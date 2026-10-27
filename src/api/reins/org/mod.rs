@@ -31,14 +31,28 @@ pub mod api;
 pub mod audit;
 pub mod console;
 pub mod console_pages;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod decisions;
 pub mod deprovision;
 pub mod dns;
+pub mod executor_api;
 pub mod gate;
 pub mod github;
 pub mod invariants;
 #[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
 pub mod kms;
+pub mod leases;
+pub mod managed_mcp;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod policy;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod posture;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod reviews;
+#[allow(dead_code, reason = "O2-WIP: wired by the decision service tasks")]
+pub mod roster;
 pub mod scim;
+pub mod sweeper;
 pub mod tenant;
 pub mod workos_api;
 
@@ -64,6 +78,8 @@ pub fn routes() -> Vec<Route> {
     }
     let mut routes = api::routes();
     routes.extend(console::routes());
+    routes.extend(executor_api::routes());
+    routes.extend(leases::routes());
     routes
 }
 
@@ -159,6 +175,16 @@ pub(crate) mod testing {
     /// An enabled account with `email` (if `uuid` has none yet).
     pub fn add_user(c: &mut DbConnInner, uuid: &str, email: &str) {
         crate::db::models::reins_org::tests::ensure_user(c, uuid, email);
+    }
+
+    /// An active member `user` of `org` (membership `m-<user>`) holding `roles`; returns the membership id.
+    pub fn member(c: &mut DbConnInner, org: &str, user: &str, roles: &[reins_proto::org::Role]) -> String {
+        let m = format!("m-{user}");
+        add_member(c, org, &m, user, crate::db::models::reins_org::ACTIVE_STATUS);
+        for r in roles {
+            grant(c, org, crate::db::models::reins_org::SUBJECT_MEMBER, &m, *r);
+        }
+        m
     }
 
     /// Sets a member's state in `org`.

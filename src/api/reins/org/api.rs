@@ -36,7 +36,7 @@ pub const CHALLENGE_SECS: i64 = 300;
 const MAX_ENROLL_BODY: u64 = 256 * 1024;
 
 pub fn routes() -> Vec<Route> {
-    routes![get_org, post_challenge, post_device, put_posture]
+    routes![get_org, post_challenge, post_device, put_posture, get_reviews, post_review, put_member_policy]
 }
 
 /// Challenges by (account, device): one at a time each.
@@ -287,5 +287,178 @@ mod tests {
         assert!(!signature_ok(&spki, "AAAA", "ch"));
         assert!(p256_point("MFkw").is_none());
         assert!(p256_point(&data_encoding::BASE64.encode(&[0u8; 91])).is_none());
+    }
+}
+
+fn review_err(e: &super::OrgError) -> rocket::response::status::Custom<Json<reins_proto::device::ApiError>> {
+    match e {
+        super::OrgError::NotFound => not_found(),
+        super::OrgError::Forbidden => api_err(Status::Forbidden, "forbidden", e.message()),
+        super::OrgError::Invalid(m) | super::OrgError::Taken(m) => api_err(Status::Conflict, "refused", *m),
+        super::OrgError::Internal(m) => internal(&crate::Error::new("Org review", m.clone())),
+    }
+}
+
+/// `GET /reins/api/org/reviews`: the org reviews this member can answer (and their own to confirm).
+#[get("/reins/api/org/reviews")]
+async fn get_reviews(headers: Headers, conn: DbConn) -> PhoneResult<Json<Vec<reins_proto::managed::ReviewItem>>> {
+    let user = headers.user.uuid.to_string();
+    let Some(org) = org_of(&user, &conn).await? else {
+        return Err(not_found());
+    };
+    let now = now_unix();
+    conn.run(move |c| super::reviews::items_for(c, &org, &user, now)).await.map(Json).map_err(|e| review_err(&e))
+}
+
+/// `POST /reins/api/org/reviews/<id>`: a device-signed answer from this phone.
+#[post("/reins/api/org/reviews/<id>", data = "<body>")]
+async fn post_review(
+    id: &str,
+    headers: Headers,
+    conn: DbConn,
+    body: Data<'_>,
+    pool: &rocket::State<crate::db::DbPool>,
+) -> PhoneResult<Status> {
+    let user = headers.user.uuid.to_string();
+    let device = headers.device.uuid.to_string();
+    let Some(org) = org_of(&user, &conn).await? else {
+        return Err(not_found());
+    };
+    let bytes = read_body_limited(body, 8 * 1024).await?;
+    let answer: reins_proto::managed::ReviewAnswer =
+        serde_json::from_slice(&bytes).map_err(|e| bad_request(format!("invalid answer: {e}")))?;
+    let (id, now) = (id.to_owned(), now_unix());
+    let answered = conn
+        .run(move |c| super::reviews::answer(c, &org, &user, &device, &id, &answer, now))
+        .await
+        .map_err(|e| review_err(&e))?;
+    if let super::reviews::Answered::Applied(followups) = answered {
+        for removal in followups {
+            super::deprovision::finish(removal, Some(pool.inner())).await;
+        }
+    }
+    Ok(Status::NoContent)
+}
+
+/// `PUT /reins/api/org/member-policy`: the member's own stricter policy, signed by this enrolled phone.
+#[put("/reins/api/org/member-policy", data = "<body>")]
+async fn put_member_policy(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneResult<Status> {
+    let user = headers.user.uuid.to_string();
+    let device = headers.device.uuid.to_string();
+    let Some(org) = org_of(&user, &conn).await? else {
+        return Err(not_found());
+    };
+    let bytes = read_body_limited(body, 64 * 1024).await?;
+    let signed: reins_proto::managed::SignedMemberPolicy =
+        serde_json::from_slice(&bytes).map_err(|e| bad_request(format!("invalid policy: {e}")))?;
+    if signed.device != device {
+        return Err(bad_request("Sign with this phone's key"));
+    }
+    let now = now_unix();
+    conn.run(move |c| set_member_policy(c, &org, &user, &signed, now)).await.map_err(|e| review_err(&e))?;
+    Ok(Status::NoContent)
+}
+
+/// Stores a member's own policy after checking it: signed now (within the clock skew) by this member's enrolled device
+/// that may decide, and strictly newer than the one it replaces (an old signed policy can't be replayed).
+pub fn set_member_policy(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    signed: &reins_proto::managed::SignedMemberPolicy,
+    now: i64,
+) -> Result<(), super::OrgError> {
+    use super::OrgError;
+    if (now - signed.at).abs() > super::reviews::SKEW_SECS {
+        return Err(OrgError::Invalid("This phone's clock is off. Check the time and try again."));
+    }
+    let version = i64::try_from(signed.version).map_err(|_| OrgError::Invalid("That version can't be stored."))?;
+    let dev = super::reviews::deciding_device(c, org, user, &signed.device, now)?;
+    let msg = reins_proto::managed::member_policy_message(org, user, signed.version, signed.at, &signed.body);
+    if !super::reviews::device_sig_ok(&dev.public_key, &signed.sig, &msg) {
+        return Err(OrgError::Invalid("The policy isn't signed by this device."));
+    }
+    if crate::db::models::reins_org_keys::q_member_policy(c, org, user)?.is_some_and(|old| old.version >= version) {
+        return Err(OrgError::Invalid("A newer policy is already set."));
+    }
+    let policy: reins_policy::org::MemberPolicy =
+        serde_json::from_str(&signed.body).map_err(|_| OrgError::Invalid("That policy can't be read."))?;
+    let hash = policy.hash();
+    crate::db::models::reins_org_keys::q_set_member_policy(
+        c,
+        &crate::db::models::reins_org_keys::ReinsOrgMemberPolicy {
+            org_uuid: org.to_owned(),
+            user_uuid: user.to_owned(),
+            body: signed.body.clone(),
+            hash: hash.clone(),
+            device_uuid: signed.device.clone(),
+            version,
+            at: signed.at,
+            sig: signed.sig.clone(),
+            updated_at: now,
+        },
+    )?;
+    super::audit::record(
+        c,
+        org,
+        super::audit::kinds::MEMBER_POLICY_SET,
+        Some(user),
+        None,
+        &json!({"hash": hash, "device": signed.device, "version": signed.version}),
+        now,
+    )?;
+    Ok(())
+}
+
+#[cfg(all(test, sqlite))]
+mod member_policy_tests {
+    use reins_proto::managed::{SignedMemberPolicy, member_policy_message};
+
+    use super::*;
+    use crate::api::reins::org::{
+        OrgError,
+        decisions::tests::pilot,
+        reviews::tests::{Phone, enroll},
+        testing::db,
+    };
+
+    fn signed(phone: &Phone, version: u64, at: i64) -> SignedMemberPolicy {
+        let body = r#"{"matrix":null,"rules":[]}"#.to_owned();
+        SignedMemberPolicy {
+            sig: phone.sign(&member_policy_message("o1", "lee", version, at, &body)),
+            body,
+            version,
+            at,
+            device: phone.device.clone(),
+        }
+    }
+
+    #[test]
+    fn an_old_signed_policy_cannot_be_replayed() {
+        let mut c = db();
+        pilot(&mut c);
+        let lee = enroll(&mut c, "o1", "lee", "lee-phone", Some(false), 100);
+        let v1 = signed(&lee, 1, 100);
+        set_member_policy(&mut c, "o1", "lee", &v1, 100).unwrap();
+        set_member_policy(&mut c, "o1", "lee", &signed(&lee, 2, 101), 101).unwrap();
+        assert_eq!(
+            set_member_policy(&mut c, "o1", "lee", &v1, 102),
+            Err(OrgError::Invalid("A newer policy is already set."))
+        );
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&lee, 2, 103), 103).is_err(), "not strictly newer");
+        // Signed long ago.
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&lee, 9, 100), 100 + 301).is_err());
+        // Another version under the same signature.
+        let mut forged = signed(&lee, 3, 104);
+        forged.version = 4;
+        assert!(set_member_policy(&mut c, "o1", "lee", &forged, 104).is_err());
+    }
+
+    #[test]
+    fn a_device_that_may_not_decide_cannot_set_it() {
+        let mut c = db();
+        pilot(&mut c);
+        let rooted = enroll(&mut c, "o1", "lee", "lee-phone", Some(true), 100);
+        assert!(set_member_policy(&mut c, "o1", "lee", &signed(&rooted, 1, 100), 100).is_err());
     }
 }

@@ -168,6 +168,10 @@ pub struct ReinsOrgMemberPolicy {
     pub body: String,
     pub hash: String,
     pub device_uuid: String,
+    /// The phone's signed version: a replacement must be strictly newer.
+    pub version: i64,
+    /// When the phone signed it.
+    pub at: i64,
     pub sig: String,
     pub updated_at: i64,
 }

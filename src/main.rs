@@ -609,6 +609,8 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         api::reins::workos_sync::spawn(pool.clone());
         // Organizations: members and groups from WorkOS Directory Sync.
         api::reins::org::scim::spawn(pool.clone());
+        // Organizations: the decision service's sweeper (expiries, leases, retention, audit checkpoints).
+        api::reins::org::sweeper::spawn(pool.clone());
     }
 
     // The first push of the day should not wait for Google's token endpoint.

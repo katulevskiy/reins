@@ -623,6 +623,8 @@ table! {
         body -> Text,
         hash -> Text,
         device_uuid -> Text,
+        version -> BigInt,
+        at -> BigInt,
         sig -> Text,
         updated_at -> BigInt,
     }

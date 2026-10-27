@@ -495,6 +495,19 @@ pub fn q_set_lease_issued(
     Ok(n == 1)
 }
 
+/// Sets a pending lease's expiry (from its decision: the lease lives from then).
+pub fn q_set_lease_expiry(c: &mut DbConnInner, org: &str, id: &str, expires_at: i64) -> QueryResult<()> {
+    diesel::update(
+        reins_org_leases::table
+            .filter(reins_org_leases::org_uuid.eq(org))
+            .filter(reins_org_leases::uuid.eq(id))
+            .filter(reins_org_leases::state.eq(lease_state::PENDING)),
+    )
+    .set(reins_org_leases::expires_at.eq(expires_at))
+    .execute(c)
+    .map(drop)
+}
+
 /// Revokes every pending or issued lease of `user` in `org` and returns them (deprovisioning). The issued ones are
 /// then revoked upstream by the executor ([`q_leases_to_revoke`]); the sealed credential is dropped here.
 pub fn q_revoke_leases_of_user(c: &mut DbConnInner, org: &str, user: &str, at: i64) -> QueryResult<Vec<ReinsOrgLease>> {
@@ -516,6 +529,21 @@ pub fn q_revoke_leases_of_user(c: &mut DbConnInner, org: &str, user: &str, at: i
     ))
     .execute(c)?;
     Ok(live)
+}
+
+/// The executor minted a lease that was revoked meanwhile: the credential exists upstream, so it is queued for
+/// revocation ([`q_leases_to_revoke`]) while the lease stays revoked.
+pub fn q_mark_issued_after_revocation(c: &mut DbConnInner, org: &str, id: &str, at: i64) -> QueryResult<()> {
+    diesel::update(
+        reins_org_leases::table
+            .filter(reins_org_leases::org_uuid.eq(org))
+            .filter(reins_org_leases::uuid.eq(id))
+            .filter(reins_org_leases::state.eq_any([lease_state::REVOKED, lease_state::EXPIRED]))
+            .filter(reins_org_leases::issued_at.is_null()),
+    )
+    .set(reins_org_leases::issued_at.eq(Some(at)))
+    .execute(c)
+    .map(drop)
 }
 
 /// Issued leases past their expiry become expired (their credential goes too).

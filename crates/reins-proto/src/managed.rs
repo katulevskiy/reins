@@ -454,16 +454,21 @@ pub struct LeaseJob {
 pub struct SignedMemberPolicy {
     /// Canonical JSON of the member policy.
     pub body: String,
+    /// Strictly greater than the version it replaces, so an old signed policy can't be replayed over a newer one.
+    pub version: u64,
+    /// When the phone signed it (Unix seconds).
+    pub at: i64,
     pub device: String,
     /// DER ECDSA P-256 over [`member_policy_message`], base64.
     pub sig: String,
 }
 
-/// What a member's device signs to set their own policy: (`reins/org-member-policy/v1`, org, member, body).
+/// What a member's device signs to set their own policy: (`reins/org-member-policy/v1`, org, member, version, at,
+/// body).
 #[must_use]
-pub fn member_policy_message(org: &str, member: &str, body: &str) -> Vec<u8> {
+pub fn member_policy_message(org: &str, member: &str, version: u64, at: i64, body: &str) -> Vec<u8> {
     let mut c = Canon::new(contexts::ORG_MEMBER_POLICY);
-    c.str(org).str(member).str(body);
+    c.str(org).str(member).u64(version).i64(at).str(body);
     c.finish()
 }
 
@@ -751,6 +756,8 @@ mod tests {
         let a = exec_request_message("o", "e", "POST", "/p", 1, b"x");
         assert_ne!(a, exec_request_message("o", "e", "POST", "/p", 1, b"y"));
         assert_ne!(a, exec_request_message("o", "e", "GET", "/p", 1, b"x"));
+        assert_ne!(member_policy_message("o", "m", 1, 5, "{}"), member_policy_message("o", "m", 2, 5, "{}"));
+        assert_ne!(member_policy_message("o", "m", 1, 5, "{}"), member_policy_message("o", "m", 1, 6, "{}"));
         assert!(ids_ok(&["a", "b"]));
         assert!(!ids_ok(&["", "b"]));
         assert!(!ids_ok(&["a\n"]));

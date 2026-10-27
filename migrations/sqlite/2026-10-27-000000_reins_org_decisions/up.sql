@@ -34,6 +34,8 @@ CREATE TABLE reins_org_member_policies (
     body             TEXT NOT NULL,
     hash             TEXT NOT NULL,
     device_uuid      TEXT NOT NULL,
+    version          BIGINT NOT NULL,
+    at               BIGINT NOT NULL,
     sig              TEXT NOT NULL,
     updated_at       BIGINT NOT NULL,
     PRIMARY KEY (org_uuid, user_uuid)
