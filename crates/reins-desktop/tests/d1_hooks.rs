@@ -290,6 +290,23 @@ fn project() -> (tempfile::TempDir, std::path::PathBuf, Config) {
     (dir, proj, config)
 }
 
+/// `app`'s folders with its state (the session, the key, and so the Reins trash) moved next to `dir`: the trash must be
+/// on the project's disk to keep a copy, and a test's temporary folder may be another one (tmpfs).
+#[cfg(unix)]
+fn on_disk_of(app: &d1_mock::App, dir: &std::path::Path) -> reins_desktop::config::Paths {
+    let state = dir.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    for e in std::fs::read_dir(&app.paths.state_dir).unwrap().flatten() {
+        if e.file_type().unwrap().is_file() {
+            std::fs::copy(e.path(), state.join(e.file_name())).unwrap();
+        }
+    }
+    reins_desktop::config::Paths {
+        config_dir: app.paths.config_dir.clone(),
+        state_dir: state,
+    }
+}
+
 #[cfg(unix)]
 fn bash(harness: &str, cwd: &std::path::Path, command: &str) -> String {
     match harness {
@@ -308,9 +325,10 @@ fn bash(harness: &str, cwd: &std::path::Path, command: &str) -> String {
 async fn an_approved_delete_runs_with_its_net_and_restores() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
-    let (_dir, proj, config) = project();
+    let (dir, proj, config) = project();
+    let paths = on_disk_of(&app, dir.path());
     let input = bash("claude", &proj, "rm -rf notes");
-    let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &paths, &config, &NoPrompter).await;
     assert_eq!(code, 0);
     let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
     let hso = &out["hookSpecificOutput"];
@@ -326,7 +344,7 @@ async fn an_approved_delete_runs_with_its_net_and_restores() {
     assert!(!detail.contains("Net:"), "the net is its own argument, never a line of the detail: {detail}");
     assert!(detail.contains(&format!("Netted command:\n{rewritten}")), "{detail}");
     // Activity has the net.
-    let log = journal::read(&app.paths, 10, 3_600);
+    let log = journal::read(&paths, 10, 3_600);
     let net = log[0].nets.clone().expect("Netted in Activity");
     assert_eq!(net.kinds, vec![reins_policy::effects::nets::NetKind::Trash]);
 
@@ -336,12 +354,12 @@ async fn an_approved_delete_runs_with_its_net_and_restores() {
     let ran = std::process::Command::new("sh")
         .args(["-c", &command])
         .current_dir(&proj)
-        .env("REINS_NETS_DIR", app.paths.state_dir.join("nets"))
+        .env("REINS_NETS_DIR", paths.state_dir.join("nets"))
         .status()
         .unwrap();
     assert!(ran.success());
     assert!(!proj.join("notes").exists());
-    let store = reins_desktop::nets::Store::open(&app.paths);
+    let store = reins_desktop::nets::Store::open(&paths);
     reins_desktop::nets::restore(&store, &net.plan).unwrap();
     assert_eq!(std::fs::read_to_string(proj.join("notes/todo.md")).unwrap(), "keep me");
 }
@@ -351,9 +369,10 @@ async fn an_approved_delete_runs_with_its_net_and_restores() {
 async fn nets_go_back_only_with_an_allow_and_where_the_harness_can_take_them() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
-    let (_dir, proj, config) = project();
+    let (dir, proj, config) = project();
+    let paths = on_disk_of(&app, dir.path());
     let run = |h: Harness, input: String| {
-        let (paths, config) = (app.paths.clone(), config.clone());
+        let (paths, config) = (paths.clone(), config.clone());
         async move {
             let (out, _, _) = hooks::run(h, input.as_bytes(), &paths, &config, &NoPrompter).await;
             out.map(|o| serde_json::from_str::<Value>(&o).unwrap())
@@ -381,7 +400,7 @@ async fn nets_go_back_only_with_an_allow_and_where_the_harness_can_take_them() {
     // An un-netted question has no `net` argument.
     let plain = mock.with(|s| s.calls.last().cloned()).unwrap();
     assert!(plain.get("net").is_none(), "{plain}");
-    let log = journal::read(&app.paths, 20, 3_600);
+    let log = journal::read(&paths, 20, 3_600);
     assert_eq!(log.iter().filter(|e| e.nets.is_some()).count(), 2, "Codex and Gemini");
 }
 
@@ -390,20 +409,21 @@ async fn nets_go_back_only_with_an_allow_and_where_the_harness_can_take_them() {
 async fn an_approved_file_change_keeps_a_copy_first() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
-    let (_dir, proj, config) = project();
+    let (dir, proj, config) = project();
+    let paths = on_disk_of(&app, dir.path());
     std::fs::write(proj.join(".env"), "TOKEN=old").unwrap();
     let input = json!({"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": proj,
         "tool_input": {"file_path": proj.join(".env"), "content": "TOKEN=new"}})
     .to_string();
-    let (out, _, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    let (out, _, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &paths, &config, &NoPrompter).await;
     let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
     assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "allow");
     assert!(out["hookSpecificOutput"].get("updatedInput").is_none(), "a file tool is not rewritten");
-    let log = journal::read(&app.paths, 10, 3_600);
+    let log = journal::read(&paths, 10, 3_600);
     let net = log[0].nets.clone().expect("a snapshot");
     // The tool writes; the copy brings the old content back.
     std::fs::write(proj.join(".env"), "TOKEN=new").unwrap();
-    let store = reins_desktop::nets::Store::open(&app.paths);
+    let store = reins_desktop::nets::Store::open(&paths);
     reins_desktop::nets::restore(&store, &net.plan).unwrap();
     assert_eq!(std::fs::read_to_string(proj.join(".env")).unwrap(), "TOKEN=old");
 }
