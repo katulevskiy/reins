@@ -544,3 +544,42 @@ async fn a_computer_picks_up_the_policy_its_phone_sealed_to_it() {
     let (status, _, _) = read(client().get(server.url("/reins/desktop/policy")).send().await.unwrap()).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+/// `POST /reins/desktop/folders` as the app with `token`.
+async fn post_folders(server: &Server, token: &str, body: &Value) -> Answer {
+    read(client().post(server.url("/reins/desktop/folders")).bearer_auth(token).json(body).send().await.unwrap()).await
+}
+
+/// Decisions v2: a computer proposes its folders; its own phone reads them (the latest only), another account's phone
+/// never does, and nothing wakes the phone for it.
+#[tokio::test]
+async fn a_computer_proposes_its_folders_to_its_own_phone() {
+    let (server, phone, tokens) = paired().await;
+    let (status, empty) = phone.get("/desktop/folders").await;
+    assert_eq!((status, empty["items"].clone()), (StatusCode::OK, json!([])));
+    let first =
+        json!({"home": "/home/me", "folders": [{"path": "/home/me/.claude/projects/*/memory", "kind": "scratch"}]});
+    let (status, _, _) = post_folders(&server, &tokens.access, &first).await;
+    assert_eq!(status, StatusCode::OK);
+    let latest = json!({"home": "/home/me", "folders": [{"path": "/mnt/data/dev", "kind": "root"}]});
+    post_folders(&server, &tokens.access, &latest).await;
+    let (_, read_back) = phone.get("/desktop/folders").await;
+    let items = read_back["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["connection_id"], json!(tokens.connection_id));
+    assert_eq!(items[0]["proposal"], latest, "the latest replaces the one before");
+    // Too many folders, or not a proposal: refused.
+    let many: Vec<Value> =
+        (0..=reins_proto::desktop::MAX_FOLDERS).map(|i| json!({"path": format!("/x/y/{i}"), "kind": "root"})).collect();
+    let (status, _, _) = post_folders(&server, &tokens.access, &json!({"home": "/home/me", "folders": many})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = post_folders(&server, &tokens.access, &json!({"roots": []})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Another account's phone sees none of it; a missing token is refused.
+    let other = server.phone("eve@example.com").await;
+    other.register_device().await;
+    assert_eq!(other.get("/desktop/folders").await.1["items"], json!([]));
+    let (status, _, _) =
+        read(client().post(server.url("/reins/desktop/folders")).json(&latest).send().await.unwrap()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

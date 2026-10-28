@@ -12,9 +12,9 @@ use reins_proto::oplog::Restriction;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
-    AutoQuestion, AutoSetup, AutopilotMode, AutopilotSettings, AutopilotStats, CellChoice, DownloadProgress,
-    FactChoice, ModelRuntime, ModelStatus, ModelUpdateOutcome, OvernightDigest, Preset, ProfileView, SuggestionView,
-    TaskView, ThresholdReplay, Verdict, ZoneChoice,
+    AutoQuestion, AutoSetup, AutopilotMode, AutopilotSettings, AutopilotStats, CellChoice, ComputerFolders,
+    DownloadProgress, FactChoice, FolderKindChoice, FolderQuestion, ModelRuntime, ModelStatus, ModelUpdateOutcome,
+    OvernightDigest, Preset, ProfileView, SuggestionView, TaskView, ThresholdReplay, Verdict, ZoneChoice,
 };
 use crate::circles::{
     AgeSignalInput, CircleDraft, CircleInviteProgress, CircleInviteStart, CircleInviteView, CircleNoticeView,
@@ -2728,6 +2728,111 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.dismiss_auto_question(&id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The folders paired computers propose for their signed snapshot, as question cards: listed, never notified.
+    pub async fn folder_questions(&self) -> Result<Vec<FolderQuestion>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine
+                .run_account(async {
+                    engine.fetch_desktop_folders_for_view().await;
+                    engine.folder_questions()
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// A computer's folders: confirmed (signed for it) and suggested (proposed by it, not confirmed).
+    pub async fn computer_folders(&self, connection_id: String) -> Result<ComputerFolders, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine
+                .run_account(async {
+                    engine.fetch_desktop_folders_for_view().await;
+                    engine.computer_folders(&connection_id)
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Confirms a folder the computer proposed (it loosens: `owner` is asked first); the computer is sent it at once.
+    pub async fn confirm_computer_folder(
+        &self,
+        connection_id: String,
+        path: String,
+        kind: FolderKindChoice,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine
+                .run_account(async {
+                    engine
+                        .and_publish(engine.confirm_computer_folder(&connection_id, &path, kind, owner.as_ref()).await)
+                        .await
+                })
+                .await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Not now" on a folder card: it stays under the computer's Folders. Changes nothing signed.
+    pub async fn dismiss_computer_folder(
+        &self,
+        connection_id: String,
+        path: String,
+        kind: FolderKindChoice,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.dismiss_computer_folder(&connection_id, &path, kind) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Removes a confirmed folder: it only tightens, so it applies at once (no owner check); the computer is told now.
+    pub async fn remove_computer_folder(
+        &self,
+        connection_id: String,
+        path: String,
+        kind: FolderKindChoice,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine
+                .run_account(async {
+                    engine.and_publish(engine.remove_computer_folder(&connection_id, &path, kind)).await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await

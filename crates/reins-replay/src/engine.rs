@@ -29,10 +29,11 @@ pub struct Policy {
     /// Safety nets (P3): a command from a harness whose hook can rewrite it is decided on its netted levels.
     #[serde(default)]
     pub nets: bool,
-    /// The desktop path (08 R1): the phone also signs the computer's scratch folders (the corpus's), as for an owner
-    /// who confirmed them. Off, as the phone signs today: only scratch folders inside a root count there.
+    /// The desktop path (08 R1) before the owner confirmed any of the computer's folders: the phone signs the corpus's
+    /// roots and no scratch folder, so only scratch folders inside a root count there. Off (the default): the computer
+    /// proposed its roots and scratch folders ([`proposed_folders`]) and the owner confirmed each on the phone.
     #[serde(default)]
-    pub desktop_scratch: bool,
+    pub unconfirmed_folders: bool,
 }
 
 impl Default for Policy {
@@ -43,7 +44,7 @@ impl Default for Policy {
             snapshot: Snapshot::default(),
             ask_on_partial: false,
             nets: false,
-            desktop_scratch: false,
+            unconfirmed_folders: false,
         }
     }
 }
@@ -280,6 +281,11 @@ pub fn desktop_effective(ctx: &Context, case: &Case, policy: &Policy) -> desktop
         tasks: desktop_policy::desktop_tasks(&policy.snapshot.tasks, &connection),
         ..policy.snapshot.clone()
     };
+    let (roots, scratch) = if policy.unconfirmed_folders {
+        (ctx.roots.clone(), Vec::new())
+    } else {
+        signed_folders(ctx)
+    };
     let signed = desktop_policy::DesktopPolicy {
         binding: desktop_policy::Binding {
             version: 1,
@@ -296,22 +302,52 @@ pub fn desktop_effective(ctx: &Context, case: &Case, policy: &Policy) -> desktop
         },
         snapshot,
         github_ids,
-        roots: ctx.roots.clone(),
-        scratch: if policy.desktop_scratch {
-            ctx.scratch.clone()
-        } else {
-            Vec::new()
-        },
+        roots,
+        scratch,
     };
     let (none, matrix) = (Facts::default(), matrix::Matrix::default());
+    let canonical = std::collections::BTreeMap::new();
     let local = desktop_policy::Local {
         facts: &none,
         matrix: &matrix,
         roots: &ctx.roots,
         scratch: &ctx.scratch,
         home: &ctx.home,
+        canonical: &canonical,
     };
     desktop_policy::effective(Some(&signed), &[], &local, &std::collections::BTreeMap::new(), case.at)
+}
+
+/// What the recording computer proposes to the phone (`reins_desktop::folders`): its roots, then its scratch folders,
+/// as absolute paths (the corpus can't resolve links, so `~` is only expanded), refused ones left out.
+#[must_use]
+pub fn proposed_folders(ctx: &Context) -> Vec<reins_proto::desktop::Folder> {
+    use reins_proto::desktop::{Folder, FolderKind};
+    let all =
+        ctx.roots.iter().map(|r| (r, FolderKind::Root)).chain(ctx.scratch.iter().map(|s| (s, FolderKind::Scratch)));
+    all.map(|(entry, kind)| Folder {
+        path: effects::normalize(entry, "/", &ctx.home),
+        kind,
+    })
+    .filter(|f| reins_policy::desktop_folders::refusal(&f.path, &ctx.home).is_none())
+    .collect()
+}
+
+/// The roots and scratch folders the phone signs for the recording computer once the owner confirmed every folder it
+/// proposed and the phone showed (`reins_core::autopilot::desktop_folders`): the standard roots and the confirmed ones.
+#[must_use]
+pub fn signed_folders(ctx: &Context) -> (Vec<String>, Vec<String>) {
+    use reins_proto::desktop::FolderKind;
+    let mut roots = Workspace::standard("").roots;
+    let cards = reins_policy::desktop_folders::open(&proposed_folders(ctx), &roots, &[], &ctx.home);
+    let mut scratch = Vec::new();
+    for f in cards {
+        match f.kind {
+            FolderKind::Root => roots.push(f.path),
+            FolderKind::Scratch => scratch.push(f.path),
+        }
+    }
+    (roots, scratch)
 }
 
 /// A hook case decided on the computer ([`EngineKind::Desktop`]).

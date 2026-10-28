@@ -635,6 +635,46 @@ pub struct AutoSetup {
     pub questions: u32,
 }
 
+/// What a computer's folder is for (`[workspace]` on the computer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum FolderKindChoice {
+    /// Its folders are projects.
+    Root,
+    /// Deleting in it loses nothing.
+    Scratch,
+}
+
+/// A folder a paired computer proposes the phone signs for it (its `[workspace]`, canonicalized there): a question
+/// card until the owner confirms (the owner check) or dismisses it. Listed, never notified.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FolderQuestion {
+    pub connection_id: String,
+    /// The computer's name.
+    pub computer: String,
+    /// Exactly as the computer resolved it (`*` stands for any one folder).
+    pub path: String,
+    pub kind: FolderKindChoice,
+    /// Unix seconds: when the computer proposed it.
+    pub at: i64,
+}
+
+/// One folder of a computer.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FolderView {
+    pub path: String,
+    pub kind: FolderKindChoice,
+}
+
+/// A computer's folders (Settings › Computers › the computer › Folders).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ComputerFolders {
+    pub connection_id: String,
+    /// Confirmed: signed into the computer's snapshot (removing one applies at once).
+    pub confirmed: Vec<FolderView>,
+    /// Proposed by the computer and not confirmed (dismissed ones too: they can still be confirmed here).
+    pub suggested: Vec<FolderView>,
+}
+
 /// "Auto needs information": a party a request named that Auto doesn't know (01 §3, later questions).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct AutoQuestion {

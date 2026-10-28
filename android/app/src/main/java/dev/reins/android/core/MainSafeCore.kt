@@ -565,6 +565,21 @@ class MainSafeCore(
 
     override suspend fun dismissAutoQuestion(id: String) = io { dismissAutoQuestion(id) }
 
+    // ---- A computer's folders: proposed by it, signed by this phone -------------------------------------------------
+
+    override suspend fun folderQuestions(): List<dev.reins.core.FolderQuestion> = io { folderQuestions() }
+
+    override suspend fun computerFolders(connectionId: String): dev.reins.core.ComputerFolders = io { computerFolders(connectionId) }
+
+    override suspend fun confirmComputerFolder(connectionId: String, path: String, kind: dev.reins.core.FolderKindChoice, owner: OwnerCheck) =
+        io { confirmComputerFolder(connectionId, path, kind, owner) }
+
+    override suspend fun dismissComputerFolder(connectionId: String, path: String, kind: dev.reins.core.FolderKindChoice) =
+        io { dismissComputerFolder(connectionId, path, kind) }
+
+    override suspend fun removeComputerFolder(connectionId: String, path: String, kind: dev.reins.core.FolderKindChoice) =
+        io { removeComputerFolder(connectionId, path, kind) }
+
     override suspend fun askMeNextTime(requestId: String) = io { askMeNextTime(requestId) }
 
     override suspend fun previewPolicyChange(change: dev.reins.core.PolicyChange): dev.reins.core.PreviewView =

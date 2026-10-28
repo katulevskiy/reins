@@ -139,6 +139,9 @@ fun ConnectionDetailScreen(
 
             autopilot?.let { ConnectionAutopilotSection(connection.id, it, onBypass = { bypassOpen = true }, onOvernight = { overnightOpen = true }, authenticator = authenticator) }
 
+            // A computer: the folders it proposes for its signed policy, trusted or suggested.
+            if (connection.keyFingerprint != null) ComputerFoldersSection(connection.id, viewModel, authenticator)
+
             SettingsGroup(header = "Details") {
                 autopilot?.let { LearnsIntoRow(connection.id, it) { picking = Picker.Profile } }
                 val active = grants.count { it.connectionId == connection.id && it.active }

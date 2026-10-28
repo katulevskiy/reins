@@ -255,3 +255,68 @@ async fn the_computer_decides_with_the_phones_signed_policy() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
+
+/// The computer proposes its `[workspace]` folders; the owner confirms one on the phone (the owner check); the
+/// phone's signed snapshot then carries it, and the computer decides with it here. Removing it applies at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn the_computer_proposes_its_folders_and_uses_the_ones_confirmed() {
+    use reins_core::autopilot::FolderKindChoice;
+
+    reins_e2e::init_tls();
+    let server = Server::start(20, 10).await;
+    server.register(EMAIL).await;
+    let phone = Phone::sign_in(&server.base, EMAIL).await;
+    let (_state, paths) = logged_in_app(&server, &phone).await;
+    phone.core.finish_auto_setup(Arc::new(Owner)).await.unwrap();
+    // A scratch folder outside the standard roots (a real one: the computer resolves it before proposing).
+    let home = reins_desktop::config::home_dir().unwrap();
+    let scratch_dir = tempfile::Builder::new().prefix(".reins-e2e-scratch-").tempdir_in(&home).unwrap();
+    let mut config = Config {
+        mode: Mode::Reins,
+        listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+        ..Config::default()
+    };
+    config.guard.timeout_secs = 5;
+    config.workspace.scratch = vec![scratch_dir.path().to_string_lossy().into_owned(), "/".to_owned()];
+    let resolved = reins_desktop::folders::canonical(&config.workspace.scratch[0], "").unwrap();
+
+    // ---- before: the computer holds the signed policy, and its scratch folder isn't in it ----
+    phone.core.sync(0).await.unwrap();
+    pull(&paths).await;
+    let (e, _) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(matches!(e.gate, Gate::Matrix { .. }), "{:?}", e.gate);
+    assert!(!e.scratch.contains(&resolved), "{:?}", e.scratch);
+
+    // ---- the computer proposes; the phone shows a card (only for what isn't signed, never `/`) ----
+    let proposal = reins_desktop::folders::proposal(&config.workspace);
+    assert!(proposal.folders.iter().all(|f| f.path != "/"), "{proposal:?}");
+    reins_desktop::folders::propose(&paths, &proposal).await.unwrap();
+    let cards = phone.core.folder_questions().await.unwrap();
+    let card = cards.iter().find(|q| q.path == resolved).unwrap_or_else(|| panic!("no card: {cards:?}"));
+    assert_eq!((card.kind, card.computer.as_str()), (FolderKindChoice::Scratch, "Laptop"));
+
+    // ---- the owner confirms it: the snapshot carries it, the computer decides with it ----
+    phone
+        .core
+        .confirm_computer_folder(card.connection_id.clone(), resolved.clone(), card.kind, Arc::new(Owner))
+        .await
+        .unwrap();
+    assert!(phone.core.folder_questions().await.unwrap().iter().all(|q| q.path != resolved));
+    let applied = pull(&paths).await;
+    assert!(applied.snapshots >= 1, "{applied:?}");
+    let (e, h) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(h.policy.as_ref().is_some_and(|p| p.scratch.contains(&resolved)), "signed for this computer");
+    assert!(e.scratch.contains(&resolved), "{:?}", e.scratch);
+    let started = Instant::now();
+    let said = hook(&paths, &config, &format!("rm -rf {resolved}/old-build")).await;
+    assert!(said.contains("allowed by Auto"), "{said}");
+    assert!(started.elapsed() < Duration::from_secs(3), "decided here, not asked");
+
+    // ---- removing it on the phone: the computer stops counting it at once ----
+    let folders = phone.core.computer_folders(card.connection_id.clone()).await.unwrap();
+    assert_eq!(folders.confirmed.iter().map(|f| f.path.clone()).collect::<Vec<_>>(), std::slice::from_ref(&resolved));
+    phone.core.remove_computer_folder(card.connection_id.clone(), resolved.clone(), card.kind).await.unwrap();
+    pull(&paths).await;
+    let (e, _) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(!e.scratch.contains(&resolved), "{:?}", e.scratch);
+}

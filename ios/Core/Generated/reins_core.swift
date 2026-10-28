@@ -3290,6 +3290,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func circlesAvailable() async throws  -> Bool
     
+    /**
+     * A computer's folders: confirmed (signed for it) and suggested (proposed by it, not confirmed).
+     */
+    func computerFolders(connectionId: String) async throws  -> ComputerFolders
+    
+    /**
+     * Confirms a folder the computer proposed (it loosens: `owner` is asked first); the computer is sent it at once.
+     */
+    func confirmComputerFolder(connectionId: String, path: String, kind: FolderKindChoice, owner: OwnerCheck) async throws 
+    
     func connections() async throws  -> [ConnectionView]
     
     /**
@@ -3366,6 +3376,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Dismisses a question: the thing stays Outside and isn't asked about again.
      */
     func dismissAutoQuestion(id: String) async throws 
+    
+    /**
+     * "Not now" on a folder card: it stays under the computer's Folders. Changes nothing signed.
+     */
+    func dismissComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) async throws 
     
     /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
@@ -3446,6 +3461,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Finishes Auto's setup and turns Auto on, after `owner` confirms.
      */
     func finishAutoSetup(owner: OwnerCheck) async throws 
+    
+    /**
+     * The folders paired computers propose for their signed snapshot, as question cards: listed, never notified.
+     */
+    func folderQuestions() async throws  -> [FolderQuestion]
     
     /**
      * Asks the token provider for a token and reports whether Gmail is usable.
@@ -3739,6 +3759,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Disconnects an account: its grants are deleted and requests waiting for it are answered with an error.
      */
     func removeAccount(account: String) async throws 
+    
+    /**
+     * Removes a confirmed folder: it only tightens, so it applies at once (no owner check); the computer is told now.
+     */
+    func removeComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) async throws 
     
     /**
      * Disconnects an account of any integration.
@@ -5245,6 +5270,44 @@ open func circlesAvailable()async throws  -> Bool  {
         )
 }
     
+    /**
+     * A computer's folders: confirmed (signed for it) and suggested (proposed by it, not confirmed).
+     */
+open func computerFolders(connectionId: String)async throws  -> ComputerFolders  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_computer_folders(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeComputerFolders_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Confirms a folder the computer proposed (it loosens: `owner` is asked first); the computer is sent it at once.
+     */
+open func confirmComputerFolder(connectionId: String, path: String, kind: FolderKindChoice, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_confirm_computer_folder(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterString.lower(path),FfiConverterTypeFolderKindChoice_lower(kind),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func connections()async throws  -> [ConnectionView]  {
     return
         try  await uniffiRustCallAsync(
@@ -5536,6 +5599,25 @@ open func dismissAutoQuestion(id: String)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_dismiss_auto_question(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Not now" on a folder card: it stays under the computer's Folders. Changes nothing signed.
+     */
+open func dismissComputerFolder(connectionId: String, path: String, kind: FolderKindChoice)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_dismiss_computer_folder(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterString.lower(path),FfiConverterTypeFolderKindChoice_lower(kind)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -5846,6 +5928,25 @@ open func finishAutoSetup(owner: OwnerCheck)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The folders paired computers propose for their signed snapshot, as question cards: listed, never notified.
+     */
+open func folderQuestions()async throws  -> [FolderQuestion]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_folder_questions(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeFolderQuestion.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6935,6 +7036,25 @@ open func removeAccount(account: String)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_remove_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(account)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Removes a confirmed folder: it only tightens, so it applies at once (no owner check); the computer is told now.
+     */
+open func removeComputerFolder(connectionId: String, path: String, kind: FolderKindChoice)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_remove_computer_folder(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterString.lower(path),FfiConverterTypeFolderKindChoice_lower(kind)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -13850,6 +13970,79 @@ public func FfiConverterTypeCommandPresentation_lower(_ value: CommandPresentati
 
 
 /**
+ * A computer's folders (Settings › Computers › the computer › Folders).
+ */
+public struct ComputerFolders: Equatable, Hashable {
+    public var connectionId: String
+    /**
+     * Confirmed: signed into the computer's snapshot (removing one applies at once).
+     */
+    public var confirmed: [FolderView]
+    /**
+     * Proposed by the computer and not confirmed (dismissed ones too: they can still be confirmed here).
+     */
+    public var suggested: [FolderView]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: String, 
+        /**
+         * Confirmed: signed into the computer's snapshot (removing one applies at once).
+         */confirmed: [FolderView], 
+        /**
+         * Proposed by the computer and not confirmed (dismissed ones too: they can still be confirmed here).
+         */suggested: [FolderView]) {
+        self.connectionId = connectionId
+        self.confirmed = confirmed
+        self.suggested = suggested
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ComputerFolders: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeComputerFolders: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ComputerFolders {
+        return
+            try ComputerFolders(
+                connectionId: FfiConverterString.read(from: &buf), 
+                confirmed: FfiConverterSequenceTypeFolderView.read(from: &buf), 
+                suggested: FfiConverterSequenceTypeFolderView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ComputerFolders, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterSequenceTypeFolderView.write(value.confirmed, into: &buf)
+        FfiConverterSequenceTypeFolderView.write(value.suggested, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComputerFolders_lift(_ buf: RustBuffer) throws -> ComputerFolders {
+    return try FfiConverterTypeComputerFolders.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeComputerFolders_lower(_ value: ComputerFolders) -> RustBuffer {
+    return FfiConverterTypeComputerFolders.lower(value)
+}
+
+
+/**
  * One connection's Autopilot settings.
  */
 public struct ConnectionAutopilot: Equatable, Hashable {
@@ -15673,6 +15866,151 @@ public func FfiConverterTypeFamilyView_lift(_ buf: RustBuffer) throws -> FamilyV
 #endif
 public func FfiConverterTypeFamilyView_lower(_ value: FamilyView) -> RustBuffer {
     return FfiConverterTypeFamilyView.lower(value)
+}
+
+
+/**
+ * A folder a paired computer proposes the phone signs for it (its `[workspace]`, canonicalized there): a question
+ * card until the owner confirms (the owner check) or dismisses it. Listed, never notified.
+ */
+public struct FolderQuestion: Equatable, Hashable {
+    public var connectionId: String
+    /**
+     * The computer's name.
+     */
+    public var computer: String
+    /**
+     * Exactly as the computer resolved it (`*` stands for any one folder).
+     */
+    public var path: String
+    public var kind: FolderKindChoice
+    /**
+     * Unix seconds: when the computer proposed it.
+     */
+    public var at: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: String, 
+        /**
+         * The computer's name.
+         */computer: String, 
+        /**
+         * Exactly as the computer resolved it (`*` stands for any one folder).
+         */path: String, kind: FolderKindChoice, 
+        /**
+         * Unix seconds: when the computer proposed it.
+         */at: Int64) {
+        self.connectionId = connectionId
+        self.computer = computer
+        self.path = path
+        self.kind = kind
+        self.at = at
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FolderQuestion: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFolderQuestion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FolderQuestion {
+        return
+            try FolderQuestion(
+                connectionId: FfiConverterString.read(from: &buf), 
+                computer: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFolderKindChoice.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FolderQuestion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.computer, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterTypeFolderKindChoice.write(value.kind, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderQuestion_lift(_ buf: RustBuffer) throws -> FolderQuestion {
+    return try FfiConverterTypeFolderQuestion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderQuestion_lower(_ value: FolderQuestion) -> RustBuffer {
+    return FfiConverterTypeFolderQuestion.lower(value)
+}
+
+
+/**
+ * One folder of a computer.
+ */
+public struct FolderView: Equatable, Hashable {
+    public var path: String
+    public var kind: FolderKindChoice
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, kind: FolderKindChoice) {
+        self.path = path
+        self.kind = kind
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FolderView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFolderView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FolderView {
+        return
+            try FolderView(
+                path: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFolderKindChoice.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FolderView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterTypeFolderKindChoice.write(value.kind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderView_lift(_ buf: RustBuffer) throws -> FolderView {
+    return try FfiConverterTypeFolderView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderView_lower(_ value: FolderView) -> RustBuffer {
+    return FfiConverterTypeFolderView.lower(value)
 }
 
 
@@ -27181,6 +27519,81 @@ public func FfiConverterTypeFactChoice_lower(_ value: FactChoice) -> RustBuffer 
 
 
 /**
+ * What a computer's folder is for (`[workspace]` on the computer).
+ */
+
+public enum FolderKindChoice: Equatable, Hashable {
+    
+    /**
+     * Its folders are projects.
+     */
+    case root
+    /**
+     * Deleting in it loses nothing.
+     */
+    case scratch
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FolderKindChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFolderKindChoice: FfiConverterRustBuffer {
+    typealias SwiftType = FolderKindChoice
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FolderKindChoice {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .root
+        
+        case 2: return .scratch
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FolderKindChoice, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .root:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .scratch:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderKindChoice_lift(_ buf: RustBuffer) throws -> FolderKindChoice {
+    return try FfiConverterTypeFolderKindChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFolderKindChoice_lower(_ value: FolderKindChoice) -> RustBuffer {
+    return FfiConverterTypeFolderKindChoice.lower(value)
+}
+
+
+
+/**
  * Error returned by the Kotlin implementations of the foreign traits.
  */
 public 
@@ -31531,6 +31944,56 @@ fileprivate struct FfiConverterSequenceTypeFamilyLeaveAsk: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFolderQuestion: FfiConverterRustBuffer {
+    typealias SwiftType = [FolderQuestion]
+
+    public static func write(_ value: [FolderQuestion], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFolderQuestion.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FolderQuestion] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FolderQuestion]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFolderQuestion.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFolderView: FfiConverterRustBuffer {
+    typealias SwiftType = [FolderView]
+
+    public static func write(_ value: [FolderView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFolderView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FolderView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FolderView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFolderView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeGitCommitView: FfiConverterRustBuffer {
     typealias SwiftType = [GitCommitView]
 
@@ -33152,6 +33615,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_circles_available() != 63648) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_computer_folders() != 3979) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_confirm_computer_folder() != 6025) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_connections() != 58172) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33200,6 +33669,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_dismiss_auto_question() != 20301) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_dismiss_computer_folder() != 53067) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33246,6 +33718,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_finish_auto_setup() != 11391) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_folder_questions() != 53428) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_gmail_status() != 55396) {
@@ -33417,6 +33892,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_remove_account() != 62770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_remove_computer_folder() != 29095) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_remove_service_account() != 28197) {

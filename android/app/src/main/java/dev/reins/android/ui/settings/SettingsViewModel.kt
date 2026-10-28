@@ -267,6 +267,44 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** The open computer's folders (Folders on its page): trusted and suggested; null until read. */
+    private val _folders = MutableStateFlow<dev.reins.core.ComputerFolders?>(null)
+    val folders: StateFlow<dev.reins.core.ComputerFolders?> = _folders.asStateFlow()
+
+    /** Reads computer [connectionId]'s folders; a failed read keeps what is shown. */
+    fun loadFolders(connectionId: String) {
+        if (_folders.value?.connectionId != connectionId) _folders.value = null
+        viewModelScope.launch { readFolders(connectionId) }
+    }
+
+    private suspend fun readFolders(connectionId: String) {
+        val epoch = container.state.accountEpoch.value
+        try {
+            val read = container.core.computerFolders(connectionId)
+            if (container.state.isCurrent(epoch)) _folders.value = read
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Trusts a suggested folder (it loosens: the owner check first); a refusal says why. */
+    fun trustFolder(connectionId: String, folder: dev.reins.core.FolderView, authenticator: Authenticator) {
+        viewModelScope.launch {
+            dev.reins.android.ui.activity.trustFolder(container, authenticator, connectionId, folder.path, folder.kind)?.let(container.state::flash)
+            readFolders(connectionId)
+        }
+    }
+
+    /** Removes a trusted folder: it only tightens, so it leaves at once (no owner check), and comes back if it fails. */
+    fun removeFolder(connectionId: String, folder: dev.reins.core.FolderView) {
+        _folders.value?.takeIf { it.connectionId == connectionId }?.let { now -> _folders.value = now.copy(confirmed = now.confirmed - folder) }
+        viewModelScope.launch {
+            dev.reins.android.ui.activity.removeFolder(container, connectionId, folder.path, folder.kind)?.let { container.state.flash("Not removed: $it") }
+            readFolders(connectionId)
+        }
+    }
+
     /** Gone from the list at once; the server is told in the background (and the connection is back if it fails). */
     fun disconnect(connectionId: String, onDone: () -> Unit) {
         container.feedback.play(Event.Revoked)

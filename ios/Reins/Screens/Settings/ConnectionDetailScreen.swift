@@ -29,6 +29,10 @@ struct ConnectionDetailScreen: View {
                     ConnectionInfoGroup(connection: connection, profiles: profiles, activeGrants: activeGrants(connection.id)) {
                         await loadProfiles()
                     }
+                    if connection.keyFingerprint != nil {
+                        // A paired computer: the folders it may work in.
+                        ComputerFoldersGroup(connectionId: connection.id)
+                    }
                     SigningKeyMore()
                     DisconnectRow(connection: connection)
                 }
