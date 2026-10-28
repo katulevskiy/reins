@@ -156,6 +156,9 @@ impl Phone {
             phone.core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
         }
         phone.core.register_device(None).await.expect("register device");
+        // The suites that predate the send hold (08 R10) expect an approved email to go at once; `send_hold.rs`
+        // turns it back on. A phone that does not decide can't set it, and sends nothing anyway.
+        drop(phone.core.set_send_hold_secs(0).await);
         if existing_gmail {
             Mock::given(method("GET"))
                 .and(path("/users/me/profile"))

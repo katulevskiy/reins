@@ -182,7 +182,7 @@ async fn desktop_undo(id: &str, request: McpRequest, conn: DbConn, pool: &State<
         return DesktopResponse::not_found();
     }
     match ReinsSendHold::cancel_for_connection(Some(id), None, &connection.uuid, &conn).await {
-        Ok(Some(user)) => {
+        Ok(Some((user, _))) => {
             tell_phone(&user, id, &conn, pool.inner()).await;
             DesktopResponse::json(Status::Ok, json!({"hold": id, "status": "undone"}))
         }
@@ -198,8 +198,8 @@ async fn desktop_undo(id: &str, request: McpRequest, conn: DbConn, pool: &State<
 /// gone now (nothing will be sent).
 pub async fn cancel_request(request_id: &str, connection: &ReinsConnection, conn: &DbConn, pool: &DbPool) -> bool {
     match ReinsSendHold::cancel_for_connection(None, Some(request_id), &connection.uuid, conn).await {
-        Ok(Some(user)) => {
-            tell_phone(&user, request_id, conn, pool).await;
+        Ok(Some((user, hold))) => {
+            tell_phone(&user, &hold, conn, pool).await;
             true
         }
         Ok(None) => false,

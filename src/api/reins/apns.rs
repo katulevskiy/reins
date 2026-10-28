@@ -516,6 +516,14 @@ mod tests {
     }
 
     #[test]
+    fn a_held_send_wakes_the_phone_silently() {
+        // An automatic hold is never a notification (08 R10): the app releases it in the background.
+        let n = notification(&push(PushKind::Hold, "h1"));
+        assert_eq!((n.push_type, n.priority), ("background", 5));
+        assert_eq!(n.payload, json!({"aps": {"content-available": 1}, "t": "hold", "id": "h1"}));
+    }
+
+    #[test]
     fn sync_pushes_are_silent_unless_an_op_asked_to_alert() {
         let n = notification(&PushMessage::sync(7, false));
         assert_eq!((n.push_type, n.priority), ("background", 5));

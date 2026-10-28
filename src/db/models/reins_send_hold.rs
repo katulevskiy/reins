@@ -76,13 +76,13 @@ impl ReinsSendHold {
     }
 
     /// Undo from the connection that asked (the desktop app, or the agent's `reins_cancel`), by hold id or by request
-    /// id: the user of the hold, if it was waiting and is gone now.
+    /// id: the user and the id of the hold, if it was waiting and is gone now.
     pub async fn cancel_for_connection(
         id: Option<&str>,
         request_id: Option<&str>,
         connection: &str,
         conn: &DbConn,
-    ) -> Result<Option<String>, crate::Error> {
+    ) -> Result<Option<(String, String)>, crate::Error> {
         conn.run(move |c| q_cancel_for_connection(c, id, request_id, connection))
             .await
             .map_res("Error deleting a Reins send hold")
@@ -188,7 +188,7 @@ fn q_cancel_for_connection(
     id: Option<&str>,
     request_id: Option<&str>,
     connection: &str,
-) -> QueryResult<Option<String>> {
+) -> QueryResult<Option<(String, String)>> {
     c.transaction(|c| {
         let mut query = reins_send_holds::table.filter(reins_send_holds::connection_uuid.eq(connection)).into_boxed();
         match (id, request_id) {
@@ -200,7 +200,7 @@ fn q_cancel_for_connection(
             return Ok(None);
         };
         let n = diesel::delete(reins_send_holds::table.filter(reins_send_holds::id.eq(&row.id))).execute(c)?;
-        Ok((n == 1).then_some(row.user_uuid))
+        Ok((n == 1).then_some((row.user_uuid, row.id)))
     })
 }
 
@@ -289,7 +289,10 @@ pub(crate) mod tests {
         assert_eq!(q_claim(&mut c, "h1", "u1", "d1", 200).unwrap(), Claim::NotFound);
         // The connection that asked may undo its own, by request id; another connection may not.
         assert_eq!(q_cancel_for_connection(&mut c, None, Some("r2"), "c2").unwrap(), None);
-        assert_eq!(q_cancel_for_connection(&mut c, None, Some("r2"), "c1").unwrap(), Some("u1".to_owned()));
+        assert_eq!(
+            q_cancel_for_connection(&mut c, None, Some("r2"), "c1").unwrap(),
+            Some(("u1".to_owned(), "h2".to_owned()))
+        );
         assert_eq!(q_cancel_for_connection(&mut c, None, Some("r2"), "c1").unwrap(), None, "gone already");
         assert!(rows(&mut c).is_empty());
     }

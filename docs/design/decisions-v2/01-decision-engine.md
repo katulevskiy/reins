@@ -162,7 +162,7 @@ The planner picks a net when one applies, runs it **before** the effect, and rec
 |---|---|---|
 | `GitRefDelete`, `GitPush{rewrites}` on non-default | push `refs/reins/backup/<ref>/<ts>` (remote) or keep a local ref; 30 days | restore the ref |
 | `FileDelete` in workspace source or `~` | move to `~/.local/share/reins/trash/<ts>/` (or the OS trash), keeping paths; 7 days | move back |
-| `Message` by email | Gmail scheduled send +60 s (configurable 0–300 s) | cancel the scheduled send |
+| `Message` by email | send hold: sealed on the server, sent by the phone after 30 s (0–120 s; 08 R10) | delete the held email |
 | `Message` by Telegram | none (delete-for-everyone isn't reliable) | — |
 | GitHub merge into a Mine default branch | revert PR prepared on demand | open the revert |
 | Email trash or archive | provider-native | restore |
@@ -209,7 +209,7 @@ trained on approve/ask labels.
 1. **Your world (zones):** one screen each for GitHub, email, messages and computers. Each item comes with a proposed
    zone and counts ("Acme · 14 repos · 3 people you mail"); swipe to confirm or fix.
 2. **Matrix:** the §4 table with your real names in it; tap any cell to see examples and change it.
-3. **Nets:** the send hold (on by default, 60 s) and the trash (on).
+3. **Nets:** the send hold (on by default, 30 s) and the trash (on).
 4. **Turn on:** a hold, then the biometric check.
 
 ### 9.2 What a review looks like
