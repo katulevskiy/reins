@@ -108,15 +108,18 @@ struct ComputerFoldersGroup: View {
     }
 }
 
-/// One folder: its symbol on a tile, the path whole in mono (wrapped, never cut), its kind quietly under it, then its
-/// action.
+/// One folder: its symbol on a tile, the path whole in mono across the row (wrapped, never cut), then its kind quietly
+/// with its action beside it. The action never narrows the path: beside it, "/Users/dan/Documents/dev/*" broke at its
+/// last slash and read as ".../dev" and a lone "*".
 private struct FolderRow<Action: View>: View {
     var folder: FolderView
     var symbol: String
     @ViewBuilder var action: Action
 
     var body: some View {
-        HStack(spacing: 12) {
+        let path = FolderText.path(folder.path)
+        let kind = FolderText.kindName(folder.kind)
+        HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Palette.paperSunken)
                 .frame(width: 32, height: 32)
@@ -124,19 +127,23 @@ private struct FolderRow<Action: View>: View {
                     Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink2)
                 }
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: FolderText.path(folder.path))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: path)
                     .font(RFont.mono(13))
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                Text(FolderText.kindName(folder.kind))
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
+                    .accessibilityLabel(Text(verbatim: "\(path), \(kind)"))
+                HStack(spacing: 8) {
+                    Text(kind)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 8)
+                    action
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            action
         }
         .padding(.vertical, 9)
         .frame(minHeight: 56)
