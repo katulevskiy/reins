@@ -12,6 +12,8 @@ struct PushPayload: Equatable {
     static let orgReview = "orgreview"
     /// An org-review push id for a family's ask (P7): `family:leave` (to guardians), `family:minor` (to the member).
     static let familyPrefix = "family:"
+    /// The family asks a push may name; nothing else with the prefix is accepted.
+    static let familyIds: Set<String> = ["family:leave", "family:minor"]
 
     /// What a family's ask says on the lock screen; nil for anything else.
     var familyText: String? {
@@ -42,6 +44,9 @@ struct PushPayload: Equatable {
             guard CirclePush(id) != nil else { return nil }
         } else if kind == Self.orgPasskey {
             guard Self.isCredentialId(id) else { return nil }
+        } else if kind == Self.orgReview {
+            // A review's id, or exactly one of a family's asks (their ":" is not an id's).
+            guard DeepLink.isId(id) || Self.familyIds.contains(id) else { return nil }
         } else {
             guard DeepLink.isId(id) else { return nil }
         }
