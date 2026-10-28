@@ -91,8 +91,11 @@ private final class FakeFamilyCore: FamilySignInCore, FamilyCore, @unchecked Sen
         family?.leaves.removeAll { $0.member == member }
     }
     func familyAnswerMinor(accept: Bool) async throws {
-        family?.minor = (family?.minor ?? false) || accept
-        family?.minorProposed = false
+        // A copy: reading `family` while writing through `family?` overlaps (an exclusivity error).
+        guard var f = family else { return }
+        f.minor = f.minor || accept
+        f.minorProposed = false
+        family = f
     }
 }
 
@@ -175,5 +178,8 @@ final class FamilyProfileTests: XCTestCase {
         XCTAssertEqual(PushPayload(kind: PushPayload.orgReview, id: "r1")?.link, .orgReviews)
         XCTAssertNil(PushPayload(kind: PushPayload.orgReview, id: "r1")?.familyText)
         XCTAssertEqual(DeepLink(url: DeepLink.family.url), .family)
+        XCTAssertEqual(PushPayload(kind: PushPayload.orgReview, id: "family:minor")?.familyText, "Your family asks you something.")
+        XCTAssertNil(PushPayload(kind: PushPayload.orgReview, id: "family:other"), "only the family asks the server sends")
+        XCTAssertNil(PushPayload(kind: "req", id: "family:leave"), "a family ask is an org review's")
     }
 }
