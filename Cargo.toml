@@ -297,7 +297,7 @@ tokio = { version = "1.53.1", features = ["macros", "test-util"] }
 # The mock HTTP/2 server of the APNs sender tests (already built for reqwest's HTTP/2)
 h2 = "0.4.19"
 http = "1.5.0"
-# Organizations (O3): mock GitHub, on-call providers, Slack and Teams in the routing tests (never the real APIs)
+# Organizations (O3, O4): mock GitHub (the policy repo too), on-call providers, Slack and Teams in the tests (never the real APIs)
 wiremock = "0.6.5"
 
 # Strip debuginfo from the release builds

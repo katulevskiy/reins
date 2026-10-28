@@ -229,7 +229,7 @@ pub fn message_of(c: &mut DbConnInner, row: &ReinsOrgRequest) -> Result<Message,
             now: row.created_at,
             reason: None,
         };
-        reins_policy::org::resolve(&req, &analysis, &p.facts).resource
+        reins_policy::org::resolve(&reins_policy::org::SimInput::from_request(&req), &p.facts).resource
     });
     let requester = reviews::email_of_user(c, &row.user_uuid)?;
     let agent = reviews::connection_label_of(c, &row.connection_uuid)?;

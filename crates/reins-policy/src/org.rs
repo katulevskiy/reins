@@ -509,22 +509,23 @@ impl OrgRule {
     }
 
     /// Whether the rule's filters hold for this request.
-    fn applies(&self, req: &ManagedRequest<'_>, analysis: &Analysis, resolved: &Resolved, facts: &Facts) -> bool {
-        if !self.members.is_empty() && !self.members.iter().any(|m| m == req.member) {
+    /// Whether the rule's filters hold for `input` (judged from what the request does, never its body).
+    fn applies(&self, input: &SimInput, resolved: &Resolved, facts: &Facts) -> bool {
+        if !self.members.is_empty() && !self.members.contains(&input.member) {
             return false;
         }
-        if self.require_reason && !req.reason.is_some_and(|r| !r.trim().is_empty() && r.chars().count() <= MAX_REASON) {
+        if self.require_reason && !input.reason_given {
             return false;
         }
-        if self.outside_hours.iter().any(|h| h.contains(req.now)) {
+        if self.outside_hours.iter().any(|h| h.contains(input.at)) {
             return false;
         }
         if let Some(min) = self.min_amount_minor
-            && !money_at_least(analysis, req.tool, req.args, min, self.currency.as_deref())
+            && !money_at_least(input, min, self.currency.as_deref())
         {
             return false;
         }
-        if self.new_party && resolved.unknown.is_empty() && !unknown_payee(analysis, req.args, facts) {
+        if self.new_party && resolved.unknown.is_empty() && !unknown_payee(input, facts) {
             return false;
         }
         true
@@ -533,15 +534,14 @@ impl OrgRule {
 
 /// Whether a Money effect pays someone the org's facts don't know: the merchant's site (`merchant_url`) has no domain
 /// or host fact. A payee that can't be named is unknown.
-fn unknown_payee(analysis: &Analysis, args: &Value, facts: &Facts) -> bool {
-    if !analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
+fn unknown_payee(input: &SimInput, facts: &Facts) -> bool {
+    if !input.analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
         return false;
     }
-    let host = args.get("merchant_url").and_then(Value::as_str).and_then(|u| reins_proto::payments::https_host(u).ok());
-    let Some(host) = host else {
+    let Some(host) = &input.payee_host else {
         return true;
     };
-    if facts.get(FactKind::Host, &host).is_some() {
+    if facts.get(FactKind::Host, host).is_some() {
         return false;
     }
     // The host or a parent domain of it (at least two labels) the org knows.
@@ -551,9 +551,9 @@ fn unknown_payee(analysis: &Analysis, args: &Value, facts: &Facts) -> bool {
 
 /// Whether the request moves at least `min` minor units (of `currency`, when named). An amount or currency that can't
 /// be read counts as at least; a request with no Money effect doesn't.
-fn money_at_least(analysis: &Analysis, tool: &str, args: &Value, min: u64, currency: Option<&str>) -> bool {
-    use reins_proto::payments::{Cart, PAYMENTS, PURCHASE_REQUEST_OP, normalize_currency, parse_amount};
-    if !analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
+fn money_at_least(input: &SimInput, min: u64, currency: Option<&str>) -> bool {
+    use reins_proto::payments::normalize_currency;
+    if !input.analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
         return false;
     }
     let want = match currency.map(normalize_currency) {
@@ -561,6 +561,17 @@ fn money_at_least(analysis: &Analysis, tool: &str, args: &Value, min: u64, curre
         Some(Err(_)) => return true,
         None => None,
     };
+    // An amount that couldn't be read, or in another currency than the rule's, counts as at least `min`.
+    match &input.amount {
+        Some((code, minor)) if want.as_deref().is_none_or(|w| w == code) => *minor >= min,
+        _ => true,
+    }
+}
+
+/// The one amount a request moves, as (currency, minor units), when it can be read unambiguously; `None` otherwise
+/// (which every `min_amount` treats as at least its minimum).
+fn read_amount(tool: &str, args: &Value) -> Option<(String, u64)> {
+    use reins_proto::payments::{Cart, PAYMENTS, PURCHASE_REQUEST_OP, normalize_currency, parse_amount};
     if tool == "payments_purchase_request" {
         // What the payment charges, read by the payments consumer's own parser: its checked `total`.
         let call = reins_proto::connector::ConnectorCall {
@@ -568,47 +579,25 @@ fn money_at_least(analysis: &Analysis, tool: &str, args: &Value, min: u64, curre
             op: PURCHASE_REQUEST_OP.to_owned(),
             args: args.as_object().cloned().unwrap_or_default(),
         };
-        let Ok(cart) = Cart::from_call(&call) else {
-            return true;
-        };
-        if want.as_deref().is_some_and(|w| w != cart.currency) {
-            return true;
-        }
+        let cart = Cart::from_call(&call).ok()?;
         // Any other amount the agent names must be the same, or it's unknown.
         let agrees = AMOUNT_FIELDS
             .iter()
             .filter_map(|k| args.get(*k))
             .all(|v| parse_amount(v, &cart.currency, "amount").is_ok_and(|m| m == cart.total));
-        return !agrees || u64::try_from(cart.total).map_or(true, |t| t >= min);
+        return agrees.then_some(()).and_then(|()| u64::try_from(cart.total).ok()).map(|t| (cart.currency, t));
     }
-    let given = args.get("currency").and_then(Value::as_str).map(normalize_currency);
-    let code = match (given, currency) {
-        (Some(Ok(c)), Some(w)) => {
-            if want.as_deref() != Some(c.as_str()) || w.is_empty() {
-                return true;
-            }
-            c
-        }
-        (Some(Ok(c)), None) => c,
-        // No currency, or one that can't be read: unknown.
-        _ => return true,
-    };
-    // Every amount-like field is read (`payments_purchase_request` pays `total`; others name `amount`): they must
-    // all parse and agree, else the amount is unknown and counts as at least `min` (fails closed).
-    let fields: Vec<&Value> = AMOUNT_FIELDS.iter().filter_map(|k| args.get(*k)).collect();
-    if fields.is_empty() {
-        return true;
-    }
-    let mut amounts = Vec::with_capacity(fields.len());
-    for v in fields {
-        match parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok()) {
-            Some(m) => amounts.push(m),
-            None => return true,
-        }
+    // No currency, or one that can't be read: unknown.
+    let code = args.get("currency").and_then(Value::as_str).map(normalize_currency)?.ok()?;
+    // Every amount-like field is read (`payments_purchase_request` pays `total`; others name `amount`): they must all
+    // parse and agree, else the amount is unknown.
+    let mut amounts = Vec::new();
+    for v in AMOUNT_FIELDS.iter().filter_map(|k| args.get(*k)) {
+        amounts.push(parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok())?);
     }
     amounts.sort_unstable();
     amounts.dedup();
-    amounts.len() != 1 || amounts[0] >= min
+    (amounts.len() == 1).then(|| (code, amounts[0]))
 }
 
 /// The arguments a payment's amount can be named by.
@@ -884,13 +873,66 @@ pub fn stricter(org: &Matrix, member: &Matrix) -> Matrix {
     out
 }
 
-/// Evaluates a Managed request (see the module docs).
+/// Everything [`evaluate_analyzed`] judges a request by, and nothing of its body: what it does (its analysis), the
+/// repository a lease names, where it came from and when. The decision service keeps it with every decision so a draft
+/// policy can be replayed over history (simulation, 02 §4) with the very function the live path runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimInput {
+    pub analysis: Analysis,
+    /// A credential lease's repository as asked (a lease has no effect that names one); `None` for any other request.
+    #[serde(default)]
+    pub base_repo: Option<String>,
+    pub connection: String,
+    /// The requester's user id.
+    pub member: String,
+    /// The agent gave a reason, 1–[`MAX_REASON`] characters (O3's `require_reason`). The reason itself isn't kept.
+    #[serde(default)]
+    pub reason_given: bool,
+    /// When it is judged (rules' `not_after`, `outside_hours`).
+    pub at: i64,
+    /// The one amount it moves, (currency, minor units), when that can be read (O3's `min_amount`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<(String, u64)>,
+    /// The payee's site host, when it names one (O3's `new_party`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payee_host: Option<String>,
+}
+
+impl SimInput {
+    /// The input of a live request.
+    #[must_use]
+    pub fn from_request(req: &ManagedRequest<'_>) -> Self {
+        Self {
+            analysis: analyze_request(req.tool, req.args),
+            base_repo: (req.tool == LEASE_TOOL)
+                .then(|| req.args.get("repo").and_then(Value::as_str).unwrap_or_default().to_owned()),
+            connection: req.connection.to_owned(),
+            member: req.member.to_owned(),
+            reason_given: req.reason.is_some_and(|r| !r.trim().is_empty() && r.chars().count() <= MAX_REASON),
+            at: req.now,
+            amount: read_amount(req.tool, req.args),
+            payee_host: req
+                .args
+                .get("merchant_url")
+                .and_then(Value::as_str)
+                .and_then(|u| reins_proto::payments::https_host(u).ok()),
+        }
+    }
+}
+
+/// Evaluates a Managed request (see the module docs): [`evaluate_analyzed`] of its [`SimInput`].
 #[must_use]
 pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
-    let analysis = analyze_request(req.tool, req.args);
-    let resolved = resolve(req, &analysis, &org.facts);
+    evaluate_analyzed(&SimInput::from_request(req), org, member)
+}
+
+/// Evaluates a request from what it does: the one evaluation the decision service, every executor and simulation run.
+#[must_use]
+pub fn evaluate_analyzed(input: &SimInput, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
+    let analysis = &input.analysis;
+    let resolved = resolve(input, &org.facts);
     // Rules whose filters don't hold for this request are left out: the matrix never sees them.
-    let live: Vec<&OrgRule> = org.rules.iter().filter(|r| r.applies(req, &analysis, &resolved, &org.facts)).collect();
+    let live: Vec<&OrgRule> = org.rules.iter().filter(|r| r.applies(input, &resolved, &org.facts)).collect();
     let mut rules: Vec<Rule> = live.iter().map(|r| r.rule.clone()).collect();
     let mut matrix = org.matrix.clone();
     if let Some(m) = member {
@@ -914,11 +956,11 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
     };
     let evaluation = matrix::evaluate(
         &Input {
-            analysis: &analysis,
+            analysis,
             resolved: &resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
             netted: false,
@@ -937,7 +979,7 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
             let mut why = evaluation.why.clone();
             // Hard obligations stop P2's evaluation before the cell. The org's cell review still applies: a member's
             // rule (or the floor) only adds to what the org requires, never stands in for it.
-            if hard && cell_needs_review(req, &analysis, &resolved, &snapshot, &live) {
+            if hard && cell_needs_review(input, &resolved, &snapshot, &live) {
                 why.push(Why::Cell);
             }
             (ManagedOutcome::Review, obligations_of(&why, org))
@@ -960,9 +1002,10 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
 
 /// Where a request acts. A lease names its repository directly (it has no effect that names one): the repository's
 /// zone, and the repository as the resource, so the org's resource rules apply to leases as to any other request.
-pub fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Resolved {
-    if req.tool == LEASE_TOOL {
-        let repo = req.args.get("repo").and_then(Value::as_str).and_then(|r| parse_repo(r, Some(GITHUB)));
+#[must_use]
+pub fn resolve(input: &SimInput, facts: &Facts) -> Resolved {
+    if let Some(asked) = &input.base_repo {
+        let repo = parse_repo(asked, Some(GITHUB));
         return match repo {
             Some(r) => {
                 let (zone, unknown) = repo_zone(facts, &r);
@@ -983,7 +1026,7 @@ pub fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> 
         };
     }
     request_zone(
-        analysis,
+        &input.analysis,
         facts,
         &Base {
             repo: None,
@@ -995,14 +1038,8 @@ pub fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> 
 
 /// Whether the composed matrix cell asks, unless one of the org's permits satisfies it: judged as if there were no
 /// hard obligation (no floor, full certainty, no deny or review rules).
-fn cell_needs_review(
-    req: &ManagedRequest<'_>,
-    analysis: &Analysis,
-    resolved: &Resolved,
-    snapshot: &Snapshot,
-    live: &[&OrgRule],
-) -> bool {
-    let mut soft = analysis.clone();
+fn cell_needs_review(input: &SimInput, resolved: &Resolved, snapshot: &Snapshot, live: &[&OrgRule]) -> bool {
+    let mut soft = input.analysis.clone();
     soft.floor.clear();
     soft.certainty = Certainty::Full;
     let permits = Snapshot {
@@ -1013,9 +1050,9 @@ fn cell_needs_review(
         &Input {
             analysis: &soft,
             resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
             netted: false,
@@ -1364,7 +1401,66 @@ mod tests {
         assert_eq!(v.obligations[0].spec, ReviewSpec::owner());
     }
 
+    #[test]
+    fn the_kept_input_carries_facts_not_the_body() {
+        let args = json!({"amount": "120.00", "currency": "usd", "merchant_url": "https://shop.example/x?token=s3cret",
+                          "memo": "the vendor's private note"});
+        let req = ManagedRequest {
+            org: "o1",
+            member: "lee",
+            connection: "c1",
+            tool: "payments_pay",
+            args: &args,
+            now: 5,
+            reason: Some("Paying the March invoice for Lee"),
+        };
+        let input = SimInput::from_request(&req);
+        assert!(input.reason_given);
+        assert_eq!(input.payee_host.as_deref(), Some("shop.example"));
+        let text = serde_json::to_string(&input).unwrap();
+        for secret in ["March invoice", "s3cret", "private note"] {
+            assert!(!text.contains(secret), "{secret}: {text}");
+        }
+        let back: SimInput = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, input);
+        // A reason that's blank or too long isn't one.
+        let long = "x".repeat(MAX_REASON + 1);
+        for r in ["  ", long.as_str()] {
+            assert!(
+                !SimInput::from_request(&ManagedRequest {
+                    reason: Some(r),
+                    ..req
+                })
+                .reason_given
+            );
+        }
+    }
+
     proptest! {
+        #[test]
+        fn evaluate_managed_is_evaluate_analyzed(
+            title in ".{0,40}",
+            repo in "(acme|someone|Acme)/(api|prod-db|forbidden|infra-x)",
+            tool in prop::sample::select(vec!["github_create_issue", "reins_list_accounts", "gmail_send", LEASE_TOOL]),
+            access in prop::sample::select(vec!["read", "push"]),
+            at in 0i64..3_000,
+        ) {
+            let mut p = acme();
+            p.rules.push(org_rule("prod-review", When { resource: Some("acme/prod-*".into()), ..When::default() },
+                Then::Review, Some(sec(1))));
+            p.rules.push(org_rule("deny", When { resource: Some("acme/forbidden".into()), ..When::default() },
+                Then::Deny, None));
+            let mut timed = org_rule("freeze", When::default(), Then::Deny, None);
+            timed.rule.not_after = Some(1_500);
+            p.rules.push(timed);
+            let args = json!({"repo": repo, "title": title, "access": access, "to": ["x@y.com"]});
+            let req = ManagedRequest { org: "o1", member: "lee", connection: "c1", tool, args: &args, now: at, reason: None };
+            let input = SimInput::from_request(&req);
+            // Through JSON too: the retained form judges the same.
+            let input: SimInput = serde_json::from_str(&serde_json::to_string(&input).unwrap()).unwrap();
+            prop_assert_eq!(evaluate_managed(&req, &p, None), evaluate_analyzed(&input, &p, None));
+        }
+
         #[test]
         fn same_inputs_same_verdict(title in ".{0,40}", repo in "(acme|someone)/[a-z]{1,8}") {
             let args = json!({"repo": repo, "title": title});

@@ -1,0 +1,11 @@
+[[rule]]
+id = "prod-deploys"
+explain = "Acme requires Security to approve production deploys"
+when = { resource = "acme/prod-*", effects = ["Infra", "GitPush"], levels = ["L2", "L3"] }
+review = { reviewers = "any of Security", quorum = 1, class = "deferred", window = "4h" }
+
+[[rule]]
+id = "prod-deny-db-drop"
+explain = "Production databases are never dropped through agents"
+when = { resource = "acme/prod-db", effects = ["Infra"], levels = ["L3"] }
+deny = true

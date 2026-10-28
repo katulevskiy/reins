@@ -76,6 +76,16 @@ pub mod kinds {
     pub const EXECUTOR_REMOVED: &str = "executor.removed";
     pub const RETENTION_SET: &str = "retention.set";
     pub const AUDIT_EXPORTED: &str = "audit.exported";
+    pub const AUDIT_READ: &str = "audit.read";
+    pub const POLICY_SIMULATED: &str = "policy.simulated";
+    pub const POLICY_STAGE_ADVANCED: &str = "policy.stage_advanced";
+    pub const POLICY_ROLLED_BACK: &str = "policy.rolled_back";
+    pub const POLICY_ROLLOUT_COMPLETED: &str = "policy.rollout_completed";
+    pub const POLICY_ROLLOUT_PAUSED: &str = "policy.rollout_paused";
+    pub const POLICY_ROLLOUT_RESUMED: &str = "policy.rollout_resumed";
+    pub const POLICY_REPO_BOUND: &str = "policy_repo.bound";
+    pub const POLICY_REPO_CHECKED: &str = "policy_repo.checked";
+    pub const GITHUB_READER_SET: &str = "github_reader.set";
 }
 
 /// Appends an event to `org`'s chain; returns its sequence number.

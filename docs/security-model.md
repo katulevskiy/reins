@@ -860,6 +860,50 @@ What this doesn't do yet:
   accounts (05 §5, 08 R6).
 
 
+### Policy as code, simulation and staged rollout (O4)
+
+- **The policy repo is input, not authority.** An org may keep its policy in a GitHub repo (`acme/reins-policy`,
+  bound by a two-person change). The server reads it with the org's *GitHub reader*, a second App whose private key
+  and webhook secret are sealed under the org's data key; webhooks are verified (`X-Hub-Signature-256`, constant
+  time), must come from the org's installation and its bound repo, and are acted on once. A PR gets a check run (its
+  compile errors, or its simulation line); a merge saves and simulates a draft and only **proposes** the activation,
+  as the system. A first Security admin confirms it on their phone (becoming its proposer), and a second approves it
+  on theirs: merging the PR, re-posting the webhook or being the only admin activates nothing. Repos are read within
+  200 policy files and 1 MiB.
+- **Simulation is evidence.** Every decision keeps its body-free input (effects, zones, levels: decision metadata,
+  never the request body), and a draft is replayed over the last 30 days with the very evaluator the live service and
+  the executors run, each case at its own time. Replaying the *active* policy must reproduce what was recorded; a
+  difference is *drift*. Once a policy is active, `ActivatePolicy` names a report made for exactly that draft's hash,
+  at most a day old, with no drift: a draft changed after it was simulated is another hash and needs its own. Reports
+  name request ids only; opening one is an audited read by an Auditor or a Security admin.
+- **Two people, always.** Activation takes two holders of the capability (their device signatures), even with
+  two-person approval turned off and even with a single Security admin (then it is refused). A Family's guardians are
+  the exception: every guardian holding the capability decides, so a single guardian activates alone.
+- **Signed staged rollout.** With a policy active, activation makes the draft a *candidate*: the issuer signs it,
+  resolves the pilot group, and pre-signs every rollout step (pilot, 25%, everyone, then the rollback) as `Rollout`
+  envelopes. Each stage carries `not_before`, activation plus the dwell of the stages before it. The decision service
+  publishes the next stage only after the dwell with enough decisions in both cohorts and the guards green (ask rate
+  and median time to decision), and the rollback when a guard trips; a rollback is terminal and the candidate goes
+  back to draft. A member's cohort is a hash of (rollout, member), percentages nest and the pilot stays in, so nobody
+  flips back and forth. Every decision records the snapshot and rollout step it was made under.
+- **What a compromised decision service can and can't do.** Executors hold every signed step they've seen and refuse
+  a decision whose snapshot, or a job whose current policy, isn't the member's effective version under them: the
+  service can't put a member outside the cohort on the candidate, nor keep anyone on the candidate after a rollback.
+  A step whose `not_before` is still ahead counts for nobody, by the executor's own clock. What it *can* do is publish
+  a pre-signed stage as soon as its time comes even if a guard should have tripped, or withhold the rollback: either
+  only moves a rollout that two Security admins approved, no faster than its approved schedule. A decision made under
+  the previous stage still runs for two minutes after an executor first sees the next one; older, it is stale.
+  Executors keep the steps they've seen on disk (`state_dir/rollouts.log`), so a restart doesn't forget them.
+
+What this doesn't do yet:
+- An executor that never received a rollout's steps (the decision service withheld them from the start) can't tell
+  a candidate from the active policy: it falls back to O2's check, any issuer-signed snapshot and the policy named
+  current. Publishing the steps to a witness (O5) closes this.
+- One Connection admin can replace the GitHub reader's key and webhook secret. That lets them post check runs and
+  propose drafts, never activate one.
+- A rollout advanced by hand through its stages with too few decisions reaches "everyone" without a stable baseline:
+  there only the time-to-decision guard applies.
+
 ## Known gaps
 
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone

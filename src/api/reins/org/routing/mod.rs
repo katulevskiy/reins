@@ -24,8 +24,7 @@ pub mod sla;
 use std::collections::{BTreeMap, BTreeSet};
 
 use reins_policy::org::{
-    ManagedOutcome, ManagedRequest, Obligation, OrgPolicy, ResolvedSets, ReviewSpec, Reviewers, analyze_request,
-    evaluate_managed,
+    ManagedOutcome, ManagedRequest, Obligation, OrgPolicy, ResolvedSets, ReviewSpec, Reviewers, evaluate_managed,
 };
 use reins_proto::{managed::Roster, org::Role};
 use serde_json::{Value, json};
@@ -666,8 +665,7 @@ pub async fn after_sweep(pool: &DbPool, swept: Vec<escalation::Swept>) {
 /// The resources a request names, for resource tags.
 #[must_use]
 pub fn resources_of(policy: &OrgPolicy, req: &ManagedRequest<'_>) -> Vec<String> {
-    let analysis = analyze_request(req.tool, req.args);
-    reins_policy::org::resolve(req, &analysis, &policy.facts).parts
+    reins_policy::org::resolve(&reins_policy::org::SimInput::from_request(req), &policy.facts).parts
 }
 
 #[cfg(all(test, sqlite))]
@@ -732,7 +730,7 @@ pub(crate) mod tests {
         p["rules"] = rules;
         p["facts"] = json!({"owners": {"acme": "work"}});
         let (rev, hash) = crate::api::reins::org::policy::save_draft(c, "o1", "dana", &p.to_string(), 10).unwrap();
-        crate::api::reins::org::policy::apply_activation(c, "o1", rev, &hash, "dana", 11).unwrap();
+        crate::api::reins::org::policy::apply_activation(c, "o1", rev, &hash, None, "dana", 11).unwrap();
         phones
     }
 

@@ -6,6 +6,7 @@
 //! recall must stay at 100%, and no known false positive may come back.
 //!
 //! - `reins-replay run [--engine guard|effects] [--policy F] [--check]`: the numbers, and the gate in CI.
+//! - `reins-replay policy check|render|simulate DIR`: an org's policy repo in its own CI ([`policy_cmd`]).
 //! - `reins-replay explain ID…`, `list [--ask|--auto]`, `unresolved`: for reviewing labels and the engine.
 //! - `reins-replay import --log ~/.local/state/reins/activity.jsonl --labels LABELS --out corpus/desktop.jsonl`:
 //!   rebuilds the desktop corpus on the owner's computer. `LABELS` (kept off the repository: it names private hosts)
@@ -17,6 +18,7 @@
 pub mod anonymize;
 pub mod corpus;
 pub mod engine;
+pub mod policy_cmd;
 pub mod report;
 
 use std::path::{Path, PathBuf};

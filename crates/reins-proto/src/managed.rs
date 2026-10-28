@@ -301,6 +301,8 @@ pub enum EnvelopeKind {
     Head,
     /// An executor's [`Receipt`], signed by the executor's key.
     Receipt,
+    /// One step of a staged policy rollout ([`crate::rollout::Rollout`]), pre-signed by the org issuer key (O4).
+    Rollout,
 }
 
 impl EnvelopeKind {
@@ -313,6 +315,7 @@ impl EnvelopeKind {
             Self::Checkpoint => "checkpoint",
             Self::Head => "head",
             Self::Receipt => "receipt",
+            Self::Rollout => "rollout",
         }
     }
 }
@@ -463,6 +466,9 @@ pub struct DecisionRecord {
     pub reason: Option<String>,
     /// When the request was evaluated (the time rules were judged at).
     pub evaluated_at: i64,
+    /// The rollout step (rollout id, seq) whose cohorts chose `snapshot`, when a staged rollout was under way (O4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout: Option<(String, u32)>,
     pub decided_at: i64,
     /// Not executed after this, it expires (03 §6: 24 h for executor-run actions).
     pub valid_until: i64,

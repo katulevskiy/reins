@@ -522,26 +522,34 @@ async fn org_routing_end_to_end() {
     // Ola (on call) and Kim (Engineering) are each told in Slack, with their own link.
     wait_for("the Slack messages", Duration::from_secs(20), || futures_lite_block(slack_posts(&slack)).len() >= 2)
         .await;
-    let posted = slack_posts(&slack).await;
-    let urls: Vec<String> = posted
-        .iter()
-        .map(|p| {
-            let line = p.to_string();
-            assert!(!line.contains("Roll out") && !line.contains("eA=="), "no body in Slack: {line}");
-            between(&line, "\"url\":\"", "\"").to_owned()
-        })
-        .collect();
-    assert!(urls.iter().all(|u| u.contains("/reins/org/approve/")), "{urls:?}");
+    // The posts go out one reviewer after another, in no set order: read them until Ola's own link is there.
     let mut mine = None;
     let mut seen = Vec::new();
-    for u in &urls {
-        let page = ola_browser.get(u).await;
-        seen.push((page.status, between(&page.body, "<title>", "</title>").to_owned()));
-        if page.status == 200 {
-            mine = Some((u.clone(), page));
-        } else {
+    let mut opened = std::collections::BTreeSet::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while mine.is_none() && std::time::Instant::now() < deadline {
+        let posted = slack_posts(&slack).await;
+        let urls: Vec<String> = posted
+            .iter()
+            .map(|p| {
+                let line = p.to_string();
+                assert!(!line.contains("Roll out") && !line.contains("eA=="), "no body in Slack: {line}");
+                between(&line, "\"url\":\"", "\"").to_owned()
+            })
+            .collect();
+        assert!(urls.iter().all(|u| u.contains("/reins/org/approve/")), "{urls:?}");
+        for u in urls.into_iter().filter(|u| opened.insert(u.clone())) {
+            let page = ola_browser.get(&u).await;
+            seen.push((page.status, between(&page.body, "<title>", "</title>").to_owned()));
+            if page.status == 200 {
+                mine = Some((u, page));
+                break;
+            }
             // A link that is someone else's: refused, whoever forwarded it.
             assert_eq!(page.status, 403, "{seen:?}");
+        }
+        if mine.is_none() {
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
     let Some((url, card)) = mine else {

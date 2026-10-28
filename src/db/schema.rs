@@ -671,6 +671,8 @@ table! {
         created_by -> Text,
         created_at -> BigInt,
         activated_at -> Nullable<BigInt>,
+        source_ref -> Nullable<Text>,
+        rollout_plan -> Nullable<Text>,
     }
 }
 
@@ -713,6 +715,58 @@ table! {
         finished_at -> Nullable<BigInt>,
         receipt -> Nullable<Text>,
         resolved -> Nullable<Text>,
+        analysis -> Nullable<Text>,
+        rollout_id -> Nullable<Text>,
+        rollout_seq -> Nullable<Integer>,
+    }
+}
+
+table! {
+    reins_org_policy_repo (org_uuid) {
+        org_uuid -> Text,
+        repo -> Text,
+        default_branch -> Text,
+        bound_by -> Text,
+        bound_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_simulations (org_uuid, report_hash) {
+        org_uuid -> Text,
+        report_hash -> Text,
+        revision -> BigInt,
+        draft_hash -> Text,
+        base_hash -> Text,
+        source_ref -> Nullable<Text>,
+        report -> Text,
+        ran_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_rollouts (rollout_id) {
+        rollout_id -> Text,
+        org_uuid -> Text,
+        revision -> BigInt,
+        epoch -> BigInt,
+        state -> Text,
+        stable -> Text,
+        candidate -> Text,
+        plan -> Text,
+        envelopes -> Text,
+        published_seq -> Integer,
+        stage_started_at -> BigInt,
+        reason -> Nullable<Text>,
+        created_at -> BigInt,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_org_webhook_deliveries (delivery_id) {
+        delivery_id -> Text,
+        received_at -> BigInt,
     }
 }
 

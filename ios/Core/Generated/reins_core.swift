@@ -3639,6 +3639,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func phoneRole() async throws  -> PhoneRole
     
     /**
+     * What `change` would have done on this phone's own last 30 days (02 §4): shown before a matrix cell or a rule
+     * changes. Read on the phone only; nothing is sent.
+     */
+    func previewPolicyChange(change: PolicyChange) async throws  -> PreviewView
+    
+    /**
      * On a viewer: proposes an account, a token, an MCP server or an icon (`rows_json`: a list of
      * `{"table", "value"}`) for the primary to keep or discard. Returns its id.
      */
@@ -6579,6 +6585,26 @@ open func phoneRole()async throws  -> PhoneRole  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePhoneRole_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What `change` would have done on this phone's own last 30 days (02 §4): shown before a matrix cell or a rule
+     * changes. Read on the phone only; nothing is sent.
+     */
+open func previewPolicyChange(change: PolicyChange)async throws  -> PreviewView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_preview_policy_change(
+                        self.uniffiCloneHandle(),FfiConverterTypePolicyChange_lower(change)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePreviewView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -19373,6 +19399,85 @@ public func FfiConverterTypePostureInput_lower(_ value: PostureInput) -> RustBuf
 
 
 /**
+ * What a change would have done on the phone's own history.
+ */
+public struct PreviewView: Equatable, Hashable {
+    /**
+     * "Last 30 days: 12 Auto → Ask, 0 Ask → Auto", or "No history yet".
+     */
+    public var line: String
+    /**
+     * Requests whose outcome would have differed.
+     */
+    public var changed: UInt32
+    /**
+     * The days looked at.
+     */
+    public var days: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Last 30 days: 12 Auto → Ask, 0 Ask → Auto", or "No history yet".
+         */line: String, 
+        /**
+         * Requests whose outcome would have differed.
+         */changed: UInt32, 
+        /**
+         * The days looked at.
+         */days: UInt32) {
+        self.line = line
+        self.changed = changed
+        self.days = days
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PreviewView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePreviewView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PreviewView {
+        return
+            try PreviewView(
+                line: FfiConverterString.read(from: &buf), 
+                changed: FfiConverterUInt32.read(from: &buf), 
+                days: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PreviewView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterUInt32.write(value.changed, into: &buf)
+        FfiConverterUInt32.write(value.days, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePreviewView_lift(_ buf: RustBuffer) throws -> PreviewView {
+    return try FfiConverterTypePreviewView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePreviewView_lower(_ value: PreviewView) -> RustBuffer {
+    return FfiConverterTypePreviewView.lower(value)
+}
+
+
+/**
  * One decision personality (spec §5.1).
  */
 public struct ProfileView: Equatable, Hashable {
@@ -27985,6 +28090,89 @@ public func FfiConverterTypePhoneRole_lower(_ value: PhoneRole) -> RustBuffer {
 
 
 /**
+ * A change to preview.
+ */
+
+public enum PolicyChange: Equatable, Hashable {
+    
+    /**
+     * One matrix cell (`level` 0 to 3).
+     */
+    case setCell(zone: ZoneChoice, level: UInt8, cell: CellChoice
+    )
+    /**
+     * The rules "Ask me next time" on this Activity entry would add.
+     */
+    case askMeNextTime(requestId: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PolicyChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePolicyChange: FfiConverterRustBuffer {
+    typealias SwiftType = PolicyChange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PolicyChange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .setCell(zone: try FfiConverterTypeZoneChoice.read(from: &buf), level: try FfiConverterUInt8.read(from: &buf), cell: try FfiConverterTypeCellChoice.read(from: &buf)
+        )
+        
+        case 2: return .askMeNextTime(requestId: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PolicyChange, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .setCell(zone,level,cell):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeZoneChoice.write(zone, into: &buf)
+            FfiConverterUInt8.write(level, into: &buf)
+            FfiConverterTypeCellChoice.write(cell, into: &buf)
+            
+        
+        case let .askMeNextTime(requestId):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(requestId, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePolicyChange_lift(_ buf: RustBuffer) throws -> PolicyChange {
+    return try FfiConverterTypePolicyChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePolicyChange_lower(_ value: PolicyChange) -> RustBuffer {
+    return FfiConverterTypePolicyChange.lower(value)
+}
+
+
+
+/**
  * Confidence thresholds of a profile (spec §5.4): approve / deny.
  */
 
@@ -32684,6 +32872,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_phone_role() != 2718) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_preview_policy_change() != 14333) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_proposal_create() != 54195) {

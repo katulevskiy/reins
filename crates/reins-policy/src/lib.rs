@@ -16,6 +16,8 @@ pub mod org;
 mod pattern;
 mod scope;
 pub mod shell;
+pub mod simulate;
+pub mod source;
 pub mod strict;
 
 use reins_proto::ValidationError;

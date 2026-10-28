@@ -192,6 +192,31 @@ How it fits together:
   optional `[google]` service account), compare `reins-executor pin --config executor.toml` with the keys the console
   shows, then `pin --accept` and `reins-executor run --config executor.toml`. Run one per org, as its own user, with
   its state directory private; see [deployment](deployment.md#org-executors).
+- **Policy repo** (policy as code). An org can keep its policy in a GitHub repo it owns (`acme/reins-policy`): see the
+  [sample](../crates/reins-policy/tests/fixtures/policy_repo). The server reads it through the org's *GitHub reader*,
+  a second GitHub App the org creates with `contents: read`, `members: read`, `pull_requests: read` and `checks:
+  write`, subscribed to `pull_request` and `push`, with its webhook at `https://<domain>/reins/org/github/policy-webhook`
+  and a webhook secret. In the console: **Policy → GitHub reader** (app id and installation id take two admins; then
+  the private key and the webhook secret, sealed under the org's data key), then **Policy → Repo** (two admins). Every
+  PR to the default branch gets a `reins/policy` check: compile errors annotated by file and line, else the simulation
+  line on the org's last 30 days. A merge only proposes the activation: two Security admins still approve it on their
+  phones, and it rolls out in the stages `[rollout]` names. The same checks run in the repo's own CI:
+
+  ```yaml
+  # .github/workflows/reins-policy.yml
+  on: [pull_request]
+  jobs:
+    check:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - run: cargo install --git https://github.com/katulevskiy/reins reins-replay --locked
+        - run: reins-replay policy check .
+  ```
+
+  `reins-replay policy render .` writes the files in their normal form (what the console exports), and `reins-replay
+  policy simulate . --history history.jsonl --base ../main-checkout` replays a history exported from the console's
+  simulation page (Auditors and Security admins; the export is audited) and prints the same summary line.
 - **Deleting an account in the app** (Settings → Delete account) deletes the WorkOS user too
   (`DELETE /user_management/users/<id>` with `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET`), before the account
   itself; while WorkOS cannot, nothing is deleted and the app says to try again. Without WorkOS (password accounts, or

@@ -4,7 +4,8 @@
 //! snapshot it was made against.
 //!
 //! Facts the org didn't author but verified (its verified domains, its GitHub organization) are added to every draft
-//! as Work, so the signed snapshot carries them. Simulation and policy as code are O4.
+//! as Work, so the signed snapshot carries them. Simulation, policy as code and staged rollout are O4
+//! ([`super::simulation`], [`super::policy_repo`], [`super::activation`], [`super::rollout`]).
 
 use reins_policy::{
     context::{FactKind, Zone},
@@ -12,16 +13,12 @@ use reins_policy::{
     org::OrgPolicy,
 };
 use reins_proto::{
-    managed::{Envelope, EnvelopeKind, canonical_json},
+    managed::{Envelope, canonical_json},
     org::Capability,
 };
 use serde_json::json;
 
-use super::{
-    OrgError, audit,
-    kms::{self, KeyPurpose},
-    require,
-};
+use super::{OrgError, audit, require};
 use crate::db::{
     DbConnInner,
     models::{
@@ -71,7 +68,25 @@ pub fn save_draft(
     body: &str,
     now: i64,
 ) -> Result<(u64, String), OrgError> {
-    require(c, org, author, Capability::AuthorPolicy)?;
+    save_draft_with(c, org, author, body, None, None, now)
+}
+
+/// [`save_draft`], with where the draft came from (`pr#12@<sha>`, `main@<sha>`, `console`, `template:<name>`) and the
+/// rollout plan it ships with. The policy repo saves as [`super::simulation::SYSTEM_ACTOR`]: what it saves is a draft
+/// only, which two Security admins must still activate.
+#[allow(clippy::too_many_arguments, reason = "one draft's parts")]
+pub fn save_draft_with(
+    c: &mut DbConnInner,
+    org: &str,
+    author: &str,
+    body: &str,
+    source_ref: Option<&str>,
+    plan: Option<&reins_policy::source::RolloutPlanSource>,
+    now: i64,
+) -> Result<(u64, String), OrgError> {
+    if author != super::simulation::SYSTEM_ACTOR {
+        require(c, org, author, Capability::AuthorPolicy)?;
+    }
     let mut policy = parse_draft(c, org, body)?;
     let revision = reins_org_keys::q_last_revision(c, org)? + 1;
     policy.revision = u64::try_from(revision).unwrap_or(0);
@@ -89,6 +104,11 @@ pub fn save_draft(
             created_by: author.to_owned(),
             created_at: now,
             activated_at: None,
+            source_ref: source_ref.map(str::to_owned),
+            rollout_plan: match plan {
+                Some(p) => Some(serde_json::to_string(p).map_err(|e| OrgError::Internal(e.to_string()))?),
+                None => None,
+            },
         },
     )?;
     audit::record(
@@ -97,7 +117,7 @@ pub fn save_draft(
         audit::kinds::POLICY_DRAFTED,
         Some(author),
         None,
-        &json!({"revision": revision, "hash": hash}),
+        &json!({"revision": revision, "hash": hash, "source": source_ref}),
         now,
     )?;
     Ok((policy.revision, hash))
@@ -116,31 +136,18 @@ pub fn check_draft(c: &mut DbConnInner, org: &str, revision: u64, hash: &str) ->
     Ok(row)
 }
 
-/// Activates the draft: the issuer key signs it, the previous policy retires. From an approved admin change only.
+/// Activates the draft, from an approved admin change only: the issuer key signs it, and it becomes active at once
+/// (the first policy) or the candidate of a staged rollout (O4, [`super::activation::activate`]).
 pub fn apply_activation(
     c: &mut DbConnInner,
     org: &str,
     revision: u64,
     hash: &str,
+    report: Option<&str>,
     actor: &str,
     now: i64,
 ) -> Result<(), OrgError> {
-    let row = check_draft(c, org, revision, hash)?;
-    let body: serde_json::Value = serde_json::from_str(&row.body).map_err(|e| OrgError::Internal(e.to_string()))?;
-    let env = kms::envelope(c, org, KeyPurpose::Issuer, EnvelopeKind::Policy, &body, now)?;
-    if !reins_org_keys::q_activate(c, org, row.revision, &serde_json::to_string(&env).unwrap_or_default(), now)? {
-        return Err(OrgError::Invalid("That policy revision isn't a draft."));
-    }
-    audit::record(
-        c,
-        org,
-        audit::kinds::POLICY_ACTIVATED,
-        Some(actor),
-        None,
-        &json!({"revision": revision, "hash": hash, "issuer_key": env.key_id}),
-        now,
-    )?;
-    Ok(())
+    super::activation::activate(c, org, revision, hash, report, actor, now)
 }
 
 fn parse_row(row: &ReinsOrgPolicy) -> Result<(OrgPolicy, Envelope), OrgError> {
@@ -174,6 +181,7 @@ mod tests {
     use super::*;
     use crate::api::reins::org::{
         kms::tests::{trusted, use_test_kms},
+        kms::{self, KeyPurpose},
         testing::{add_org, db, member},
     };
 
@@ -210,6 +218,7 @@ mod tests {
         let action = AdminAction::ActivatePolicy {
             revision,
             hash,
+            report: None,
         };
         let (Proposed::Pending(change), _) = propose(&mut c, "o1", "u1", &action, None, 6).unwrap() else {
             panic!("a second Security admin exists: it must wait");
@@ -227,8 +236,8 @@ mod tests {
         add_org(&mut c, "o1");
         member(&mut c, "o1", "u1", &[Role::SecurityAdmin]);
         let (rev, hash) = save_draft(&mut c, "o1", "u1", DEVELOPER_BASELINE, 5).unwrap();
-        assert!(apply_activation(&mut c, "o1", rev, "wrong", "u1", 6).is_err());
-        apply_activation(&mut c, "o1", rev, &hash, "u1", 6).unwrap();
+        assert!(apply_activation(&mut c, "o1", rev, "wrong", None, "u1", 6).is_err());
+        apply_activation(&mut c, "o1", rev, &hash, None, "u1", 6).unwrap();
         let (policy, env) = active(&mut c, "o1").unwrap().unwrap();
         assert_eq!(policy.hash(), hash);
         let issuer = kms::signing_key(&mut c, "o1", KeyPurpose::Issuer, 7).unwrap();
@@ -238,6 +247,6 @@ mod tests {
         assert_eq!(by_hash(&mut c, "o1", &hash).unwrap(), Some(env));
         assert!(by_hash(&mut c, "o2", &hash).unwrap().is_none());
         // Activated once.
-        assert!(apply_activation(&mut c, "o1", rev, &hash, "u1", 8).is_err());
+        assert!(apply_activation(&mut c, "o1", rev, &hash, None, "u1", 8).is_err());
     }
 }

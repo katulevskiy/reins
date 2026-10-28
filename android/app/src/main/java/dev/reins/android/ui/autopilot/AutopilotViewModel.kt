@@ -21,6 +21,7 @@ import dev.reins.core.AutopilotStats
 import dev.reins.core.AutoSetup
 import dev.reins.core.CellChoice
 import dev.reins.core.WorldItem
+import dev.reins.core.PolicyChange
 import dev.reins.core.ZoneChoice
 import dev.reins.core.ThresholdReplay
 import dev.reins.core.ModelState
@@ -65,7 +66,12 @@ data class AutopilotUi(
     val setup: AutoSetup? = null,
     /** Picking Auto before the setup was finished: the setup should open (the page that shows it clears this). */
     val setupRequested: Boolean = false,
+    /** A cell about to be made looser, with what it would have done on this phone's last 30 days (02 §4). */
+    val loosen: LoosenCell? = null,
 )
+
+/** A looser matrix cell waiting for the owner to look at its preview. */
+data class LoosenCell(val zone: ZoneChoice, val level: Int, val cell: CellChoice, val preview: String)
 
 /** Settings > Autopilot, its profiles and "Try it", and the Autopilot part of a connection's page. */
 class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
@@ -398,8 +404,46 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         setupChange(owner) { container.core.setWorldZone(item.kind, item.key, zone, owner) }
     }
 
-    /** One cell of the matrix ([level] 0 to 3). Looser asks the owner first; a refusal puts the old one back. */
+    /**
+     * One cell of the matrix ([level] 0 to 3). Looser shows its preview first ([LoosenCell]: what it would have done on
+     * this phone's own history), then asks the owner; stricter applies at once.
+     */
     fun setMatrixCell(zone: ZoneChoice, level: Int, cell: CellChoice, authenticator: Authenticator) {
+        val old = _ui.value.setup?.matrix?.firstOrNull { it.zone == zone }?.cells?.getOrNull(level)
+        if (old != null && strictness(cell) < strictness(old)) {
+            viewModelScope.launch {
+                val preview = try {
+                    container.core.previewPolicyChange(PolicyChange.SetCell(zone, level.toUByte(), cell)).line
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    ""
+                }
+                _ui.update { it.copy(loosen = LoosenCell(zone, level, cell, preview)) }
+            }
+            return
+        }
+        applyMatrixCell(zone, level, cell, authenticator)
+    }
+
+    /** The owner looked at the preview: go on (the core still asks for the owner's check). */
+    fun confirmLoosen(authenticator: Authenticator) {
+        val l = _ui.value.loosen ?: return
+        _ui.update { it.copy(loosen = null) }
+        applyMatrixCell(l.zone, l.level, l.cell, authenticator)
+    }
+
+    fun cancelLoosen() {
+        _ui.update { it.copy(loosen = null) }
+    }
+
+    private fun strictness(c: CellChoice) = when (c) {
+        CellChoice.AUTO -> 0
+        CellChoice.ASK_FIRST -> 1
+        CellChoice.ASK -> 2
+    }
+
+    private fun applyMatrixCell(zone: ZoneChoice, level: Int, cell: CellChoice, authenticator: Authenticator) {
         container.feedback.play(Event.Selection)
         _ui.update { ui ->
             ui.copy(

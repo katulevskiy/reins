@@ -227,7 +227,7 @@ pub struct Unknown {
 }
 
 /// A request's zone, what it named that isn't known, and the resource it acts on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resolved {
     pub zone: Zone,
     pub unknown: Vec<Unknown>,

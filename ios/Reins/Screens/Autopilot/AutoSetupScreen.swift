@@ -44,6 +44,13 @@ struct AutoSetupScreen: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("autoSetup")
+        .alert("Let Auto do more", isPresented: Binding(get: { setup.loosen != nil }, set: { if !$0 { setup.cancelLoosen() } })) {
+            Button("Cancel", role: .cancel) { setup.cancelLoosen() }
+            Button("Continue") { Task { await setup.confirmLoosen() } }
+                .accessibilityIdentifier("loosenConfirm")
+        } message: {
+            Text(verbatim: PolicyPreview.shown(setup.loosen?.line ?? ""))
+        }
     }
 
     // MARK: Parts
@@ -289,7 +296,7 @@ private struct MatrixGrid: View {
                     .accessibilityElement(children: .combine)
                     ForEach(Array(row.cells.enumerated()), id: \.offset) { level, cell in
                         MatrixCell(cell: cell, locked: !AutoSetupText.editable(level: level), busy: setup.busy) {
-                            Task { await setup.cycle(row.zone, level: level) }
+                            Task { await setup.tap(row.zone, level: level) }
                         }
                         .accessibilityLabel("\(AutoSetupText.zoneName(row.zone)), \(AutoSetupText.levels[min(level, 3)])")
                         .accessibilityValue(AutoSetupText.cellName(cell))

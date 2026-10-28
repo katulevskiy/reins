@@ -26,6 +26,8 @@ pub struct PolicyView<'a> {
     pub retention_days: u32,
     pub can_author: bool,
     pub can_activate: bool,
+    /// The staged rollout in a few words, when one is under way or just ended (O4).
+    pub rollout_line: Option<String>,
 }
 
 fn short(hash: &str) -> &str {
@@ -101,8 +103,17 @@ padding:10px;border:0;box-shadow:0 0 0 1px var(--rule);background:var(--paper)\"
     } else {
         format!("<section><h2>Request bodies</h2><p>{}</p></section>", retention_text(v.retention_days))
     };
+    let rollout = v.rollout_line.as_deref().map_or_else(String::new, |l| {
+        format!("<p><a class=\"pill\" href=\"{org}/policy/rollout\">{}{}</a></p>", svg(icon::GROUP), e(l))
+    });
+    let links = format!(
+        "<p><a class=\"pill\" href=\"{org}/policy/drafts\">{}Drafts</a> <a class=\"pill\" \
+href=\"{org}/policy/rollout\">{}Rollout</a> <a class=\"pill\" href=\"{org}/policy/repo\">Repo</a></p>",
+        svg(icon::LIST),
+        svg(icon::GROUP)
+    );
     let body = format!(
-        "<div class=\"row\"><h1>{}Policy</h1></div><section><h2>Active</h2>{active}</section>\
+        "<div class=\"row\"><h1>{}Policy</h1></div>{links}<section><h2>Active</h2>{active}{rollout}</section>\
 <section><h2>Revisions</h2><table><tr><th>#</th><th>Hash</th><th>State</th><th></th></tr>{drafts}</table>\
 <p class=\"meta\">Activation needs two Security admins, each on their phone.</p></section>{author}{retention}",
         svg(icon::SHIELD)
@@ -314,6 +325,7 @@ mod tests {
             retention_days: 30,
             can_author: true,
             can_activate: true,
+            rollout_line: None,
         };
         assert!(!policy(&frame(), &v).contains("</textarea><script>"));
     }
@@ -350,6 +362,7 @@ mod tests {
             retention_days: 365,
             can_author: true,
             can_activate: true,
+            rollout_line: None,
         };
         assert!(policy(&frame(), &v).contains("policy/activate"));
         v.can_activate = false;

@@ -18,6 +18,14 @@ final class AutoSetupModel {
     var error: String?
     /// Auto is on: the setup closes.
     private(set) var finished = false
+    /// A cell about to get looser, with what it would have done on this phone's last 30 days (02 §4).
+    private(set) var loosen: LoosenPreview?
+
+    struct LoosenPreview: Equatable {
+        var zone: ZoneChoice
+        var level: Int
+        var line: String
+    }
 
     @ObservationIgnored private weak var app: AppModel?
 
@@ -90,6 +98,31 @@ final class AutoSetupModel {
             try await app.core.setMatrixCell(zone: zone, level: UInt8(level), cell: next, owner: app.ownerCheck)
             app.feedback.play(.selection)
         }
+    }
+
+    /// A tap on a cell from the screen: a looser cell shows its preview first ([`loosen`]), then the owner is asked on
+    /// Continue ([`confirmLoosen`]); a stricter one changes at once.
+    func tap(_ zone: ZoneChoice, level: Int) async {
+        guard let app, AutoSetupText.editable(level: level),
+              let row = setup?.matrix.first(where: { $0.zone == zone }), level < row.cells.count else { return }
+        let old = row.cells[level]
+        let next = AutoSetupText.nextCell(old)
+        guard AutoSetupText.strictness(next) < AutoSetupText.strictness(old) else {
+            await cycle(zone, level: level)
+            return
+        }
+        let line = await PolicyPreview.line(app.core, .setCell(zone: zone, level: UInt8(level), cell: next))
+        loosen = LoosenPreview(zone: zone, level: level, line: line)
+    }
+
+    func confirmLoosen() async {
+        guard let l = loosen else { return }
+        loosen = nil
+        await cycle(l.zone, level: l.level)
+    }
+
+    func cancelLoosen() {
+        loosen = nil
     }
 
     // MARK: Turn on
@@ -203,6 +236,15 @@ enum AutoSetupText {
     static func editable(level: Int) -> Bool { (0..<3).contains(level) }
 
     /// Auto, then Ask first, then Ask, then Auto again.
+    /// Higher is stricter: Auto, Ask first, Ask.
+    static func strictness(_ cell: CellChoice) -> Int {
+        switch cell {
+        case .auto: 0
+        case .askFirst: 1
+        case .ask: 2
+        }
+    }
+
     static func nextCell(_ cell: CellChoice) -> CellChoice {
         switch cell {
         case .auto: .askFirst
