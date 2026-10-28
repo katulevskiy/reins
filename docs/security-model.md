@@ -728,6 +728,27 @@ org's policy, and an **executor** runs what was decided with the org's own crede
   back since.
 - **Retention.** Request bodies are kept 0, 30 (default) or 365 days, set by a device-signed two-person change.
 
+### Audit packaging (O5)
+
+- **Timestamps.** With an RFC 3161 authority configured, every checkpoint (its signed envelope, byte for byte) is
+  timestamped; the server checks only that the answer is for its own imprint and nonce, and keeps the authority's
+  response for `openssl ts -verify`. A checkpoint with a timestamp is an anchor a compromised server can't move: a
+  rewritten chain, even re-signed with the decision service key, fails `reins-audit verify --anchor` against it.
+- **Pruning** deletes events older than the plan keeps (Team 30 days, Business 1 year, Enterprise 7 years) only below
+  the newest stored checkpoint signed before the cut-off, which stays as the chain's anchor; a chain that doesn't
+  verify as stored is never pruned (the evidence of an edit stays).
+- **Streaming.** A destination's configuration is sealed under the tenant data key and never shown back; turning it on
+  is a two-person change with device signatures that names the configuration's digest, and any change to it turns
+  it off and lapses pending enables, so an admin can't redirect an approved stream. Deliveries go through the outbound
+  guard (HTTPS, public addresses, no redirects) and are not audit events themselves; a destination starting or
+  stopping to fail is.
+- **Evidence reports** are built only from an export that verified with the org's decision service key, offline by
+  `reins-audit report` or in the console, and are deterministic.
+- **Bring your own KMS.** The master key that seals every tenant key can be wrapped by the operator's AWS KMS, GCP
+  Cloud KMS or Azure Key Vault key, unwrapped once at launch; if the unwrap fails the server doesn't start (no
+  fallback to a local key). **Limit:** the unwrapped master and the signing keys are in the server's memory while it
+  runs, so revoking the KMS key stops the next launch, not the running one; HSM-held signing keys (06 §3) are later.
+
 ### Approval routing (O3)
 
 Org reviews name people by **relationship** as well as by group or role: the requester's manager, the repository's

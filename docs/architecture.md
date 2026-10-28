@@ -110,6 +110,9 @@ retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`
 (channel messages to update), and `reins_org_requests.resolved`. O4 adds `reins_org_policy_repo`,
 `reins_org_simulations` (reports by hash), `reins_org_rollouts` (every step pre-signed) and
 `reins_org_webhook_deliveries`, and keeps each request's body-free analysis and rollout step on `reins_org_requests`.
+O5 adds `reins_org_audit_sinks` (sealed streaming destinations and how far each was delivered) and
+`reins_org_witness` (RFC 3161 timestamps of checkpoints); the audit routes are under `/reins/org/<org>/audit/`
+(`export`, `report`, `keys.json`, `checkpoints/<seq>.json|tsr`, `streaming`).
 Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
 `reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
