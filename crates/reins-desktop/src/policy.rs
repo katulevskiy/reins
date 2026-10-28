@@ -79,45 +79,98 @@ fn floor_file(paths: &Paths) -> PathBuf {
     paths.state_dir.join("policy.floor")
 }
 
-/// The highest snapshot version applied: the larger of the two copies (an agent lowering one copy rolls nothing back).
-#[must_use]
-pub fn floor(paths: &Paths) -> u64 {
-    let copy = std::fs::read_to_string(floor_file(paths)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
-    PolicyStore::load(paths).floor.max(copy)
+/// The highest snapshot version applied, and the phone key that signed it: a floor belongs to one phone, so a new
+/// phone (a re-pairing, a new key trusted) starts from nothing, and an old phone's floor never blocks it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Floor {
+    pub signer: Option<String>,
+    pub version: u64,
 }
 
-fn write_floor(paths: &Paths, floor: u64) {
-    if let Err(e) = write_private(&floor_file(paths), floor.to_string().as_bytes()) {
+fn floor_copy(paths: &Paths) -> Floor {
+    std::fs::read(floor_file(paths)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn write_floor(paths: &Paths, floor: &Floor) {
+    let file = floor_file(paths);
+    let written = serde_json::to_vec(floor)
+        .map_err(|e| e.to_string())
+        .and_then(|b| write_private(&file, &b).map_err(|e| format!("{}: {e}", file.display())));
+    if let Err(e) = written {
         log::warn!("policy: {e}");
     }
 }
 
-/// The daemon's copy of the highest version (in memory, where an agent can't lower it): any file found below it is
-/// raised back, and a snapshot below it is dropped. Returns the highest version known now.
+/// The floor for `signer`: the larger of the copies that belong to it (an agent lowering one copy rolls nothing back).
+fn floor_for(store: &PolicyStore, copy: &Floor, signer: Option<&str>) -> u64 {
+    let kept = if store.signer.as_deref() == signer {
+        store.floor
+    } else {
+        0
+    };
+    let copied = if copy.signer.as_deref() == signer {
+        copy.version
+    } else {
+        0
+    };
+    kept.max(copied)
+}
+
+/// The floor of the phone pinned now.
 #[must_use]
-pub fn hold_floor(paths: &Paths, known: u64) -> u64 {
-    let on_disk = floor(paths);
-    if on_disk >= known {
-        return on_disk;
+pub fn floor(paths: &Paths) -> Floor {
+    let signer = pinned(paths).0;
+    let version = floor_for(&PolicyStore::load(paths), &floor_copy(paths), signer.as_deref());
+    Floor {
+        signer,
+        version,
     }
-    log::warn!("policy: the kept version went down ({on_disk} < {known}); restored, and an older snapshot dropped");
+}
+
+fn snapshot_version(signed: &Signed) -> Option<u64> {
+    serde_json::from_str::<serde_json::Value>(&signed.body)
+        .ok()
+        .and_then(|v| v.pointer("/binding/version").and_then(serde_json::Value::as_u64))
+}
+
+/// The daemon's copy of the floor (in memory, where an agent can't lower it): files found below it are raised back
+/// and an older snapshot is dropped. Nothing while logged out; for another phone than `known`'s, that phone's floor
+/// on disk is taken as it is. Returns the floor known now.
+#[must_use]
+pub fn hold_floor(paths: &Paths, known: &Floor) -> Floor {
+    if crate::server::oauth::logged_in_server(paths).is_none() {
+        return known.clone();
+    }
+    let now = floor(paths);
+    if now.signer != known.signer || now.version >= known.version {
+        return now;
+    }
+    // Under the store's lock: everything read again, and only ever raised.
     let restored = PolicyStore::update(paths, |s| {
-        let older = s.snapshot.as_ref().is_some_and(|signed| {
-            serde_json::from_str::<serde_json::Value>(&signed.body)
-                .ok()
-                .and_then(|v| v.pointer("/binding/version").and_then(serde_json::Value::as_u64))
-                .is_none_or(|v| v < known)
-        });
-        if older {
+        if s.signer != known.signer {
+            return None;
+        }
+        let version = floor_for(s, &floor_copy(paths), known.signer.as_deref()).max(known.version);
+        log::warn!("policy: the kept version went down; restored to {version}");
+        s.floor = version;
+        if s.snapshot.as_ref().is_some_and(|signed| snapshot_version(signed).is_none_or(|v| v < version)) {
             s.snapshot = None;
         }
-        s.floor = known;
+        let f = Floor {
+            signer: s.signer.clone(),
+            version,
+        };
+        write_floor(paths, &f);
+        Some(f)
     });
-    if let Err(e) = restored {
-        log::warn!("policy: {e}");
+    match restored {
+        Ok(Some(f)) => f,
+        Ok(None) => floor(paths),
+        Err(e) => {
+            log::warn!("policy: {e}");
+            known.clone()
+        }
     }
-    write_floor(paths, known);
-    known
 }
 
 impl PolicyStore {
@@ -191,8 +244,8 @@ pub struct Held {
 #[must_use]
 pub fn held(paths: &Paths, client_key: &str, now: i64) -> Held {
     let store = PolicyStore::load(paths);
-    let floor = floor(paths);
     let (key, disputed) = pinned(paths);
+    let floor = floor_for(&store, &floor_copy(paths), key.as_deref());
     let open = |s: &Signed| {
         let m = dp::open(s, key.as_deref(), &verify)?;
         dp::check(m.binding(), client_key, now)?;
@@ -253,15 +306,13 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
     }
     let (key, disputed) = pinned(paths);
     let client_key = identity.public_key();
-    let copy = std::fs::read_to_string(floor_file(paths)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0u64);
-    let applied = PolicyStore::update(paths, |store| {
+    PolicyStore::update(paths, |store| {
         let mut out = Applied {
             seen: mail.items.iter().map(|i| i.version).max().unwrap_or(0),
             ..Applied::default()
         };
         store.looked_at = now;
-        store.floor = store.floor.max(copy);
-        // Another phone (a new key trusted): what the old one signed goes.
+        // Another phone (a new key trusted): what the old one signed goes, and its floor with it.
         if store.signer != key {
             store.snapshot = None;
             store.tightens.clear();
@@ -269,6 +320,10 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
             store.floor = 0;
             store.signer.clone_from(&key);
         }
+        store.floor = floor_for(store, &floor_copy(paths), key.as_deref());
+        let open = |s: &Signed| {
+            dp::open(s, key.as_deref(), &verify).and_then(|m| dp::check(m.binding(), &client_key, now).map(|()| m))
+        };
         for item in &mail.items {
             let signed: Option<Signed> =
                 identity.unseal(&item.sealed).ok().and_then(|plain| serde_json::from_slice(&plain).ok());
@@ -276,17 +331,16 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
                 out.refused.push(Refusal::Unreadable);
                 continue;
             };
-            let opened = dp::open(&signed, key.as_deref(), &verify)
-                .and_then(|m| dp::check(m.binding(), &client_key, now).map(|()| m));
-            match opened {
+            match open(&signed) {
                 Ok(PolicyMessage::Snapshot(p)) if !disputed && p.binding.version > store.floor => {
                     store.floor = p.binding.version;
                     store.snapshot = Some(signed);
                     out.snapshots += 1;
                 }
-                Ok(PolicyMessage::Tighten(t)) if t.binding.version > store.floor => {
-                    let have = store.tightens.iter().any(|s| s.body == signed.body);
-                    if !have {
+                // A tightening only tightens: taken whatever the floor says (a floor raised by anyone can't hold back a
+                // Lockdown), until a snapshot as new supersedes it.
+                Ok(PolicyMessage::Tighten(_)) => {
+                    if !store.tightens.iter().any(|s| s.body == signed.body) {
                         store.tightens.push(signed);
                         out.tightens += 1;
                     }
@@ -295,19 +349,25 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
                 Err(r) => out.refused.push(r),
             }
         }
-        // Tightenings a snapshot superseded, or that no longer open, go.
-        let floor = store.floor;
-        store.tightens.retain(|s| {
-            matches!(
-                dp::open(s, key.as_deref(), &verify).and_then(|m| dp::check(m.binding(), &client_key, now).map(|()| m)),
-                Ok(PolicyMessage::Tighten(t)) if t.binding.version > floor
-            )
+        // Tightenings the kept snapshot superseded, or that no longer open, go; the newest are kept.
+        let held = store.snapshot.as_ref().and_then(|s| match open(s) {
+            Ok(PolicyMessage::Snapshot(p)) => Some(p.binding.version),
+            _ => None,
         });
+        store
+            .tightens
+            .retain(|s| matches!(open(s), Ok(PolicyMessage::Tighten(t)) if held.is_none_or(|v| t.binding.version > v)));
+        store.tightens.sort_by_key(|s| std::cmp::Reverse(snapshot_version(s).unwrap_or(0)));
         store.tightens.truncate(reins_proto::desktop::MAX_TIGHTENS);
-        (out, store.floor)
-    })?;
-    write_floor(paths, applied.1);
-    Ok(applied.0)
+        write_floor(
+            paths,
+            &Floor {
+                signer: store.signer.clone(),
+                version: store.floor,
+            },
+        );
+        out
+    })
 }
 
 /// Counts one use of budgeted task `id` spent here.
@@ -349,26 +409,27 @@ pub async fn pull(
 
 /// The daemon's pick-up: once on start, then a long poll, so a Lockdown or another tightening arrives within seconds.
 pub async fn puller(paths: Paths, identity: std::sync::Arc<Identity>) {
-    let known = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(floor(&paths)));
+    let known = std::sync::Arc::new(std::sync::Mutex::new(floor(&paths)));
     tokio::join!(pull_loop(paths.clone(), identity, std::sync::Arc::clone(&known)), keep_floor(paths, known));
 }
 
-/// Every second: the files' floor never goes below the one this daemon knows ([`hold_floor`]).
-async fn keep_floor(paths: Paths, known: std::sync::Arc<std::sync::atomic::AtomicU64>) {
-    use std::sync::atomic::Ordering;
+/// The floor this daemon knows, raised (or moved to a new phone's) by what is on disk now ([`hold_floor`]).
+fn keep(paths: &Paths, known: &std::sync::Mutex<Floor>) {
+    let mut k = known.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *k = hold_floor(paths, &k);
+}
+
+/// Every second: the files' floor never goes below the one this daemon knows.
+async fn keep_floor(paths: Paths, known: std::sync::Arc<std::sync::Mutex<Floor>>) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let now = hold_floor(&paths, known.load(Ordering::Acquire));
-        known.fetch_max(now, Ordering::AcqRel);
+        keep(&paths, &known);
     }
 }
 
-async fn pull_loop(
-    paths: Paths,
-    identity: std::sync::Arc<Identity>,
-    known: std::sync::Arc<std::sync::atomic::AtomicU64>,
-) {
+async fn pull_loop(paths: Paths, identity: std::sync::Arc<Identity>, known: std::sync::Arc<std::sync::Mutex<Floor>>) {
     let mut seen = 0u64;
+    let mut signer = pinned(&paths).0;
     let mut wait = Duration::ZERO;
     loop {
         if crate::server::oauth::logged_in_server(&paths).is_none() {
@@ -383,15 +444,18 @@ async fn pull_loop(
                 continue;
             }
         };
+        // Another phone: what the old one's versions were says nothing about the new one's.
+        let now_signer = pinned(&paths).0;
+        if now_signer != signer {
+            seen = 0;
+            signer = now_signer;
+        }
         let after = PolicyStore::load(&paths).newest().max(seen);
         let started = std::time::Instant::now();
         match pull(&paths, &identity, &client, after, wait).await {
             Ok(a) => {
                 seen = seen.max(a.seen);
-                known.fetch_max(
-                    hold_floor(&paths, known.load(std::sync::atomic::Ordering::Acquire)),
-                    std::sync::atomic::Ordering::AcqRel,
-                );
+                keep(&paths, &known);
                 wait = POLL_WAIT;
                 // A server that answers at once again and again (nothing new, or only what is refused): not a hot loop.
                 if started.elapsed() < Duration::from_secs(1) && a.snapshots + a.tightens == 0 {
@@ -599,11 +663,31 @@ mod tests {
         assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.binding.version), Some(9));
     }
 
+    /// A session, as `reins login` leaves it (the daemon holds the floor only while logged in).
+    fn log_in(paths: &Paths) {
+        let session = serde_json::json!({"server": "https://reins.example", "client_id": "c",
+            "token_endpoint": "https://reins.example/reins/oauth/token", "access_token": "a",
+            "access_expires_at": NOW + 3600, "refresh_token": "r"});
+        write_private(&paths.session_file(), session.to_string().as_bytes()).unwrap();
+        assert!(crate::server::oauth::logged_in_server(paths).is_some());
+    }
+
+    fn lowered(paths: &Paths, signer: &str, version: u64) {
+        write_floor(
+            paths,
+            &Floor {
+                signer: Some(signer.to_owned()),
+                version,
+            },
+        );
+    }
+
     /// An agent puts an older, looser snapshot back and lowers the floor in `policy.json`: the second copy refuses it;
     /// with both copies lowered, the daemon's own (in memory) restores them.
     #[test]
     fn a_lowered_floor_does_not_load_an_older_snapshot() {
         let (_d, paths, id, phone) = setup();
+        log_in(&paths);
         let me = id.public_key();
         let mut older = snapshot(&me, 8, NOW);
         if let PolicyMessage::Snapshot(p) = &mut older {
@@ -613,20 +697,104 @@ mod tests {
         let old_store = std::fs::read(store_file(&paths)).unwrap();
         apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 9, NOW))]), NOW).unwrap();
         let known = floor(&paths);
-        assert_eq!(known, 9);
+        assert_eq!(known.version, 9);
         // policy.json put back as it was at version 8 (its floor 8 with it).
         std::fs::write(store_file(&paths), &old_store).unwrap();
         let h = held(&paths, &me, NOW);
         assert_eq!((h.policy.is_none(), h.refused), (true, Some(Refusal::Older)));
         // Both copies lowered: loaded, until the daemon (which kept 9 in memory) restores the floor.
-        std::fs::write(floor_file(&paths), "8").unwrap();
+        lowered(&paths, &phone.key(), 8);
         assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.mode.mode), Some(Mode::Bypass));
-        assert_eq!(hold_floor(&paths, known), 9);
+        assert_eq!(hold_floor(&paths, &known).version, 9);
         assert!(held(&paths, &me, NOW).policy.is_none(), "the older snapshot is gone");
-        assert_eq!(floor(&paths), 9);
+        assert_eq!(floor(&paths).version, 9);
+        // A daemon that knew less never lowers what is on disk.
+        assert_eq!(
+            hold_floor(
+                &paths,
+                &Floor {
+                    signer: Some(phone.key()),
+                    version: 3,
+                }
+            )
+            .version,
+            9
+        );
+        assert_eq!(floor(&paths).version, 9);
         // The phone's next snapshot is taken as usual.
         apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 10, NOW))]), NOW).unwrap();
         assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.binding.version), Some(10));
+    }
+
+    /// Logged out, the daemon holds nothing (`forget` removed the floor with the session).
+    #[test]
+    fn logged_out_the_floor_is_left_alone() {
+        let (_d, paths, id, phone) = setup();
+        let me = id.public_key();
+        apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 9, NOW))]), NOW).unwrap();
+        let known = floor(&paths);
+        forget(&paths);
+        assert_eq!(hold_floor(&paths, &known), known, "nothing written while logged out");
+        assert!(!floor_file(&paths).exists());
+    }
+
+    /// A new phone (re-paired, a new key trusted) starts from its own versions: the old phone's floor, on disk or in the
+    /// daemon's memory, never blocks its snapshots.
+    #[test]
+    fn a_new_phone_starts_its_own_floor() {
+        let (_d, paths, id, old_phone) = setup();
+        log_in(&paths);
+        let me = id.public_key();
+        apply(&paths, &id, &mail(&old_phone, vec![old_phone.sealed(&me, &snapshot(&me, 900, NOW))]), NOW).unwrap();
+        let known = floor(&paths);
+        let new_phone = Phone::new();
+        TicketStore::update(&paths, |s| {
+            s.see_signing_key(&new_phone.key());
+            s.trust_key()
+        })
+        .unwrap();
+        let a =
+            apply(&paths, &id, &mail(&new_phone, vec![new_phone.sealed(&me, &snapshot(&me, 1, NOW))]), NOW).unwrap();
+        assert_eq!(a.snapshots, 1, "{a:?}");
+        let now = hold_floor(&paths, &known);
+        assert_eq!((now.signer.as_deref(), now.version), (Some(new_phone.key().as_str()), 1));
+        assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.binding.version), Some(1));
+    }
+
+    /// A floor raised by anyone (an agent, to block the phone) can't hold back a tightening: Lockdown still applies.
+    #[test]
+    fn tightenings_pass_a_raised_floor() {
+        let (_d, paths, id, phone) = setup();
+        let me = id.public_key();
+        apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 5, NOW))]), NOW).unwrap();
+        lowered(&paths, &phone.key(), u64::MAX);
+        let lock = PolicyMessage::Tighten(Tighten {
+            binding: Binding {
+                version: 6,
+                issued_at: NOW,
+                not_after: NOW + dp::TIGHTEN_SECS,
+                client_key: me.clone(),
+                connection_id: "conn-1".to_owned(),
+                profile: dp::PERSONAL.to_owned(),
+            },
+            tightening: Tightening {
+                lockdown: true,
+                ..Tightening::default()
+            },
+        });
+        let a = apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &lock)]), NOW).unwrap();
+        assert_eq!(a.tightens, 1, "{a:?}");
+        let h = held(&paths, &me, NOW);
+        assert!(h.policy.is_none(), "the raised floor refuses the snapshot");
+        let config = Config::default();
+        let local = dp::Local {
+            facts: &config.auto.facts,
+            matrix: &config.auto.matrix,
+            roots: &[],
+            scratch: &[],
+            home: "/home/me",
+        };
+        assert_eq!(dp::effective(None, &h.tightens, &local, &h.spent, NOW).gate, dp::Gate::Lockdown);
     }
 
     #[test]
