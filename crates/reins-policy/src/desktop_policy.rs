@@ -387,6 +387,10 @@ pub fn tighten_of(old: &DesktopPolicy, new: &DesktopPolicy) -> Option<Tightening
         || lost_ids
         || permit_gone
         || roots_gone;
+    // Coalesced: a tightening sent while Lockdown is on carries it, so the newest tightening covers the older ones'.
+    if !tight.is_empty() && new.mode.mode == Mode::Lockdown {
+        tight.lockdown = true;
+    }
     (!tight.is_empty()).then_some(tight)
 }
 
@@ -1025,6 +1029,11 @@ mod tests {
             explain: String::new(),
         });
         assert!(tighten_of(&old, &rule).is_some_and(|t| t.rules.len() == 1 && !t.stop_auto));
+        // Under Lockdown, any later tightening carries it too.
+        let (mut was_locked, mut still_locked) = (locked, rule.clone());
+        was_locked.mode.mode = Mode::Lockdown;
+        still_locked.mode.mode = Mode::Lockdown;
+        assert!(tighten_of(&was_locked, &still_locked).is_some_and(|t| t.lockdown && t.rules.len() == 1));
         let mut tasked = old.clone();
         tasked.snapshot.tasks.push(Task {
             id: "t1".to_owned(),

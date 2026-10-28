@@ -18,7 +18,9 @@ use reins_policy::desktop_policy::{
 };
 use reins_policy::effects::Workspace;
 use reins_policy::matrix::Snapshot;
-use reins_proto::desktop::{MAX_POLICY_CHARS, MAX_POLICY_ITEMS, PolicyKind, PolicyPost, SealedPolicy, decode_key};
+use reins_proto::desktop::{
+    MAX_POLICY_CHARS, MAX_POLICY_ITEMS, MAX_TIGHTEN_CHARS, PolicyKind, PolicyPost, SealedPolicy, decode_key,
+};
 use serde::{Deserialize, Serialize};
 
 use super::modes::{self, BYPASS_UNTIL_OFF, ModeRow};
@@ -291,22 +293,41 @@ impl Engine {
             messages.push(PolicyMessage::Snapshot(Box::new(body)));
             let snapshot_version = version;
             version += 1;
+            let seal_one = |m: &PolicyMessage| -> Option<SealedPolicy> {
+                let s = signed::sign(m, &public, &|b| signer.sign_b64(b));
+                if s.body.len() > MAX_BODY_BYTES {
+                    return None;
+                }
+                let limit = match m {
+                    PolicyMessage::Snapshot(_) => MAX_POLICY_CHARS,
+                    PolicyMessage::Tighten(_) => MAX_TIGHTEN_CHARS,
+                };
+                let sealed = seal(d.key, &s).ok().filter(|x| x.len() <= limit)?;
+                Some(SealedPolicy {
+                    connection_id: d.connection_id.clone(),
+                    version: m.version(),
+                    kind: match m {
+                        PolicyMessage::Snapshot(_) => PolicyKind::Snapshot,
+                        PolicyMessage::Tighten(_) => PolicyKind::Tighten,
+                    },
+                    sealed,
+                })
+            };
             let items: Option<Vec<SealedPolicy>> = messages
                 .iter()
                 .map(|m| {
-                    let s = signed::sign(m, &public, &|b| signer.sign_b64(b));
-                    if s.body.len() > MAX_BODY_BYTES {
-                        return None;
-                    }
-                    let sealed = seal(d.key, &s).ok().filter(|x| x.len() <= MAX_POLICY_CHARS)?;
-                    Some(SealedPolicy {
-                        connection_id: d.connection_id.clone(),
-                        version: m.version(),
-                        kind: match m {
-                            PolicyMessage::Snapshot(_) => PolicyKind::Snapshot,
-                            PolicyMessage::Tighten(_) => PolicyKind::Tighten,
-                        },
-                        sealed,
+                    seal_one(m).or_else(|| match m {
+                        // A tightening too large to relay (many new rules): the computer stops deciding (and keeps a
+                        // Lockdown) until the snapshot, which carries the rules, arrives.
+                        PolicyMessage::Tighten(t) => seal_one(&PolicyMessage::Tighten(Tighten {
+                            binding: t.binding.clone(),
+                            tightening: Tightening {
+                                lockdown: t.tightening.lockdown,
+                                stop_auto: true,
+                                ..Tightening::default()
+                            },
+                        })),
+                        PolicyMessage::Snapshot(_) => None,
                     })
                 })
                 .collect();

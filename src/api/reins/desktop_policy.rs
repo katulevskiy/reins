@@ -9,7 +9,9 @@ use std::{
     time::Duration,
 };
 
-use reins_proto::desktop::{MAX_POLICY_CHARS, MAX_TIGHTENS, MailedPolicy, POLICY_TTL_SECS, PolicyKind};
+use reins_proto::desktop::{
+    MAX_POLICY_CHARS, MAX_TIGHTEN_CHARS, MAX_TIGHTENS, MailedPolicy, POLICY_TTL_SECS, PolicyKind,
+};
 use tokio::sync::watch;
 
 use super::now_unix;
@@ -29,10 +31,11 @@ pub enum Posted {
 pub const MAX_ACCOUNT_POLICY_CHARS: usize = 16 * 1024 * 1024;
 /// The most computers one account keeps policy for.
 pub const MAX_ACCOUNT_MAILBOXES: usize = 32;
-/// The most characters kept in all, across accounts: a backstop that refuses new snapshots, never evicts. Tightenings
-/// (small, and what a Lockdown travels as) are bounded per computer and per account only, so no one else's posts can
-/// keep them out.
+/// The most snapshot characters kept in all, across accounts: a backstop that refuses new snapshots, never evicts.
 pub const MAX_TOTAL_POLICY_CHARS: usize = 512 * 1024 * 1024;
+/// The tightenings' own reserve, apart from the snapshots': what snapshots fill never keeps out a Lockdown. Each is at
+/// most [`MAX_TIGHTEN_CHARS`], [`MAX_TIGHTENS`] per computer, so filling it takes thousands of computers.
+pub const TIGHTEN_RESERVE: usize = 64 * 1024 * 1024;
 
 /// Per desktop connection: the newest snapshot and the tightenings newer than it, until the computer picks them up.
 /// Memory only, each kept [`POLICY_TTL_SECS`] after it was posted; a server that restarts forgot them, and the phone
@@ -40,16 +43,17 @@ pub const MAX_TOTAL_POLICY_CHARS: usize = 512 * 1024 * 1024;
 ///
 /// Every change happens under one lock, so a post and a pick-up never see half of another. Bounds, none of which ever
 /// pushes out what another account keeps (a Lockdown included):
-/// - per computer: one snapshot, replaced by a newer one, and at most [`MAX_TIGHTENS`] tightenings (its own oldest go),
-///   each at most [`MAX_POLICY_CHARS`];
+/// - per computer: one snapshot of at most [`MAX_POLICY_CHARS`], replaced by a newer one, and at most [`MAX_TIGHTENS`]
+///   tightenings of at most [`MAX_TIGHTEN_CHARS`] (its own oldest go: the newest carries a Lockdown in force);
 /// - per account: [`MAX_ACCOUNT_MAILBOXES`] computers and [`MAX_ACCOUNT_POLICY_CHARS`] in all;
-/// - per server: [`MAX_TOTAL_POLICY_CHARS`].
+/// - per server: [`MAX_TOTAL_POLICY_CHARS`] of snapshots and, apart, [`TIGHTEN_RESERVE`] of tightenings.
 ///
 /// A post over a budget is refused, and the phone sends it again.
 pub struct Policies {
     state: Mutex<State>,
-    /// [`MAX_TOTAL_POLICY_CHARS`] (smaller in tests).
+    /// [`MAX_TOTAL_POLICY_CHARS`] and [`TIGHTEN_RESERVE`] (smaller in tests).
     ceiling: usize,
+    reserve: usize,
 }
 
 impl Default for Policies {
@@ -57,6 +61,7 @@ impl Default for Policies {
         Self {
             state: Mutex::default(),
             ceiling: MAX_TOTAL_POLICY_CHARS,
+            reserve: TIGHTEN_RESERVE,
         }
     }
 }
@@ -64,20 +69,22 @@ impl Default for Policies {
 #[derive(Default)]
 struct State {
     by_connection: HashMap<String, Mailbox>,
-    /// Characters kept per account, and in all.
+    /// Characters kept per account (both kinds), and in all: snapshots, and tightenings apart.
     by_account: HashMap<String, usize>,
     chars: usize,
+    tighten_chars: usize,
 }
 
 impl State {
     /// Runs `f` on `connection`'s mailbox, keeping the character counts right.
     fn with<R>(&mut self, connection: &str, f: impl FnOnce(&mut Mailbox) -> R) -> R {
         let mailbox = self.by_connection.entry(connection.to_owned()).or_insert_with(Mailbox::new);
-        let before = mailbox.chars();
+        let (before, tightens_before) = (mailbox.chars(), mailbox.tighten_chars());
         let r = f(mailbox);
-        let after = mailbox.chars();
+        let (after, tightens_after) = (mailbox.chars(), mailbox.tighten_chars());
         let account = mailbox.account.clone();
-        self.chars = self.chars - before + after;
+        self.chars = self.chars - (before - tightens_before) + (after - tightens_after);
+        self.tighten_chars = self.tighten_chars - tightens_before + tightens_after;
         if let Some(a) = account {
             let n = self.by_account.entry(a.clone()).or_default();
             *n = *n - before + after;
@@ -120,6 +127,10 @@ impl Mailbox {
         self.snapshot.iter().chain(&self.tightens).map(|k| k.sealed.len()).sum()
     }
 
+    fn tighten_chars(&self) -> usize {
+        self.tightens.iter().map(|k| k.sealed.len()).sum()
+    }
+
     /// Drops what expired.
     fn expire(&mut self, now: i64) {
         if self.snapshot.as_ref().is_some_and(|k| k.until <= now) {
@@ -143,7 +154,11 @@ impl Policies {
     /// [`MAX_TIGHTENS`] (this computer's oldest go). An empty or oversized blob, or one over a budget, is refused; a
     /// version already kept is stale.
     pub fn post(&self, account: &str, connection: &str, item: MailedPolicy, now: i64) -> Posted {
-        if item.sealed.is_empty() || item.sealed.len() > MAX_POLICY_CHARS {
+        let limit = match item.kind {
+            PolicyKind::Snapshot => MAX_POLICY_CHARS,
+            PolicyKind::Tighten => MAX_TIGHTEN_CHARS,
+        };
+        if item.sealed.is_empty() || item.sealed.len() > limit {
             return Posted::Refused;
         }
         let mut state = self.lock();
@@ -161,6 +176,10 @@ impl Policies {
         // Budgets, counted as if nothing else went (only this computer's own snapshot is replaced for sure).
         let freed = match item.kind {
             PolicyKind::Snapshot => mailbox.snapshot.as_ref().map_or(0, |k| k.sealed.len()),
+            // At the cap, this computer's oldest goes.
+            PolicyKind::Tighten if mailbox.tightens.len() >= MAX_TIGHTENS => {
+                mailbox.tightens.first().map_or(0, |k| k.sealed.len())
+            }
             PolicyKind::Tighten => 0,
         };
         let new_mailbox = mailbox.account.is_none();
@@ -169,7 +188,10 @@ impl Policies {
         let account_chars = state.by_account.get(account).copied().unwrap_or(0);
         if (new_mailbox && mailboxes >= MAX_ACCOUNT_MAILBOXES)
             || account_chars + grows > MAX_ACCOUNT_POLICY_CHARS
-            || (item.kind == PolicyKind::Snapshot && state.chars + grows > self.ceiling)
+            || match item.kind {
+                PolicyKind::Snapshot => state.chars + grows > self.ceiling,
+                PolicyKind::Tighten => state.tighten_chars + grows > self.reserve,
+            }
         {
             warn!(
                 "Refused a desktop policy over its budget (account {account_chars} characters, {mailboxes} computers)"
@@ -381,10 +403,11 @@ mod tests {
     #[test]
     fn each_computer_has_its_own_budget() {
         let p = Policies::default();
+        let small = "x".repeat(MAX_TIGHTEN_CHARS);
         let big = "x".repeat(MAX_POLICY_CHARS);
         assert_eq!(p.post("a-mine", "mine", tighten(1), 100), Posted::Kept);
         for v in 0..(MAX_TIGHTENS as u64 * 4) {
-            assert_eq!(p.post("a-theirs", "theirs", item(10 + v, PolicyKind::Tighten, &big), 100), Posted::Kept);
+            assert_eq!(p.post("a-theirs", "theirs", item(10 + v, PolicyKind::Tighten, &small), 100), Posted::Kept);
         }
         assert_eq!(p.lock().by_connection["theirs"].tightens.len(), MAX_TIGHTENS, "their oldest go, not ours");
         for v in 0..(MAX_TIGHTENS as u64 * 4) {
@@ -393,7 +416,7 @@ mod tests {
         assert_eq!(sealed(&p.peek("mine", 0, 101)), ["t1"], "this computer's Lockdown stays");
         let theirs = &p.lock().by_connection["theirs"];
         assert!(theirs.snapshot.is_some() && theirs.tightens.len() <= MAX_TIGHTENS);
-        assert!(theirs.chars() <= MAX_POLICY_CHARS * (1 + MAX_TIGHTENS));
+        assert!(theirs.chars() <= MAX_POLICY_CHARS + MAX_TIGHTEN_CHARS * MAX_TIGHTENS);
     }
 
     /// An account has a budget of its own: past its computers or its characters, its posts are refused (the phone
@@ -415,15 +438,6 @@ mod tests {
         assert_eq!(state.by_account["greedy"], kept * MAX_POLICY_CHARS);
         drop(state);
         assert_eq!(kept, MAX_ACCOUNT_MAILBOXES, "the computers past the cap are refused");
-        // Tightenings until the account's characters run out: then refused, never kept past the budget.
-        let mut refused = false;
-        for v in 0..(MAX_TIGHTENS as u64) {
-            for c in 0..MAX_ACCOUNT_MAILBOXES {
-                refused |=
-                    p.post("greedy", &format!("c{c}"), item(20 + v, PolicyKind::Tighten, &big), 100) == Posted::Refused;
-            }
-        }
-        assert!(refused);
         assert!(p.lock().by_account["greedy"] <= MAX_ACCOUNT_POLICY_CHARS);
         // The other account's Lockdown is still there, and it can still post.
         assert_eq!(p.post("other", "theirs", tighten(2), 100), Posted::Kept);
@@ -438,8 +452,8 @@ mod tests {
         assert_eq!(p.lock().chars, 0);
     }
 
-    /// With the server's ceiling filled by others, a new snapshot is refused, but a tightening (a Lockdown) still gets
-    /// through: only the per-computer and per-account bounds hold it.
+    /// With the server's ceiling filled by others' snapshots, a new snapshot is refused, but a tightening (a Lockdown)
+    /// still gets through: it has a reserve of its own.
     #[test]
     fn a_full_server_still_takes_a_tightening() {
         let p = Policies {
@@ -450,6 +464,38 @@ mod tests {
         assert_eq!(p.post("me", "mine", item(1, PolicyKind::Snapshot, "s"), 100), Posted::Refused, "full");
         assert_eq!(p.post("me", "mine", item(2, PolicyKind::Tighten, "lockdown"), 100), Posted::Kept);
         assert_eq!(sealed(&p.peek("mine", 0, 101)), ["lockdown"]);
+    }
+
+    /// Tightenings stay small and few, so their reserve bounds them: one too large is refused, a computer keeps at most
+    /// [`MAX_TIGHTENS`] (its own oldest go), and past the reserve new ones are refused, never anyone's evicted.
+    #[test]
+    fn tightenings_are_small_few_and_bounded() {
+        let p = Policies {
+            reserve: 3 * MAX_TIGHTEN_CHARS,
+            ..Policies::default()
+        };
+        let small = "x".repeat(MAX_TIGHTEN_CHARS);
+        assert_eq!(
+            p.post("a", "c1", item(1, PolicyKind::Tighten, &"x".repeat(MAX_TIGHTEN_CHARS + 1)), 100),
+            Posted::Refused
+        );
+        assert_eq!(p.post("a", "c1", item(2, PolicyKind::Tighten, &small), 100), Posted::Kept);
+        assert_eq!(p.post("b", "c2", item(2, PolicyKind::Tighten, &small), 100), Posted::Kept);
+        assert_eq!(p.post("c", "c3", item(2, PolicyKind::Tighten, &small), 100), Posted::Kept);
+        assert_eq!(
+            p.post("d", "c4", item(2, PolicyKind::Tighten, &small), 100),
+            Posted::Refused,
+            "the reserve is full"
+        );
+        assert_eq!(p.lock().tighten_chars, 3 * MAX_TIGHTEN_CHARS);
+        assert_eq!(sealed(&p.peek("c1", 0, 101)).len(), 1, "nothing evicted");
+        // One computer's many: its own oldest go, the count stays at the cap.
+        let q = Policies::default();
+        for v in 0..(MAX_TIGHTENS as u64 * 3) {
+            assert_eq!(q.post("a", "c1", item(10 + v, PolicyKind::Tighten, "t"), 100), Posted::Kept);
+        }
+        assert_eq!(q.lock().by_connection["c1"].tightens.len(), MAX_TIGHTENS);
+        assert_eq!(q.lock().tighten_chars, MAX_TIGHTENS);
     }
 
     #[test]
