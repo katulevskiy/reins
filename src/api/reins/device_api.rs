@@ -722,14 +722,16 @@ async fn post_policy(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbC
                 kind: item.kind,
                 sealed: item.sealed,
             };
-            if HUB.policies.post(&item.connection_id, mailed, now) == super::desktop_policy::Posted::Refused {
+            if HUB.policies.post(&headers.user.uuid.to_string(), &item.connection_id, mailed, now)
+                == super::desktop_policy::Posted::Refused
+            {
                 refused += 1;
             }
         }
     }
     // The phone keeps what wasn't taken and sends it again (the rest of the post is kept either way).
     if refused > 0 {
-        return Err(bad_request(format!("{refused} items empty or larger than the limit")));
+        return Err(bad_request(format!("{refused} items refused: empty, too large, or over this account's budget")));
     }
     Ok(Status::NoContent)
 }

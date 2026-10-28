@@ -573,7 +573,8 @@ How it travels and is checked:
 - A tightening (Lockdown, a new Deny or Review rule, an ended task, anything else stricter) is also sent first as a
   small signed "tighten now". It applies at once, with or without a snapshot and whatever versions came before, until
   a snapshot as new arrives. The server keeps each computer's messages in its own budget, so another account can't
-  push them out. Lockdown refuses every tool use. The daemon long-polls, so it arrives within seconds.
+  push them out (each account has its own budget too, and a post over it is refused and sent again). Lockdown
+  refuses every tool use. The daemon long-polls, so it arrives within seconds.
 
 What the computer's own settings can do: only tighten. A local fact counts only where it is stricter than the signed
 one, a local matrix cell only where stricter, a local workspace root only inside a signed root, a scratch folder only
