@@ -73,7 +73,8 @@ pub fn routes() -> Vec<Route> {
         get_devices,
         delete_device,
         post_logout,
-        post_revocations
+        post_revocations,
+        post_policy
     ]
 }
 
@@ -692,6 +693,35 @@ async fn post_revocations(data: Data<'_>, headers: Headers, key: DeviceKey, conn
     for item in post.items {
         if ReinsConnection::find_by_uuid_and_user(&item.connection_id, &headers.user.uuid, &conn).await.is_some() {
             HUB.revocations.post(&item.connection_id, item.sealed, item.all, now);
+        }
+    }
+    Ok(Status::NoContent)
+}
+
+/// The largest body of `POST /reins/api/desktop/policy` (a snapshot is far smaller than its limit).
+const MAX_POLICY_BODY_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Decisions v2 (08 R1): the phone-signed desktop policy, a snapshot or a "tighten now", sealed to each paired
+/// computer's key. Each waits (in memory, a day at most) until superseded; that computer's daemon picks it up. Only
+/// for this account's connections; others are skipped.
+#[post("/reins/api/desktop/policy", data = "<data>")]
+async fn post_policy(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    use reins_proto::desktop::{MAX_POLICY_ITEMS, MailedPolicy, PolicyPost};
+    require_approval_device(&headers, &key, &conn).await?;
+    let post: PolicyPost = serde_json::from_slice(&read_body_limited(data, MAX_POLICY_BODY_BYTES).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    if post.items.len() > MAX_POLICY_ITEMS {
+        return Err(bad_request(format!("at most {MAX_POLICY_ITEMS} items")));
+    }
+    let now = now_unix();
+    for item in post.items {
+        if ReinsConnection::find_by_uuid_and_user(&item.connection_id, &headers.user.uuid, &conn).await.is_some() {
+            let mailed = MailedPolicy {
+                version: item.version,
+                kind: item.kind,
+                sealed: item.sealed,
+            };
+            HUB.policies.post(&item.connection_id, mailed, now);
         }
     }
     Ok(Status::NoContent)

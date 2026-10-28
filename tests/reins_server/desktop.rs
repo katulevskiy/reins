@@ -481,3 +481,63 @@ async fn an_ai_never_hears_where_autopilot_leans_or_who_decided() {
     let (_, _, answer) = get_call(&server, Some(&tokens.access), &id).await;
     assert!(answer.get("decided").is_none(), "{answer}");
 }
+
+/// `GET /reins/desktop/policy` as the app with `token`.
+async fn get_policy(server: &Server, token: &str, query: &str) -> Answer {
+    read(client().get(server.url(&format!("/reins/desktop/policy{query}"))).bearer_auth(token).send().await.unwrap())
+        .await
+}
+
+/// Decisions v2 (08 R1): the phone posts the signed policy sealed to each computer; that computer picks up what is
+/// newer than it holds, waiting for news; another account's computer, or an AI, gets nothing.
+#[tokio::test]
+async fn a_computer_picks_up_the_policy_its_phone_sealed_to_it() {
+    let (server, phone, tokens) = paired().await;
+    let id = tokens.connection_id.clone();
+    let item = |version: u64, kind: &str, sealed: &str| json!({"connection_id": id, "version": version, "kind": kind, "sealed": sealed});
+    let (status, _, empty) = get_policy(&server, &tokens.access, "").await;
+    assert_eq!((status, empty["items"].clone()), (StatusCode::OK, json!([])), "nothing yet, no wait asked");
+
+    let post = json!({"items": [item(10, "snapshot", "c25hcA"), item(11, "tighten", "dGln"),
+        {"connection_id": "someone-else", "version": 1, "kind": "snapshot", "sealed": "eA"}]});
+    let (status, body) = phone.post("/desktop/policy", &post).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, _, mail) = get_policy(&server, &tokens.access, "?after=0").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        mail["items"],
+        json!([{"version": 10, "kind": "snapshot", "sealed": "c25hcA"},
+            {"version": 11, "kind": "tighten", "sealed": "dGln"}])
+    );
+    let (_, _, newer) = get_policy(&server, &tokens.access, "?after=10").await;
+    assert_eq!(newer["items"].as_array().map(Vec::len), Some(1));
+
+    // A wait ends with the next post.
+    let start = Instant::now();
+    let waiting = get_policy(&server, &tokens.access, "?after=11&wait=20");
+    let later = async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        phone.post("/desktop/policy", &json!({"items": [item(12, "snapshot", "bmV3")]})).await
+    };
+    let ((status, _, woke), (posted, _)) = tokio::join!(waiting, later);
+    assert_eq!((status, posted), (StatusCode::OK, StatusCode::NO_CONTENT));
+    assert_eq!(woke["items"], json!([{"version": 12, "kind": "snapshot", "sealed": "bmV3"}]));
+    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
+
+    // Too many items at once is refused; another account cannot post for this computer.
+    let many: Vec<Value> =
+        (0..=reins_proto::desktop::MAX_POLICY_ITEMS as u64).map(|v| item(100 + v, "tighten", "eA")).collect();
+    let (status, _) = phone.post("/desktop/policy", &json!({"items": many})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let other = server.phone("eve@example.com").await;
+    other.register_device().await;
+    let (status, _) = other.post("/desktop/policy", &json!({"items": [item(50, "snapshot", "ZXZl")]})).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "skipped silently");
+    let (_, _, after) = get_policy(&server, &tokens.access, "?after=12").await;
+    assert_eq!(after["items"], json!([]));
+    // An AI's connection has no policy of its own; a missing token is refused.
+    let ai = server.connect_ai(&phone, "dev@example.com", None).await;
+    assert_eq!(get_policy(&server, &ai.access, "").await.2["items"], json!([]));
+    let (status, _, _) = read(client().get(server.url("/reins/desktop/policy")).send().await.unwrap()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

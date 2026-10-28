@@ -42,7 +42,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack]
+    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack, get_policy]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -539,6 +539,26 @@ async fn post_revocations_ack(data: Data<'_>, request: McpRequest, conn: DbConn)
     };
     HUB.revocations.ack(&connection.uuid, &ack);
     DesktopResponse::json(Status::Ok, json!({}))
+}
+
+/// Decisions v2 (08 R1): the phone-signed policy for this computer newer than version `after` (default 0), waiting
+/// up to `wait` seconds (at most [`reins_proto::desktop::POLICY_WAIT_MAX_SECS`]) for a post when there is none yet;
+/// with the approval device's signing key, as `GET /reins/desktop/tickets` names it.
+#[get("/reins/desktop/policy?<after>&<wait>")]
+async fn get_policy(after: Option<u64>, wait: Option<u64>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    let signing_key = super::tickets::device_keys(&connection.user_uuid.to_string(), &conn).await.map(|k| k.sign_pub);
+    // No pooled connection is held across the wait.
+    drop(conn);
+    let wait = Duration::from_secs(wait.unwrap_or(0).min(reins_proto::desktop::POLICY_WAIT_MAX_SECS));
+    let mail = reins_proto::desktop::PolicyMail {
+        items: HUB.policies.wait(&connection.uuid, after.unwrap_or(0), wait).await,
+        signing_key,
+    };
+    DesktopResponse::json(Status::Ok, json!(mail))
 }
 
 #[cfg(test)]

@@ -69,6 +69,8 @@ flowchart TB
 | `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | iOS, Android | none; pairing links open the app (`REINS_APPLE_TEAM_ID`, `REINS_ANDROID_CERT_SHA256`) |
 | `/.well-known/openai-apps-challenge` | OpenAI's directory review | none; the domain verification token (`REINS_OPENAI_APPS_CHALLENGE`), 404 when unset |
 | `POST /reins/desktop/calls`, `GET /reins/desktop/calls/<id>` | desktop app | the same OAuth token as MCP; only desktop-only tools |
+| `POST /reins/api/desktop/policy` | the approval device | as the rest of `/reins/api/*`; the phone-signed desktop policy sealed to each paired computer, only the account's connections, kept in memory |
+| `GET /reins/desktop/policy?after=<version>&wait=<s>` | desktop daemon | the same OAuth token as MCP; that computer's newest snapshot and newer tightenings, long-polls up to 25 s, with the approval device's signing key |
 | `/reins/api/*` (`device`, `pending`, `requests`, `pairings`, `pairings/claim`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
 | `POST /reins/api/joins`, `GET /reins/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
 | `POST /reins/api/account/delete` | the phone apps' Settings → Delete account | Vaultwarden login token issued in the last 5 minutes, the typed account email, and the approval device (or, from another device, the master password hash); see [security model](security-model.md#accounts-without-a-master-password) |
