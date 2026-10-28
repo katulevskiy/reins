@@ -104,6 +104,8 @@ pub struct State {
     told: Mutex<Vec<(String, reins_proto::autopilot::Suggestion)>>,
     /// One publish of the policy to the paired computers at a time (`desktop_policy`).
     pub(crate) publish: tokio::sync::Mutex<()>,
+    /// Unix seconds: when the computers' folder proposals were last fetched (`desktop_folders`).
+    pub(crate) folders_fetched: std::sync::atomic::AtomicI64,
 }
 
 /// A parked item, as the pass sees it.

@@ -14,6 +14,7 @@ pub mod adapter;
 pub mod context;
 pub mod decide;
 pub mod desktop;
+pub(crate) mod desktop_folders;
 pub(crate) mod desktop_policy;
 pub(crate) mod engine;
 pub mod gates;
@@ -42,8 +43,8 @@ pub(crate) use engine::{activity_note, suggestion_line};
 pub use runtime::{DownloadProgress, ModelRuntime};
 pub use types::{
     AutoDecisionView, AutoQuestion, AutoSetup, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings,
-    AutopilotStats, CellChoice, ClassView, ConnectionAutopilot, DigestGroup, FactChoice, MatrixRowView, MatrixView,
-    ModelInput, ModelOutput, ModelState, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME,
-    OvernightDigest, Preset, ProfileView, RiskLevel, RiskView, SuggestionView, TaskView, ThresholdReplay, Verdict,
-    WorldItem, ZoneChoice,
+    AutopilotStats, CellChoice, ClassView, ComputerFolders, ConnectionAutopilot, DigestGroup, FactChoice,
+    FolderKindChoice, FolderQuestion, FolderView, MatrixRowView, MatrixView, ModelInput, ModelOutput, ModelState,
+    ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightDigest, Preset, ProfileView, RiskLevel,
+    RiskView, SuggestionView, TaskView, ThresholdReplay, Verdict, WorldItem, ZoneChoice,
 };

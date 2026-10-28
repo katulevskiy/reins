@@ -16,7 +16,6 @@ use reins_policy::desktop_policy::{
     self as signed, Binding, DesktopPolicy, MAX_BODY_BYTES, ModeState, PERSONAL, PolicyMessage, REFRESH_SECS,
     TIGHTEN_SECS, Tighten, Tightening, VALIDITY_SECS, desktop_facts, desktop_rules, desktop_tasks, tighten_of,
 };
-use reins_policy::effects::Workspace;
 use reins_policy::matrix::Snapshot;
 use reins_proto::desktop::{
     MAX_POLICY_CHARS, MAX_POLICY_ITEMS, MAX_TIGHTEN_CHARS, PolicyKind, PolicyPost, SealedPolicy, decode_key,
@@ -90,6 +89,8 @@ impl Engine {
         let mut snap = self.ap_snapshot()?;
         self.ap_tasks_into(&mut snap, now);
         let (facts, github_ids) = desktop_facts(&snap.facts);
+        // The standard roots, and the folders the owner confirmed for this computer (`desktop_folders`).
+        let (roots, scratch) = self.ap_signed_folders(connection_id)?;
         // A computer decides commands and files, never messages: the people a task may reach stay on the phone. Without
         // them a task covers no message, so this only narrows, except where people were its only resource bound (an
         // empty envelope covers any resource): such a task isn't sent at all.
@@ -120,9 +121,8 @@ impl Engine {
                 facts,
             },
             github_ids,
-            roots: Workspace::standard("").roots,
-            // The phone has no scratch folders the owner confirmed yet.
-            scratch: Vec::new(),
+            roots,
+            scratch,
         })
     }
 
@@ -767,5 +767,57 @@ mod tests {
         };
         assert_eq!(t.tightening.ended_tasks, [mine_id]);
         assert!(snapshot_of(env.open(&items[1])).snapshot.tasks.is_empty());
+    }
+    /// A folder the computer proposed, confirmed with the owner check, goes into its snapshot at once; removing it
+    /// tells the computer to stop deciding first (a tighten), then sends the snapshot without it. The proposals come
+    /// with the syncs, never as a notification.
+    #[tokio::test]
+    async fn confirmed_folders_are_signed_and_removing_tightens() {
+        let env = env().await;
+        let memory = "/home/me/.claude/projects/*/memory";
+        mount(
+            &env.server,
+            "GET",
+            "/reins/api/desktop/folders",
+            200,
+            json!({"items": [{"connection_id": DESK, "at": 100, "proposal": {"home": "/home/me", "folders": [
+                {"path": memory, "kind": "scratch"}, {"path": "/home/me", "kind": "root"}]}}]}),
+        )
+        .await;
+        env.publish_at(unix_now()).await;
+        let engine = env.engine();
+        engine.fetch_desktop_folders(&engine.session().unwrap()).await;
+        let qs = env.core.folder_questions().await.unwrap();
+        assert_eq!(qs.iter().map(|q| q.path.as_str()).collect::<Vec<_>>(), [memory], "the home folder is refused");
+        let owner = crate::autopilot::testing::FakeOwner::new(Ok(true));
+        env.core
+            .confirm_computer_folder(
+                DESK.to_owned(),
+                memory.to_owned(),
+                crate::autopilot::FolderKindChoice::Scratch,
+                owner,
+            )
+            .await
+            .unwrap();
+        let posts = env.posts().await;
+        let last = posts.last().unwrap();
+        assert_eq!(
+            last.items.iter().map(|i| i.kind).collect::<Vec<_>>(),
+            [PolicyKind::Snapshot],
+            "loosening: no tighten"
+        );
+        assert_eq!(snapshot_of(env.open(&last.items[0])).scratch, [memory]);
+        env.core
+            .remove_computer_folder(DESK.to_owned(), memory.to_owned(), crate::autopilot::FolderKindChoice::Scratch)
+            .await
+            .unwrap();
+        let posts = env.posts().await;
+        let items = &posts.last().unwrap().items;
+        assert_eq!(items.iter().map(|i| i.kind).collect::<Vec<_>>(), [PolicyKind::Tighten, PolicyKind::Snapshot]);
+        let PolicyMessage::Tighten(t) = env.open(&items[0]) else {
+            panic!("a tighten first")
+        };
+        assert!(t.tightening.stop_auto);
+        assert!(snapshot_of(env.open(&items[1])).scratch.is_empty());
     }
 }

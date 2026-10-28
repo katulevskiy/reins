@@ -107,7 +107,7 @@ fn level_of(level: u8) -> Result<Level, CoreError> {
     })
 }
 
-async fn confirm(owner: &dyn OwnerCheck, reason: &str) -> Result<(), CoreError> {
+pub(crate) async fn confirm(owner: &dyn OwnerCheck, reason: &str) -> Result<(), CoreError> {
     match owner.confirm(reason.to_owned()).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(CoreError::invalid("the owner did not confirm")),
