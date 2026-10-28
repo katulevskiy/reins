@@ -1,8 +1,8 @@
 import BackgroundTasks
 import UIKit
 
-/// A push that reaches the app process (the Android app's `PushHandler`): `replaced` comes as a background push; the
-/// others reach the app only when it runs (they are alerts the notification extension handles). The core fetches what
+/// A push that reaches the app process (the Android app's `PushHandler`): `replaced` and `hold` come as background
+/// pushes; the others reach the app only when it runs (they are alerts the notification extension handles). The core fetches what
 /// the push announced and tells `AppNotifier`, which notifies or chimes.
 @MainActor
 enum PushReceiver {
@@ -28,6 +28,8 @@ enum PushReceiver {
         // A push for another profile on this phone: not this core's (no fetch, no "replaced"). Its notification says
         // only that something waits, and a tap opens that profile.
         guard WorkProfiles.belongsHere(userInfo, remote: true) else { return .noData }
+        // A held email is due (08 R10): sent from here, silently; only a "Still send?" notifies.
+        if payload.silent { return await SendHolds.receive(model, notifier: host.notifier) }
         if payload.kind == "replaced" {
             model.markReplaced()
             host.notifier.deviceReplaced()
@@ -100,6 +102,9 @@ enum BackgroundRefresh {
     private static func refresh(host: AppHost) async -> Bool {
         // The refresh may be why the app launched: the store may still be opening.
         guard let model = await host.ready(), case .signedIn = model.session, !model.deviceReplaced else { return true }
+        // Held sends that came due go first, so one woken for too late says "Still send?" (the sync releases them too,
+        // silently).
+        _ = try? await SendHolds.release(model, notifier: host.notifier)
         do {
             _ = try await model.core.sync(waitSecs: 0)
         } catch let CoreError.Server(status, _) where status == 403 {

@@ -8,7 +8,8 @@ import SwiftUI
 enum ActivityText {
     private static func capitalized(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
-    /// An entry that went through (not denied, not failed) reads in the past.
+    /// An entry that went through (not denied, not failed) reads in the past. A held email ("held") has not gone yet,
+    /// and "undone" and "not_sent" never went.
     static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
 
     /// The label line of a waiting card: "Gmail · Send" (set in mono capitals), from the core's provider and action.

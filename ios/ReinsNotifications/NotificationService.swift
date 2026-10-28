@@ -28,6 +28,12 @@ final class NotificationService: UNNotificationServiceExtension {
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         let settings = FeedbackSettings.load()
         let payload = PushPayload(userInfo: request.content.userInfo)
+        // A held send's push is a background wake for the app (08 R10), never an alert: if one reaches here, it shows
+        // nothing, and this process never touches the hold.
+        if payload?.silent == true {
+            contentHandler(NotificationContent.nothing())
+            return
+        }
         let generic = NotificationContent.generic(request.content, payload: payload, settings: settings)
         lock.withLock {
             deliver = contentHandler

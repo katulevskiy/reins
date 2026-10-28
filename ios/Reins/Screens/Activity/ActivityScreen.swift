@@ -379,6 +379,13 @@ struct ActivityScreen: View {
                     .padding(.top, 6)
                     .accessibilityIdentifier("pond")
             }
+            // Held emails (08 R10): "Sending in 23 s" with Undo, or "Still send?" with Send and Discard.
+            let held = HoldText.held(model.activity)
+            if !held.isEmpty {
+                HeldSends(entries: held)
+                    .padding(.top, 8)
+                    .animation(Motion.of(.smooth(duration: 0.25), reduce: reduceMotion), value: held.map(\.id))
+            }
             if !model.tasks.isEmpty {
                 // Live tasks with Stop, and those that ended today, quietly.
                 TaskChips(tasks: model.tasks)

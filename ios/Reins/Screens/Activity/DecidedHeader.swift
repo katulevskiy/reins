@@ -122,7 +122,9 @@ struct DecidedHeader: View {
         case .bypass: .shieldAlert
         case .lockdown: .block
         case .auto: .autopilot
-        case .failed, .started, .unknown, .withheld: .circleAlert
+        case .failed, .started, .unknown, .withheld, .notSent: .circleAlert
+        case .held: .send
+        case .undone: .undo
         }
     }
 
@@ -132,8 +134,10 @@ struct DecidedHeader: View {
         case .auto, .grant, .permission: Palette.violet
         case .overnight: Palette.nightText
         case .denied, .bypass: Palette.danger
-        case .failed, .lockdown, .started, .unknown, .withheld: Palette.warning
+        case .failed, .lockdown, .started, .unknown, .withheld, .notSent: Palette.warning
         case .approved: Palette.success
+        case .held: Palette.violet
+        case .undone: Palette.ink2
         }
     }
 }

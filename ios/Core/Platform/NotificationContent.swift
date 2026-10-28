@@ -443,6 +443,16 @@ enum NotificationContent {
         }
     }
 
+    /// Nothing to show: a push that only wakes the app (a held send's, `PushPayload.silent`) handed to the extension
+    /// anyway. No title, body or sound, so nothing is shown.
+    static func nothing() -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.sound = nil
+        c.interruptionLevel = .passive
+        c.relevanceScore = 0
+        return c
+    }
+
     /// A push whose item is no longer waiting: a quiet line instead of an alarm for nothing.
     static func handled(_ original: UNNotificationContent) -> UNMutableNotificationContent {
         let c = (original.mutableCopy() as? UNMutableNotificationContent) ?? UNMutableNotificationContent()

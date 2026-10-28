@@ -236,7 +236,7 @@ struct ActivityDetailScreen: View {
 
     /// The entry in words, for sharing.
     private func summary(_ entry: ActivityEntry) -> String {
-        [entry.headline, untrusted(entry.detail), "\(OutcomeTag.word(entry.outcome)) · \(TimeText.full(entry.at))"]
+        [entry.headline, untrusted(entry.detail), "\(HoldText.outcome(entry.outcome, hold: entry.hold) ?? OutcomeTag.word(entry.outcome)) · \(TimeText.full(entry.at))"]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }

@@ -8,6 +8,9 @@ enum Outcome: Equatable {
     case grant, bypass, locked, night, failed
     /// Carried out, but how it ended needs a look ("Waiting", "Unknown", "Withheld"): one word on amber.
     case attention(word: String, spoken: String)
+    /// A held email (08 R10): "Sending" while its hold runs, "Held" after; undone; not sent (too late, "Still send?").
+    case held(word: String)
+    case undone, notSent
     case none
 
     /// What VoiceOver reads for it.
@@ -23,6 +26,9 @@ enum Outcome: Equatable {
         case .night: "Held overnight"
         case .failed: "Approved, then failed"
         case let .attention(_, spoken): spoken
+        case let .held(word): word
+        case .undone: "Undone; not sent"
+        case .notSent: "Not sent"
         case .none: ""
         }
     }
@@ -46,6 +52,9 @@ struct OutcomeMark: View {
             case .night: Pill("Night", tone: .night, glyph: .moon)
             case .failed: Pill("Failed", tone: .warning, glyph: .circleAlert)
             case let .attention(word, _): Pill(word, tone: .warning, glyph: .circleAlert)
+            case let .held(word): Pill(word, tone: .violet, symbol: "paperplane")
+            case .undone: Pill("Undone", tone: .neutral, symbol: "arrow.uturn.backward")
+            case .notSent: Pill("Not sent", tone: .warning, glyph: .circleAlert)
             case .none: EmptyView()
             }
         }

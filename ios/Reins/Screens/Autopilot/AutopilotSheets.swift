@@ -191,6 +191,23 @@ struct ExpiryPicker: View {
     }
 }
 
+/// How long an approved email waits before it goes (08 R10): Off, 10 s, 30 s, 60 s, 120 s.
+struct SendHoldPicker: View {
+    var selected: UInt32
+    var onPick: (UInt32) -> Void
+
+    var body: some View {
+        Chooser(HoldText.choices(selected).map { secs in
+            Chooser.Segment(id: "sendHold:\(secs)", title: HoldText.choiceLabel(secs), selected: selected == secs) {
+                if selected != secs { onPick(secs) }
+            }
+        })
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("sendHold")
+    }
+}
+
 /// A timed mode's sheet (see `BypassSheet`, `OvernightSheet`): its name with a (?) and the close button, who it is
 /// for, what `extra` adds, the lengths, and the hold that starts it.
 struct TimedModeSheet<Extra: View>: View {

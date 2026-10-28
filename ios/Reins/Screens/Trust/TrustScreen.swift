@@ -220,6 +220,8 @@ struct TrustScreen: View {
 
             autopilot
 
+            sendHold
+
             StartingRuleChooser()
                 .plainRow(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
         }
@@ -391,6 +393,21 @@ struct TrustScreen: View {
         .trustSlice(.of(profiles.count + 1, count: count))
         .accessibilityIdentifier("modelRow")
         .plainRow(EdgeInsets())
+    }
+
+    /// "Send hold (?)": how long an approved email waits, so it can be undone (08 R10).
+    @ViewBuilder
+    private var sendHold: some View {
+        if let secs = ap.sendHoldSecs {
+            VStack(spacing: 0) {
+                SectionHeader(HoldText.settingTitle, glyph: .send) {
+                    HelpButton(text: HoldText.settingHelp).frame(height: 20)
+                }
+                SendHoldPicker(selected: secs) { picked in Task { await ap.setSendHold(picked) } }
+                    .padding(.horizontal, 16)
+            }
+            .plainRow(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+        }
     }
 
     private func download() {

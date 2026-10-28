@@ -91,6 +91,8 @@ enum EntryOutcome {
         case "error": return "Failed"
         default: break
         }
+        // A held email has not gone (08 R10), whoever approved it.
+        if let held = HoldText.outcome(entry.outcome, hold: entry.hold) { return held }
         let denied = entry.outcome == "denied"
         if let actor = permissionActor(entry) { return denied ? "Denied · \(actor)" : "Allowed by \(actor)" }
         switch entry.decidedBy {
@@ -122,8 +124,10 @@ enum EntryOutcome {
         case .lockdown: "lock.fill"
         case .grant, .permission: "key.horizontal"
         case .denied: "xmark"
-        case .failed, .started, .unknown, .withheld: "exclamationmark.triangle"
+        case .failed, .started, .unknown, .withheld, .notSent: "exclamationmark.triangle"
         case .approved: "checkmark"
+        case .held: "paperplane"
+        case .undone: "arrow.uturn.backward"
         }
     }
 
@@ -132,8 +136,10 @@ enum EntryOutcome {
         case .auto, .grant, .permission: Palette.violet
         case .overnight: Palette.violet
         case .bypass, .denied: Palette.danger
-        case .lockdown, .failed, .started, .unknown, .withheld: Palette.warning
+        case .lockdown, .failed, .started, .unknown, .withheld, .notSent: Palette.warning
         case .approved: Palette.success
+        case .held: Palette.violet
+        case .undone: Palette.ink2
         }
     }
 
