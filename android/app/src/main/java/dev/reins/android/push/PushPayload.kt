@@ -10,6 +10,8 @@ package dev.reins.android.push
 data class PushPayload(val kind: String, val id: String, val profileTag: String? = null) {
     companion object {
         private val ID = Regex("[A-Za-z0-9_-]{1,128}")
+        /** An org review, or one of a family's two asks (`family:leave`, `family:minor`). */
+        private val ORG_REVIEW_ID = Regex("[A-Za-z0-9_-]{1,128}|family:(leave|minor)")
         private val TAG = Regex("[0-9a-f]{16}")
         /** An org review waits for this member (O2): the app shows it; the core fetches nothing. */
         const val ORG_REVIEW = "orgreview"
@@ -29,6 +31,7 @@ data class PushPayload(val kind: String, val id: String, val profileTag: String?
             val pattern = when (kind) {
                 CIRCLE -> CIRCLE_ID
                 ORG_PASSKEY -> CREDENTIAL_ID
+                ORG_REVIEW -> ORG_REVIEW_ID
                 else -> ID
             }
             if (kind !in KINDS || !pattern.matches(id)) return null
