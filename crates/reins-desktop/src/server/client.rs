@@ -9,6 +9,9 @@
 //! once approved (collected then) or denied, and `closed` when it expired, was cancelled or went stale. `GET
 //! /reins/desktop/tickets` lists this connection's tickets; `POST /reins/desktop/tickets/<ticket>/stale` says the remote
 //! moved before an approved push could go.
+//!
+//! Send holds (Decisions v2 08 R10): `DELETE /reins/desktop/holds/<id>` is Undo on an approved email the server holds
+//! before the phone sends it.
 
 use std::time::Duration;
 
@@ -168,6 +171,16 @@ impl DesktopClient {
         Ok(())
     }
 
+    /// Undo on a held send: the server deletes the hold, so the email never goes. [`HOLD_GONE`] when it is not waiting
+    /// any more (already sent, undone, or not this connection's); an id the server could not have made is refused here.
+    pub async fn undo_hold(&self, id: &str) -> Result<(), LinkError> {
+        let path = hold_path(id).ok_or_else(|| LinkError::Failed("not a hold id".to_owned()))?;
+        match self.send_raw(|server| self.http.delete(format!("{server}{path}"))).await {
+            Err(LinkError::NotFound) => Err(LinkError::Failed(HOLD_GONE.to_owned())),
+            other => other.map(drop),
+        }
+    }
+
     /// Waits for the answer to an earlier call again.
     pub async fn poll(&self, request_id: &str) -> Result<CallAnswer, LinkError> {
         let id: String = url::form_urlencoded::byte_serialize(request_id.as_bytes()).collect();
@@ -267,6 +280,14 @@ impl DesktopClient {
             .await
             .map_err(|e| LinkError::Failed(format!("cannot reach {}: {}", access.server, e.without_url())))
     }
+}
+
+/// What [`DesktopClient::undo_hold`] says of a hold that is not waiting any more.
+pub const HOLD_GONE: &str = "Already sent or undone";
+
+/// The path Undo deletes for hold `id`; `None` for an id the server could not have made.
+fn hold_path(id: &str) -> Option<String> {
+    reins_proto::hold::valid_id(id).then(|| format!("/reins/desktop/holds/{id}"))
 }
 
 /// The note the phone signs on an Overnight park (`reins_core::autopilot::overnight::PARKED_NOTE`).
@@ -427,6 +448,17 @@ mod tests {
                 stale: None,
             }
         );
+    }
+
+    #[test]
+    fn hold_paths_take_plain_ids_only() {
+        assert_eq!(
+            hold_path("0b8c2d4e-1f2a-4b3c-8d9e-0a1b2c3d4e5f").as_deref(),
+            Some("/reins/desktop/holds/0b8c2d4e-1f2a-4b3c-8d9e-0a1b2c3d4e5f")
+        );
+        for bad in ["", "../tickets", "a/b", "a?b", "a%2Fb", &"a".repeat(65)] {
+            assert_eq!(hold_path(bad), None, "{bad}");
+        }
     }
 
     #[test]

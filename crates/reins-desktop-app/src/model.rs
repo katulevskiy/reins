@@ -244,6 +244,9 @@ pub struct Model {
     /// Safety nets restored from Activity (by plan id), and the one being restored.
     pub restored_nets: std::collections::HashSet<String>,
     pub restoring_net: Option<String>,
+    /// Held sends undone from Activity (by hold id), and the one being undone.
+    pub undone_holds: std::collections::HashSet<String>,
+    pub undoing_hold: Option<String>,
     /// The vault's item names (name, kind) as the phone last gave them, and whether it is being asked.
     pub vault_names: Option<Vec<(String, String)>>,
     pub vault_asking: bool,
@@ -421,6 +424,8 @@ impl Model {
                 correcting: None,
                 restored_nets: std::collections::HashSet::new(),
                 restoring_net: None,
+                undone_holds: std::collections::HashSet::new(),
+                undoing_hold: None,
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
@@ -1872,6 +1877,40 @@ impl Model {
                         m.restored_nets.insert(plan);
                     }
                     Err(e) => m.notice = Some(format!("Not restored: {}", e.lines().next().unwrap_or_default())),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Activity's "Undo" on a held send: the server deletes the hold before the phone sends the email.
+    pub fn undo_hold(&mut self, id: String, cx: &mut Context<'_, Self>) {
+        if self.undoing_hold.is_some() || self.undone_holds.contains(&id) {
+            return;
+        }
+        self.notice = None;
+        self.undoing_hold = Some(id.clone());
+        cx.notify();
+        let demo = self.args.demo;
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let hold = id.clone();
+            let result = if demo {
+                cx.background_executor().timer(Duration::from_millis(600)).await;
+                Ok(())
+            } else {
+                Tokio::spawn(cx, async move { backend.undo_hold(&hold).await })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            let _gone = this.update(cx, |m, cx| {
+                m.undoing_hold = None;
+                match result {
+                    Ok(()) => {
+                        m.undone_holds.insert(id);
+                    }
+                    Err(e) => m.notice = Some(format!("Not undone: {e}")),
                 }
                 cx.notify();
             });

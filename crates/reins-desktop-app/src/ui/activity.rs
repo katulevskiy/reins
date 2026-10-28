@@ -13,7 +13,7 @@ use gpui::{
     Anchor, AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
-use reins_desktop::journal::{Decider, Entry, Kind, NetRecord, Outcome, Tally};
+use reins_desktop::journal::{Decider, Entry, HoldRecord, Kind, NetRecord, Outcome, Tally};
 
 use reins_desktop::pushes::{CommitInfo, FileStatus, Push, RefChange, RefUpdate};
 use reins_proto::attention::{self, Attention, Level};
@@ -403,6 +403,7 @@ impl Root {
         });
         let took = e.ended_at.map(|end| format::duration(end - e.at));
         let net = e.nets.as_ref().map(|n| Self::net_panel(n, d, pal, cx));
+        let hold = e.hold.as_ref().and_then(|h| Self::hold_panel(h, d, pal, cx));
         let mut panel = div()
             .flex()
             .flex_col()
@@ -471,6 +472,7 @@ impl Root {
                 )
             })
             .when_some(net, gpui::ParentElement::child)
+            .when_some(hold, gpui::ParentElement::child)
             // What the matrix decided here, or would have (Decisions v2): one quiet line.
             .when_some(e.matrix.as_ref().map(matrix_text), |c, text| {
                 c.child(
@@ -911,6 +913,95 @@ impl Root {
     }
 }
 
+/// Where a held send stands in Activity (Decisions v2 08 R10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HoldState {
+    /// Still held: it goes in this many seconds unless undone.
+    Sending(i64),
+    /// Undo asked, not answered yet.
+    Undoing(i64),
+    Undone,
+    /// Past its release: the phone sent it (or asked again); this computer does not learn which.
+    Over,
+}
+
+fn hold_state(hold: &HoldRecord, now: i64, undone: bool, undoing: bool) -> HoldState {
+    let left = hold.until - now;
+    if undone {
+        HoldState::Undone
+    } else if left <= 0 {
+        HoldState::Over
+    } else if undoing {
+        HoldState::Undoing(left)
+    } else {
+        HoldState::Sending(left)
+    }
+}
+
+/// What a held send says: "Sending in 12 s", "Undone"; nothing once it is over.
+fn hold_text(state: HoldState) -> Option<String> {
+    match state {
+        HoldState::Sending(left) | HoldState::Undoing(left) => Some(format!("Sending in {left} s")),
+        HoldState::Undone => Some("Undone".to_owned()),
+        HoldState::Over => None,
+    }
+}
+
+/// `e` is a send still held: its countdown needs a render every second.
+pub(super) fn holding(e: &Entry, now: i64) -> bool {
+    e.hold.as_ref().is_some_and(|h| h.until > now)
+}
+
+impl Root {
+    /// "Sending in 12 s · Undo" on an approved email the server holds; "Undone" once it is.
+    fn hold_panel(hold: &HoldRecord, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        let state = hold_state(
+            hold,
+            d.now,
+            d.undone_holds.contains(&hold.id),
+            d.undoing_hold.as_deref() == Some(hold.id.as_str()),
+        );
+        let text = hold_text(state)?;
+        let line = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .text_size(px(13.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(pal.ink_2())
+            .child(glyph(
+                if state == HoldState::Undone {
+                    Glyph::Check
+                } else {
+                    Glyph::Timer
+                },
+                14.0,
+                pal.ink_2(),
+            ))
+            .child(text);
+        let button = matches!(state, HoldState::Sending(_) | HoldState::Undoing(_)).then(|| {
+            let button = kit::button("hold-undo", kit::Look::Soft, kit::Size::Small, Some(Glyph::Undo), "Undo", pal);
+            if matches!(state, HoldState::Sending(_)) && d.undoing_hold.is_none() {
+                let id = hold.id.clone();
+                button.on_click(Self::on_model(cx, move |m, cx| m.undo_hold(id.clone(), cx)))
+            } else {
+                button.opacity(kit::button::DISABLED)
+            }
+        });
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(12.0))
+                .mt(px(10.0))
+                .child(line)
+                .when_some(button, gpui::ParentElement::child)
+                .into_any_element(),
+        )
+    }
+}
+
 /// What a request does, as the consequence engine read it on this computer: the level, then one line per effect, and
 /// what could not be read. Decides nothing yet (Decisions v2 P1).
 fn effects_text(s: &reins_policy::effects::Summary) -> String {
@@ -1111,6 +1202,26 @@ mod tests {
         let mut e = Entry::new(kind, "x");
         e.outcome = outcome;
         e
+    }
+
+    #[test]
+    fn held_sends_count_down_offer_undo_and_then_say_nothing() {
+        let hold = HoldRecord {
+            id: "h-1".to_owned(),
+            until: 130,
+        };
+        assert_eq!(hold_state(&hold, 100, false, false), HoldState::Sending(30));
+        assert_eq!(hold_text(hold_state(&hold, 100, false, false)).as_deref(), Some("Sending in 30 s"));
+        assert_eq!(hold_state(&hold, 118, false, true), HoldState::Undoing(12));
+        assert_eq!(hold_text(hold_state(&hold, 118, false, true)).as_deref(), Some("Sending in 12 s"));
+        assert_eq!(hold_text(hold_state(&hold, 120, true, false)).as_deref(), Some("Undone"));
+        assert_eq!(hold_text(hold_state(&hold, 500, true, false)).as_deref(), Some("Undone"), "stays undone");
+        assert_eq!(hold_state(&hold, 130, false, false), HoldState::Over);
+        assert_eq!(hold_text(hold_state(&hold, 131, false, true)), None, "past its release: nothing to say");
+        let mut e = Entry::new(Kind::Mcp, "Codex: gmail_send");
+        assert!(!holding(&e, 100));
+        e.hold = Some(hold);
+        assert!(holding(&e, 129) && !holding(&e, 130));
     }
 
     #[test]

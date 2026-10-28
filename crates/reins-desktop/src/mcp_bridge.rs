@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as
 use tokio::sync::mpsc;
 
 use crate::config::Paths;
-use crate::journal::{Entry, Journal, Kind, Notice, Outcome};
+use crate::journal::{Entry, HoldRecord, Journal, Kind, Notice, Outcome};
 use crate::server::LinkError;
 use crate::server::oauth::{Access, SessionTokens};
 
@@ -119,6 +119,23 @@ pub fn tool_outcome(response: Option<&Value>) -> (Outcome, Option<String>) {
     } else {
         (Outcome::Failed, Some(line))
     }
+}
+
+/// The send hold of an approved call (a held `gmail_send`, Decisions v2 08 R10), from the server's answer: the hold id
+/// and when it is released. `None` for every other answer, and for a release time that does not read.
+#[must_use]
+pub fn tool_hold(response: Option<&Value>) -> Option<HoldRecord> {
+    let r = response?;
+    if r.pointer("/result/isError").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    let (id, send_at) = reins_proto::hold::held_of(r.pointer("/result/structuredContent")?)?;
+    #[expect(clippy::cast_possible_truncation, reason = "Unix seconds of a date, whole")]
+    let until = crate::doctor::parse_rfc3339(&send_at)?.floor() as i64;
+    Some(HoldRecord {
+        id,
+        until,
+    })
 }
 
 enum Failure {
@@ -385,6 +402,7 @@ impl Bridge {
         }
         let own = passing.await.ok().flatten();
         let (outcome, reason) = tool_outcome(own.as_ref());
+        entry.hold = tool_hold(own.as_ref()).filter(|_| outcome == Outcome::Approved);
         entry.end(outcome, reason.as_deref());
         self.journal.record(&entry);
     }
@@ -569,6 +587,41 @@ mod tests {
         assert_eq!(tool_outcome(Some(&reply(true, "Gmail said no"))).0, Outcome::Failed);
         assert_eq!(tool_outcome(Some(&json!({"id": 1, "error": {"code": -1, "message": "x"}}))).0, Outcome::Failed);
         assert_eq!(tool_outcome(None).0, Outcome::Failed);
+    }
+
+    #[test]
+    fn a_held_send_is_recognised_and_other_answers_are_not() {
+        let held = reins_proto::hold::held_result("0b8c2d4e-1f2a", "rt_r1", "2026-10-27T10:00:30Z", 30);
+        let reply = |error: bool, structured: Value| {
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"isError": error,
+            "content": [{"type": "text", "text": structured.to_string()}], "structuredContent": structured}})
+        };
+        let ok = reply(false, held.clone());
+        assert_eq!(tool_outcome(Some(&ok)).0, Outcome::Approved);
+        assert_eq!(
+            tool_hold(Some(&ok)),
+            Some(HoldRecord {
+                id: "0b8c2d4e-1f2a".to_owned(),
+                until: 1_793_095_230,
+            })
+        );
+        assert_eq!(tool_hold(Some(&reply(false, json!({"id": "m1", "thread_id": "t1"})))), None);
+        assert_eq!(tool_hold(Some(&reply(true, held.clone()))), None, "an error is never a hold");
+        let mut bad_time = held.clone();
+        bad_time["send_at"] = json!("soon");
+        assert_eq!(tool_hold(Some(&reply(false, bad_time))), None);
+        let mut bad_id = held;
+        bad_id["hold"] = json!("../x");
+        assert_eq!(tool_hold(Some(&reply(false, bad_id))), None);
+        // Only the structured result counts, never the text.
+        assert_eq!(
+            tool_hold(Some(
+                &json!({"id": 1, "result": {"content": [{"type": "text", "text": "{\"status\":\"held\"}"}]}})
+            )),
+            None
+        );
+        assert_eq!(tool_hold(Some(&json!({"id": 1, "error": {"code": -1, "message": "x"}}))), None);
+        assert_eq!(tool_hold(None), None);
     }
 
     #[test]

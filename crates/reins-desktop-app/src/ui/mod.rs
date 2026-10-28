@@ -199,6 +199,8 @@ struct Data {
     correcting: Option<String>,
     restored_nets: std::collections::HashSet<String>,
     restoring_net: Option<String>,
+    undone_holds: std::collections::HashSet<String>,
+    undoing_hold: Option<String>,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -243,6 +245,8 @@ impl Data {
             correcting: m.correcting.clone(),
             restored_nets: m.restored_nets.clone(),
             restoring_net: m.restoring_net.clone(),
+            undone_holds: m.undone_holds.clone(),
+            undoing_hold: m.undoing_hold.clone(),
             demo: m.demo(),
             gallery: false,
         }
@@ -583,6 +587,7 @@ impl Render for Root {
             matches!(d.test, Test::Waiting(_))
                 || (screen == Screen::Status
                     && (d.waiting().next().is_some()
+                        || d.activity().iter().any(|e| activity::holding(e, d.now))
                         || d.work.asking.is_some()
                         || d.running().and_then(crate::modes::Running::until).is_some())),
             window,

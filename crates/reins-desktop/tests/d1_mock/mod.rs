@@ -88,6 +88,9 @@ pub struct State {
     pub pushed_fail: u32,
     /// The approval phone's signing key the ticket list names.
     pub signing_key: Option<String>,
+    /// Send holds waiting (Undo deletes them), and the paths Undo was asked on.
+    pub holds: HashSet<String>,
+    pub undos: Vec<String>,
     access: HashSet<String>,
     refresh: HashSet<String>,
     sessions: HashSet<String>,
@@ -315,6 +318,15 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
             let doc: Value = serde_json::from_slice(&body).unwrap_or_default();
             s.stale.push((ticket, doc["diff"].as_str().unwrap_or_default().to_owned()));
             respond(204, "text/plain", "")
+        }
+        ("DELETE", p) if p.starts_with("/reins/desktop/holds/") => {
+            let id = p["/reins/desktop/holds/".len()..].to_owned();
+            s.undos.push(p.to_owned());
+            if s.holds.remove(&id) {
+                json_resp(200, &json!({"hold": id, "status": "undone"}))
+            } else {
+                json_resp(404, &json!({"error": "not_found"}))
+            }
         }
         ("POST", "/mcp") => {
             let doc: Value = serde_json::from_slice(&body).unwrap_or_default();
@@ -577,6 +589,19 @@ fn mcp(s: &mut State, session: Option<&str>, doc: &Value) -> Resp {
                 {"name": "echo", "description": "Echoes", "inputSchema": {"type": "object"}},
             ]}});
             respond(200, "text/event-stream", format!("event: message\ndata: {note}\n\nid: 2\ndata: {result}\n\n"))
+        }
+        // An approved email, held before it goes.
+        "tools/call" if doc["params"]["name"] == "gmail_send" => {
+            let held = reins_proto::hold::held_result("h-1", "rt_r1", "2026-10-27T10:00:30Z", 30);
+            s.holds.insert("h-1".to_owned());
+            json_resp(
+                200,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {
+                    "content": [{"type": "text", "text": held.to_string()}],
+                    "structuredContent": held,
+                    "isError": false,
+                }}),
+            )
         }
         "tools/call" => json_resp(
             200,

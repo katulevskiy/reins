@@ -770,6 +770,12 @@ impl Backend {
         reins_desktop::autopilot::correct(&self.paths, &config, &request_id, approve).await
     }
 
+    /// Undo on the held send `id` (a held `gmail_send`): the email never goes.
+    pub async fn undo_hold(&self, id: &str) -> Result<(), String> {
+        let client = reins_desktop::server::client::DesktopClient::new(&self.paths)?;
+        client.undo_hold(id).await.map_err(|e| e.to_string())
+    }
+
     /// The names and kinds of the vault items (the phone's owner approves; the phone key must be pinned).
     pub async fn vault_names(&self) -> Result<Vec<(String, String)>, String> {
         let config = self.config()?;
