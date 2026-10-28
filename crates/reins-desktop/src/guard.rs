@@ -130,6 +130,8 @@ pub const DEFAULT_FILES: &[&str] = &[
     "reins/control.token",
     "reins/phone-key.json",
     "reins/config.toml",
+    "reins/policy.json",
+    "reins/tickets.json",
 ];
 
 /// Built-in exceptions to the file patterns.

@@ -1149,6 +1149,7 @@ mod tests {
             line: "Auto · Mine · Undoable".to_owned(),
             snapshot: "ab".repeat(32),
             decided: false,
+            task: None,
         };
         assert_eq!(matrix_text(&m), "Would be: Auto · Mine · Undoable");
         m.decided = true;

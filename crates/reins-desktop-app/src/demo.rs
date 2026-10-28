@@ -433,6 +433,7 @@ impl Demo {
             line: format!("{word} · {} · {}", zone.label(), level.label()),
             snapshot: "d3".repeat(32),
             decided,
+            task: None,
         })
     }
 
