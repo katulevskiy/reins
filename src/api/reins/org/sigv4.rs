@@ -37,7 +37,10 @@ fn uri_encode(s: &str) -> String {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -86,7 +89,13 @@ pub fn sign(
         .collect();
     canon.sort();
     let signed: String = canon.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
-    let canonical_headers: String = canon.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
+    let mut canonical_headers = String::new();
+    for (k, v) in &canon {
+        canonical_headers.push_str(k);
+        canonical_headers.push(':');
+        canonical_headers.push_str(v);
+        canonical_headers.push('\n');
+    }
     let path = if url.path().is_empty() {
         "/"
     } else {

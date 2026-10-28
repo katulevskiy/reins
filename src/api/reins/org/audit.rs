@@ -172,22 +172,21 @@ fn stored_envelope(cp: &ReinsOrgCheckpoint) -> Result<Envelope, OrgError> {
     serde_json::from_str(&cp.envelope).map_err(|e| OrgError::Internal(format!("stored checkpoint: {e}")))
 }
 
+/// Export lines and the last event's sequence number and hash.
+type Lines = (Vec<String>, Option<(i64, String)>);
+
 /// The export lines of `org`'s events after `after` up to `upto` (all when `None`), each stored checkpoint after the
 /// event it covers; with the anchor checkpoint at `after` first when `after` isn't the genesis. Returns the lines and
 /// the last event's sequence number and hash.
-fn lines_between(
-    c: &mut DbConnInner,
-    org: &str,
-    after: i64,
-    upto: Option<i64>,
-) -> Result<(Vec<String>, Option<(i64, String)>), OrgError> {
+fn lines_between(c: &mut DbConnInner, org: &str, after: i64, upto: Option<i64>) -> Result<Lines, OrgError> {
     let mut out: Vec<String> = Vec::new();
-    let mut last = None;
-    if after > 0 {
+    let mut last = if after > 0 {
         let anchor = reins_org_exec::q_checkpoint(c, org, after)?.ok_or(OrgError::NotFound)?;
         out.push(line(&ExportLine::Checkpoint(stored_envelope(&anchor)?)));
-        last = Some((anchor.seq, anchor.hash));
-    }
+        Some((anchor.seq, anchor.hash))
+    } else {
+        None
+    };
     let mut checkpoints = reins_org_exec::q_checkpoints(c, org, after)?.into_iter().peekable();
     let mut after = after;
     'pages: loop {
