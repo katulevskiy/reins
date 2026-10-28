@@ -639,8 +639,14 @@ make_config! {
         reins_orgs_enabled:          bool,   false,  def,    false;
         /// WorkOS directory sync interval (seconds) |> With organizations on and WorkOS as the SSO provider: how often the server reads the WorkOS Directory Sync events (SCIM users and groups) when no webhook wakes it. Keep it under 60 so that a removed member loses access within a minute even without webhooks. 0 disables the directory sync.
         reins_workos_dsync_secs:     u64,    false,  def,    20;
-        /// Org key file |> With organizations on: the 32-byte master key (created on first use, mode 0600) that seals every org's issuer, decision service and data keys. Keep it out of database backups; BYOK KMS adapters replace it later.
+        /// Org key file |> With organizations on: the 32-byte master key (created on first use, mode 0600) that seals every org's issuer, decision service and data keys. Keep it out of database backups. With a cloud provider below it holds the master key wrapped by that KMS instead (`reins-wrapped-v1:<provider>:…`, made on first launch).
         reins_org_kms_key_file:      String, false,  auto,   |c| storage::join_path(&c.data_folder, "reins_org_kms.key");
+        /// Org key provider |> `local` (the key file holds the master key) or, to bring your own KMS, `aws`, `gcp` or `azure`: the key file then holds the master key wrapped by that KMS, unwrapped once at launch. Credentials: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_SESSION_TOKEN or the instance role; GOOGLE_APPLICATION_CREDENTIALS or the metadata server; AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET or the managed identity. If the KMS can't unwrap it, the server doesn't start.
+        reins_org_kms_provider:      String, false,  def,    "local".to_owned();
+        /// Org KMS key |> With a cloud provider above: the key that wraps the master key (an AWS KMS key ARN, a GCP `projects/…/cryptoKeys/…` name, or an Azure Key Vault key URL `https://<vault>.vault.azure.net/keys/<name>/<version>`).
+        reins_org_kms_key_id:        String, false,  def,    String::new();
+        /// Audit timestamp authority |> With organizations on: an RFC 3161 time-stamping authority URL (e.g. `http://timestamp.digicert.com`) that timestamps every audit checkpoint, so a rewrite of a whole chain shows. Empty: off.
+        reins_org_audit_tsa_url:     String, false,  def,    String::new();
         /// Android attestation roots |> A PEM file of the root certificates Android key attestation chains must end in. Empty: Google's hardware attestation roots.
         reins_attest_android_roots:  String, false,  def,    String::new();
         /// App Attest app id |> The iOS app's App ID (TEAMID.bundle id) App Attest attestations must name. Empty: App Attest is recorded but not verified.

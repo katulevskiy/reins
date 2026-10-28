@@ -185,13 +185,18 @@ How it fits together:
   Graph `TeamsAppInstallation.ReadWriteSelfForUser.All` and `User.Read.All`), then turn it on (two admins). Members
   add a device-bound passkey at `https://<domain>/reins/org/passkeys/new` and confirm it on their phone. Reports:
   Routing › SLA.
-- **Org executors** run Managed requests with the org's credentials. Build `reins-executor`
-  (`cargo build --release -p reins-executor`), then on the executor's host: `reins-executor keygen --out
+- **Org executors** run Managed requests with the org's credentials. Take `reins-executor` from a release (a static
+  Linux archive, or the image `ghcr.io/katulevskiy/reins-executor`) or build it (`cargo build --release -p
+  reins-executor`); the [executor guide](executor.md) has every setting. Then on the executor's host: `reins-executor keygen --out
   executor.key`, register its public key in the console (Executors; it takes two admins' phones), write a config
   (server, org, executor id, key file, state directory, `[github]` app id, installation id, owner and private key file,
   optional `[google]` service account), compare `reins-executor pin --config executor.toml` with the keys the console
   shows, then `pin --accept` and `reins-executor run --config executor.toml`. Run one per org, as its own user, with
   its state directory private; see [deployment](deployment.md#org-executors).
+- **Audit** ([guide](audit.md)): exports verify offline with `reins-audit`, which also builds SOC 2 and ISO 27001
+  evidence; streaming to Splunk, Datadog, Elastic, Sentinel and S3/GCS is set up in the console. Optional server
+  settings: `REINS_ORG_AUDIT_TSA_URL` (RFC 3161 timestamps of checkpoints), and `REINS_ORG_KMS_PROVIDER` with
+  `REINS_ORG_KMS_KEY_ID` to wrap the org master key with your own AWS, GCP or Azure key.
 - **Policy repo** (policy as code). An org can keep its policy in a GitHub repo it owns (`acme/reins-policy`): see the
   [sample](../crates/reins-policy/tests/fixtures/policy_repo). The server reads it through the org's *GitHub reader*,
   a second GitHub App the org creates with `contents: read`, `members: read`, `pull_requests: read` and `checks:

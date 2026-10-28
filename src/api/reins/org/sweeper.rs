@@ -1,11 +1,11 @@
 //! The org decision service's housekeeping, every [`EVERY_SECS`] while organizations are on: expiring reviews and
 //! approvals nobody acted on, marking executions that never reported back, expiring leases (so the executor revokes
 //! them upstream) and settling revocations whose token died upstream on its own, purging bodies past retention,
-//! checkpointing the audit chains, and moving staged policy rollouts ([`rollout::tick_all`]).
+//! checkpointing the audit chains and pruning them by tier, and moving staged policy rollouts ([`rollout::tick_all`]).
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing};
+use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing, sinks, witness};
 use crate::{
     api::reins::now_unix,
     db::{DbConnInner, DbPool, models::reins_org_request},
@@ -58,6 +58,10 @@ pub fn sweep_routed(
     if let Err(e) = audit::checkpoint_due(c, now) {
         warn!("Org sweeper: checkpoints: {e:?}");
     }
+    // O5: events past the tier's retention go, down to a signed checkpoint.
+    if let Err(e) = audit::prune_due(c, now) {
+        warn!("Org sweeper: audit pruning: {e:?}");
+    }
     // Families (P7): connect jobs whose time ran out, with any code they still held.
     if let Err(e) = super::family_connect::sweep(c, now) {
         warn!("Org sweeper: family connect jobs: {e:?}");
@@ -100,6 +104,7 @@ pub fn spawn(pool: DbPool) {
     if !enabled() {
         return;
     }
+    let compliance = pool.clone();
     tokio::spawn(async move {
         let mut relinked = 0_i64;
         loop {
@@ -125,6 +130,15 @@ pub fn spawn(pool: DbPool) {
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }
+            tokio::time::sleep(Duration::from_secs(every_secs())).await;
+        }
+    });
+    // O5, in its own loop so a slow authority or SIEM never delays reviews, escalation or leases: checkpoints
+    // timestamped (network calls, outside any transaction) and the audit chains streamed.
+    tokio::spawn(async move {
+        loop {
+            witness::stamp_due(&compliance).await;
+            sinks::push_all(&compliance, now_unix()).await;
             tokio::time::sleep(Duration::from_secs(every_secs())).await;
         }
     });

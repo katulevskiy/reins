@@ -94,7 +94,23 @@ async fn main() -> Result<(), Error> {
     db::models::TwoFactor::migrate_credential_to_passkey(&pool.get().await.unwrap()).await.unwrap();
 
     let extra_debug = matches!(level, log::LevelFilter::Trace | log::LevelFilter::Debug);
+    unlock_org_kms().await;
     launch_rocket(pool, extra_debug).await // Blocks until program termination.
+}
+
+/// Organizations with a BYOK provider: unwrap the master key before anything can use an org key. Fails closed: the
+/// server doesn't start without it (and never falls back to a local key).
+async fn unlock_org_kms() {
+    if !api::reins::org::enabled() || api::reins::org::kms::provider_is_local(&CONFIG.reins_org_kms_provider()) {
+        return;
+    }
+    match api::reins::org::kms_byok::init().await {
+        Ok(()) => info!("The org master key was unwrapped by {}", CONFIG.reins_org_kms_provider().trim()),
+        Err(e) => {
+            error!("The org KMS could not be unlocked: {e}\nExiting Vaultwarden!");
+            exit(1);
+        }
+    }
 }
 
 const HELP: &str = "\

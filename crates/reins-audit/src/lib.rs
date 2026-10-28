@@ -13,11 +13,14 @@
 //!   witness): the export still has that checkpoint's hash at its sequence number. A server holding the decision
 //!   service key could re-sign a rewritten chain; it can't make it agree with a checkpoint someone kept.
 
+pub mod cli;
+pub mod evidence;
+
 use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use reins_proto::canon::parse_sig;
-use reins_proto::managed::{Checkpoint, Envelope, EnvelopeKind, ExportLine, envelope_message};
+use reins_proto::managed::{AuditEvent, Checkpoint, Envelope, EnvelopeKind, ExportLine, envelope_message};
 use reins_proto::org::GENESIS_HASH;
 use ring::signature::{ED25519, UnparsedPublicKey};
 
@@ -132,6 +135,16 @@ fn checkpoint_of(
 /// Verifies an export read from `input` (see the crate docs). `keys`: the trusted decision-service keys. `anchor`: a
 /// checkpoint obtained earlier, which the export must still contain.
 pub fn verify(input: impl BufRead, keys: &[TrustedKey], anchor: Option<&Checkpoint>) -> Result<Report, VerifyError> {
+    verify_collect(input, keys, anchor).map(|(report, _)| report)
+}
+
+/// [`verify`], also returning the export's events in order (what [`evidence::build`] reads). The events are only
+/// returned when the whole export verified.
+pub fn verify_collect(
+    input: impl BufRead,
+    keys: &[TrustedKey],
+    anchor: Option<&Checkpoint>,
+) -> Result<(Report, Vec<AuditEvent>), VerifyError> {
     let mut org: Option<String> = None;
     let mut same_org = |o: &str| -> Result<(), VerifyError> {
         match &org {
@@ -150,6 +163,7 @@ pub fn verify(input: impl BufRead, keys: &[TrustedKey], anchor: Option<&Checkpoi
     let mut events = 0_u64;
     let mut checkpoints = 0_u64;
     let mut head: Option<Checkpoint> = None;
+    let mut collected: Vec<AuditEvent> = Vec::new();
     for (i, line) in input.lines().enumerate() {
         let n = i + 1;
         let line = line.map_err(|_| VerifyError::Parse {
@@ -185,9 +199,10 @@ pub fn verify(input: impl BufRead, keys: &[TrustedKey], anchor: Option<&Checkpoi
                 }
                 first_seq.get_or_insert(e.seq);
                 hashes.insert(e.seq, e.hash.clone());
-                prev = e.hash;
+                prev.clone_from(&e.hash);
                 next_seq += 1;
                 events += 1;
+                collected.push(e);
             }
             ExportLine::Checkpoint(env) => {
                 let cp = checkpoint_of(&env, EnvelopeKind::Checkpoint, keys, n)?;
@@ -226,32 +241,32 @@ pub fn verify(input: impl BufRead, keys: &[TrustedKey], anchor: Option<&Checkpoi
             seq: a.seq,
         });
     }
-    Ok(Report {
+    let report = Report {
         org,
         events,
         first_seq: first_seq.unwrap_or(next_seq),
         last_seq,
         head_hash: prev,
         checkpoints,
-    })
+    };
+    Ok((report, collected))
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use reins_proto::canon::encode_sig;
-    use reins_proto::managed::AuditEvent;
     use ring::rand::SystemRandom;
     use ring::signature::{Ed25519KeyPair, KeyPair};
 
     use super::*;
 
-    struct Signer {
+    pub(crate) struct Signer {
         key: Ed25519KeyPair,
         id: String,
     }
 
     impl Signer {
-        fn new(id: &str) -> Self {
+        pub(crate) fn new(id: &str) -> Self {
             let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
             Self {
                 key: Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap(),
@@ -259,14 +274,14 @@ mod tests {
             }
         }
 
-        fn trusted(&self) -> TrustedKey {
+        pub(crate) fn trusted(&self) -> TrustedKey {
             TrustedKey {
                 key_id: self.id.clone(),
                 public: self.key.public_key().as_ref().try_into().unwrap(),
             }
         }
 
-        fn envelope(&self, kind: EnvelopeKind, cp: &Checkpoint) -> Envelope {
+        pub(crate) fn envelope(&self, kind: EnvelopeKind, cp: &Checkpoint) -> Envelope {
             let body = serde_json::to_string(cp).unwrap();
             let sig = self.key.sign(&envelope_message(kind, &cp.org, &self.id, &body));
             Envelope {
@@ -280,7 +295,7 @@ mod tests {
     }
 
     /// A chain of `n` events of org `o1`, from `prev` at `start` (exclusive).
-    fn chain(n: i64) -> Vec<AuditEvent> {
+    pub(crate) fn chain(n: i64) -> Vec<AuditEvent> {
         let mut out: Vec<AuditEvent> = Vec::new();
         let mut prev = GENESIS_HASH.to_owned();
         for seq in 1..=n {
@@ -302,7 +317,7 @@ mod tests {
         out
     }
 
-    fn rehash(events: &mut [AuditEvent]) {
+    pub(crate) fn rehash(events: &mut [AuditEvent]) {
         let mut prev = GENESIS_HASH.to_owned();
         for e in events {
             e.prev_hash.clone_from(&prev);
@@ -311,7 +326,7 @@ mod tests {
         }
     }
 
-    fn cp(e: &AuditEvent) -> Checkpoint {
+    pub(crate) fn cp(e: &AuditEvent) -> Checkpoint {
         Checkpoint {
             org: e.org.clone(),
             seq: e.seq,
@@ -321,7 +336,7 @@ mod tests {
     }
 
     /// The export of `events` with a checkpoint after event 2 and a head.
-    fn export(events: &[AuditEvent], s: &Signer) -> String {
+    pub(crate) fn export(events: &[AuditEvent], s: &Signer) -> String {
         let mut lines: Vec<String> = Vec::new();
         for e in events {
             lines.push(serde_json::to_string(&ExportLine::Event(e.clone())).unwrap());

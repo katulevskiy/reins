@@ -283,7 +283,8 @@ over HTTPS only and refuses any job it can't verify on its own (see the
 
   `systemctl enable --now reins-executor@<org>`.
 - **Dedicated / self-hosted:** the same binary in the org's own network, registered with mode `dedicated` or
-  `self_hosted`; nothing else differs.
+  `self_hosted`; nothing else differs. Releases ship it as static Linux archives and as the image
+  `ghcr.io/katulevskiy/reins-executor` ([executor guide](executor.md)).
 - Its key is registered in the console (Executors), which takes two admins' phones; its pins come from
   `reins-executor pin` and are compared with the console's before `--accept`.
 

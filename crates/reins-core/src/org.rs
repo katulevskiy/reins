@@ -398,6 +398,15 @@ fn change_lines(text: &str) -> Vec<String> {
         },
         "register_executor" => format!("Register executor {} ({})", s("executor_id"), s("mode")),
         "remove_executor" => format!("Remove executor {}", s("executor_id")),
+        "set_audit_sink" => {
+            let sink = serde_json::from_value::<reins_proto::org::SinkKind>(v.get("sink").cloned().unwrap_or_default())
+                .map_or("a destination", reins_proto::org::SinkKind::label);
+            if v.get("enabled").and_then(serde_json::Value::as_bool) == Some(true) {
+                format!("Stream the audit log to {sink}")
+            } else {
+                format!("Stop streaming the audit log to {sink}")
+            }
+        }
         _ => "Admin change".to_owned(),
     };
     vec![line]

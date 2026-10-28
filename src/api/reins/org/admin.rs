@@ -624,6 +624,11 @@ fn validate(
             }
             Ok(())
         }
+        AdminAction::SetAuditSink {
+            sink,
+            enabled,
+            config,
+        } => super::sinks::validate(c, org, *sink, *enabled, config.as_deref()),
     }
 }
 
@@ -819,6 +824,11 @@ fn apply(
         | AdminAction::SetApprovalChannel {
             ..
         } => super::routing::apply_admin(c, org, action, actor, now)?,
+        AdminAction::SetAuditSink {
+            sink,
+            enabled,
+            ..
+        } => super::sinks::apply_admin(c, org, *sink, *enabled, actor, now)?,
         AdminAction::RemoveExecutor {
             executor_id,
         } => {

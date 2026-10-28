@@ -20,6 +20,7 @@ pub mod reins_family_conn;
 #[cfg(all(test, sqlite))]
 pub(crate) use self::reins_device::test_db;
 pub mod reins_org;
+pub mod reins_org_compliance;
 pub mod reins_org_event;
 pub mod reins_org_exec;
 #[allow(dead_code, reason = "shared with O4, whose policy repo looks readers up by installation")]

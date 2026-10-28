@@ -3,14 +3,15 @@
 # Features, Fixes, Other) with links to the commits, then how to install it. Used by .github/workflows/release.yml.
 #
 #   scripts/release-notes.sh --version 0.2.0 --previous v0.1.0 --repo https://github.com/OWNER/REPO \
-#       [--rev <commit>] [--image ghcr.io/OWNER/reins-server] [--note "text"]...
+#       [--rev <commit>] [--image ghcr.io/OWNER/reins-server] [--executor-image ghcr.io/OWNER/reins-executor] \
+#       [--note "text"]...
 #
 # --previous may be empty (the first release: every commit). --note adds a paragraph under the title (repeatable).
 # The grouping follows scripts/next-version.sh: `type!:` or a `BREAKING CHANGE:` footer is breaking, `feat` a feature,
 # `fix` a fix, anything else (including the `area: message` style) other. Merge commits are left out.
 set -euo pipefail
 
-version="" previous="" repo="" rev="HEAD" image="" notes=()
+version="" previous="" repo="" rev="HEAD" image="" executor_image="" notes=()
 while (($#)); do
     case "$1" in
     --version) version="$2" ;;
@@ -18,6 +19,7 @@ while (($#)); do
     --repo) repo="${2%/}" ;;
     --rev) rev="$2" ;;
     --image) image="$2" ;;
+    --executor-image) executor_image="$2" ;;
     --note) notes+=("$2") ;;
     *)
         echo "unknown argument: $1" >&2
@@ -31,7 +33,9 @@ done
     exit 2
 }
 tag="v$version"
-image="${image:-ghcr.io/$(basename "$(dirname "$repo")" | tr '[:upper:]' '[:lower:]')/reins-server}"
+owner="$(basename "$(dirname "$repo")" | tr '[:upper:]' '[:lower:]')"
+image="${image:-ghcr.io/$owner/reins-server}"
+executor_image="${executor_image:-ghcr.io/$owner/reins-executor}"
 range="$rev"
 [[ -n "$previous" ]] && range="$previous..$rev"
 
@@ -100,6 +104,7 @@ desktop="reins-desktop-$version-x86_64-unknown-linux-musl"
 raw="${repo/#https:\/\/github.com\//https://raw.githubusercontent.com/}"
 server="reins-server-$version-x86_64-unknown-linux-gnu"
 apk="reins-$version-android.apk"
+audit="reins-audit-$version-x86_64-unknown-linux-musl"
 
 for note in ${notes[@]+"${notes[@]}"}; do
     printf '> %s\n\n' "$note"
@@ -153,6 +158,24 @@ docker pull $image:$version
 \`\`\`
 
 or the Linux binary with SQLite, \`$server.tar.gz\` (no web vault; see the guide).
+
+**Organization tools** (Linux, static: \`x86_64-unknown-linux-musl\` or \`aarch64-unknown-linux-musl\`):
+\`reins-audit\` verifies an audit export offline and writes evidence reports
+([audit guide]($repo/blob/$tag/docs/audit.md)); \`reins-executor\` holds an organization's credentials and runs only
+the requests it has checked, on the organization's own machines ([executor guide]($repo/blob/$tag/docs/executor.md)).
+
+\`\`\`sh
+curl -fsSLO $base/$audit.tar.gz
+tar xzf $audit.tar.gz
+$audit/reins-audit --version
+\`\`\`
+
+\`reins-executor-$version-<target>.tar.gz\` is the executor; its image (linux/amd64 and linux/arm64, with
+\`reins-audit\`) is
+
+\`\`\`sh
+docker pull $executor_image:$version
+\`\`\`
 
 **Android**: download \`$apk\` on the phone and open it (Android asks you to allow installs from your browser once).
 

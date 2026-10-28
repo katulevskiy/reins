@@ -4,14 +4,17 @@
 //! The chain is O1's admin event table (`reins_org_events`), taken over as it is: its rows keep their hashes, so the
 //! events O1 wrote verify unchanged, and O2 appends decisions, reviews, executions, leases, policy and executor changes
 //! to the same chain ([`kinds`]). Every 10 minutes ([`CHECKPOINT_SECS`]) a chain that grew gets a checkpoint signed by
-//! the decision service key, handed to the [`Witness`]. An export ends with a signed head, so `reins-audit verify`
+//! the decision service key, which an RFC 3161 authority then timestamps ([`super::witness`]). An export ends with a signed head, so `reins-audit verify`
 //! (`crates/reins-audit`) catches an edit, a gap, a reordering or a cut tail, and a rewrite against any checkpoint kept
 //! from before.
 
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::LazyLock;
 
 use diesel::prelude::*;
-use reins_proto::managed::{Checkpoint, Envelope, EnvelopeKind, ExportLine};
+use reins_proto::{
+    managed::{Checkpoint, Envelope, EnvelopeKind, ExportLine},
+    org::Tier,
+};
 use serde_json::Value;
 
 use super::{
@@ -21,7 +24,7 @@ use super::{
 use crate::db::{
     DbConnInner,
     models::{
-        reins_org_event,
+        reins_org, reins_org_compliance, reins_org_event,
         reins_org_exec::{self, ReinsOrgCheckpoint},
     },
     schema::reins_orgs,
@@ -77,6 +80,8 @@ pub mod kinds {
     pub const RETENTION_SET: &str = "retention.set";
     pub const AUDIT_EXPORTED: &str = "audit.exported";
     pub const AUDIT_READ: &str = "audit.read";
+    /// O5: events below a signed checkpoint deleted after the tier's retention (the checkpoint stays as the anchor).
+    pub const AUDIT_PRUNED: &str = "audit.pruned";
     pub const POLICY_SIMULATED: &str = "policy.simulated";
     pub const POLICY_STAGE_ADVANCED: &str = "policy.stage_advanced";
     pub const POLICY_ROLLED_BACK: &str = "policy.rolled_back";
@@ -101,33 +106,6 @@ pub fn record(
     Ok(reins_org_event::append(c, org, kind, actor, subject, detail, now)?)
 }
 
-/// Where checkpoints are published so a rewrite of the whole chain shows (06 §5.2: a transparency log or an RFC 3161
-/// timestamp). O2 publishes nowhere by default; O5 adds witnesses.
-pub trait Witness: Send + Sync {
-    fn publish(&self, org: &str, checkpoint: &Envelope) -> Result<(), String>;
-}
-
-/// Publishes nowhere.
-pub struct NoWitness;
-
-impl Witness for NoWitness {
-    fn publish(&self, _org: &str, _checkpoint: &Envelope) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-static WITNESS: LazyLock<RwLock<Arc<dyn Witness>>> = LazyLock::new(|| RwLock::new(Arc::new(NoWitness)));
-
-/// Sets the witness (once, at launch).
-#[allow(dead_code, reason = "the seam O5's witnesses plug into")]
-pub fn set_witness(w: Arc<dyn Witness>) {
-    *WITNESS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = w;
-}
-
-fn witness() -> Arc<dyn Witness> {
-    WITNESS.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
-}
-
 fn signed_head(
     c: &mut DbConnInner,
     org: &str,
@@ -146,7 +124,8 @@ fn signed_head(
     Ok((cp, env))
 }
 
-/// Checkpoints `org`'s chain when it grew since the last checkpoint: signed, stored, handed to the witness.
+/// Checkpoints `org`'s chain when it grew since the last checkpoint: signed and stored ([`super::witness`] has it
+/// timestamped later, outside any transaction).
 pub fn checkpoint(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<Checkpoint>, OrgError> {
     // The key first: creating it is itself an event, which the checkpoint then covers.
     kms::signing_key(c, org, KeyPurpose::Decision, now)?;
@@ -167,9 +146,6 @@ pub fn checkpoint(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<Che
             envelope: serde_json::to_string(&env).unwrap_or_default(),
         },
     )?;
-    if let Err(e) = witness().publish(org, &env) {
-        warn!("Audit checkpoint {seq} of {org} not witnessed: {e}");
-    }
     Ok(Some(cp))
 }
 
@@ -192,9 +168,69 @@ fn line(l: &ExportLine) -> String {
     serde_json::to_string(l).unwrap_or_default()
 }
 
-/// `org`'s audit export as JSON Lines: from the genesis, or from the stored checkpoint at `from` (its first line);
-/// the stored checkpoints after the event they cover; and a freshly signed head as the last line. Records
-/// `audit.exported` (by `actor`) after building it, so the export's head is the chain just before that event.
+fn stored_envelope(cp: &ReinsOrgCheckpoint) -> Result<Envelope, OrgError> {
+    serde_json::from_str(&cp.envelope).map_err(|e| OrgError::Internal(format!("stored checkpoint: {e}")))
+}
+
+/// Export lines and the last event's sequence number and hash.
+type Lines = (Vec<String>, Option<(i64, String)>);
+
+/// The export lines of `org`'s events after `after` up to `upto` (all when `None`), each stored checkpoint after the
+/// event it covers; with the anchor checkpoint at `after` first when `after` isn't the genesis. Returns the lines and
+/// the last event's sequence number and hash.
+fn lines_between(c: &mut DbConnInner, org: &str, after: i64, upto: Option<i64>) -> Result<Lines, OrgError> {
+    let mut out: Vec<String> = Vec::new();
+    let mut last = if after > 0 {
+        let anchor = reins_org_exec::q_checkpoint(c, org, after)?.ok_or(OrgError::NotFound)?;
+        out.push(line(&ExportLine::Checkpoint(stored_envelope(&anchor)?)));
+        Some((anchor.seq, anchor.hash))
+    } else {
+        None
+    };
+    let mut checkpoints = reins_org_exec::q_checkpoints(c, org, after)?.into_iter().peekable();
+    let mut after = after;
+    'pages: loop {
+        let page = reins_org_event::q_events_from(c, org, after, PAGE)?;
+        if page.is_empty() {
+            break;
+        }
+        for e in &page {
+            if upto.is_some_and(|u| e.seq > u) {
+                break 'pages;
+            }
+            out.push(line(&ExportLine::Event(e.to_audit())));
+            while let Some(cp) = checkpoints.next_if(|cp| cp.seq <= e.seq) {
+                if cp.seq == e.seq {
+                    out.push(line(&ExportLine::Checkpoint(stored_envelope(&cp)?)));
+                }
+            }
+            after = e.seq;
+            last = Some((e.seq, e.hash.clone()));
+        }
+    }
+    Ok((out, last))
+}
+
+/// Where an export of the whole kept chain starts: the genesis (0), or the prune anchor (the checkpoint at the first
+/// kept event).
+fn kept_from(c: &mut DbConnInner, org: &str) -> Result<i64, OrgError> {
+    Ok(match reins_org_event::q_first(c, org)? {
+        Some((first, _)) if first > 1 => first,
+        _ => 0,
+    })
+}
+
+fn finish(mut out: Vec<String>, head: Envelope) -> String {
+    out.push(line(&ExportLine::Head(head)));
+    let mut text = out.join("\n");
+    text.push('\n');
+    text
+}
+
+/// `org`'s audit export as JSON Lines: from the genesis (or, once pruned, from the checkpoint pruning kept as the
+/// anchor), or from the stored checkpoint at `from` (its first line); the stored checkpoints after the event they
+/// cover; and a freshly signed head as the last line. Records `audit.exported` (by `actor`) after building it, so the
+/// export's head is the chain just before that event.
 pub fn export(
     c: &mut DbConnInner,
     org: &str,
@@ -203,49 +239,122 @@ pub fn export(
     now: i64,
 ) -> Result<String, OrgError> {
     kms::signing_key(c, org, KeyPurpose::Decision, now)?;
-    let mut out: Vec<String> = Vec::new();
-    let (mut after, mut last) = match from {
-        Some(seq) => {
-            let anchor = reins_org_exec::q_checkpoint(c, org, seq)?.ok_or(OrgError::NotFound)?;
-            let env: Envelope = serde_json::from_str(&anchor.envelope)
-                .map_err(|e| OrgError::Internal(format!("stored checkpoint: {e}")))?;
-            out.push(line(&ExportLine::Checkpoint(env)));
-            (seq, Some((anchor.seq, anchor.hash)))
-        }
-        None => (0, None),
+    let after = match from {
+        Some(seq) => seq,
+        None => kept_from(c, org)?,
     };
-    let mut checkpoints = reins_org_exec::q_checkpoints(c, org, after)?.into_iter().peekable();
-    loop {
-        let page = reins_org_event::q_events_from(c, org, after, PAGE)?;
-        if page.is_empty() {
-            break;
-        }
-        for e in &page {
-            out.push(line(&ExportLine::Event(e.to_audit())));
-            while let Some(cp) = checkpoints.next_if(|cp| cp.seq <= e.seq) {
-                if cp.seq == e.seq {
-                    let env: Envelope = serde_json::from_str(&cp.envelope)
-                        .map_err(|err| OrgError::Internal(format!("stored checkpoint: {err}")))?;
-                    out.push(line(&ExportLine::Checkpoint(env)));
-                }
-            }
-            after = e.seq;
-            last = Some((e.seq, e.hash.clone()));
-        }
-    }
+    let (out, last) = lines_between(c, org, after, None)?;
     let (seq, hash) = last.ok_or(OrgError::NotFound)?;
     let (_, head) = signed_head(c, org, EnvelopeKind::Head, seq, &hash, now)?;
-    out.push(line(&ExportLine::Head(head)));
+    let text = finish(out, head);
     record(c, org, kinds::AUDIT_EXPORTED, actor, None, &serde_json::json!({"from": from, "to": seq}), now)?;
-    let mut text = out.join("\n");
-    text.push('\n');
     Ok(text)
 }
 
-/// Whether `org`'s whole chain verifies as stored (the console's "Chain intact").
+/// The export of `org`'s events after the stored checkpoint at `after` (the genesis when `None`) up to the stored
+/// checkpoint at `to`, ending with a freshly signed head at `to`. It records nothing: audit streaming calls it every
+/// few minutes, and each segment verifies alone with `reins-audit verify --anchor <the checkpoint at after>`.
+pub fn segment(c: &mut DbConnInner, org: &str, after: Option<i64>, to: i64, now: i64) -> Result<String, OrgError> {
+    let end = reins_org_exec::q_checkpoint(c, org, to)?.ok_or(OrgError::Invalid("A segment ends at a checkpoint."))?;
+    let after = after.unwrap_or(0);
+    if after == 0 && kept_from(c, org)? > 0 {
+        return Err(OrgError::Invalid("The chain was pruned: start from its anchor."));
+    }
+    if to <= after {
+        return Err(OrgError::Invalid("A segment ends after it starts."));
+    }
+    let (out, last) = lines_between(c, org, after, Some(to))?;
+    if last.as_ref().map(|(s, h)| (*s, h.as_str())) != Some((end.seq, end.hash.as_str())) {
+        return Err(OrgError::Internal(format!("checkpoint {to} of {org} is not on the stored chain")));
+    }
+    let (_, head) = signed_head(c, org, EnvelopeKind::Head, end.seq, &end.hash, now)?;
+    Ok(finish(out, head))
+}
+
+/// How long an org's audit events are kept, in days (05 §11, 06 §4): Team 30, Business a year, Enterprise seven. A
+/// Family (P7) keeps a year: the spec names no period, and a guardianship's history is kept rather than pruned early.
+#[must_use]
+pub fn audit_retention_days(tier: Tier) -> i64 {
+    match tier {
+        Tier::Team => 30,
+        Tier::Business | Tier::Family => 365,
+        Tier::Enterprise => 7 * 365,
+    }
+}
+
+/// Deletes `org`'s events older than its tier keeps, down to (not including) the newest checkpoint signed before the
+/// cut-off, which stays as the chain's anchor: exports then start from it and still verify. Refuses a chain that
+/// doesn't verify as stored (the evidence of an edit must stay). Returns the anchor's sequence number when it pruned.
+pub fn prune(c: &mut DbConnInner, org: &str, now: i64) -> Result<Option<i64>, OrgError> {
+    let tenant = reins_org::q_org(c, org)?.ok_or(OrgError::NotFound)?;
+    let days = audit_retention_days(tenant.tier());
+    let Some((first, _)) = reins_org_event::q_first(c, org)? else {
+        return Ok(None);
+    };
+    let Some(anchor) = reins_org_exec::q_checkpoint_at_or_before(c, org, now - days * 86_400)? else {
+        return Ok(None);
+    };
+    if anchor.seq <= first {
+        return Ok(None);
+    }
+    if !intact(c, org)? {
+        return Err(OrgError::Internal(format!("the audit chain of {org} does not verify: not pruned")));
+    }
+    c.transaction(|c| {
+        let deleted = reins_org_event::q_delete_before(c, org, anchor.seq)?;
+        reins_org_exec::q_delete_checkpoints_before(c, org, anchor.seq)?;
+        reins_org_compliance::q_delete_witness_before(c, org, anchor.seq)?;
+        record(
+            c,
+            org,
+            kinds::AUDIT_PRUNED,
+            None,
+            None,
+            &serde_json::json!({"anchor": anchor.seq, "hash": anchor.hash, "deleted": deleted, "days": days}),
+            now,
+        )?;
+        Ok(Some(anchor.seq))
+    })
+}
+
+static LAST_PRUNE: LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> = LazyLock::new(Default::default);
+
+/// Prunes every org, each at most once a day.
+pub fn prune_due(c: &mut DbConnInner, now: i64) -> Result<usize, OrgError> {
+    let orgs: Vec<String> = reins_orgs::table.select(reins_orgs::org_uuid).load(c)?;
+    let mut pruned = 0;
+    for org in orgs {
+        {
+            let mut last = LAST_PRUNE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if last.get(&org).is_some_and(|t| now - t < 86_400) {
+                continue;
+            }
+            last.insert(org.clone(), now);
+        }
+        match prune(c, &org, now) {
+            Ok(Some(_)) => pruned += 1,
+            Ok(None) => {}
+            Err(e) => warn!("Audit pruning of {org}: {e:?}"),
+        }
+    }
+    Ok(pruned)
+}
+
+/// Whether `org`'s kept chain verifies as stored (the console's "Chain intact"): from the genesis, or from the first
+/// kept event, which must be the prune anchor's.
 pub fn intact(c: &mut DbConnInner, org: &str) -> Result<bool, OrgError> {
-    let mut after = 0;
-    let mut prev = reins_proto::org::GENESIS_HASH.to_owned();
+    let Some((first, first_hash)) = reins_org_event::q_first(c, org)? else {
+        return Ok(true);
+    };
+    let mut after = first - 1;
+    let mut prev: Option<String> = if first == 1 {
+        Some(reins_proto::org::GENESIS_HASH.to_owned())
+    } else {
+        match reins_org_exec::q_checkpoint(c, org, first)? {
+            Some(cp) if cp.hash == first_hash => None,
+            _ => return Ok(false),
+        }
+    };
     loop {
         let page = reins_org_event::q_events_from(c, org, after, PAGE)?;
         if page.is_empty() {
@@ -253,11 +362,12 @@ pub fn intact(c: &mut DbConnInner, org: &str) -> Result<bool, OrgError> {
         }
         for e in page {
             let a = e.to_audit();
-            if e.seq != after + 1 || e.prev_hash != prev || a.expected_hash() != e.hash {
+            let linked = prev.as_ref().is_none_or(|p| *p == e.prev_hash);
+            if e.seq != after + 1 || !linked || a.expected_hash() != e.hash {
                 return Ok(false);
             }
             after = e.seq;
-            prev = e.hash;
+            prev = Some(e.hash);
         }
     }
 }
@@ -338,6 +448,144 @@ mod tests {
         some_events(&mut c, "o1", 1);
         assert!(checkpoint(&mut c, "o1", 3).unwrap().is_some());
         assert!(checkpoint(&mut c, "o1", 4).unwrap().is_none());
+    }
+
+    fn tenant(c: &mut DbConnInner, org: &str) {
+        reins_org::tests::add_org(c, org);
+    }
+
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn a_pruned_chain_exports_from_its_anchor_and_verifies() {
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        tenant(&mut c, "o1");
+        some_events(&mut c, "o1", 5);
+        let anchor = checkpoint(&mut c, "o1", 100).unwrap().unwrap();
+        some_events(&mut c, "o1", 4);
+        checkpoint(&mut c, "o1", 200).unwrap().unwrap();
+        // Business keeps a year: a year and 50 s after it, the checkpoint signed at 100 is old enough, the one at 200 not.
+        let now = 150 + 365 * DAY;
+        assert_eq!(prune(&mut c, "o1", now).unwrap(), Some(anchor.seq));
+        let (first, _) = reins_org_event::q_first(&mut c, "o1").unwrap().unwrap();
+        assert_eq!(first, anchor.seq, "the anchor event stays");
+        let text = export(&mut c, "o1", None, None, now).unwrap();
+        let first_line: ExportLine = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert!(matches!(first_line, ExportLine::Checkpoint(_)), "{first_line:?}");
+        let k = keys(&mut c, "o1");
+        let r = verify(text.as_bytes(), &k, Some(&anchor)).unwrap();
+        assert_eq!(r.first_seq, anchor.seq + 1);
+        assert!(intact(&mut c, "o1").unwrap());
+        // The prune is itself on the chain, and the chain still grows.
+        let kinds: Vec<String> =
+            reins_org_event::q_events(&mut c, "o1", None, 3).unwrap().into_iter().map(|e| e.kind).collect();
+        assert!(kinds.iter().any(|k| k == kinds::AUDIT_PRUNED), "{kinds:?}");
+        record(&mut c, "o1", "x.y", None, None, &json!({}), now + 1).unwrap();
+        assert!(intact(&mut c, "o1").unwrap());
+        // A second prune at the same time finds nothing new.
+        assert_eq!(prune(&mut c, "o1", now).unwrap(), None);
+    }
+
+    #[test]
+    fn nothing_is_pruned_without_an_old_enough_checkpoint() {
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        tenant(&mut c, "o1");
+        some_events(&mut c, "o1", 5);
+        checkpoint(&mut c, "o1", 100).unwrap().unwrap();
+        assert_eq!(prune(&mut c, "o1", 100 + 364 * DAY).unwrap(), None);
+        let (first, _) = reins_org_event::q_first(&mut c, "o1").unwrap().unwrap();
+        assert_eq!(first, 1);
+        // Without any checkpoint, nothing either.
+        tenant(&mut c, "o2");
+        some_events(&mut c, "o2", 3);
+        assert_eq!(prune(&mut c, "o2", 10 * 365 * DAY).unwrap(), None);
+    }
+
+    #[test]
+    fn retention_follows_the_tier() {
+        assert_eq!(audit_retention_days(Tier::Team), 30);
+        assert_eq!(audit_retention_days(Tier::Business), 365);
+        assert_eq!(audit_retention_days(Tier::Enterprise), 7 * 365);
+        assert_eq!(audit_retention_days(Tier::Family), 365);
+    }
+
+    #[test]
+    fn pruning_never_crosses_into_another_tenant() {
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        tenant(&mut c, "o1");
+        tenant(&mut c, "o2");
+        some_events(&mut c, "o1", 4);
+        some_events(&mut c, "o2", 4);
+        checkpoint(&mut c, "o1", 100).unwrap().unwrap();
+        checkpoint(&mut c, "o2", 100 + 400 * DAY).unwrap().unwrap();
+        assert!(prune(&mut c, "o1", 101 + 366 * DAY).unwrap().is_some());
+        assert_eq!(prune(&mut c, "o2", 101 + 366 * DAY).unwrap(), None);
+        assert_eq!(reins_org_event::q_first(&mut c, "o2").unwrap().unwrap().0, 1);
+        assert!(intact(&mut c, "o2").unwrap());
+    }
+
+    #[test]
+    fn a_tampered_chain_is_never_pruned() {
+        use crate::db::schema::reins_org_events;
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        tenant(&mut c, "o1");
+        some_events(&mut c, "o1", 4);
+        checkpoint(&mut c, "o1", 100).unwrap().unwrap();
+        diesel::update(
+            reins_org_events::table.filter(reins_org_events::org_uuid.eq("o1")).filter(reins_org_events::seq.eq(2)),
+        )
+        .set(reins_org_events::detail.eq("{\"i\":99}"))
+        .execute(&mut c)
+        .unwrap();
+        assert!(prune(&mut c, "o1", 101 + 366 * DAY).is_err(), "the evidence of the edit must stay");
+        assert_eq!(reins_org_event::q_first(&mut c, "o1").unwrap().unwrap().0, 1);
+    }
+
+    #[test]
+    fn editing_the_first_kept_event_breaks_intact() {
+        use crate::db::schema::reins_org_events;
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        tenant(&mut c, "o1");
+        some_events(&mut c, "o1", 4);
+        let anchor = checkpoint(&mut c, "o1", 100).unwrap().unwrap();
+        some_events(&mut c, "o1", 2);
+        prune(&mut c, "o1", 101 + 366 * DAY).unwrap().unwrap();
+        diesel::update(
+            reins_org_events::table
+                .filter(reins_org_events::org_uuid.eq("o1"))
+                .filter(reins_org_events::seq.eq(anchor.seq)),
+        )
+        .set(reins_org_events::detail.eq("{\"i\":99}"))
+        .execute(&mut c)
+        .unwrap();
+        assert!(!intact(&mut c, "o1").unwrap());
+    }
+
+    #[test]
+    fn a_segment_verifies_against_its_anchor_and_records_nothing() {
+        use_test_kms();
+        let mut c = super::super::testing::db();
+        some_events(&mut c, "o1", 3);
+        let first = checkpoint(&mut c, "o1", 20).unwrap().unwrap();
+        some_events(&mut c, "o1", 3);
+        let second = checkpoint(&mut c, "o1", 30).unwrap().unwrap();
+        some_events(&mut c, "o1", 1);
+        let head = reins_org_event::q_head(&mut c, "o1").unwrap().unwrap();
+        let k = keys(&mut c, "o1");
+        let whole = segment(&mut c, "o1", None, first.seq, 40).unwrap();
+        let r = verify(whole.as_bytes(), &k, None).unwrap();
+        assert_eq!((r.first_seq, r.last_seq), (1, first.seq));
+        let next = segment(&mut c, "o1", Some(first.seq), second.seq, 41).unwrap();
+        let r = verify(next.as_bytes(), &k, Some(&first)).unwrap();
+        assert_eq!((r.first_seq, r.last_seq), (first.seq + 1, second.seq));
+        assert_eq!(reins_org_event::q_head(&mut c, "o1").unwrap().unwrap(), head, "nothing recorded");
+        // Only between stored checkpoints.
+        assert!(segment(&mut c, "o1", Some(first.seq), head.0, 42).is_err());
     }
 
     #[test]

@@ -1,0 +1,29 @@
+# The Reins executor image (ghcr.io/<owner>/reins-executor): reins-executor and reins-audit, both static (musl), on an
+# empty base. Built by .github/workflows/release.yml (executor-image) from the binaries the audit-tools job made, for
+# linux/amd64 and linux/arm64 in one run: there is no RUN step, so nothing runs under emulation. The context is:
+#
+#   bin/amd64/reins-executor  bin/amd64/reins-audit
+#   bin/arm64/reins-executor  bin/arm64/reins-audit
+#   state/                    an empty directory (mode 0700): the state directory
+#
+# The executor carries its own TLS roots (webpki-roots), so the image needs no CA bundle. Its configuration is mounted
+# at /etc/reins-executor/executor.toml (docs/executor.md); its key, leases and journal live in the volume.
+FROM scratch
+
+ARG TARGETARCH
+
+COPY bin/${TARGETARCH}/reins-executor bin/${TARGETARCH}/reins-audit /
+# scratch has no shell to make a directory with: the context's empty state/ becomes the state directory, owned by the
+# user the executor runs as.
+COPY --chown=65532:65532 state/ /var/lib/reins-executor/
+
+USER 65532:65532
+WORKDIR /var/lib/reins-executor
+VOLUME /var/lib/reins-executor
+
+LABEL org.opencontainers.image.title="Reins executor" \
+      org.opencontainers.image.description="The Reins organization executor, with reins-audit" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENTRYPOINT ["/reins-executor"]
+CMD ["run", "--config", "/etc/reins-executor/executor.toml"]
