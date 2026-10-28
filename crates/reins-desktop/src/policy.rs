@@ -74,6 +74,52 @@ fn store_file(paths: &Paths) -> PathBuf {
     paths.state_dir.join("policy.json")
 }
 
+/// The second copy of the highest snapshot version applied (`policy.floor`, also in the `reins` guard group).
+fn floor_file(paths: &Paths) -> PathBuf {
+    paths.state_dir.join("policy.floor")
+}
+
+/// The highest snapshot version applied: the larger of the two copies (an agent lowering one copy rolls nothing back).
+#[must_use]
+pub fn floor(paths: &Paths) -> u64 {
+    let copy = std::fs::read_to_string(floor_file(paths)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
+    PolicyStore::load(paths).floor.max(copy)
+}
+
+fn write_floor(paths: &Paths, floor: u64) {
+    if let Err(e) = write_private(&floor_file(paths), floor.to_string().as_bytes()) {
+        log::warn!("policy: {e}");
+    }
+}
+
+/// The daemon's copy of the highest version (in memory, where an agent can't lower it): any file found below it is
+/// raised back, and a snapshot below it is dropped. Returns the highest version known now.
+#[must_use]
+pub fn hold_floor(paths: &Paths, known: u64) -> u64 {
+    let on_disk = floor(paths);
+    if on_disk >= known {
+        return on_disk;
+    }
+    log::warn!("policy: the kept version went down ({on_disk} < {known}); restored, and an older snapshot dropped");
+    let restored = PolicyStore::update(paths, |s| {
+        let older = s.snapshot.as_ref().is_some_and(|signed| {
+            serde_json::from_str::<serde_json::Value>(&signed.body)
+                .ok()
+                .and_then(|v| v.pointer("/binding/version").and_then(serde_json::Value::as_u64))
+                .is_none_or(|v| v < known)
+        });
+        if older {
+            s.snapshot = None;
+        }
+        s.floor = known;
+    });
+    if let Err(e) = restored {
+        log::warn!("policy: {e}");
+    }
+    write_floor(paths, known);
+    known
+}
+
 impl PolicyStore {
     /// What is kept (nothing when the file is missing or unreadable: then the phone is asked, as before).
     #[must_use]
@@ -145,6 +191,7 @@ pub struct Held {
 #[must_use]
 pub fn held(paths: &Paths, client_key: &str, now: i64) -> Held {
     let store = PolicyStore::load(paths);
+    let floor = floor(paths);
     let (key, disputed) = pinned(paths);
     let open = |s: &Signed| {
         let m = dp::open(s, key.as_deref(), &verify)?;
@@ -154,7 +201,12 @@ pub fn held(paths: &Paths, client_key: &str, now: i64) -> Held {
     let mut refused = None;
     let policy = match store.snapshot.as_ref().map(open) {
         _ if disputed => None,
-        Some(Ok(PolicyMessage::Snapshot(p))) if p.binding.version <= store.floor => Some(*p),
+        // The snapshot kept is the one that set the floor: anything below it is an older one put back.
+        Some(Ok(PolicyMessage::Snapshot(p))) if p.binding.version >= floor => Some(*p),
+        Some(Ok(PolicyMessage::Snapshot(_))) => {
+            refused = Some(Refusal::Older);
+            None
+        }
         Some(Ok(_)) => {
             refused = Some(Refusal::Unreadable);
             None
@@ -201,12 +253,14 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
     }
     let (key, disputed) = pinned(paths);
     let client_key = identity.public_key();
-    PolicyStore::update(paths, |store| {
+    let copy = std::fs::read_to_string(floor_file(paths)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0u64);
+    let applied = PolicyStore::update(paths, |store| {
         let mut out = Applied {
             seen: mail.items.iter().map(|i| i.version).max().unwrap_or(0),
             ..Applied::default()
         };
         store.looked_at = now;
+        store.floor = store.floor.max(copy);
         // Another phone (a new key trusted): what the old one signed goes.
         if store.signer != key {
             store.snapshot = None;
@@ -250,8 +304,10 @@ pub fn apply(paths: &Paths, identity: &Identity, mail: &PolicyMail, now: i64) ->
             )
         });
         store.tightens.truncate(reins_proto::desktop::MAX_TIGHTENS);
-        out
-    })
+        (out, store.floor)
+    })?;
+    write_floor(paths, applied.1);
+    Ok(applied.0)
 }
 
 /// Counts one use of budgeted task `id` spent here.
@@ -263,11 +319,12 @@ pub fn spend(paths: &Paths, id: &str) {
 
 /// Forgets everything kept (logging out).
 pub fn forget(paths: &Paths) {
-    let file = store_file(paths);
-    if let Err(e) = std::fs::remove_file(&file)
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        log::warn!("{}: {e}", file.display());
+    for file in [store_file(paths), floor_file(paths)] {
+        if let Err(e) = std::fs::remove_file(&file)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("{}: {e}", file.display());
+        }
     }
 }
 
@@ -292,6 +349,25 @@ pub async fn pull(
 
 /// The daemon's pick-up: once on start, then a long poll, so a Lockdown or another tightening arrives within seconds.
 pub async fn puller(paths: Paths, identity: std::sync::Arc<Identity>) {
+    let known = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(floor(&paths)));
+    tokio::join!(pull_loop(paths.clone(), identity, std::sync::Arc::clone(&known)), keep_floor(paths, known));
+}
+
+/// Every second: the files' floor never goes below the one this daemon knows ([`hold_floor`]).
+async fn keep_floor(paths: Paths, known: std::sync::Arc<std::sync::atomic::AtomicU64>) {
+    use std::sync::atomic::Ordering;
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let now = hold_floor(&paths, known.load(Ordering::Acquire));
+        known.fetch_max(now, Ordering::AcqRel);
+    }
+}
+
+async fn pull_loop(
+    paths: Paths,
+    identity: std::sync::Arc<Identity>,
+    known: std::sync::Arc<std::sync::atomic::AtomicU64>,
+) {
     let mut seen = 0u64;
     let mut wait = Duration::ZERO;
     loop {
@@ -312,6 +388,10 @@ pub async fn puller(paths: Paths, identity: std::sync::Arc<Identity>) {
         match pull(&paths, &identity, &client, after, wait).await {
             Ok(a) => {
                 seen = seen.max(a.seen);
+                known.fetch_max(
+                    hold_floor(&paths, known.load(std::sync::atomic::Ordering::Acquire)),
+                    std::sync::atomic::Ordering::AcqRel,
+                );
                 wait = POLL_WAIT;
                 // A server that answers at once again and again (nothing new, or only what is refused): not a hot loop.
                 if started.elapsed() < Duration::from_secs(1) && a.snapshots + a.tightens == 0 {
@@ -516,9 +596,37 @@ mod tests {
         let a = apply(&paths, &id, &mail(&phone, vec![older, newer]), NOW).unwrap();
         assert_eq!(a.snapshots, 0);
         assert_eq!(a.refused, [Refusal::Older, Refusal::Older]);
-        // A copy of an older file put back: its snapshot is above nothing kept, but the floor came with it, so the
-        // server is asked after it again and only newer ones are taken from then on.
         assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.binding.version), Some(9));
+    }
+
+    /// An agent puts an older, looser snapshot back and lowers the floor in `policy.json`: the second copy refuses it;
+    /// with both copies lowered, the daemon's own (in memory) restores them.
+    #[test]
+    fn a_lowered_floor_does_not_load_an_older_snapshot() {
+        let (_d, paths, id, phone) = setup();
+        let me = id.public_key();
+        let mut older = snapshot(&me, 8, NOW);
+        if let PolicyMessage::Snapshot(p) = &mut older {
+            p.mode.mode = Mode::Bypass;
+        }
+        apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &older)]), NOW).unwrap();
+        let old_store = std::fs::read(store_file(&paths)).unwrap();
+        apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 9, NOW))]), NOW).unwrap();
+        let known = floor(&paths);
+        assert_eq!(known, 9);
+        // policy.json put back as it was at version 8 (its floor 8 with it).
+        std::fs::write(store_file(&paths), &old_store).unwrap();
+        let h = held(&paths, &me, NOW);
+        assert_eq!((h.policy.is_none(), h.refused), (true, Some(Refusal::Older)));
+        // Both copies lowered: loaded, until the daemon (which kept 9 in memory) restores the floor.
+        std::fs::write(floor_file(&paths), "8").unwrap();
+        assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.mode.mode), Some(Mode::Bypass));
+        assert_eq!(hold_floor(&paths, known), 9);
+        assert!(held(&paths, &me, NOW).policy.is_none(), "the older snapshot is gone");
+        assert_eq!(floor(&paths), 9);
+        // The phone's next snapshot is taken as usual.
+        apply(&paths, &id, &mail(&phone, vec![phone.sealed(&me, &snapshot(&me, 10, NOW))]), NOW).unwrap();
+        assert_eq!(held(&paths, &me, NOW).policy.map(|p| p.binding.version), Some(10));
     }
 
     #[test]
