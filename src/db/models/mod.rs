@@ -17,6 +17,8 @@ mod reins_connection;
 mod reins_device;
 pub mod reins_family;
 pub mod reins_family_conn;
+#[cfg(all(test, sqlite))]
+pub(crate) use self::reins_device::test_db;
 pub mod reins_org;
 pub mod reins_org_event;
 pub mod reins_org_exec;
@@ -53,7 +55,9 @@ pub use self::organization::{
     Membership, MembershipId, MembershipStatus, MembershipType, OrgApiKeyId, Organization, OrganizationApiKey,
     OrganizationId,
 };
-pub use self::reins_circle::{ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket};
+pub use self::reins_circle::{
+    ReinsCircleChange, ReinsCircleInvite, ReinsCircleLink, ReinsCirclePacket, ReinsGuardianNotice,
+};
 pub use self::reins_client::{ReinsClient, ReinsJwtClient};
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;

@@ -1375,6 +1375,8 @@ final class AppModel {
             if WorkProfiles.active.managed { show(.orgReviews, in: .settings) } else { open(.settings) }
         case .family:
             if WorkProfiles.active.family { show(.family, in: .settings) } else { open(.settings) }
+        case .circles:
+            show(.circles, in: .settings)
         case .pair:
             break
         }

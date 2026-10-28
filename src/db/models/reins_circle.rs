@@ -10,7 +10,10 @@ use crate::{
     api::EmptyResult,
     db::{
         DbConn, DbConnInner,
-        schema::{reins_circle_invites, reins_circle_links, reins_circle_packets},
+        schema::{
+            reins_circle_changes, reins_circle_invites, reins_circle_links, reins_circle_packets,
+            reins_guardian_notices,
+        },
     },
     error::MapResult,
 };
@@ -59,6 +62,40 @@ pub struct ReinsCircleLink {
     pub last_change: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// A guardianship the ward asked to end: when the end takes effect (`i64::MAX`: a minor's, waiting for the
+    /// guardian's consent). Until then it stays as it is.
+    pub effective_at: Option<i64>,
+}
+
+/// One signed change of a link, as it arrived (the history a guardian's phone checks step by step).
+#[derive(Clone, Debug, PartialEq, Eq, Queryable, Insertable)]
+#[diesel(table_name = reins_circle_changes)]
+pub struct ReinsCircleChange {
+    pub link_id: String,
+    /// The change's own `seq` (unique per link: a second change with the same number is refused).
+    pub seq: i64,
+    /// The `SignedChange` (JSON).
+    pub change_body: String,
+    /// When the server received it.
+    pub at: i64,
+}
+
+/// What the server observed about a ward, for one of its guardians (08 R7).
+#[derive(Clone, Debug, PartialEq, Eq, Queryable, Insertable, AsChangeset)]
+#[diesel(table_name = reins_guardian_notices)]
+pub struct ReinsGuardianNotice {
+    pub id: String,
+    pub guardian_uuid: String,
+    pub link_id: String,
+    /// The notice's type (`account_reset`, `account_deleted`, `roster_changed`, `link_changed`).
+    pub kind: String,
+    /// The `GuardianNoticeKind` (JSON).
+    pub detail: String,
+    pub at: i64,
+    /// Its push went out (or isn't owed).
+    pub pushed: bool,
+    /// The guardian's phone took it.
+    pub fetched: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Queryable, Insertable, AsChangeset)]
@@ -133,9 +170,40 @@ impl ReinsCircleLink {
         conn.run(move |c| q_links_for(c, user)).await
     }
 
+    /// Links `user` is on, or the error: what a phone reads, which must never take a failed load for "no links".
+    pub async fn try_for_user(user: &str, conn: &DbConn) -> Result<Vec<Self>, crate::Error> {
+        conn.run(move |c| q_try_links_for(c, user)).await.map_res("Error reading Circle links")
+    }
+
     /// Writes `self` if the stored state is still `from`.
     pub async fn update(&self, from: &str, conn: &DbConn) -> Result<bool, crate::Error> {
         conn.run(move |c| q_update_link(c, self, from)).await.map_res("Error updating a Circle link")
+    }
+
+    /// `ward`'s guardianships (as the owner) that aren't ended.
+    pub async fn guardians_of(ward: &str, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |c| q_guardians_of(c, ward)).await
+    }
+
+    /// Guardianships whose end took effect at `now` and aren't ended yet.
+    pub async fn ending_due(now: i64, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |c| q_ending_due(c, now)).await
+    }
+
+    /// Logs `change` and writes `self` if the stored state is still `from`, at once: `false` when someone moved the
+    /// link first or a change with the same `seq` is logged already.
+    pub async fn update_with_change(
+        &self,
+        from: &str,
+        change: &ReinsCircleChange,
+        conn: &DbConn,
+    ) -> Result<bool, crate::Error> {
+        conn.run(move |c| q_update_with_change(c, self, from, change)).await.map_res("Error updating a Circle link")
+    }
+
+    /// Every logged change of `link`, oldest first.
+    pub async fn changes(link: &str, conn: &DbConn) -> Vec<ReinsCircleChange> {
+        conn.run(move |c| q_changes(c, link)).await
     }
 
     pub async fn delete(id: &str, conn: &DbConn) -> EmptyResult {
@@ -197,6 +265,52 @@ impl ReinsCirclePacket {
     }
 }
 
+impl ReinsGuardianNotice {
+    /// One notice to each guardian of `ward` (its Guardian links as the owner that haven't ended): `detail` is the
+    /// notice's JSON, `kind` its type. Returns what was written.
+    pub async fn notify_guardians(
+        ward: &str,
+        kind: &str,
+        detail: &str,
+        now: i64,
+        conn: &DbConn,
+    ) -> Result<Vec<Self>, crate::Error> {
+        conn.run(move |c| q_notify_guardians(c, ward, kind, detail, now, &mut new_notice_id))
+            .await
+            .map_res("Error saving guardian notices")
+    }
+
+    pub async fn insert(&self, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_insert_notice(c, self)).await.map_res("Error saving a guardian notice")
+    }
+
+    /// `guardian`'s notices its phone hasn't acknowledged, oldest first (they stay until it does).
+    pub async fn pending(guardian: &str, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |c| q_pending_notices(c, guardian)).await
+    }
+
+    /// The guardian's phone kept these (only its own notices are touched).
+    pub async fn mark_fetched(guardian: &str, ids: Vec<String>, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_mark_notices_fetched(c, guardian, &ids)).await.map_res("Error updating guardian notices")
+    }
+
+    /// Notices whose push hasn't gone out.
+    pub async fn unpushed(conn: &DbConn) -> Vec<Self> {
+        conn.run(q_unpushed_notices).await
+    }
+
+    pub async fn mark_pushed(id: &str, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| {
+            diesel::update(reins_guardian_notices::table.find(id))
+                .set(reins_guardian_notices::pushed.eq(true))
+                .execute(c)
+                .map(|_| ())
+        })
+        .await
+        .map_res("Error updating a guardian notice")
+    }
+}
+
 /// Drops invitations a day past their expiry and packets closed for 7 days.
 pub async fn purge(now: i64, conn: &DbConn) -> EmptyResult {
     conn.run(move |c| q_purge(c, now)).await.map_res("Error purging Circle rows")
@@ -245,29 +359,157 @@ fn q_due_invites(c: &mut DbConnInner, now: i64) -> Vec<ReinsCircleInvite> {
         .unwrap_or_default()
 }
 
-fn q_insert_link(c: &mut DbConnInner, row: &ReinsCircleLink) -> QueryResult<()> {
+pub(crate) fn q_insert_link(c: &mut DbConnInner, row: &ReinsCircleLink) -> QueryResult<()> {
     diesel::insert_into(reins_circle_links::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_find_link(c: &mut DbConnInner, id: &str) -> Option<ReinsCircleLink> {
+pub(crate) fn q_find_link(c: &mut DbConnInner, id: &str) -> Option<ReinsCircleLink> {
     reins_circle_links::table.find(id).first(c).ok()
 }
 
 fn q_links_for(c: &mut DbConnInner, user: &str) -> Vec<ReinsCircleLink> {
+    q_try_links_for(c, user).unwrap_or_default()
+}
+
+fn q_try_links_for(c: &mut DbConnInner, user: &str) -> QueryResult<Vec<ReinsCircleLink>> {
     reins_circle_links::table
         .filter(reins_circle_links::owner_uuid.eq(user).or(reins_circle_links::helper_uuid.eq(user)))
         .order(reins_circle_links::created_at.asc())
         .load(c)
-        .unwrap_or_default()
 }
 
-fn q_update_link(c: &mut DbConnInner, row: &ReinsCircleLink, from: &str) -> QueryResult<bool> {
+pub(crate) fn q_update_link(c: &mut DbConnInner, row: &ReinsCircleLink, from: &str) -> QueryResult<bool> {
     diesel::update(
         reins_circle_links::table.filter(reins_circle_links::id.eq(&row.id)).filter(reins_circle_links::state.eq(from)),
     )
     .set(row)
     .execute(c)
     .map(|n| n == 1)
+}
+
+pub(crate) fn q_guardians_of(c: &mut DbConnInner, ward: &str) -> Vec<ReinsCircleLink> {
+    reins_circle_links::table
+        .filter(reins_circle_links::owner_uuid.eq(ward))
+        .filter(reins_circle_links::kind.eq("guardian"))
+        .filter(reins_circle_links::state.ne("ended"))
+        .order(reins_circle_links::created_at.asc())
+        .load(c)
+        .unwrap_or_default()
+}
+
+fn q_ending_due(c: &mut DbConnInner, now: i64) -> Vec<ReinsCircleLink> {
+    reins_circle_links::table
+        .filter(reins_circle_links::kind.eq("guardian"))
+        .filter(reins_circle_links::state.ne("ended"))
+        .filter(reins_circle_links::effective_at.le(now))
+        .load(c)
+        .unwrap_or_default()
+}
+
+pub(crate) fn q_update_with_change(
+    c: &mut DbConnInner,
+    row: &ReinsCircleLink,
+    from: &str,
+    change: &ReinsCircleChange,
+) -> QueryResult<bool> {
+    c.transaction(|c| {
+        let logged = reins_circle_changes::table
+            .filter(reins_circle_changes::link_id.eq(&change.link_id))
+            .filter(reins_circle_changes::seq.ge(change.seq))
+            .count()
+            .get_result::<i64>(c)?;
+        if logged > 0 {
+            return Ok(false);
+        }
+        diesel::insert_into(reins_circle_changes::table).values(change).execute(c)?;
+        if q_update_link(c, row, from)? {
+            Ok(true)
+        } else {
+            // Moved meanwhile: the change isn't logged either.
+            Err(diesel::result::Error::RollbackTransaction)
+        }
+    })
+    .or_else(|e| match e {
+        // Moved meanwhile, or two changes with one `seq` at once (the second finds the first's row).
+        diesel::result::Error::RollbackTransaction
+        | diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation, _) => Ok(false),
+        e => Err(e),
+    })
+}
+
+pub(crate) fn q_changes(c: &mut DbConnInner, link: &str) -> Vec<ReinsCircleChange> {
+    reins_circle_changes::table
+        .filter(reins_circle_changes::link_id.eq(link))
+        .order(reins_circle_changes::seq.asc())
+        .limit(1_000)
+        .load(c)
+        .unwrap_or_default()
+}
+
+fn new_notice_id() -> String {
+    crate::crypto::encode_random_bytes::<16>(&data_encoding::HEXLOWER)
+}
+
+pub(crate) fn q_insert_notice(c: &mut DbConnInner, row: &ReinsGuardianNotice) -> QueryResult<()> {
+    diesel::insert_into(reins_guardian_notices::table).values(row).execute(c).map(|_| ())
+}
+
+pub(crate) fn q_notify_guardians(
+    c: &mut DbConnInner,
+    ward: &str,
+    kind: &str,
+    detail: &str,
+    now: i64,
+    new_id: &mut dyn FnMut() -> String,
+) -> QueryResult<Vec<ReinsGuardianNotice>> {
+    c.transaction(|c| {
+        let mut out = Vec::new();
+        for link in q_guardians_of(c, ward) {
+            let row = ReinsGuardianNotice {
+                id: new_id(),
+                guardian_uuid: link.helper_uuid,
+                link_id: link.id,
+                kind: kind.to_owned(),
+                detail: detail.to_owned(),
+                at: now,
+                pushed: false,
+                fetched: false,
+            };
+            q_insert_notice(c, &row)?;
+            out.push(row);
+        }
+        Ok(out)
+    })
+}
+
+pub(crate) fn q_pending_notices(c: &mut DbConnInner, guardian: &str) -> Vec<ReinsGuardianNotice> {
+    reins_guardian_notices::table
+        .filter(reins_guardian_notices::guardian_uuid.eq(guardian))
+        .filter(reins_guardian_notices::fetched.eq(false))
+        .order(reins_guardian_notices::at.asc())
+        .limit(200)
+        .load(c)
+        .unwrap_or_default()
+}
+
+pub(crate) fn q_mark_notices_fetched(c: &mut DbConnInner, guardian: &str, ids: &[String]) -> QueryResult<()> {
+    diesel::update(
+        reins_guardian_notices::table
+            .filter(reins_guardian_notices::guardian_uuid.eq(guardian))
+            .filter(reins_guardian_notices::id.eq_any(ids)),
+    )
+    .set(reins_guardian_notices::fetched.eq(true))
+    .execute(c)
+    .map(|_| ())
+}
+
+fn q_unpushed_notices(c: &mut DbConnInner) -> Vec<ReinsGuardianNotice> {
+    reins_guardian_notices::table
+        .filter(reins_guardian_notices::pushed.eq(false))
+        .order(reins_guardian_notices::at.asc())
+        .limit(200)
+        .load(c)
+        .unwrap_or_default()
 }
 
 fn q_linked(c: &mut DbConnInner, a: &str, b: &str) -> bool {
@@ -398,12 +640,20 @@ fn q_purge(c: &mut DbConnInner, now: i64) -> QueryResult<()> {
             .filter(reins_circle_packets::owner_seen.eq(true).or(reins_circle_packets::updated_at.lt(now - 7 * 86_400)))
             .filter(reins_circle_packets::updated_at.lt(now - 86_400)),
     )
+    .execute(c)?;
+    diesel::delete(
+        reins_guardian_notices::table
+            .filter(reins_guardian_notices::fetched.eq(true))
+            .filter(reins_guardian_notices::at.lt(now - 30 * 86_400)),
+    )
     .execute(c)
     .map(|_| ())
 }
 
-/// Every Circle row of `user`, either side (account deletion or reset).
+/// Every Circle row of `user`, either side (account deletion or reset), and the notices it holds as a guardian. Notices
+/// about it (as a ward) stay with its guardians.
 pub(crate) fn q_delete_user(c: &mut DbConnInner, user: &str) -> QueryResult<()> {
+    diesel::delete(reins_guardian_notices::table.filter(reins_guardian_notices::guardian_uuid.eq(user))).execute(c)?;
     diesel::delete(
         reins_circle_packets::table
             .filter(reins_circle_packets::owner_uuid.eq(user).or(reins_circle_packets::helper_uuid.eq(user))),
@@ -458,6 +708,7 @@ mod tests {
             last_change: None,
             created_at: 1,
             updated_at: 1,
+            effective_at: None,
         }
     }
 

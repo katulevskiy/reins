@@ -2558,6 +2558,31 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func circleNotices() async throws -> [CircleNoticeView] { circles.noticeList() }
 
+    func guardianProposeMinor(linkId: String) async throws {
+        try await latency()
+        try circles.proposeMinor(linkId)
+    }
+
+    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) async throws {
+        try await latency()
+        // As the core: the owner confirms first, or nothing is marked.
+        guard try await owner.confirm(reason: "Mark this account a minor's") else { throw CoreError.Invalid(reason: "Not confirmed.") }
+        try circles.acceptMinor(linkId, signal: signal)
+    }
+
+    func guardianConsentEnd(linkId: String, owner: OwnerCheck) async throws {
+        try await latency()
+        // As the core: the owner confirms first, or nothing is consented.
+        guard try await owner.confirm(reason: "Let them leave") else { throw CoreError.Invalid(reason: "Not confirmed.") }
+        try circles.consentEnd(linkId)
+    }
+
+    func guardianSetDigest(linkId: String, on: Bool) async throws { try circles.setDigest(linkId, on: on) }
+
+    func guardianNotices(refresh: Bool) async throws -> [GuardianNoticeView] { circles.guardianNoticeList() }
+
+    func guardianWardView(linkId: String) async throws -> WardView { try circles.wardView(linkId) }
+
     func circleAnswer(reviewId: String, approve: Bool, note: String?) async throws {
         try await latency()
         try circles.answer(reviewId, approve: approve)

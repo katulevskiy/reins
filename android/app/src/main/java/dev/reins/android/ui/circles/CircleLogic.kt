@@ -103,11 +103,69 @@ fun personLine(p: CirclePerson): String = listOfNotNull(
     if (decides(p.role)) (if (p.deferred) "Deferred" else "Instant") else null,
 ).joinToString(" · ")
 
-/** The owner may pause and resume; only an active or paused arrangement. */
-fun canPause(p: CirclePerson): Boolean = p.mine && (p.state == CircleLinkState.ACTIVE || p.state == CircleLinkState.PAUSED)
+/**
+ * The owner may pause and resume; only an active or paused arrangement. Never the ward's own guardianship (04 §4: the
+ * ward can't silently remove it), which the core refuses too.
+ */
+fun canPause(p: CirclePerson): Boolean =
+    p.mine && !wardsGuardianship(p) && (p.state == CircleLinkState.ACTIVE || p.state == CircleLinkState.PAUSED)
 
-/** The owner ends an arrangement; a helper leaves it. */
-fun endLabel(p: CirclePerson): String = if (p.mine) "End" else "Leave"
+/** The owner ends an arrangement; a helper leaves it. A ward leaves its guardianship. */
+fun endLabel(p: CirclePerson): String = if (p.mine && !wardsGuardianship(p)) "End" else "Leave"
+
+// ---- Guardianship (Decisions v2 P7, 04 §4) -------------------------------------------------------------------------
+
+/** This account is the ward: the other person is its guardian. */
+fun wardsGuardianship(p: CirclePerson): Boolean = p.role == CircleRole.GUARDIAN && p.mine
+
+/** This account is the guardian of the other person. */
+fun guardsThem(p: CirclePerson): Boolean = p.role == CircleRole.GUARDIAN && !p.mine
+
+/** The notices a ward picks from, up front (04 §4: 0, 3 or 7 days, never more, never "permanent"). */
+val NOTICE_DAYS: List<Int> = listOf(0, 3, 7)
+
+/** A notice as its segment says it. */
+fun noticeLabel(days: Int): String = if (days == 0) "None" else "$days days"
+
+/** "Ends after 3 days' notice"; "Ends right away" with none. */
+fun noticeLine(days: Int): String = when (days) {
+    0 -> "Ends right away"
+    1 -> "Ends after 1 day's notice"
+    else -> "Ends after $days days' notice"
+}
+
+/** "Ends in 3 d", "Ends in 5 h", "Ends in 12 min": the countdown of a guardianship that is ending. */
+fun endingLine(ending: Long, nowSeconds: Long): String {
+    val left = ending - nowSeconds
+    return when {
+        left <= 0 -> "Ending"
+        left < 3_600 -> "Ends in ${((left + 59) / 60).coerceAtLeast(1)} min"
+        left < 86_400 -> "Ends in ${left / 3_600} h"
+        else -> "Ends in ${left / 86_400} d" + (((left % 86_400) / 3_600).takeIf { it > 0 }?.let { " $it h" } ?: "")
+    }
+}
+
+/** A minor's request to leave waits for the guardian: "Waiting for Mom". */
+fun waitingFor(guardian: String): String = "Waiting for ${shortName(guardian)}"
+
+/** The badge a guardianship's row carries while it ends: the countdown, or who it waits for. */
+fun guardianBadge(p: CirclePerson, nowSeconds: Long): String? = when {
+    p.role != CircleRole.GUARDIAN -> null
+    p.needsConsent -> if (p.mine) waitingFor(p.peer) else "Asked to leave"
+    else -> p.ending?.let { endingLine(it, nowSeconds) }
+}
+
+/** The ward's switch: "Weekly summary for Mom". */
+fun digestLabel(guardian: String): String = "Weekly summary for ${shortName(guardian)}"
+
+/** What the server reported that this phone could not check. */
+const val REPORTED_BY_SERVER = "Reported by the server"
+
+/** The guardian's consent card: "Sam asked to leave. Allow?". */
+fun consentLine(ward: String): String = "${shortName(ward)} asked to leave. Allow?"
+
+/** The one notification of a guardian notice: "Sam: guardianship changed". */
+fun guardianNotificationTitle(ward: String): String = "${shortName(ward)}: guardianship changed"
 
 /** What a person is called on screen: their address's name part, as given ("alex" from alex@example.com). */
 fun shortName(email: String): String {

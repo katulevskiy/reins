@@ -109,7 +109,8 @@ final class AppNotifier: Notifier, @unchecked Sendable {
 
     /// Circles. A request of another account waiting for this phone is the one Circle notification ("Sam: purchase $42
     /// waiting"; a tap opens Reins, nothing is answered from it); in front it chimes and "For others" shows it.
-    /// Anything else (a review settled, an invitation moved, the owner's progress) refreshes quietly.
+    /// A guardian's notice about a ward is told the same way ("Sam: guardianship changed"). Anything else (a review
+    /// settled, an invitation moved, the owner's progress) refreshes quietly.
     func circleChanged(event: CircleEvent) {
         Task { @MainActor in
             guard let model else { return }
@@ -127,15 +128,20 @@ final class AppNotifier: Notifier, @unchecked Sendable {
                     if !shown { self.post(id, NotificationContent.circleReview(review, settings: self.settings())) }
                 }
                 await model.refreshCircles()
-            case let .alert(linkId, person, text):
-                // A guardian must know at once (08 R7): posted in front too (it explains itself), quietly there.
-                self.post("circle-alert-\(linkId)", NotificationContent.status(
-                    title: person.isEmpty ? "Reins" : person,
-                    body: text,
-                    link: .home,
-                    settings: self.settings(),
-                    silent: model.isActive
-                ))
+            case let .guardianNotice(notice):
+                // Something about a ward (a request to leave, an early end, a reset): "Sam: guardianship changed". In
+                // front it chimes and Circles shows it; else one notification per notice (the extension may have shown
+                // it already: both processes read the push).
+                if model.isActive {
+                    model.feedback.play(.alert)
+                } else {
+                    let id = NotificationContent.alertId(notice.linkId)
+                    let body = GuardianLogic.notificationBody(notice)
+                    let shown = await self.center.deliveredNotifications().contains { n in
+                        n.request.content.userInfo[NotificationKey.id] as? String == id && n.request.content.body == body
+                    }
+                    if !shown { self.post(id, NotificationContent.guardianNotice(notice, settings: self.settings())) }
+                }
                 await model.circlesChanged()
             case .changed:
                 await model.circlesChanged()

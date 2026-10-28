@@ -250,9 +250,11 @@ private struct SettledReviewRow: View {
     }
 }
 
-/// What a watcher was told: a quiet list, no buttons ("Dana · Turned on Bypass for 1 h").
+/// What a watcher was told: a quiet list, no buttons ("Dana · Turned on Bypass for 1 h"). A ward's weekly summary
+/// ("This week: 3 automatic decisions") keeps its lines behind More.
 struct CircleNotices: View {
     var notices: [CircleNoticeView]
+    @State private var open: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -267,6 +269,20 @@ struct CircleNotices: View {
                             .fixedSize(horizontal: false, vertical: true)
                         if let outcome = n.outcome.map(untrusted), !outcome.isEmpty {
                             Text(verbatim: outcome).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
+                        }
+                        if !n.lines.isEmpty {
+                            if open.contains(n.id) {
+                                ForEach(Array(n.lines.prefix(50).enumerated()), id: \.offset) { _, line in
+                                    Text(verbatim: untrusted(line)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
+                                }
+                            }
+                            Button(open.contains(n.id) ? "Less" : "More") {
+                                if open.contains(n.id) { open.remove(n.id) } else { open.insert(n.id) }
+                            }
+                            .font(RFont.sans(12.5, .semibold))
+                            .foregroundStyle(Palette.violet)
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("circleNoticeMore:\(n.id)")
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

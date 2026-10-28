@@ -30,6 +30,8 @@ testRetry = "1.6.6"
 onnxruntime = "1.30.0"
 # Home screen widgets (And-Outside 04).
 glance = "1.2.0"
+# Google Play Age Signals: the age seam of a guardianship's minor mark (Decisions v2 P7). Unavailable is never a block.
+ageSignals = "0.0.4"
 androidxTestCore = "1.7.0"
 
 [libraries]
@@ -65,6 +67,7 @@ androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "a
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+play-age-signals = { module = "com.google.android.play:age-signals", version.ref = "ageSignals" }
 glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
 glance-appwidget-testing = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
 espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }

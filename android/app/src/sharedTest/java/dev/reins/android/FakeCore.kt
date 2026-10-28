@@ -677,7 +677,7 @@ class FakeCore : ReinsCoreInterface {
         val draft = circleDrafts.lastOrNull()
         val person = CirclePerson(
             "link-$id", helper, draft?.role ?: CircleRole.COSIGN, true, "Money", draft?.deferred ?: true, 14_400uL,
-            CircleLinkState.ACTIVE, now(),
+            CircleLinkState.ACTIVE, now(), null, false,
         )
         circlePeopleList = circlePeopleList + person
         circleInviteLast = CircleInviteProgress.Active(person.linkId)
@@ -718,8 +718,69 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun circleEnd(linkId: String) {
         circleEnds += linkId
+        val ward = guardianWards[linkId]
+        if (ward == null || ward.noticeDays.toInt() == 0 && !ward.minor) {
+            guardianWards.remove(linkId)
+            circlePeopleList = circlePeopleList.filterNot { it.linkId == linkId }
+            return
+        }
+        // The ward asks: a minor's waits for the guardian; else it ends after the notice the ward chose.
+        if (ward.ending != null || ward.needsConsent) throw CoreException.Invalid("You asked to leave already.")
+        val ending = if (ward.minor) null else now() + ward.noticeDays.toLong() * 86_400
+        guardianWards[linkId] = ward.copy(ending = ending, needsConsent = ward.minor)
+        circlePeopleList = circlePeopleList.map { if (it.linkId == linkId) it.copy(ending = ending, needsConsent = ward.minor) else it }
+    }
+
+    // ---- Guardianship (Decisions v2 P7) -----------------------------------------------------------------------------
+
+    /** The ward's views of its guardianships, by link. */
+    val guardianWards = java.util.concurrent.ConcurrentHashMap<String, WardView>()
+    /** What a guardian was told, newest first. */
+    @Volatile var guardianNoticeList: List<GuardianNoticeView> = emptyList()
+    /** `guardianAcceptMinor` calls: (link id, signal). */
+    val guardianMinorAccepts = CopyOnWriteArrayList<Pair<String, AgeSignalInput>>()
+    val guardianMinorProposals = CopyOnWriteArrayList<String>()
+    val guardianConsents = CopyOnWriteArrayList<String>()
+    /** `guardianSetDigest` calls: (link id, on). */
+    val guardianDigests = CopyOnWriteArrayList<Pair<String, Boolean>>()
+    val guardianNoticeReads = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun guardianProposeMinor(linkId: String) {
+        guardianMinorProposals += linkId
+    }
+
+    override suspend fun guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) {
+        val ward = guardianWards[linkId] ?: throw CoreException.NotFound()
+        // As the core: the owner confirms first, or nothing is marked.
+        if (!owner.confirm("Mark this account a minor's")) throw CoreException.Invalid("Not confirmed.")
+        if (signal == AgeSignalInput.Adult) throw CoreException.Invalid("This account isn't a minor's.")
+        if (!ward.minorProposed) throw CoreException.Invalid("Your guardian hasn't asked for this.")
+        guardianMinorAccepts += linkId to signal
+        guardianWards[linkId] = ward.copy(minor = true, minorProposed = false)
+    }
+
+    override suspend fun guardianConsentEnd(linkId: String, owner: OwnerCheck) {
+        // As the core: the owner confirms first, or nothing is consented.
+        if (!owner.confirm("Let them leave")) throw CoreException.Invalid("Not confirmed.")
+        val notice = guardianNoticeList.firstOrNull { it.linkId == linkId && it.needsConsent }
+            ?: throw CoreException.Invalid("Nothing waits for your consent.")
+        guardianConsents += linkId
+        guardianNoticeList = guardianNoticeList.map { if (it.id == notice.id) it.copy(needsConsent = false) else it }
         circlePeopleList = circlePeopleList.filterNot { it.linkId == linkId }
     }
+
+    override suspend fun guardianSetDigest(linkId: String, on: Boolean) {
+        val ward = guardianWards[linkId] ?: throw CoreException.NotFound()
+        guardianDigests += linkId to on
+        guardianWards[linkId] = ward.copy(digest = on)
+    }
+
+    override suspend fun guardianNotices(refresh: Boolean): List<GuardianNoticeView> {
+        guardianNoticeReads.incrementAndGet()
+        return guardianNoticeList
+    }
+
+    override suspend fun guardianWardView(linkId: String): WardView = guardianWards[linkId] ?: throw CoreException.NotFound()
 
     override suspend fun circleReviews(refresh: Boolean): List<CircleReviewView> {
         circleReviewReads.incrementAndGet()
@@ -755,6 +816,13 @@ class FakeCore : ReinsCoreInterface {
         circlePauses.clear()
         circleEnds.clear()
         circleReviewReads.set(0)
+        guardianWards.clear()
+        guardianNoticeList = emptyList()
+        guardianMinorAccepts.clear()
+        guardianMinorProposals.clear()
+        guardianConsents.clear()
+        guardianDigests.clear()
+        guardianNoticeReads.set(0)
     }
 
     override suspend fun gmailStatus() = gmail

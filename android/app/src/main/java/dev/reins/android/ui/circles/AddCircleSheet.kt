@@ -83,6 +83,7 @@ fun AddCircleSheet(
     onPreset: (String) -> Unit,
     onAgent: (String, String) -> Unit,
     onDeferred: (Boolean) -> Unit,
+    onNotice: (Int) -> Unit,
     onCreate: () -> Unit,
     onConfirm: () -> Unit,
     onBack: () -> Unit,
@@ -105,7 +106,7 @@ fun AddCircleSheet(
         when (page) {
             AddPage.Role -> RolePage(onRole)
             AddPage.Scope -> ScopePage(flow, connections, onPreset, onAgent)
-            AddPage.Class -> ClassPage(flow, onDeferred, onCreate)
+            AddPage.Class -> ClassPage(flow, onDeferred, onNotice, onCreate)
             AddPage.Invite -> InvitePage(flow, onConfirm, onClose)
         }
         flow.error?.let { RText(it, RType.sans(14f, FontWeight.Medium), LocalColors.current.danger, Modifier.padding(top = 10.dp).testTag("addCircleError"), maxLines = 3) }
@@ -141,7 +142,7 @@ private fun ScopePage(flow: AddFlow, connections: List<ConnectionView>, onPreset
 }
 
 @Composable
-private fun ClassPage(flow: AddFlow, onDeferred: (Boolean) -> Unit, onCreate: () -> Unit) {
+private fun ClassPage(flow: AddFlow, onDeferred: (Boolean) -> Unit, onNotice: (Int) -> Unit, onCreate: () -> Unit) {
     val c = LocalColors.current
     val role = flow.role ?: return
     var help by rememberSaveable { mutableStateOf(false) }
@@ -166,11 +167,14 @@ private fun ClassPage(flow: AddFlow, onDeferred: (Boolean) -> Unit, onCreate: ()
             Modifier.padding(top = 6.dp),
         )
     }
+    // A guardianship: the notice to leave, picked here, before the code (04 §4).
+    val guardian = role == CircleRole.GUARDIAN
+    if (guardian) GuardianTermsStep(flow.noticeDays, onNotice, Modifier.padding(top = 14.dp))
     Spacer(Modifier.size(18.dp))
     SignalButton(
         "Create link",
         Modifier.fillMaxWidth().testTag("circleCreate"),
-        enabled = !flow.busy,
+        enabled = !flow.busy && (!guardian || flow.noticeDays != null),
         leading = { if (flow.busy) Spinner(c.onInverse, size = 18.dp) else Icon(Icons.Rounded.QrCode2, null, Modifier.size(20.dp), tint = c.onInverse) },
         onClick = onCreate,
     )
@@ -315,9 +319,9 @@ internal fun OptionRow(
     }
 }
 
-/** One of two choices side by side (Deferred · Instant). */
+/** One of a few choices side by side (Deferred · Instant; a guardianship's notice). */
 @Composable
-private fun Segment(title: String, icon: ImageVector, selected: Boolean, tag: String, modifier: Modifier, onClick: () -> Unit) {
+internal fun Segment(title: String, icon: ImageVector?, selected: Boolean, tag: String, modifier: Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
     val shape = RoundedCornerShape(14.dp)
     Row(
@@ -332,7 +336,7 @@ private fun Segment(title: String, icon: ImageVector, selected: Boolean, tag: St
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, Modifier.size(18.dp), tint = if (selected) c.violet else c.ink2)
+        icon?.let { Icon(it, null, Modifier.size(18.dp), tint = if (selected) c.violet else c.ink2) }
         RText(title, RType.sans(15f, FontWeight.SemiBold), if (selected) c.violet else c.ink, maxLines = 1)
     }
 }

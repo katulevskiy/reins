@@ -109,6 +109,13 @@ async fn post_reset(
     }
 
     let approval = ReinsDevice::find_by_user(&user.uuid, &conn).await;
+    // Its guardians hear first, while the links still name them (08 R7).
+    super::guardian_notices::notify_guardians(
+        user.uuid.as_ref(),
+        &reins_proto::circle::GuardianNoticeKind::AccountReset,
+        &conn,
+    )
+    .await;
 
     let wipe = async {
         Send::delete_all_by_user(&user.uuid, &conn).await?;
@@ -143,6 +150,7 @@ async fn post_reset(
     HUB.forget_user(user.uuid.as_ref());
     // Its Circle arrangements can't be verified any more (new keys): they end, and each peer hears (08 R7).
     super::circles::end_all_for(user.uuid.as_ref(), &conn, pool.inner()).await;
+    super::guardian_notices::push_pending(&conn, pool.inner()).await;
 
     // The phone that approved for the account is signed out already; tell it so it says why.
     if let Some(old) = approval.filter(|old| old.device_uuid != device.uuid) {

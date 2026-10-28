@@ -271,12 +271,14 @@ impl Engine {
     /// The obligations the owner's arrangements put on `request`, its effect line and the owner's account; `None`
     /// when no arrangement covers it.
     fn circle_obligations(&self, state: &CircleState, request: &RelayRequest) -> Option<(Obligations, String, String)> {
-        // Active arrangements bind; a suspended one (the helper's keys changed) binds too, and its requests wait for the
-        // owner to end it (never fewer reviews because a key went missing). A paused one adds nothing.
+        // Arrangements in force bind (a guardianship until its end takes effect: its notice running, or a minor's
+        // request waiting for consent, 04 §4); a suspended one (the helper's keys changed) binds too, and its requests
+        // wait for the owner to end it (never fewer reviews because a key went missing). A paused one adds nothing.
+        let now = unix_now();
         let all: Vec<&circle::Arrangement> = state
             .held
             .iter()
-            .filter(|h| h.side == Side::Owner && matches!(h.standing, Standing::Active | Standing::Suspended))
+            .filter(|h| h.side == Side::Owner && (h.in_force(now) || h.standing == Standing::Suspended))
             .map(|h| &h.arrangement)
             .collect();
         if all.is_empty() {
@@ -664,6 +666,17 @@ impl Engine {
                             {
                                 p.vote = Some(answer.vote);
                                 p.note.clone_from(&answer.note);
+                                // The ward sees every decision its guardian made, and the note (04 §4).
+                                if p.kind == CircleKind::Guardian {
+                                    s.guardian_decisions.push(super::guardian::GuardianDecision {
+                                        link: p.arrangement.clone(),
+                                        at: unix_now(),
+                                        title: hold.card.title.clone(),
+                                        approved: answer.vote == Vote::Approve,
+                                        note: answer.note.clone(),
+                                    });
+                                    super::guardian::trim_decisions(&mut s.guardian_decisions);
+                                }
                             }
                             Ok(())
                         })?;
@@ -944,6 +957,7 @@ impl Engine {
                 text: circle::shown_text(&format!("{outcome}: {}", hold.card.title), circle::MAX_CARD_LINE, false),
                 outcome: Some(outcome.clone()),
                 at: unix_now(),
+                lines: Vec::new(),
             };
             if let Err(e) = self.circle_notice(session, me, link, notice).await {
                 log::info!("a Circle notice could not be sent: {e}");
@@ -1010,6 +1024,7 @@ impl Engine {
                 text: circle::shown_text(text, circle::MAX_CARD_LINE, false),
                 outcome: None,
                 at: unix_now(),
+                lines: Vec::new(),
             };
             if let Err(e) = self.circle_notice(&session, &me, &link, notice).await {
                 log::info!("a Circle notice could not be sent: {e}");
@@ -1178,6 +1193,7 @@ impl Engine {
                 text: n.notice.text.clone(),
                 outcome: n.notice.outcome.clone(),
                 at: n.notice.at,
+                lines: n.notice.lines.clone(),
             })
             .collect();
         out.sort_by_key(|n| std::cmp::Reverse(n.at));

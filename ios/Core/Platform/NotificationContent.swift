@@ -230,15 +230,21 @@ enum NotificationText {
         [untrusted(r.subtitle), CircleLogic.due(r.deadline, now: now)].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
-    /// A guardianship that ended or needs a new invitation, as the guardian is told (08 R7).
+    /// A guardianship that ended or needs a new invitation, as the guardian is told (08 R7). A guardianship's push
+    /// also comes for a notice the extension could not find (a reset, a recovery, a request to leave): then it says
+    /// what the person's row says, or that it changed, never that it ended.
     static func circleAlertTitle(_ p: CirclePerson) -> String { CircleLogic.name(p.peer) }
 
-    static func circleAlertBody(_ p: CirclePerson) -> String {
+    static func circleAlertBody(_ p: CirclePerson, now: Int64 = Int64(Date().timeIntervalSince1970)) -> String {
+        if GuardianLogic.isGuardian(p), p.needsConsent, p.state != .ended { return GuardianLogic.consentLine(p.peer) }
+        let what = p.role == .guardian ? "Guardianship" : CircleLogic.roleName(p.role)
         switch p.state {
-        case .ended: "\(CircleLogic.roleName(p.role)) ended"
-        case .suspended: "Their phone changed. Invite them again."
-        case .paused: "\(CircleLogic.roleName(p.role)) paused"
-        case .active: "\(CircleLogic.roleName(p.role)) changed"
+        case .ended: return "\(what) ended"
+        case .suspended: return "Their phone changed. Invite them again."
+        case .paused: return "\(what) paused"
+        case .active:
+            if p.role == .guardian, let ending = p.ending { return "Asked to leave · \(GuardianLogic.endingLine(ending, now: now))" }
+            return "\(what) changed"
         }
     }
 }
@@ -317,18 +323,37 @@ enum NotificationContent {
         c.interruptionLevel = .active
         c.relevanceScore = 0.5
         c.sound = NotificationSoundFile.sound(NotificationSoundFile.attention, .alerts, settings)
-        c.userInfo = circleInfo("alert:\(p.linkId)")
+        c.userInfo = circleInfo(alertId(p.linkId), link: p.role == .guardian ? .circles : .home)
+        return c
+    }
+
+    /// Something about a ward this account guards (04 §4): "Sam: guardianship changed", what happened under it, and
+    /// "Reported by the server" when this phone could not check it. A tap opens Circles, where the notice (and an
+    /// Allow for a request to leave) is.
+    static func guardianNotice(_ n: GuardianNoticeView, settings: FeedbackSettings) -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.title = GuardianLogic.notificationTitle(n.ward)
+        c.body = GuardianLogic.notificationBody(n)
+        c.categoryIdentifier = NotificationCategory.circle.rawValue
+        c.threadIdentifier = NotificationCategory.circle.thread
+        c.interruptionLevel = n.needsConsent ? .timeSensitive : .active
+        c.relevanceScore = n.needsConsent ? 0.8 : 0.5
+        c.sound = NotificationSoundFile.sound(NotificationSoundFile.attention, .alerts, settings)
+        c.userInfo = circleInfo(alertId(n.linkId), link: .circles)
         return c
     }
 
     /// A Circle notification's `userInfo`: what it is about as the push names it (`review:<id>`, `alert:<link>`, so the
     /// extension's and the app's match), and the tap's destination.
-    static func circleInfo(_ pushId: String) -> [String: Any] {
-        [NotificationKey.kind: "circle", NotificationKey.id: pushId, NotificationKey.link: DeepLink.home.url.absoluteString]
+    static func circleInfo(_ pushId: String, link: DeepLink = .home) -> [String: Any] {
+        [NotificationKey.kind: "circle", NotificationKey.id: pushId, NotificationKey.link: link.url.absoluteString]
     }
 
     /// The push id of a review's notification.
     static func reviewId(_ id: String) -> String { "review:\(id)" }
+
+    /// The push id of a guardianship's alert (one per ward: the newest says what changed).
+    static func alertId(_ linkId: String) -> String { "alert:\(linkId)" }
 
     /// What Autopilot (or a bypass, or Lockdown) decided by itself: approvals are listed and never heard, denials
     /// get the soft click.

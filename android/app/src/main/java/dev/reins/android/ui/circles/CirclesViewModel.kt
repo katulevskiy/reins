@@ -17,6 +17,9 @@ import dev.reins.core.CircleInviteView
 import dev.reins.core.CircleJoinStage
 import dev.reins.core.CirclePerson
 import dev.reins.core.CircleRole
+import dev.reins.core.GuardianNoticeView
+import dev.reins.core.WardView
+import dev.reins.android.platform.toInput
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +50,8 @@ data class AddFlow(
     val agentId: String? = null,
     val agentLabel: String = "",
     val deferred: Boolean = true,
+    /** A guardianship's notice (0, 3 or 7 days), picked by this account, the ward, before the code. */
+    val noticeDays: Int? = null,
     /** The invitation, once made: its link (shown as text and a QR code). */
     val invite: CircleInviteStart? = null,
     val progress: CircleInviteProgress = CircleInviteProgress.Waiting,
@@ -65,6 +70,29 @@ data class AddFlow(
 }
 
 enum class AddPage { Role, Scope, Class, Invite }
+
+/** The ward's own guardianship, on its screen (04 §4: the scope, every decision and note, the way out). */
+data class WardUi(
+    val person: CirclePerson,
+    /** Null until read. */
+    val view: WardView? = null,
+    val busy: Boolean = false,
+    val error: String? = null,
+    /** The guardian's minor ask, set aside for now. */
+    val minorIgnored: Boolean = false,
+)
+
+/** Someone this account guards: what it was told about them, and the consent a minor's leaving waits for. */
+data class GuardingUi(
+    val person: CirclePerson,
+    /** Null until read; newest first. */
+    val notices: List<GuardianNoticeView>? = null,
+    /** The notice an Allow runs for, or [CirclesViewModel.MINOR]. */
+    val busy: String? = null,
+    val error: String? = null,
+    /** The minor mark was asked for here. */
+    val minorAsked: Boolean = false,
+)
 
 /** Where joining someone's Circle stands (the Join sheet). */
 data class JoinFlow(
@@ -86,6 +114,14 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
     private val _join = MutableStateFlow<JoinFlow?>(null)
     /** Null when the Join sheet is closed. */
     val join: StateFlow<JoinFlow?> = _join.asStateFlow()
+
+    private val _ward = MutableStateFlow<WardUi?>(null)
+    /** The ward's own guardianship, open on its screen; null when closed. */
+    val ward: StateFlow<WardUi?> = _ward.asStateFlow()
+
+    private val _guarding = MutableStateFlow<GuardingUi?>(null)
+    /** Someone this account guards, open on the notices screen; null when closed. */
+    val guarding: StateFlow<GuardingUi?> = _guarding.asStateFlow()
 
     private var addPoll: Job? = null
     private var joinPoll: Job? = null
@@ -111,6 +147,12 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 val people = container.core.circlePeople(fromServer)
                 if (current()) _ui.update { it.copy(people = people, error = null) }
+                // What is open follows: a ward's countdown, a guardian's new notice.
+                _ward.value?.let { open ->
+                    people.firstOrNull { it.linkId == open.person.linkId && it.state != dev.reins.core.CircleLinkState.ENDED }?.let { readWard(it) }
+                        ?: closeWard()
+                }
+                _guarding.value?.let { open -> people.firstOrNull { it.linkId == open.person.linkId }?.let { readNotices(it, refresh = false) } }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -162,6 +204,10 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setDeferred(deferred: Boolean) = _add.update { it?.copy(deferred = deferred) }
 
+    fun pickNotice(days: Int) {
+        if (days in NOTICE_DAYS) _add.update { it?.copy(noticeDays = days, error = null) }
+    }
+
     /** One step back inside the sheet; false when there is none (the sheet closes). */
     fun addBack(): Boolean {
         val flow = _add.value ?: return false
@@ -179,6 +225,8 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
         val flow = _add.value ?: return
         val role = flow.role ?: return
         val scope = preset(flow.preset ?: return, flow.agentId, flow.agentLabel) ?: return
+        // A guardianship's notice is the ward's to pick, up front: no default.
+        val notice = if (role == CircleRole.GUARDIAN) (flow.noticeDays ?: return) else null
         if (flow.busy) return
         _add.update { it?.copy(busy = true, error = null) }
         viewModelScope.launch {
@@ -190,6 +238,7 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
                     windowSecs = null,
                     fallBackToMe = role == CircleRole.DELEGATE,
                     fullCards = false,
+                    noticeDays = notice?.toUByte(),
                 )
                 val start = container.core.circleInviteCreate(draft)
                 if (!current()) return@launch
@@ -384,6 +433,164 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
         _join.value = null
     }
 
+    // ---- Guardianship (Decisions v2 P7, 04 §4) ---------------------------------------------------------------------
+
+    /** A Guardian row: the ward's view of its guardianship, or the guardian's notices about the ward. */
+    fun openPerson(person: CirclePerson) {
+        when {
+            wardsGuardianship(person) -> {
+                _ward.value = WardUi(person)
+                readWard(person)
+            }
+            guardsThem(person) -> {
+                _guarding.value = GuardingUi(person)
+                readNotices(person, refresh = true)
+            }
+        }
+    }
+
+    fun closeWard() {
+        _ward.value = null
+    }
+
+    fun closeGuarding() {
+        _guarding.value = null
+    }
+
+    private fun readWard(person: CirclePerson) {
+        viewModelScope.launch {
+            try {
+                val view = container.core.guardianWardView(person.linkId)
+                if (current()) _ward.update { it?.takeIf { w -> w.person.linkId == person.linkId }?.copy(person = person, view = view) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (current()) _ward.update { it?.takeIf { w -> w.person.linkId == person.linkId }?.copy(error = e.userMessage()) }
+            }
+        }
+    }
+
+    private fun wardAct(block: suspend (WardUi) -> Unit) {
+        val open = _ward.value ?: return
+        if (open.busy) return
+        _ward.update { it?.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                block(open)
+                val people = container.core.circlePeople(false)
+                if (!current()) return@launch
+                _ui.update { it.copy(people = people) }
+                val person = people.firstOrNull { it.linkId == open.person.linkId && it.state != dev.reins.core.CircleLinkState.ENDED }
+                if (person == null) {
+                    // It ended right away (no notice): back to the list.
+                    closeWard()
+                    return@launch
+                }
+                val view = container.core.guardianWardView(person.linkId)
+                _ward.update { it?.copy(person = person, view = view) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                if (current()) _ward.update { it?.copy(error = e.userMessage()) }
+            } finally {
+                _ward.update { it?.copy(busy = false) }
+            }
+        }
+    }
+
+    /** The ward leaves: the notice it chose starts (a minor's waits for the guardian), and the guardian is told. */
+    fun leaveWard() = wardAct { open ->
+        container.core.circleEnd(open.person.linkId)
+        container.feedback.play(Event.Revoked)
+    }
+
+    /**
+     * The ward accepts the guardian's minor mark, with the phone's age signal. No signal never blocks it: the ward's own
+     * acceptance counts. An adult's signal is refused by the core.
+     */
+    fun acceptMinor(authenticator: Authenticator) = wardAct { open ->
+        val signal = container.ageSignals().check()
+        // The core asks the owner (biometrics or the screen lock) before it signs: a cancel marks nothing.
+        val owner = OwnerPrompt(authenticator, "Mark as a minor's")
+        container.core.guardianAcceptMinor(open.person.linkId, signal.toInput(), owner)
+        container.feedback.play(Event.Approved)
+    }
+
+    /** Leaves the guardian's ask unanswered (it shows again next time). */
+    fun ignoreMinor() = _ward.update { it?.copy(minorIgnored = true) }
+
+    /** The ward's weekly summary of automatic decisions in scope, for the guardian (opt-in). */
+    fun setDigest(on: Boolean) {
+        val open = _ward.value ?: return
+        val before = open.view ?: return
+        if (open.busy) return
+        _ward.update { it?.copy(view = before.copy(digest = on)) }
+        wardAct { w ->
+            try {
+                container.core.guardianSetDigest(w.person.linkId, on)
+            } catch (e: Exception) {
+                _ward.update { it?.copy(view = it.view?.copy(digest = before.digest)) }
+                throw e
+            }
+        }
+    }
+
+    private fun readNotices(person: CirclePerson, refresh: Boolean) {
+        viewModelScope.launch {
+            try {
+                val notices = container.core.guardianNotices(refresh).filter { it.linkId == person.linkId }
+                if (current()) _guarding.update { it?.takeIf { g -> g.person.linkId == person.linkId }?.copy(person = person, notices = notices) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (current()) {
+                    _guarding.update { it?.takeIf { g -> g.person.linkId == person.linkId }?.copy(error = e.userMessage(), notices = it.notices ?: emptyList()) }
+                }
+            }
+        }
+    }
+
+    private fun guardAct(key: String, block: suspend (GuardingUi) -> Unit) {
+        val open = _guarding.value ?: return
+        if (open.busy != null) return
+        _guarding.update { it?.copy(busy = key, error = null) }
+        viewModelScope.launch {
+            try {
+                block(open)
+                val people = container.core.circlePeople(false)
+                val notices = container.core.guardianNotices(false).filter { it.linkId == open.person.linkId }
+                if (!current()) return@launch
+                _ui.update { it.copy(people = people) }
+                val person = people.firstOrNull { it.linkId == open.person.linkId } ?: open.person
+                _guarding.update { it?.copy(person = person, notices = notices) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                if (current()) _guarding.update { it?.copy(error = e.userMessage()) }
+            } finally {
+                _guarding.update { it?.copy(busy = null) }
+            }
+        }
+    }
+
+    /**
+     * The guardian allows a minor's request to leave: it ends now. The core asks the owner (biometrics or the screen
+     * lock) before it signs; a cancel or a phone without a screen lock consents to nothing.
+     */
+    fun consentEnd(notice: GuardianNoticeView, authenticator: Authenticator) = guardAct(notice.id) {
+        val owner = OwnerPrompt(authenticator, "Let ${shortName(untrusted(notice.ward))} leave")
+        container.core.guardianConsentEnd(notice.linkId, owner)
+        container.feedback.play(Event.Approved)
+    }
+
+    /** The guardian asks to mark the ward's account a minor's; the ward accepts on their phone, or not. */
+    fun proposeMinor() = guardAct(MINOR) { open ->
+        container.core.guardianProposeMinor(open.person.linkId)
+        _guarding.update { it?.copy(minorAsked = true) }
+    }
+
     override fun onCleared() {
         closeAdd()
         stopJoinPoll()
@@ -392,6 +599,9 @@ class CirclesViewModel(private val container: AppContainer) : ViewModel() {
     companion object {
         /** How often an invitation is asked about while its sheet is open. */
         const val POLL_MS = 2_500L
+
+        /** [GuardingUi.busy] while the minor mark is asked for. */
+        const val MINOR = "minor"
     }
 }
 
