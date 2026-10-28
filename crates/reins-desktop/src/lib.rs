@@ -14,6 +14,7 @@ pub mod consequences;
 pub mod control;
 pub mod daemon;
 pub mod doctor;
+pub mod folders;
 pub mod git;
 pub mod guard;
 pub mod harden;

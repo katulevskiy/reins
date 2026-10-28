@@ -55,20 +55,20 @@ fn signed(app: &App, version: u64, mode: Mode) -> DesktopPolicy {
         },
         snapshot,
         github_ids: BTreeMap::new(),
-        roots: vec!["/home/me".to_owned()],
+        roots: vec!["/home/me/dev".to_owned()],
         scratch: Vec::new(),
     }
 }
 
 fn claude(command: &str) -> String {
-    serde_json::json!({"session_id": "abc", "cwd": "/home/me/app", "hook_event_name": "PreToolUse",
+    serde_json::json!({"session_id": "abc", "cwd": "/home/me/dev/app", "hook_event_name": "PreToolUse",
         "tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "t"})
     .to_string()
 }
 
 fn config() -> Config {
     let mut c = Config::default();
-    c.workspace.roots = vec!["/home/me".to_owned()];
+    c.workspace.roots = vec!["/home/me/dev".to_owned()];
     c
 }
 
@@ -97,7 +97,7 @@ async fn a_fresh_snapshot_decides_like_the_phone() {
     let m = log[0].matrix.clone().unwrap();
     assert!(m.decided && m.outcome == Outcome::Auto && m.zone == Zone::Mine, "{m:?}");
     // The same request on the phone's matrix: the same outcome.
-    let ctx = reins_desktop::consequences::context(&config(), Some("/home/me/app"), &|_| None, None);
+    let ctx = reins_desktop::consequences::context(&config(), Some("/home/me/dev/app"), &|_| None, None);
     let a = reins_policy::effects::analyze_command("rm -rf build dist", &ctx);
     let r = reins_policy::context::request_zone(&a, &p.snapshot.facts, &reins_policy::context::Base::default());
     let phone_says = reins_policy::matrix::evaluate(
@@ -270,4 +270,36 @@ async fn without_a_snapshot_the_local_matrix_never_allows() {
     // Guarded: asked as before (P2's local matrix only adds asks).
     assert_eq!(run(&mock, &app, &c, "rm -rf build dist").await, (Some("allow".to_owned()), true));
     assert_eq!(run(&mock, &app, &c, "ls -la").await, (None, false));
+}
+
+/// A scratch folder outside the roots counts here only once the phone signed it (the owner confirmed what this computer
+/// proposed); one the phone signs that is as broad as the home never does.
+#[tokio::test]
+async fn a_scratch_folder_counts_only_once_signed() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let phone = Phone::new();
+    let mut c = config();
+    c.workspace.scratch = vec!["/home/me/.zeron/uploads".to_owned()];
+    let delete = "rm -rf /home/me/.zeron/uploads/old";
+    phone.send(&app, &PolicyMessage::Snapshot(Box::new(signed(&app, 1, Mode::Auto))));
+    let (_, asked) = run(&mock, &app, &c, delete).await;
+    assert!(asked, "not signed: the phone is asked");
+    let mut p = signed(&app, 2, Mode::Auto);
+    p.scratch = vec!["/home/me/.zeron/uploads".to_owned()];
+    phone.send(&app, &PolicyMessage::Snapshot(Box::new(p)));
+    let (e, _) = policy::effective(&app.paths, &c, reins_desktop::now_unix());
+    assert_eq!(e.scratch, ["/home/me/.zeron/uploads"]);
+    assert_eq!(run(&mock, &app, &c, delete).await, (Some("allow".to_owned()), false), "signed: decided here");
+    // Signed, but as broad as a home: never counts.
+    let mut broad = signed(&app, 3, Mode::Auto);
+    broad.scratch = vec!["/home/me".to_owned(), "/home/me/.zeron/uploads".to_owned()];
+    broad.roots.push("/".to_owned());
+    phone.send(&app, &PolicyMessage::Snapshot(Box::new(broad)));
+    let mut wide = c.clone();
+    wide.workspace.scratch.push("/home/me".to_owned());
+    wide.workspace.roots.push("/".to_owned());
+    let (e, _) = policy::effective(&app.paths, &wide, reins_desktop::now_unix());
+    assert_eq!(e.scratch, ["/home/me/.zeron/uploads"]);
+    assert_eq!(e.roots, ["/home/me/dev"]);
 }

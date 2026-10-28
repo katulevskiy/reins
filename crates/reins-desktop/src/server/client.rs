@@ -216,6 +216,12 @@ impl DesktopClient {
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
     }
 
+    /// Proposes this computer's folders for the phone to sign (`crate::folders`).
+    pub async fn post_folders(&self, proposal: &reins_proto::desktop::FolderProposal) -> Result<(), LinkError> {
+        self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/folders")).json(proposal)).await?;
+        Ok(())
+    }
+
     /// Tells the server what this reader applied, so that it stops handing it those.
     pub async fn ack_revocations(&self, ack: &reins_proto::desktop::RevocationAck) -> Result<(), LinkError> {
         self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/revocations/ack")).json(ack)).await?;

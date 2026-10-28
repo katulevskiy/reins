@@ -393,12 +393,17 @@ pub fn effective(paths: &Paths, config: &Config, now: i64) -> (dp::Effective, He
             }
         }
     };
+    // What the folders named here resolve to now (an agent re-pointing a link is seen at once).
+    let signed = h.policy.iter().flat_map(|p| p.roots.iter().chain(&p.scratch));
+    let canonical =
+        crate::folders::resolved(config.workspace.roots.iter().chain(&config.workspace.scratch).chain(signed));
     let local = dp::Local {
         facts: &config.auto.facts,
         matrix: &config.auto.matrix,
         roots: &config.workspace.roots,
         scratch: &config.workspace.scratch,
         home: &home,
+        canonical: &canonical,
     };
     (dp::effective(h.policy.as_ref(), &h.tightens, &local, &h.spent, now), h)
 }

@@ -271,8 +271,10 @@ impl Daemon {
         let tickets = crate::tickets::refresher(paths.clone());
         // The phone-signed policy hooks decide with: pulled on start, then long-polled (a Lockdown arrives in seconds).
         let policy = crate::policy::puller(paths.clone(), Arc::clone(&identity));
+        // This computer's folders, proposed for the phone to sign (they count only once the owner confirms them).
+        let folders = crate::folders::proposer(paths.clone(), config.workspace.clone());
         let revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
-            tokio::join!(revoked, nets, tickets, policy);
+            tokio::join!(revoked, nets, tickets, policy, folders);
         });
         let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
         let overview = {
