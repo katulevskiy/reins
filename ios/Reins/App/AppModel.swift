@@ -142,6 +142,9 @@ final class AppModel {
     private(set) var autopilot: AutopilotSettings?
     /// "Who is octo?": what Auto met and doesn't know yet, newest first. Shown with what waits, never notified.
     private(set) var autoQuestions: [AutoQuestion] = []
+    /// "Trust this folder?": the folders paired computers propose and the owner has not confirmed or put away yet,
+    /// newest first. Shown with what waits, never notified.
+    private(set) var folderQuestions: [FolderQuestion] = []
     /// Tasks: live ones, then those that ended in the last day (Activity's task chips). Never notified.
     private(set) var tasks: [TaskView] = []
     /// Auto's setup is open (`AutoSetupScreen`): picking Auto for every AI before it was done guides through it first.
@@ -398,6 +401,7 @@ final class AppModel {
         onboarding = false
         autopilot = nil
         autoQuestions = []
+        folderQuestions = []
         tasks = []
         autoSetupOpen = false
         circleReviews = []
@@ -604,6 +608,7 @@ final class AppModel {
             async let serversRead = core.mcpServers()
             async let startingRead = core.startingPolicy()
             async let questionsRead = core.autoQuestions()
+            async let foldersRead = core.folderQuestions()
             async let tasksRead = core.tasks()
             async let reviewsRead = core.circleReviews(refresh: false)
             async let noticesRead = core.circleNotices()
@@ -616,6 +621,7 @@ final class AppModel {
             let newStarting = try? await startingRead
             // Questions are extra: a list that cannot be read keeps the last one.
             let newQuestions = try? await questionsRead
+            let newFolders = try? await foldersRead
             let newTasks = try? await tasksRead
             // Circles too: an account without them (or a read that fails) keeps the last lists.
             let newReviews = try? await reviewsRead
@@ -632,6 +638,7 @@ final class AppModel {
             if grants != newGrants { grants = newGrants }
             if startingPolicy != newStarting { startingPolicy = newStarting }
             if let newQuestions, autoQuestions != newQuestions { autoQuestions = newQuestions }
+            if let newFolders, folderQuestions != newFolders { folderQuestions = newFolders }
             if let newTasks, tasks != newTasks { tasks = newTasks }
             if let newReviews, circleReviews != newReviews { setCircleReviews(newReviews) }
             if let newNotices, circleNotices != newNotices { circleNotices = newNotices }
@@ -844,6 +851,61 @@ final class AppModel {
         autoQuestions.removeAll { $0.id == id }
         await refreshAutoQuestions()
         return nil
+    }
+
+    // MARK: Computers' folders
+
+    /// Reads the computers' proposed folders again (kept as they were when they cannot be read).
+    func refreshFolderQuestions() async {
+        let epoch = accountEpoch
+        guard let read = try? await core.folderQuestions(), epoch == accountEpoch else { return }
+        if read != folderQuestions { folderQuestions = read }
+    }
+
+    /// Trusts a folder a computer proposed: it loosens what the computer may do, so the core asks for the owner check.
+    /// nil when it went through, else what to say.
+    func trustFolder(connectionId: String, path: String, kind: FolderKindChoice) async -> String? {
+        do {
+            try await core.confirmComputerFolder(connectionId: connectionId, path: path, kind: kind, owner: ownerCheck)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.selection)
+        dropFolderQuestion(connectionId: connectionId, path: path, kind: kind)
+        await refreshFolderQuestions()
+        return nil
+    }
+
+    /// "Not now": the card goes, the folder stays suggested on the computer's page. Changes nothing signed.
+    func dismissFolder(connectionId: String, path: String, kind: FolderKindChoice) async -> String? {
+        do {
+            try await core.dismissComputerFolder(connectionId: connectionId, path: path, kind: kind)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.close)
+        dropFolderQuestion(connectionId: connectionId, path: path, kind: kind)
+        await refreshFolderQuestions()
+        return nil
+    }
+
+    /// Removes a trusted folder: it only tightens, so it applies at once, with no owner check.
+    func removeFolder(connectionId: String, path: String, kind: FolderKindChoice) async -> String? {
+        do {
+            try await core.removeComputerFolder(connectionId: connectionId, path: path, kind: kind)
+        } catch {
+            feedback.play(.error)
+            return AutopilotModel.sentence(error.userMessage)
+        }
+        feedback.play(.revoked)
+        await refreshFolderQuestions()
+        return nil
+    }
+
+    private func dropFolderQuestion(connectionId: String, path: String, kind: FolderKindChoice) {
+        folderQuestions.removeAll { $0.connectionId == connectionId && $0.path == path && $0.kind == kind }
     }
 
     /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
