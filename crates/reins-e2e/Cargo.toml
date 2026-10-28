@@ -29,6 +29,8 @@ zeroize = "1.9.0"
 # crates/reins-desktop/tests/proxy_support).
 reins-desktop = { path = "../reins-desktop" }
 reins-proto = { path = "../reins-proto" }
+# tests/desktop_policy.rs: the signed policy the computer decides with.
+reins-policy = { path = "../reins-policy" }
 reins-audit = { path = "../reins-audit" }
 reins-executor = { path = "../reins-executor", features = ["testing"] }
 bytes = "1.12.1"
