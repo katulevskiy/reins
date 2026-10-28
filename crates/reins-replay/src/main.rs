@@ -1,4 +1,4 @@
-//! `reins-replay run [--engine guard|effects] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json]
+//! `reins-replay run [--engine guard|effects|desktop] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json]
 //! [--verbose] [--write-baseline]`, and `reins-replay import --log FILE --labels FILE --out FILE` (local only: it reads
 //! the owner's activity log).
 
@@ -10,7 +10,7 @@ use reins_replay::engine::{EngineKind, Policy};
 use reins_replay::report::{self, Baseline};
 
 const USAGE: &str = "usage:
-  reins-replay run [--engine guard|effects] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json] [--verbose] [--write-baseline]
+  reins-replay run [--engine guard|effects|desktop] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json] [--verbose] [--write-baseline]
   reins-replay import --log FILE --labels FILE --out FILE
   reins-replay policy check|render DIR
   reins-replay policy simulate DIR --history FILE.jsonl --base DIR [--out report.json]";
@@ -28,6 +28,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     let engine = match value(args, "--engine").as_deref() {
         None | Some("effects") => EngineKind::Effects,
         Some("guard") => EngineKind::Guard,
+        Some("desktop") => EngineKind::Desktop,
         Some(other) => return Err(format!("unknown engine {other}")),
     };
     let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
