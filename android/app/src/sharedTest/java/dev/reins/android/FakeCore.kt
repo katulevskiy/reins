@@ -840,6 +840,52 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun handlePushDeferringAutopilot(kind: String, id: String) = Unit
 
+    // ---- the email send hold (08 R10) ----
+
+    /** The send hold in seconds, and the `setSendHoldSecs` calls. */
+    @Volatile var sendHold: UInt = 30u
+    val sendHoldCalls = CopyOnWriteArrayList<UInt>()
+    /** What `releaseHolds` answers, and how often it was called. */
+    @Volatile var holdsReleased = dev.reins.core.HoldsReleased(0u, 0u)
+    val releaseHoldsCalls = java.util.concurrent.atomic.AtomicInteger()
+    /** `undoSend` and `sendLate` calls, as `undo:id` and `send:id`; [holdFailure] makes the next ones fail. */
+    val holdCalls = CopyOnWriteArrayList<String>()
+    @Volatile var holdFailure: CoreException? = null
+
+    fun resetHolds() {
+        sendHold = 30u
+        sendHoldCalls.clear()
+        holdsReleased = dev.reins.core.HoldsReleased(0u, 0u)
+        releaseHoldsCalls.set(0)
+        holdCalls.clear()
+        holdFailure = null
+    }
+
+    override suspend fun sendHoldSecs(): UInt = sendHold
+
+    override suspend fun setSendHoldSecs(secs: UInt) {
+        // As the core: 0 (off) to 120 seconds.
+        if (secs > 120u) throw CoreException.Invalid("between 0 and 120 seconds")
+        sendHoldCalls += secs
+        sendHold = secs
+    }
+
+    override suspend fun undoSend(holdId: String) {
+        holdFailure?.let { throw it }
+        holdCalls += "undo:$holdId"
+    }
+
+    override suspend fun sendLate(holdId: String) {
+        holdFailure?.let { throw it }
+        holdCalls += "send:$holdId"
+    }
+
+    override suspend fun releaseHolds(): dev.reins.core.HoldsReleased {
+        pushFailure?.let { throw it }
+        releaseHoldsCalls.incrementAndGet()
+        return holdsReleased
+    }
+
     override suspend fun login(serverUrl: String, email: String, password: String, totp: String?): SessionInfo {
         logins += listOf(serverUrl, email, password, totp)
         loginError?.let { throw it }

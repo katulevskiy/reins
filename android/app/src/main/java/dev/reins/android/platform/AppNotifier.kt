@@ -481,6 +481,27 @@ class AppNotifier(
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
+    /**
+     * Held emails went too late and now ask the owner "Still send?" (08 R10): an ask, so it is notified (a send held
+     * automatically never is). Says nothing of the emails; tapping opens Activity, where Send and Discard are.
+     */
+    fun stillSend(count: Int) {
+        onChanged()
+        if (count <= 0 || !manager.areNotificationsEnabled()) return
+        val notification = Notification.Builder(context, channel(Kind.Approvals, silent = Foreground.focused))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(dev.reins.android.ui.activity.STILL_SEND)
+            .setContentText(if (count == 1) "An email was not sent" else "$count emails were not sent")
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setContentIntent(openApp())
+            .build()
+        manager.notify(tag, STILL_SEND_ID, notification)
+    }
+
+    /** Nothing asks "Still send?" any more (sent or discarded, here or elsewhere): its notification goes. */
+    fun dropStillSend() = manager.cancel(tag, STILL_SEND_ID)
+
     /** An answer from the notification did not go through: the request still waits, one tap away. */
     fun answerFailed(id: String, approved: Boolean, message: String) {
         onChanged()
@@ -779,6 +800,8 @@ class AppNotifier(
         const val OVERNIGHT_ID = 6
         /** The neutral "Open Reins" of a push or action for another profile ([otherProfile]). */
         const val OTHER_PROFILE_ID = 7
+        /** "Still send?" of held emails that went too late ([stillSend]); 8 is the Overnight digest's. */
+        const val STILL_SEND_ID = 9
 
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
         const val GROUP_AUTOPILOT = "autopilot"

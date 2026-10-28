@@ -273,15 +273,22 @@ fun waitCards(all: List<PendingItem>): List<WaitCard> {
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
 
 /** How an entry ended, as the marker at the end of its row. */
-enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Permission, Bypass, Lockdown, Failed, Started, Unknown, Withheld }
+enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Permission, Bypass, Lockdown, Failed, Started, Unknown, Withheld, Held, Undone, NotSent }
 
-/** Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). */
+/**
+ * Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). A held send
+ * (`held`) is approved but not sent yet: never one of these.
+ */
 private val DONE = setOf("released", "sent", "granted")
 
 fun outcomeOf(entry: ActivityEntry): Outcome = when {
     entry.outcome == "started" -> Outcome.Started
     entry.outcome == "unknown" -> Outcome.Unknown
     entry.outcome == "succeeded_withheld" -> Outcome.Withheld
+    // The send hold (08 R10), whoever approved it: waiting out its Undo, undone, or not sent.
+    entry.outcome == "held" -> Outcome.Held
+    entry.outcome == "undone" -> Outcome.Undone
+    entry.outcome == "not_sent" -> Outcome.NotSent
     entry.outcome == "error" -> Outcome.Failed
     entry.decidedBy == "overnight" -> if (entry.outcome == "denied") Outcome.OvernightDenied else Outcome.Overnight
     // How it ended comes first: a bypass never makes a refused or failed entry read as allowed, nor Lockdown the reverse.
@@ -357,6 +364,7 @@ fun outcomeLine(entry: ActivityEntry): String {
         "unknown" -> return "Outcome unknown · do not repeat"
         "succeeded_withheld" -> return "Completed; response withheld · do not repeat"
     }
+    holdOutcomeLabel(entry.outcome, live = entry.hold != null)?.let { return it }
     val note = entry.autopilot
     val denied = entry.outcome == "denied"
     // One that was allowed but not carried out never reads as allowed.

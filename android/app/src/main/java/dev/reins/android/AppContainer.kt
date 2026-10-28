@@ -517,7 +517,9 @@ class AppContainer(private val context: Context) {
                 state.setPending(waiting)
                 notifier.dropStale(waiting.map { it.id }.toSet(), readAt)
                 appScope.launch { approvalViews.prefetch(core, waiting) }
-                state.setActivity(activity.await())
+                val entries = activity.await()
+                state.setActivity(entries)
+                if (entries.none { it.hold?.state == dev.reins.core.HoldState.LATE }) notifier.dropStillSend()
                 state.setGrants(loaded)
                 state.setAccounts(accounts.await())
                 state.setServices(services.await())

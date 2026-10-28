@@ -182,6 +182,7 @@ private fun legacyAction(service: String, action: String, op: String): Pair<Stri
  */
 fun entryTense(outcome: String): Tense = if (outcome in DONE_OUTCOMES) Tense.Done else Tense.Refused
 
+/** Never `held`: a held send is approved but not sent yet ("Asked to send", until its own "sent" entry). */
 private val DONE_OUTCOMES = setOf("released", "sent", "granted")
 
 /** A decided entry, in the past tense. [who] starts the sentence where the asker is not shown beside it. */
