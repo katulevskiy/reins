@@ -6,10 +6,17 @@
 //! - **data key** (AES-256-GCM): seals request bodies and results at rest (envelope encryption).
 //!
 //! Each is stored sealed by the [`Kms`], bound to its org, purpose and key id (the associated data), so a sealed key
-//! copied to another tenant's row doesn't open. [`LocalKms`] (Reins Cloud, self-hosted) seals with a master key kept
-//! in a file outside the database; BYOK adapters (AWS KMS, GCP KMS, Azure Key Vault, an HSM) implement the same trait
-//! later. With `LocalKms` the decision service and the issuer key share a process: R5's split between the decision
-//! service and the issuer holds fully only with a KMS that enforces the two-signature rule itself.
+//! copied to another tenant's row doesn't open. [`LocalKms`] seals with a 32-byte master key:
+//! - with `REINS_ORG_KMS_PROVIDER=local` (Reins Cloud, self-hosted) the master key is kept in a file outside the
+//!   database;
+//! - with `aws`, `gcp` or `azure` (BYOK, [`super::kms_byok`]) that file holds the master key *wrapped* by the
+//!   customer's KMS key, unwrapped once at launch and installed with [`install_kms`]. Until then [`kms`] fails
+//!   closed: it never falls back to a local key.
+//!
+//! BYOK's limit: once unwrapped, the master key and the org signing keys it opens live in the server's memory while
+//! it runs, so revoking the KMS key stops the next launch, not the running one. Signing inside an HSM is later. With
+//! keys in the server's memory the decision service and the issuer key share a process: R5's split between the
+//! decision service and the issuer holds fully only with a KMS that enforces the two-signature rule itself.
 
 use std::{
     io::Write,
@@ -97,9 +104,11 @@ fn gcm_open(key: &[u8; 32], aad: &[u8], sealed: &str) -> Result<Zeroizing<Vec<u8
     Ok(buf)
 }
 
-/// Seals with a 32-byte master key from a file (created 0600 on first use).
+/// Seals with a 32-byte master key: from a file (created 0600 on first use), or unwrapped by a BYOK KMS.
 pub struct LocalKms {
     master: Zeroizing<[u8; 32]>,
+    /// The id the console shows instead of `local:…` (a BYOK master: `<provider>:<key hash>`).
+    id: Option<String>,
 }
 
 impl LocalKms {
@@ -107,6 +116,16 @@ impl LocalKms {
     pub fn from_key(master: [u8; 32]) -> Self {
         Self {
             master: Zeroizing::new(master),
+            id: None,
+        }
+    }
+
+    /// A master key that came from somewhere else (a BYOK unwrap), named `id`.
+    #[must_use]
+    pub fn with_id(master: [u8; 32], id: String) -> Self {
+        Self {
+            master: Zeroizing::new(master),
+            id: Some(id),
         }
     }
 
@@ -143,6 +162,9 @@ impl Kms for LocalKms {
     }
 
     fn id(&self) -> String {
+        if let Some(id) = &self.id {
+            return id.clone();
+        }
         let h = reins_proto::canon::sha256(self.master.as_ref());
         format!("local:{}", &reins_proto::canon::hex32(&h)[..8])
     }
@@ -150,21 +172,43 @@ impl Kms for LocalKms {
 
 static KMS: LazyLock<RwLock<Option<Arc<dyn Kms>>>> = LazyLock::new(|| RwLock::new(None));
 
-/// The configured KMS ([`LocalKms`] over `REINS_ORG_KMS_KEY_FILE`).
+/// Whether `provider` (`REINS_ORG_KMS_PROVIDER`) is the local key file.
+#[must_use]
+pub fn provider_is_local(provider: &str) -> bool {
+    provider.trim().eq_ignore_ascii_case("local")
+}
+
+/// The configured KMS: the installed one, else (provider `local` only) [`LocalKms`] over `REINS_ORG_KMS_KEY_FILE`.
 pub fn kms() -> Result<Arc<dyn Kms>, OrgError> {
-    if let Some(k) = KMS.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+    resolve(&KMS, &CONFIG.reins_org_kms_provider(), &CONFIG.reins_org_kms_key_file())
+}
+
+/// [`kms`] over a given slot and settings. A cloud provider with nothing installed is an error, never a local key.
+pub(super) fn resolve(
+    slot: &RwLock<Option<Arc<dyn Kms>>>,
+    provider: &str,
+    key_file: &str,
+) -> Result<Arc<dyn Kms>, OrgError> {
+    if let Some(k) = slot.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
         return Ok(k);
     }
-    let local: Arc<dyn Kms> =
-        Arc::new(LocalKms::from_file(&CONFIG.reins_org_kms_key_file()).map_err(OrgError::Internal)?);
-    let mut slot = KMS.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(Arc::clone(slot.get_or_insert(local)))
+    if !provider_is_local(provider) {
+        return Err(OrgError::Internal("the org KMS is not unlocked".into()));
+    }
+    let local: Arc<dyn Kms> = Arc::new(LocalKms::from_file(key_file).map_err(OrgError::Internal)?);
+    let mut w = slot.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(Arc::clone(w.get_or_insert(local)))
+}
+
+/// Installs the KMS every org key is sealed by (at launch, after a BYOK unwrap).
+pub fn install_kms(kms: Arc<dyn Kms>) {
+    *KMS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kms);
 }
 
 /// Replaces the KMS (tests).
 #[cfg(test)]
 pub fn set_kms(kms: Arc<dyn Kms>) {
-    *KMS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kms);
+    install_kms(kms);
 }
 
 fn key_aad(org: &str, purpose: KeyPurpose, key_id: &str) -> Vec<u8> {
@@ -434,5 +478,36 @@ pub(crate) mod tests {
         assert!(a.open(b"other", &sealed).is_err());
         assert_eq!(&*a.open(b"aad", &sealed).unwrap(), b"x");
         assert_ne!(a.id(), b.id());
+        assert_eq!(LocalKms::with_id([1u8; 32], "aws:0123abcd".into()).id(), "aws:0123abcd");
+    }
+
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("reins-kms-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_cloud_provider_with_nothing_installed_fails_closed() {
+        let dir = test_dir("closed");
+        let path = dir.join("master.key");
+        let path = path.to_str().unwrap();
+        let slot: RwLock<Option<Arc<dyn Kms>>> = RwLock::new(None);
+        for provider in ["aws", "gcp", "azure", "unknown"] {
+            let Err(OrgError::Internal(e)) = resolve(&slot, provider, path) else {
+                panic!("{provider}: expected an error");
+            };
+            assert_eq!(e, "the org KMS is not unlocked");
+        }
+        assert!(!std::path::Path::new(path).exists(), "no local key was created");
+        // Installed: used whatever the provider.
+        *slot.write().unwrap() = Some(Arc::new(LocalKms::with_id([3u8; 32], "aws:x".into())));
+        assert_eq!(resolve(&slot, "aws", path).unwrap().id(), "aws:x");
+        // Local: the key file, created once.
+        let local = RwLock::new(None);
+        let id = resolve(&local, " Local ", path).unwrap().id();
+        assert!(id.starts_with("local:"));
+        assert_eq!(std::fs::read(path).unwrap().len(), 32);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

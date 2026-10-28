@@ -55,6 +55,7 @@ pub mod github;
 pub mod github_reader;
 pub mod invariants;
 pub mod kms;
+pub mod kms_byok;
 pub mod leases;
 pub mod managed_mcp;
 pub mod policy;
