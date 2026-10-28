@@ -545,6 +545,51 @@ Nets are a guardrail, not a boundary. An agent running as the same user can dele
 trash. The phone shows the net it is told about read-only, and never asks less because of it. The net travels as its
 own argument, which only the hook sets. `reins ask`'s words are the agent's own, so they can't claim one.
 
+### The phone-signed policy (Decisions v2, 08 R1)
+
+The phone signs the owner's Auto rules for each paired computer, and the computer decides hook requests (shell
+commands, file tools) with them, without a round trip and with the phone offline. What the computer gets:
+
+- the matrix, the owner's Deny and Review rules (and permits that name no person), the connection's tasks;
+- the facts it needs: owners, repositories and hosts. People, domains, chats and the owner's addresses stay on the
+  phone;
+- the mode for that connection and when it ends, whether the phone's matrix decides, and the workspace roots.
+
+How it travels and is checked:
+
+- The phone signs it with its device key, the key the computer pinned for tickets (P4), and seals it to the computer's
+  pinned key. The server keeps opaque blobs in memory and relays them.
+- The computer uses a snapshot only for its own key and the Personal profile, signed by the pinned key (never a key
+  named in a file an agent can write), and only for 10 minutes after the phone signed it, by the computer's own clock.
+  The phone signs a new one every 4 minutes while it's online, and at once on any change. Freshness is the rollback
+  protection: an older snapshot, replayed by the server or put back in the computer's files, is stale within minutes,
+  and then the phone is asked. Within those minutes a newer version wins, and the daemon remembers (in memory only)
+  the newest version each phone key signed. **What's left:** a snapshot from the last 10 minutes can be replayed
+  until it goes stale; a tightening sent since then still applies on top of it. A changed signing key is held until
+  `reins tickets --trust-key`.
+- Logged out, nothing kept is used.
+- A stale, missing or invalid snapshot, Auto off on the phone, a mode whose end passed: the computer asks the phone as
+  before. With the phone offline for more than 10 minutes, that means hook requests wait for it.
+- A tightening (Lockdown, a new Deny or Review rule, an ended task, anything else stricter) is also sent first as a
+  small signed "tighten now". It applies at once, with or without a snapshot and whatever versions came before, until
+  a snapshot as new arrives. The server keeps each computer's messages in its own budget, so another account can't
+  push them out. Lockdown refuses every tool use. The daemon long-polls, so it arrives within seconds.
+
+What the computer's own settings can do: only tighten. A local fact counts only where it is stricter than the signed
+one, a local matrix cell only where stricter, a local workspace root only inside a signed root, a scratch folder only
+inside one or signed. Where the signed policy decides, the built-in guard groups are labels, except those about Reins
+itself (its session, its keys, `config.toml`, `policy.json` and `tickets.json`, secrets and payments), which are always
+asked, and the user's own guard rules, which still ask.
+
+Trust: for shell commands Reins is a guardrail, not a boundary. An agent running as the same user can run commands
+without the hooks, or edit Reins's files (changing `policy.json` or the pinned key in `tickets.json` makes the
+snapshot fail its checks, so the phone is asked). Hook-level decisions trust the computer's facts because an agent
+that can forge them didn't need Reins's permission. The boundary is around credentials: git push credentials, secrets
+and SSH signatures stay on the phone and are released per action under the phone's own evaluation. The signing key is
+pinned on first use from the server, like the tickets' (compare its digits in `reins tickets` with the phone); a server
+that swapped it at first use could already approve `reins ask` questions, so this adds no new power over shell
+commands.
+
 ## Autopilot
 
 Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It is limited three ways.

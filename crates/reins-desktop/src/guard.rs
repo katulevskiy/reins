@@ -131,7 +131,6 @@ pub const DEFAULT_FILES: &[&str] = &[
     "reins/phone-key.json",
     "reins/config.toml",
     "reins/policy.json",
-    "reins/policy.floor",
     "reins/tickets.json",
 ];
 

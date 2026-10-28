@@ -637,7 +637,7 @@ impl SigningPhone {
             items: vec![item],
             signing_key: Some(self.key()),
         };
-        reins_desktop::policy::apply(paths, identity, &mail, reins_desktop::now_unix()).unwrap()
+        reins_desktop::policy::apply(paths, identity, &mail, reins_desktop::now_unix(), 0).unwrap()
     }
 
     /// A fresh Auto snapshot for the app at `paths`: dkat Mine, acme Work, the 01 §4 matrix, `roots` as signed.

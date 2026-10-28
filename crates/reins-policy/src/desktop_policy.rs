@@ -25,10 +25,12 @@ use crate::matrix::{Matrix, Rule, Snapshot, Task, Then};
 
 /// The format of the messages.
 pub const FORMAT: u32 = 1;
-/// How long a snapshot is valid after it was issued.
-pub const VALIDITY_SECS: i64 = 6 * 3600;
-/// How often the phone signs its snapshot again when nothing changed.
-pub const REFRESH_SECS: i64 = 3600;
+/// How long a snapshot is used after it was issued, by the computer's clock whatever the signed `not_after` says. Short,
+/// so that freshness is the rollback protection: an older snapshot replayed (by the server, or a file put back) is
+/// stale within minutes, and then the phone is asked.
+pub const VALIDITY_SECS: i64 = 600;
+/// How often the phone signs its snapshot again when nothing changed (it also does at once on any change).
+pub const REFRESH_SECS: i64 = 240;
 /// How long a tightening holds when no snapshot supersedes it.
 pub const TIGHTEN_SECS: i64 = 86_400;
 /// The longest validity the computer accepts.
@@ -270,6 +272,17 @@ pub fn check(b: &Binding, client_key: &str, now: i64) -> Result<(), Refusal> {
         return Err(Refusal::Expired);
     }
     Ok(())
+}
+
+/// [`check`], and for a snapshot also within [`VALIDITY_SECS`] of its issue (the computer's clock bounds it, not only
+/// the phone's `not_after`). A tightening holds until its own `not_after`: it only ever tightens.
+pub fn check_message(m: &PolicyMessage, client_key: &str, now: i64) -> Result<(), Refusal> {
+    let b = m.binding();
+    check(b, client_key, now)?;
+    match m {
+        PolicyMessage::Snapshot(_) if now >= b.issued_at.saturating_add(VALIDITY_SECS) => Err(Refusal::Expired),
+        _ => Ok(()),
+    }
 }
 
 /// What of the phone's facts a computer needs: owners, repositories and hosts, with their labels; and the GitHub
@@ -718,6 +731,25 @@ mod tests {
             ..b
         };
         assert_eq!(check(&long, KEY, now), Err(Refusal::TooLong));
+    }
+
+    #[test]
+    fn a_snapshot_is_stale_minutes_after_its_issue() {
+        let now = 10_000;
+        let mut p = policy(1, now);
+        // Signed as valid for a day: the computer still uses it only for VALIDITY_SECS.
+        p.binding.not_after = now + MAX_VALIDITY_SECS;
+        let snap = PolicyMessage::Snapshot(Box::new(p.clone()));
+        assert_eq!(check_message(&snap, KEY, now + VALIDITY_SECS - 1), Ok(()));
+        assert_eq!(check_message(&snap, KEY, now + VALIDITY_SECS), Err(Refusal::Expired));
+        let t = PolicyMessage::Tighten(Tighten {
+            binding: p.binding,
+            tightening: Tightening {
+                lockdown: true,
+                ..Tightening::default()
+            },
+        });
+        assert_eq!(check_message(&t, KEY, now + VALIDITY_SECS), Ok(()), "a tightening holds to its own end");
     }
 
     #[test]
