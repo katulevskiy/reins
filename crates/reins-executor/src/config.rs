@@ -21,6 +21,14 @@
 //!
 //! [google]
 //! service_account = { env = "REINS_GOOGLE_SERVICE_ACCOUNT" }
+//!
+//! [user_oauth.google]            # a family's connections (P7): its own OAuth clients
+//! client_id = "…apps.googleusercontent.com"
+//! client_secret = { env = "REINS_FAMILY_GOOGLE_SECRET" }
+//!
+//! [user_oauth.github]
+//! client_id = "Ov23…"
+//! client_secret = { file = "/etc/reins-executor/github-oauth-secret" }
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -101,6 +109,25 @@ fn google_api() -> String {
     "https://www.googleapis.com".to_owned()
 }
 
+/// One OAuth client a family's executor connects members' accounts with. `base` points every endpoint at one origin
+/// (a test's mock server); otherwise the provider's own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthClientConfig {
+    pub client_id: String,
+    pub client_secret: SecretSource,
+    #[serde(default)]
+    pub base: Option<String>,
+}
+
+/// A family's connections (P7): the OAuth clients its members' accounts are connected through.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserOAuthConfig {
+    #[serde(default)]
+    pub google: Option<OAuthClientConfig>,
+    #[serde(default)]
+    pub github: Option<OAuthClientConfig>,
+}
+
 const fn cloud() -> ExecutorMode {
     ExecutorMode::Cloud
 }
@@ -127,6 +154,8 @@ pub struct ExecutorConfig {
     pub github: Option<GithubConfig>,
     #[serde(default)]
     pub google: Option<GoogleConfig>,
+    #[serde(default)]
+    pub user_oauth: Option<UserOAuthConfig>,
     #[serde(default = "max_roster_age")]
     pub max_roster_age_secs: i64,
 }

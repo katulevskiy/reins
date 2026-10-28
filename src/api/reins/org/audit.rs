@@ -271,12 +271,13 @@ pub fn segment(c: &mut DbConnInner, org: &str, after: Option<i64>, to: i64, now:
     Ok(finish(out, head))
 }
 
-/// How long an org's audit events are kept, in days (05 §11, 06 §4): Team 30, Business a year, Enterprise seven.
+/// How long an org's audit events are kept, in days (05 §11, 06 §4): Team 30, Business a year, Enterprise seven. A
+/// Family (P7) keeps a year: the spec names no period, and a guardianship's history is kept rather than pruned early.
 #[must_use]
 pub fn audit_retention_days(tier: Tier) -> i64 {
     match tier {
         Tier::Team => 30,
-        Tier::Business => 365,
+        Tier::Business | Tier::Family => 365,
         Tier::Enterprise => 7 * 365,
     }
 }
@@ -507,6 +508,7 @@ mod tests {
         assert_eq!(audit_retention_days(Tier::Team), 30);
         assert_eq!(audit_retention_days(Tier::Business), 365);
         assert_eq!(audit_retention_days(Tier::Enterprise), 7 * 365);
+        assert_eq!(audit_retention_days(Tier::Family), 365);
     }
 
     #[test]

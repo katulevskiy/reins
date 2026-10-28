@@ -238,8 +238,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if owner != WorkProfiles.active.id {
                 if action == UNNotificationDefaultActionIdentifier, let owner,
                    (try? WorkProfiles.registry().list().contains { $0.id == owner }) == true {
-                    // An org review (or web passkey) opens that profile's reviews once it is shown.
-                    if payload?.link == .orgReviews { ProfileSwitch.then = .orgReviews }
+                    // An org review (or web passkey) opens that profile's reviews once it is shown; a family's ask, its page.
+                    if let link = payload?.link, link == .orgReviews || link == .family { ProfileSwitch.then = link }
                     ProfileSwitch.switchTo(owner)
                 }
                 completionHandler()

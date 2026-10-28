@@ -170,6 +170,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** A family's notification (P7): Settings > Family of this (family) profile. */
+    fun openFamily() {
+        home()
+        selectTab(Tab.Settings)
+        open(Route.Family)
+    }
+
     /** An org review notification: Settings > Reviews of this (work) profile. */
     fun openOrgReviews() {
         home()

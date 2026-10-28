@@ -15,6 +15,8 @@ pub mod reins_circle;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
+pub mod reins_family;
+pub mod reins_family_conn;
 #[cfg(all(test, sqlite))]
 pub(crate) use self::reins_device::test_db;
 pub mod reins_org;

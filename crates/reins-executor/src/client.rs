@@ -193,6 +193,21 @@ impl Client {
         self.call(reqwest::Method::POST, &format!("/lease/{id}"), body).await.map(drop)
     }
 
+    /// `POST /connect/claim`: a family's connect jobs (P7).
+    pub async fn connect_claim(&self) -> Result<Vec<reins_proto::managed::ConnectJob>, String> {
+        self.call(reqwest::Method::POST, "/connect/claim", b"{}".to_vec())
+            .await?
+            .json()
+            .await
+            .map_err(|e| format!("the server's connect jobs are not valid: {}", e.without_url()))
+    }
+
+    /// `POST /connect/done`: what this executor did with one (never a token).
+    pub async fn connect_done(&self, done: &reins_proto::managed::ConnectDone) -> Result<(), String> {
+        let body = serde_json::to_vec(done).map_err(|e| e.to_string())?;
+        self.call(reqwest::Method::POST, "/connect/done", body).await.map(drop)
+    }
+
     /// `GET /revocations`.
     pub async fn revocations(&self) -> Result<Vec<Revocation>, String> {
         self.get_json("/revocations").await

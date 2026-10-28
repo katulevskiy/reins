@@ -92,7 +92,7 @@ public addresses.
 
 ## Retention and pruning
 
-The log is kept by plan: Team 30 days, Business 1 year, Enterprise 7 years. Once a day, events older than that are
+The log is kept by plan: Team 30 days, Business and Family 1 year, Enterprise 7 years. Once a day, events older than that are
 deleted down to the newest checkpoint signed before the cut-off, which stays: exports then start from it and still
 verify (`audit.pruned` records the anchor). A chain that doesn't verify as stored is never pruned. Stream to object
 storage with Object Lock to keep more.

@@ -18,10 +18,11 @@ use serde_json::{Value, json};
 
 use crate::client::Client;
 use crate::config::{ExecutorConfig, MAX_ROSTER_AGE_SECS, Pins};
-use crate::connectors::{Connector, GithubApp, GoogleWorkspace};
+use crate::connectors::{Connector, GithubApp, GoogleWorkspace, UserOAuth};
 use crate::leases::LeaseStore;
 use crate::seal::seal;
 use crate::verify::{HeldStep, Refusal, Verified, verify_job_with};
+use reins_proto::managed::OAuthProvider;
 
 /// How often [`run`] polls.
 pub const POLL: Duration = Duration::from_secs(2);
@@ -125,6 +126,8 @@ pub struct Context {
     pub max_roster_age_secs: i64,
     pub github: Option<GithubApp>,
     pub google: Option<GoogleWorkspace>,
+    /// A family's connections (P7): members' own accounts, held here.
+    pub user_oauth: Option<Arc<UserOAuth>>,
     pub leases: LeaseStore,
     pub done: DoneLog,
     policies: Mutex<HashMap<String, Envelope>>,
@@ -150,6 +153,7 @@ impl Context {
             max_roster_age_secs: MAX_ROSTER_AGE_SECS,
             github: None,
             google: None,
+            user_oauth: None,
             policies: Mutex::new(HashMap::new()),
             rollouts: Mutex::new(rollouts),
         })
@@ -167,6 +171,12 @@ impl Context {
         self
     }
 
+    #[must_use]
+    pub fn with_user_oauth(mut self, oauth: Arc<UserOAuth>) -> Self {
+        self.user_oauth = Some(oauth);
+        self
+    }
+
     /// From the configuration file: its key, pins, connectors and state directory.
     pub fn from_config(cfg: &ExecutorConfig) -> Result<Self, String> {
         let key = Arc::new(crate::client::load_key(&cfg.key_file)?);
@@ -181,12 +191,41 @@ impl Context {
             let key = g.service_account.read()?;
             ctx = ctx.with_google(GoogleWorkspace::from_service_account(&key, &g.api_base, g.token_uri.as_deref())?);
         }
+        if let Some(u) = &cfg.user_oauth {
+            let secret = zeroize::Zeroizing::new(
+                std::fs::read(&cfg.key_file).map_err(|e| format!("reading {}: {e}", cfg.key_file.display()))?,
+            );
+            let tokens = Arc::new(crate::user_tokens::UserTokens::open(&cfg.state_dir, &secret)?);
+            let mut clients = Vec::new();
+            let configured = [(OAuthProvider::Google, u.google.as_ref()), (OAuthProvider::Github, u.github.as_ref())];
+            for (provider, c) in configured {
+                let Some(c) = c else {
+                    continue;
+                };
+                let secret = c.client_secret.read()?;
+                let client = match provider {
+                    OAuthProvider::Google => crate::connectors::user_oauth::Client::google(&c.client_id, secret),
+                    OAuthProvider::Github => crate::connectors::user_oauth::Client::github(&c.client_id, secret),
+                };
+                clients.push(match &c.base {
+                    Some(base) => client.at(base),
+                    None => client,
+                });
+            }
+            ctx = ctx.with_user_oauth(Arc::new(UserOAuth::new(clients, tokens, &cfg.state_dir)?));
+        }
         Ok(ctx)
     }
 
     fn connector(&self, tool: &str) -> Option<&dyn Connector> {
         if let Some(gh) = self.github.as_ref().filter(|c| c.handles(tool)) {
             return Some(gh);
+        }
+        // A family's executor has no org-wide connector: its members' own accounts serve them.
+        if self.google.is_none()
+            && let Some(u) = self.user_oauth.as_deref().filter(|c| c.handles(tool))
+        {
+            return Some(u);
         }
         self.google.as_ref().filter(|c| c.handles(tool)).map(|g| -> &dyn Connector { g })
     }
@@ -441,7 +480,11 @@ pub async fn run_once(ctx: &Context) -> Result<RunStats, String> {
     let jobs = run_jobs(ctx, &mut stats).await;
     // Revocations run every pass, whatever happened to the jobs.
     let revoked = revocations(ctx, &mut stats).await;
-    jobs.and(revoked).map(|()| stats)
+    let connected = match &ctx.user_oauth {
+        Some(oauth) => connect_jobs(ctx, oauth).await,
+        None => Ok(()),
+    };
+    jobs.and(revoked).and(connected).map(|()| stats)
 }
 
 /// [`run_once`] every [`POLL`], forever.
@@ -603,6 +646,40 @@ async fn revoke_lease(ctx: &Context, lease: &str) -> Result<usize, String> {
     }
     ctx.leases.revoked(lease, crate::now())?;
     Ok(held.len())
+}
+
+/// A family's connect jobs (P7): begin, finish or revoke a member's connection. The answer names the account, never a
+/// token.
+async fn connect_jobs(ctx: &Context, oauth: &UserOAuth) -> Result<(), String> {
+    use reins_proto::managed::{ConnectDone, ConnectPhase};
+    for job in ctx.client.connect_claim().await? {
+        let mut done = ConnectDone {
+            job: job.id.clone(),
+            ok: true,
+            auth_url: None,
+            state: None,
+            account: None,
+            reason: String::new(),
+        };
+        let outcome = match &job.phase {
+            ConnectPhase::Begin => oauth.begin(job.provider, &job.member, &job.redirect_uri).map(|(url, state)| {
+                done.auth_url = Some(url);
+                done.state = Some(state);
+            }),
+            ConnectPhase::Finish {
+                code,
+                state,
+            } => oauth.finish(job.provider, &job.member, code, state).await.map(|account| done.account = Some(account)),
+            ConnectPhase::Revoke => oauth.revoke(job.provider, &job.member).await,
+        };
+        if let Err(e) = outcome {
+            log::warn!("family connect job {}: {e}", job.id);
+            done.ok = false;
+            done.reason = e;
+        }
+        ctx.client.connect_done(&done).await?;
+    }
+    Ok(())
 }
 
 async fn revoke_expired(ctx: &Context, stats: &mut RunStats) {

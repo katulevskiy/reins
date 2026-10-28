@@ -595,7 +595,16 @@ class AppNotifier(
      * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
      * channel; tapping opens that profile's reviews. Says nothing of the review itself.
      */
-    fun orgReview(target: WorkProfiles.Active, reviewId: String) = orgAction(target, reviewId, "A review waits for you.")
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) = orgAction(
+        target,
+        reviewId,
+        // A family's ask (P7): a member's request to leave for its guardians, or a guardian's question for the member.
+        when (reviewId) {
+            "family:leave" -> "A request to leave waits for you."
+            "family:minor" -> "Your family asks you something."
+            else -> "A review waits for you."
+        },
+    )
 
     /**
      * A web passkey the member added in the browser waits for this phone's confirmation (O3): notified like a review,
@@ -607,13 +616,15 @@ class AppNotifier(
     private fun orgAction(target: WorkProfiles.Active, reviewId: String, text: String) {
         onChanged()
         if (!manager.areNotificationsEnabled()) return
+        // A family's ask (P7): a member's request to leave for its guardians, or a guardian's question for the member.
+        val family = reviewId.startsWith(FAMILY_PREFIX)
         val open = PendingIntent.getActivity(
             context,
             notificationId(reviewId),
             WorkProfiles.stamp(
                 context,
                 Intent(context, MainActivity::class.java)
-                    .setAction(ACTION_OPEN_ORG_REVIEWS)
+                    .setAction(if (family) ACTION_OPEN_FAMILY else ACTION_OPEN_ORG_REVIEWS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 target.id,
             ),
@@ -749,6 +760,9 @@ class AppNotifier(
         const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
         /** A work profile's org reviews ([orgReview]). */
         const val ACTION_OPEN_ORG_REVIEWS = "dev.reins.android.OPEN_ORG_REVIEWS"
+        const val ACTION_OPEN_FAMILY = "dev.reins.android.OPEN_FAMILY"
+        /** An org-review push id the server sends for a family's ask (`family:leave`, `family:minor`). */
+        const val FAMILY_PREFIX = "family:"
         /** A Circle review's notification: Activity, at For others. */
         const val ACTION_OPEN_FOR_OTHERS = "dev.reins.android.OPEN_FOR_OTHERS"
         /** The Circle review a notification is about, in its extras (see [dropStaleCircles]). */

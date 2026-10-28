@@ -312,10 +312,10 @@ async fn home(cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             Some(d) => reins_org::q_verified_owner(c, d)?.is_none(),
             None => false,
         };
-        Ok((orgs, (!in_any && free).then_some(domain).flatten()))
+        Ok((orgs, (!in_any && free).then_some(domain).flatten(), !in_any))
     })
     .await;
-    let Ok((orgs, create)) = view else {
+    let Ok((orgs, create, can_create_family)) = view else {
         return Page(pages::signed_out(&base(), Some("Something went wrong. Try again.")));
     };
     let flash = s.flash.as_ref().map(|(t, b)| (t.as_str(), *b));
@@ -333,6 +333,7 @@ async fn home(cookies: &CookieJar<'_>, conn: DbConn) -> Page {
         &pages::HomeView {
             orgs,
             can_create: create.as_deref(),
+            can_create_family,
         },
     ))
 }
@@ -517,6 +518,18 @@ async fn create(form: Form<NewOrg>, cookies: &CookieJar<'_>, conn: DbConn) -> Re
     }
     let tier = Tier::parse(&form.tier).unwrap_or(Tier::Business);
     let (user, email, name, now) = (s.user.clone(), s.email.clone(), form.name.clone(), now_unix());
+    if tier == Tier::Family {
+        return match run(&conn, move |c| super::family::create_family(c, &user, &email, &name, now)).await {
+            Ok(created) => {
+                flash(&s.sid, "Created. Approve its policy on your phone.", false);
+                to_org(&created.org, "")
+            }
+            Err(e) => {
+                flash(&s.sid, e.message(), true);
+                to_home()
+            }
+        };
+    }
     match run(&conn, move |c| tenant::create_org(c, &user, &email, &name, tier, now)).await {
         Ok((org, _)) => {
             flash(&s.sid, "Created. Add the TXT record, then Verify.", false);
@@ -633,6 +646,9 @@ async fn overview(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
     let Ok(view) = view else {
         return not_found();
     };
+    if view.tier == Tier::Family {
+        return super::console_family::page(org, &s, &conn, view).await;
+    }
     let flash = s.flash.as_ref().map(|(t, b)| (t.as_str(), *b));
     let base = base();
     let frame = pages::Frame {

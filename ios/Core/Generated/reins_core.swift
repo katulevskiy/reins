@@ -2768,6 +2768,11 @@ public protocol ProfileRegistryProtocol: AnyObject, Sendable {
     func beginManaged(serverUrl: String) throws  -> AccountProfile
     
     /**
+     * Finishes "Add family account" (P7): as [`Self::confirm_managed`], for an org that is a family.
+     */
+    func confirmFamily(id: String, orgId: String, orgName: String, email: String) throws  -> AccountProfile
+    
+    /**
      * Finishes "Add work account": the reserved profile `id` is `email`'s, a member of `org_id`. Refused when it is
      * the Personal account, or when this phone already has that org's work profile.
      */
@@ -2886,6 +2891,22 @@ open func beginManaged(serverUrl: String)throws  -> AccountProfile  {
     uniffi_reins_core_fn_method_profileregistry_begin_managed(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(serverUrl),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Finishes "Add family account" (P7): as [`Self::confirm_managed`], for an org that is a family.
+     */
+open func confirmFamily(id: String, orgId: String, orgName: String, email: String)throws  -> AccountProfile  {
+    return try  FfiConverterTypeAccountProfile_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_profileregistry_confirm_family(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(orgId),
+        FfiConverterString.lower(orgName),
+        FfiConverterString.lower(email),uniffiCallStatus
     )
 })
 }
@@ -3385,6 +3406,36 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
      */
     func extendGrant(grantId: String, durationSecs: UInt64) async throws 
+    
+    /**
+     * Answers a guardian's proposal to mark this account a minor's.
+     */
+    func familyAnswerMinor(accept: Bool) async throws 
+    
+    /**
+     * Withdraws a request to leave.
+     */
+    func familyCancelLeave() async throws 
+    
+    /**
+     * A guardian allows a member's request to leave.
+     */
+    func familyConsentLeave(member: String) async throws 
+    
+    /**
+     * Joins a family with its invitation link, on a new account (the Family profile's own core).
+     */
+    func familyJoin(link: String) async throws  -> FamilyView
+    
+    /**
+     * Asks to leave: an adult goes after the family's notice, a minor when a guardian allows it.
+     */
+    func familyRequestLeave() async throws  -> FamilyLeaveInfo
+    
+    /**
+     * The family of this account; `None` when it isn't a family's member.
+     */
+    func familyView() async throws  -> FamilyView?
     
     /**
      * Opens one email listed in the activity: fetched from Gmail now, `account` being the entry's account.
@@ -5643,6 +5694,120 @@ open func extendGrant(grantId: String, durationSecs: UInt64)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Answers a guardian's proposal to mark this account a minor's.
+     */
+open func familyAnswerMinor(accept: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_answer_minor(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(accept)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Withdraws a request to leave.
+     */
+open func familyCancelLeave()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_cancel_leave(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * A guardian allows a member's request to leave.
+     */
+open func familyConsentLeave(member: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_consent_leave(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(member)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Joins a family with its invitation link, on a new account (the Family profile's own core).
+     */
+open func familyJoin(link: String)async throws  -> FamilyView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_join(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(link)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFamilyView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Asks to leave: an adult goes after the family's notice, a minor when a guardian allows it.
+     */
+open func familyRequestLeave()async throws  -> FamilyLeaveInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_request_leave(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFamilyLeaveInfo_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The family of this account; `None` when it isn't a family's member.
+     */
+open func familyView()async throws  -> FamilyView?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_family_view(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeFamilyView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -9128,6 +9293,10 @@ public struct AccountProfile: Equatable, Hashable {
      * Put in front of notification channel ids and thread identifiers (`""` for Personal).
      */
     public var channelPrefix: String
+    /**
+     * A Family profile (P7): its org is a family (the badge shows the family glyph).
+     */
+    public var family: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9143,7 +9312,10 @@ public struct AccountProfile: Equatable, Hashable {
          */keyAlias: String, 
         /**
          * Put in front of notification channel ids and thread identifiers (`""` for Personal).
-         */channelPrefix: String) {
+         */channelPrefix: String, 
+        /**
+         * A Family profile (P7): its org is a family (the badge shows the family glyph).
+         */family: Bool = false) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -9153,6 +9325,7 @@ public struct AccountProfile: Equatable, Hashable {
         self.dataDir = dataDir
         self.keyAlias = keyAlias
         self.channelPrefix = channelPrefix
+        self.family = family
     }
 
     
@@ -9179,7 +9352,8 @@ public struct FfiConverterTypeAccountProfile: FfiConverterRustBuffer {
                 serverUrl: FfiConverterOptionString.read(from: &buf), 
                 dataDir: FfiConverterString.read(from: &buf), 
                 keyAlias: FfiConverterString.read(from: &buf), 
-                channelPrefix: FfiConverterString.read(from: &buf)
+                channelPrefix: FfiConverterString.read(from: &buf), 
+                family: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -9193,6 +9367,7 @@ public struct FfiConverterTypeAccountProfile: FfiConverterRustBuffer {
         FfiConverterString.write(value.dataDir, into: &buf)
         FfiConverterString.write(value.keyAlias, into: &buf)
         FfiConverterString.write(value.channelPrefix, into: &buf)
+        FfiConverterBool.write(value.family, into: &buf)
     }
 }
 
@@ -15249,6 +15424,255 @@ public func FfiConverterTypeEnvStoreView_lift(_ buf: RustBuffer) throws -> EnvSt
 #endif
 public func FfiConverterTypeEnvStoreView_lower(_ value: EnvStoreView) -> RustBuffer {
     return FfiConverterTypeEnvStoreView.lower(value)
+}
+
+
+/**
+ * A member's request to leave, as a guardian sees it (a minor's waits for their Allow).
+ */
+public struct FamilyLeaveAsk: Equatable, Hashable {
+    public var member: String
+    public var email: String
+    public var minor: Bool
+    public var requestedAt: Int64
+    public var effectiveAt: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(member: String, email: String, minor: Bool, requestedAt: Int64, effectiveAt: Int64?) {
+        self.member = member
+        self.email = email
+        self.minor = minor
+        self.requestedAt = requestedAt
+        self.effectiveAt = effectiveAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FamilyLeaveAsk: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFamilyLeaveAsk: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FamilyLeaveAsk {
+        return
+            try FamilyLeaveAsk(
+                member: FfiConverterString.read(from: &buf), 
+                email: FfiConverterString.read(from: &buf), 
+                minor: FfiConverterBool.read(from: &buf), 
+                requestedAt: FfiConverterInt64.read(from: &buf), 
+                effectiveAt: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FamilyLeaveAsk, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.member, into: &buf)
+        FfiConverterString.write(value.email, into: &buf)
+        FfiConverterBool.write(value.minor, into: &buf)
+        FfiConverterInt64.write(value.requestedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.effectiveAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyLeaveAsk_lift(_ buf: RustBuffer) throws -> FamilyLeaveAsk {
+    return try FfiConverterTypeFamilyLeaveAsk.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyLeaveAsk_lower(_ value: FamilyLeaveAsk) -> RustBuffer {
+    return FfiConverterTypeFamilyLeaveAsk.lower(value)
+}
+
+
+/**
+ * A request to leave, as the member sees theirs.
+ */
+public struct FamilyLeaveInfo: Equatable, Hashable {
+    public var requestedAt: Int64
+    /**
+     * When they go; `None` while a minor's request waits for a guardian.
+     */
+    public var effectiveAt: Int64?
+    public var needsConsent: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(requestedAt: Int64, 
+        /**
+         * When they go; `None` while a minor's request waits for a guardian.
+         */effectiveAt: Int64?, needsConsent: Bool) {
+        self.requestedAt = requestedAt
+        self.effectiveAt = effectiveAt
+        self.needsConsent = needsConsent
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FamilyLeaveInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFamilyLeaveInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FamilyLeaveInfo {
+        return
+            try FamilyLeaveInfo(
+                requestedAt: FfiConverterInt64.read(from: &buf), 
+                effectiveAt: FfiConverterOptionInt64.read(from: &buf), 
+                needsConsent: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FamilyLeaveInfo, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.requestedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.effectiveAt, into: &buf)
+        FfiConverterBool.write(value.needsConsent, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyLeaveInfo_lift(_ buf: RustBuffer) throws -> FamilyLeaveInfo {
+    return try FfiConverterTypeFamilyLeaveInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyLeaveInfo_lower(_ value: FamilyLeaveInfo) -> RustBuffer {
+    return FfiConverterTypeFamilyLeaveInfo.lower(value)
+}
+
+
+/**
+ * The family, as this member's phone shows it.
+ */
+public struct FamilyView: Equatable, Hashable {
+    public var orgId: String
+    public var name: String
+    public var minor: Bool
+    public var guardian: Bool
+    public var guardians: [String]
+    /**
+     * An adult's notice before leaving: 0, 3 or 7 days.
+     */
+    public var noticeDays: UInt8
+    public var leave: FamilyLeaveInfo?
+    /**
+     * A guardian asked to mark this account a minor's: it counts only if this member accepts.
+     */
+    public var minorProposed: Bool
+    /**
+     * What the family sees ([`SEES`]).
+     */
+    public var sees: [String]
+    /**
+     * For a guardian: requests to leave.
+     */
+    public var leaves: [FamilyLeaveAsk]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(orgId: String, name: String, minor: Bool, guardian: Bool, guardians: [String], 
+        /**
+         * An adult's notice before leaving: 0, 3 or 7 days.
+         */noticeDays: UInt8, leave: FamilyLeaveInfo?, 
+        /**
+         * A guardian asked to mark this account a minor's: it counts only if this member accepts.
+         */minorProposed: Bool, 
+        /**
+         * What the family sees ([`SEES`]).
+         */sees: [String], 
+        /**
+         * For a guardian: requests to leave.
+         */leaves: [FamilyLeaveAsk]) {
+        self.orgId = orgId
+        self.name = name
+        self.minor = minor
+        self.guardian = guardian
+        self.guardians = guardians
+        self.noticeDays = noticeDays
+        self.leave = leave
+        self.minorProposed = minorProposed
+        self.sees = sees
+        self.leaves = leaves
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FamilyView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFamilyView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FamilyView {
+        return
+            try FamilyView(
+                orgId: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                minor: FfiConverterBool.read(from: &buf), 
+                guardian: FfiConverterBool.read(from: &buf), 
+                guardians: FfiConverterSequenceString.read(from: &buf), 
+                noticeDays: FfiConverterUInt8.read(from: &buf), 
+                leave: FfiConverterOptionTypeFamilyLeaveInfo.read(from: &buf), 
+                minorProposed: FfiConverterBool.read(from: &buf), 
+                sees: FfiConverterSequenceString.read(from: &buf), 
+                leaves: FfiConverterSequenceTypeFamilyLeaveAsk.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FamilyView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.orgId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.minor, into: &buf)
+        FfiConverterBool.write(value.guardian, into: &buf)
+        FfiConverterSequenceString.write(value.guardians, into: &buf)
+        FfiConverterUInt8.write(value.noticeDays, into: &buf)
+        FfiConverterOptionTypeFamilyLeaveInfo.write(value.leave, into: &buf)
+        FfiConverterBool.write(value.minorProposed, into: &buf)
+        FfiConverterSequenceString.write(value.sees, into: &buf)
+        FfiConverterSequenceTypeFamilyLeaveAsk.write(value.leaves, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyView_lift(_ buf: RustBuffer) throws -> FamilyView {
+    return try FfiConverterTypeFamilyView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFamilyView_lower(_ value: FamilyView) -> RustBuffer {
+    return FfiConverterTypeFamilyView.lower(value)
 }
 
 
@@ -29585,6 +30009,54 @@ fileprivate struct FfiConverterOptionTypeEnvReleaseView: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFamilyLeaveInfo: FfiConverterRustBuffer {
+    typealias SwiftType = FamilyLeaveInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFamilyLeaveInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFamilyLeaveInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFamilyView: FfiConverterRustBuffer {
+    typealias SwiftType = FamilyView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFamilyView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFamilyView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeGitPushView: FfiConverterRustBuffer {
     typealias SwiftType = GitPushView?
 
@@ -31026,6 +31498,31 @@ fileprivate struct FfiConverterSequenceTypeEnvStoreView: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeEnvStoreView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFamilyLeaveAsk: FfiConverterRustBuffer {
+    typealias SwiftType = [FamilyLeaveAsk]
+
+    public static func write(_ value: [FamilyLeaveAsk], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFamilyLeaveAsk.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FamilyLeaveAsk] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FamilyLeaveAsk]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFamilyLeaveAsk.read(from: &buf))
         }
         return seq
     }
@@ -32727,6 +33224,24 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_extend_grant() != 25710) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_family_answer_minor() != 52304) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_family_cancel_leave() != 29013) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_family_consent_leave() != 42486) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_family_join() != 44094) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_family_request_leave() != 30582) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_family_view() != 23713) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_fetch_email() != 21111) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33238,6 +33753,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_profileregistry_begin_managed() != 29294) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_profileregistry_confirm_family() != 43049) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_profileregistry_confirm_managed() != 21692) {

@@ -166,6 +166,15 @@ class MainActivity : FragmentActivity() {
             }
             return
         }
+        if (intent?.action == AppNotifier.ACTION_OPEN_FAMILY) {
+            if (container.profile.managed || dev.reins.android.profiles.WorkProfiles.active.managed) {
+                lifecycleScope.launch {
+                    container.state.session.first { it is SessionState.SignedIn }
+                    app.openFamily()
+                }
+            }
+            return
+        }
         if (intent?.action == AppNotifier.ACTION_OPEN_ORG_REVIEWS) {
             if (container.profile.managed || dev.reins.android.profiles.WorkProfiles.active.managed) {
                 lifecycleScope.launch {

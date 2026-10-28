@@ -19,6 +19,8 @@ enum WorkProfiles {
         let threadPrefix: String
         /// Appended to the data-key Keychain account ("" for Personal).
         let keyAlias: String
+        /// A Family profile (P7): its org is a family.
+        var family = false
     }
 
     static let personal = Active(id: "personal", label: "Personal", managed: false, threadPrefix: "", keyAlias: "")
@@ -30,7 +32,8 @@ enum WorkProfiles {
     nonisolated(unsafe) static var hasWork = false
 
     static func of(_ p: AccountProfile) -> Active {
-        Active(id: p.id, label: label(p), managed: p.kind == .managed, threadPrefix: p.channelPrefix, keyAlias: p.keyAlias)
+        Active(id: p.id, label: label(p), managed: p.kind == .managed, threadPrefix: p.channelPrefix, keyAlias: p.keyAlias,
+               family: p.family)
     }
 
     /// A profile's label as shown anywhere: the org typed it, so it goes through `untrustedName` (the core already
