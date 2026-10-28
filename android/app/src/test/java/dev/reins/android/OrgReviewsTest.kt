@@ -142,6 +142,14 @@ class OrgReviewsTest : FlowHarness() {
     }
 
     @Test
+    fun aFamilysTwoAsksArriveAsOrgReviewPushesAndNothingElseWithAColonDoes() {
+        assertEquals("family:leave", PushPayload.parse(mapOf("t" to "orgreview", "id" to "family:leave"))?.id)
+        assertEquals("family:minor", PushPayload.parse(mapOf("t" to "orgreview", "id" to "family:minor"))?.id)
+        assertEquals(null, PushPayload.parse(mapOf("t" to "orgreview", "id" to "family:other")))
+        assertEquals(null, PushPayload.parse(mapOf("t" to "req", "id" to "family:leave")))
+    }
+
+    @Test
     fun anOrgReviewPushOpensTheReviewsOfItsProfile() {
         val payload = PushPayload.parse(mapOf("t" to "orgreview", "id" to "or_1"))!!
         assertEquals("orgreview", payload.kind)

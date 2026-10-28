@@ -39,6 +39,7 @@ use crate::config::{Config, Paths};
 use crate::guard::{GuardConfig, Match, OnNoAnswer};
 use crate::harness::Harness;
 use crate::journal::{Entry, Kind, Outcome};
+use reins_policy::desktop_policy::Gate;
 
 /// What the tool is about to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -954,32 +955,106 @@ pub async fn run(
         } => Kind::File,
         _ => Kind::Command,
     };
-    // Decisions v2: with `auto.matrix_decides` (and this computer's setup done), the matrix only adds asks: what the
-    // guard asks about is still asked, and what the matrix asks about is asked even with no guard rule. Without a
-    // reading in time, or with it off, the guard decides as before.
-    let decided = if config.auto.matrix_decides && config.auto.setup_done {
-        crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
-    } else {
-        None
+    // Decisions v2 (08 R1): the policy the phone signed for this computer decides tool uses when a fresh one is held.
+    let tool_use = matches!(
+        call.event,
+        Event::PreToolUse | Event::CursorShell | Event::CursorRead | Event::CursorTool | Event::GeminiBeforeTool
+    );
+    if phone && tool_use {
+        crate::policy::look_if_stale(paths, config).await;
+    }
+    let signed = (phone && tool_use).then(|| crate::policy::effective(paths, config, crate::now_unix()).0);
+    let gate = signed.as_ref().map(|e| e.gate);
+    if gate == Some(Gate::Lockdown) {
+        let reason = "Reins: Lockdown is on (set on the phone).".to_owned();
+        return refuse(paths, &call, harness, kind, &reason, None, &news);
+    }
+    // The workspace as the phone signed it (local roots only inside its roots).
+    let signed_config = signed.as_ref().filter(|_| matches!(gate, Some(Gate::Matrix { .. } | Gate::Bypass))).map(|e| {
+        let mut c = config.clone();
+        c.workspace.roots.clone_from(&e.roots);
+        c.workspace.scratch.clone_from(&e.scratch);
+        c
+    });
+    let config = signed_config.as_ref().unwrap_or(config);
+    let basis = match (&signed, gate) {
+        (
+            Some(e),
+            Some(Gate::Matrix {
+                overnight,
+            }),
+        ) => Some(crate::consequences::Basis::signed(e, overnight)),
+        (Some(e), Some(Gate::Bypass)) => Some(crate::consequences::Basis::signed(e, false)),
+        _ => None,
     };
-    let guarded = question_in(&call, &config.guard, head.as_ref()).is_some();
-    let matrix_asks = if let Some((summary, shadow)) = &decided {
-        if shadow.outcome == reins_policy::matrix::Outcome::Deny {
-            let reason = format!("Reins: not allowed: {}", shadow.line);
-            let mut entry = Entry::new(kind, &action_line(&call))
-                .source(Some(harness.label()))
-                .decider(crate::journal::Decider::Settings)
-                .effects(Some(summary.clone()))
-                .matrix(Some(shadow.clone()));
-            entry.end(Outcome::Blocked, Some(&reason));
-            crate::journal::Journal::new(paths).record(&entry);
-            let (out, code) = render_with(&call, &Verdict::Deny(reason), &news);
+    let guard_question = question_in(&call, &config.guard, head.as_ref());
+    // Without the signed policy: with `auto.matrix_decides` (and this computer's setup done) the local matrix only adds
+    // asks: what the guard asks about is still asked, and what the matrix asks about is asked even with no guard rule.
+    let decided = match &basis {
+        Some(b) => crate::consequences::evaluate_action_with(
+            config,
+            b,
+            &call.action,
+            call.cwd.as_deref(),
+            head.as_ref(),
+            harness.label(),
+        ),
+        None if config.auto.matrix_decides && config.auto.setup_done => crate::consequences::evaluate_action(
+            config,
+            &call.action,
+            call.cwd.as_deref(),
+            head.as_ref(),
+            harness.label(),
+        ),
+        None => None,
+    };
+    // The signed policy decides only with a reading in time; without one, today's guard flow.
+    let deciding = basis.is_some() && decided.is_some();
+    if let Some((summary, shadow)) = &decided
+        && shadow.outcome == reins_policy::matrix::Outcome::Deny
+    {
+        let reason = format!("Reins: not allowed: {}", shadow.line);
+        return refuse(paths, &call, harness, kind, &reason, Some((summary.clone(), shadow.clone())), &news);
+    }
+    // Where the signed policy decides, the built-in groups are labels (01 §2.2), except those about Reins itself; the
+    // user's own rules still ask (local settings only tighten).
+    let guarded = if deciding {
+        must_ask(&call, &config.guard, head.as_ref())
+    } else {
+        guard_question.is_some()
+    };
+    if gate == Some(Gate::Bypass)
+        && deciding
+        && let Some((summary, shadow)) = &decided
+    {
+        // Bypass: everything is allowed (Deny rules aside, above); said explicitly only where the guard would have asked.
+        if guard_question.is_none() {
+            let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
             return (out, code, None);
         }
-        shadow.outcome.reviews()
-    } else {
-        false
-    };
+        let reason = "Reins: allowed by Bypass (set on the phone).".to_owned();
+        return allow(paths, &call, harness, kind, &reason, (summary.clone(), shadow.clone()), &news);
+    }
+    let matrix_asks = decided.as_ref().is_some_and(|(_, shadow)| shadow.outcome.reviews());
+    let park = deciding
+        && decided.as_ref().is_some_and(|(_, s)| matches!(s.outcome, reins_policy::matrix::Outcome::Park { .. }));
+    // The signed matrix says Auto and nothing local asks: allowed here, without the phone. Said explicitly only where
+    // the guard would have asked (otherwise the harness's own permission settings apply, as for anything unguarded).
+    if deciding
+        && !guarded
+        && !matrix_asks
+        && let Some((summary, shadow)) = &decided
+    {
+        if let Some(task) = &shadow.task {
+            crate::policy::spend(paths, task);
+        }
+        if guard_question.is_none() {
+            let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
+            return (out, code, None);
+        }
+        let reason = format!("Reins: allowed by Auto: {}.", shadow.line);
+        return allow(paths, &call, harness, kind, &reason, (summary.clone(), shadow.clone()), &news);
+    }
     // Nothing to ask about: no net either (a rewrite needs an allow Reins decided).
     if !guarded && !matrix_asks {
         let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
@@ -994,12 +1069,14 @@ pub async fn run(
             _ => v.get("tool_input").cloned(),
         })
         .unwrap_or(Value::Null);
-    // Only the matrix asks, and a net is planned: the matrix decides on the netted request (`NetPlan::after`, P3's
-    // levels). Auto there allows the netted request without the phone, when the net can be applied: the netted command
-    // handed back to a harness that takes it, or the file copies taken now. Otherwise it is asked as below.
-    if !guarded
-        && let (Some((summary, _)), Some(n)) = (&decided, &net)
-        && let Some(after) = crate::consequences::evaluate_netted(config, &call, &n.plan.after, harness.label())
+    // The signed matrix asks, nothing local does, and a net is planned: the matrix decides on the netted request
+    // (`NetPlan::after`, P3's levels). Auto there allows the netted request without the phone, when the net can be
+    // applied: the netted command handed back to a harness that takes it, or the file copies taken now. Otherwise it
+    // is asked as below. (This computer's own unsigned matrix never allows anything.)
+    if deciding
+        && !guarded
+        && let (Some((summary, _)), Some(n), Some(b)) = (&decided, &net, &basis)
+        && let Some(after) = crate::consequences::evaluate_netted_with(config, b, &call, &n.plan.after, harness.label())
         && after.outcome == reins_policy::matrix::Outcome::Auto
     {
         let applied = match &n.rewritten {
@@ -1007,6 +1084,9 @@ pub async fn run(
             None => crate::nets::hook::apply_files(config, paths, n).is_ok(),
         };
         if applied {
+            if let Some(task) = &after.task {
+                crate::policy::spend(paths, task);
+            }
             let mut reason = format!("Reins: allowed by Auto: {}.", after.line);
             if n.rewritten.is_some() {
                 reason.push_str(" Reins keeps a copy of what it deletes.");
@@ -1024,7 +1104,7 @@ pub async fn run(
             return (out, code, None);
         }
     }
-    let question = if guarded {
+    let question = if guard_question.is_some() {
         question_netted(&call, &config.guard, head.as_ref(), net.as_ref())
     } else {
         decided.as_ref().and_then(|(_, shadow)| matrix_question(&call, &shadow.line, net.as_ref()))
@@ -1057,9 +1137,10 @@ pub async fn run(
     } else {
         log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
         let timeout = Duration::from_secs(config.guard.timeout_secs);
+        // Overnight (signed): parked for the morning at once, the agent carries on.
         let ticketing = digest.as_deref().map(|digest| crate::ask::Ticketing {
             digest,
-            defer: false,
+            defer: park,
         });
         let (answer, timed_out, entry) =
             crate::ask::ask_logged_ticketed(paths, config, &q, timeout, false, prompter, entry, Some(&tell), ticketing)
@@ -1166,6 +1247,69 @@ fn action_line(call: &HookCall) -> String {
         ),
         Action::Other => format!("{who} used a tool"),
     }
+}
+
+/// Whether something local asks about `call` even where the signed policy decides: the user's own guard rules (the
+/// built-in ones off), or a built-in group about Reins itself (whatever `disabled_groups` and the allow lists say).
+fn must_ask(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>) -> bool {
+    let own = GuardConfig {
+        defaults: false,
+        ..guard.clone()
+    };
+    if question_in(call, &own, head).is_some() {
+        return true;
+    }
+    let texts: Vec<&str> = match &call.action {
+        Action::Command(c) => vec![c.as_str()],
+        Action::Files {
+            paths,
+            ..
+        } => paths.iter().map(String::as_str).collect(),
+        Action::Other => Vec::new(),
+    };
+    !reins_policy::guard::always_asked(&texts).is_empty()
+}
+
+/// Refuses `call` here, without the phone (Lockdown, or a Deny rule), with an Activity entry.
+fn refuse(
+    paths: &Paths,
+    call: &HookCall,
+    harness: Harness,
+    kind: Kind,
+    reason: &str,
+    reading: Option<(reins_policy::effects::Summary, crate::consequences::Shadow)>,
+    news: &[String],
+) -> (Option<String>, u8, Option<String>) {
+    let mut entry =
+        Entry::new(kind, &action_line(call)).source(Some(harness.label())).decider(crate::journal::Decider::Settings);
+    if let Some((summary, shadow)) = reading {
+        entry = entry.effects(Some(summary)).matrix(Some(shadow));
+    }
+    entry.end(Outcome::Blocked, Some(reason));
+    crate::journal::Journal::new(paths).record(&entry);
+    let (out, code) = render_with(call, &Verdict::Deny(reason.to_owned()), news);
+    (out, code, None)
+}
+
+/// Allows `call` here, without the phone, with an Activity entry.
+fn allow(
+    paths: &Paths,
+    call: &HookCall,
+    harness: Harness,
+    kind: Kind,
+    reason: &str,
+    reading: (reins_policy::effects::Summary, crate::consequences::Shadow),
+    news: &[String],
+) -> (Option<String>, u8, Option<String>) {
+    let mut entry = Entry::new(kind, &action_line(call))
+        .source(Some(harness.label()))
+        .decider(crate::journal::Decider::Settings)
+        .effects(Some(reading.0))
+        .matrix(Some(reading.1));
+    entry.end(Outcome::Allowed, Some(reason));
+    crate::journal::Journal::new(paths).record(&entry);
+    let (out, code) = render_with(call, &Verdict::Allow(reason.to_owned()), news);
+    (out, code, None)
 }
 
 /// The question for something the matrix asks about that no guard rule matches.

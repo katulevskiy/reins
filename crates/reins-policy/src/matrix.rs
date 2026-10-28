@@ -38,6 +38,16 @@ impl Cell {
         }
     }
 
+    /// The stricter of the two.
+    #[must_use]
+    pub fn stricter(self, other: Self) -> Self {
+        if other.strictness() > self.strictness() {
+            other
+        } else {
+            self
+        }
+    }
+
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -99,6 +109,28 @@ impl Matrix {
     #[must_use]
     pub fn loosens(&self, zone: Zone, level: Level, cell: Cell) -> bool {
         cell.strictness() < self.cell(zone, level).strictness()
+    }
+
+    /// Cell by cell, the stricter of `self` and `other`.
+    #[must_use]
+    pub fn stricter(&self, other: &Self) -> Self {
+        let mut out = self.clone();
+        for zone in Zone::ALL {
+            for level in [Level::L0, Level::L1, Level::L2, Level::L3] {
+                out.set(zone, level, self.cell(zone, level).stricter(other.cell(zone, level)));
+            }
+        }
+        out
+    }
+
+    /// Whether any cell of `self` is stricter than the same cell of `other`.
+    #[must_use]
+    pub fn any_stricter_than(&self, other: &Self) -> bool {
+        Zone::ALL.iter().any(|z| {
+            [Level::L0, Level::L1, Level::L2, Level::L3]
+                .iter()
+                .any(|l| self.cell(*z, *l).strictness() > other.cell(*z, *l).strictness())
+        })
     }
 }
 

@@ -684,6 +684,7 @@ mod tests {
             line: "Auto · Mine · Undoable".to_owned(),
             snapshot: "ab".repeat(32),
             decided: false,
+            task: None,
         };
         let e = Entry::new(Kind::Command, "rm").effects(Some(summary.clone())).matrix(Some(shadow.clone()));
         j.record(&e);

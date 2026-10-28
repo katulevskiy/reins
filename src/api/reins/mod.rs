@@ -9,6 +9,7 @@ pub mod blob;
 pub mod blob_io;
 pub mod blob_routes;
 pub mod circles;
+pub mod desktop_policy;
 pub mod desktop_routes;
 pub mod device_api;
 pub mod device_flow;
@@ -112,6 +113,8 @@ pub struct Hub {
     pub presence: presence::Presence,
     /// Per desktop connection: sealed "drop your secrets" notes from the phone, until its daemon picks them up.
     pub revocations: Revocations,
+    /// Per desktop connection: the phone-signed policy sealed to that computer (08 R1), until it is superseded.
+    pub policies: desktop_policy::Policies,
     /// Viewers asking to become primary (phone roles).
     pub handovers: roles::HandoverHub,
     /// Per account with phone roles: what wakes the members' long-polls, and the op log's head.
@@ -316,6 +319,7 @@ impl Hub {
             modes: std::sync::Mutex::default(),
             presence: presence::Presence::default(),
             revocations: Revocations::default(),
+            policies: desktop_policy::Policies::default(),
         }
     }
 
@@ -437,6 +441,7 @@ impl Hub {
         self.blobs.purge(now_unix());
         self.joins.purge(now_unix());
         self.revocations.purge(now_unix());
+        self.policies.purge(now_unix());
         self.handovers.purge(now_unix());
         self.live.purge();
     }

@@ -8428,6 +8428,7 @@ dependencies = [
  "reins-core",
  "reins-desktop",
  "reins-executor",
+ "reins-policy",
  "reins-proto",
  "reqwest",
  "ring",

@@ -131,3 +131,30 @@ fn overnight_gate() {
     let mean = baseline.overnight_decisions_mean.expect("the baseline records Overnight's decisions");
     assert!(o.decisions_mean <= mean + report::OVERNIGHT_SLACK + 1e-9, "{} > {mean}", o.decisions_mean);
 }
+
+/// 08 R1: hook requests decided on the computer with the policy the phone signs for it (the facts it gets, its
+/// workspace as signed, the nets, the groups about Reins itself always asked). Every labelled risk is still asked and
+/// no known false positive is. As the phone signs today (roots, no scratch folders), the computer asks a little more
+/// than the phone's own engine: scratch folders outside the roots aren't trusted until the phone signs them.
+#[test]
+fn desktop_path_keeps_recall() {
+    let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
+    let path = reins_replay::default_policy().with_file_name("nets.json");
+    let mut policy: Policy = serde_json::from_slice(&std::fs::read(path).expect("the policy file")).expect("a policy");
+    let phone = report::run(&corpus, &policy, EngineKind::Effects);
+    let desktop = report::run(&corpus, &policy, EngineKind::Desktop);
+    for r in [&phone, &desktop] {
+        assert!((r.recall - 1.0).abs() < f64::EPSILON, "{}", report::text(r, false));
+        assert!(r.missed_risks.is_empty(), "{:?}", r.missed_risks);
+        assert_eq!(r.known_fp_asked, 0, "{}", report::text(r, false));
+        assert_eq!(r.needs_human_asked, r.needs_human);
+    }
+    // Only hook requests are decided differently; the rest is the phone's.
+    assert_eq!(desktop.asks - desktop.hook_asks, phone.asks - phone.hook_asks);
+    assert!(desktop.hook_asks >= phone.hook_asks, "local settings never loosen");
+    assert!(desktop.hook_asks <= 33, "{}", report::text(&desktop, false));
+    // With the computer's scratch folders signed too, it decides as the phone's own engine does.
+    policy.desktop_scratch = true;
+    let signed = report::run(&corpus, &policy, EngineKind::Desktop);
+    assert_eq!(signed.hook_asks, phone.hook_asks, "{}", report::text(&signed, false));
+}

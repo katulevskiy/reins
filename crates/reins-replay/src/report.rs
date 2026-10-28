@@ -50,6 +50,13 @@ pub struct Report {
     pub developer_cases: usize,
     pub developer_asks: usize,
     pub developer_ask_rate: f64,
+    /// Hook requests (commands and files: what the computer decides with the phone-signed policy, 08 R1).
+    #[serde(default)]
+    pub hook_cases: usize,
+    #[serde(default)]
+    pub hook_asks: usize,
+    #[serde(default)]
+    pub hook_ask_rate: f64,
     pub real_risk: usize,
     pub real_risk_asked: usize,
     /// Labelled risks the matrix would have let Auto do (P2's success line: none).
@@ -223,12 +230,13 @@ pub fn run(corpus: &Corpus, policy: &Policy, engine: EngineKind) -> Report {
     }
     r.ask_rate = rate(r.asks, r.history);
     r.developer_ask_rate = rate(r.developer_asks, r.developer_cases);
+    r.hook_ask_rate = rate(r.hook_asks, r.hook_cases);
     r.recall = if r.real_risk == 0 {
         1.0
     } else {
         rate(r.real_risk_asked, r.real_risk)
     };
-    if engine == EngineKind::Effects {
+    if engine != EngineKind::Guard {
         r.full_certainty = Some(rate(full, r.developer_cases));
         r.overnight = Some(overnight(corpus, policy));
     }
@@ -260,6 +268,10 @@ fn tally(r: &mut Report, case: &Case, d: &Decision) {
         if case.kind.developer() {
             r.developer_cases += 1;
             r.developer_asks += usize::from(d.ask);
+        }
+        if matches!(case.kind, crate::corpus::Kind::Command | crate::corpus::Kind::File) {
+            r.hook_cases += 1;
+            r.hook_asks += usize::from(d.ask);
         }
     }
     if case.real_risk() {
@@ -430,10 +442,13 @@ pub fn text(r: &Report, verbose: bool) -> String {
     );
     let _w = writeln!(
         s,
-        "developer requests {} · asks {} ({})",
+        "developer requests {} · asks {} ({}) · hook requests {} · asks {} ({})",
         r.developer_cases,
         r.developer_asks,
-        pct(r.developer_ask_rate)
+        pct(r.developer_ask_rate),
+        r.hook_cases,
+        r.hook_asks,
+        pct(r.hook_ask_rate)
     );
     let _w = writeln!(
         s,

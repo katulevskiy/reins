@@ -115,8 +115,47 @@ pub struct Shadow {
     pub line: String,
     /// The hash of the snapshot it was evaluated against.
     pub snapshot: String,
-    /// It decided (`auto.matrix_decides`); else it was only recorded.
+    /// It decided (`auto.matrix_decides`, or the phone-signed policy); else it was only recorded.
     pub decided: bool,
+    /// The task whose envelope covered it, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
+/// What a request is evaluated against: this computer's own `[auto]` (shadow, or local asks), or the phone-signed
+/// policy as this computer applies it (`reins_policy::desktop_policy::Effective`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Basis {
+    pub snapshot: matrix::Snapshot,
+    /// The connection rules and tasks are for: the computer's own with the signed policy, else the harness.
+    pub connection: Option<String>,
+    pub overnight: bool,
+    /// The phone signed it: the matrix decides.
+    pub signed: bool,
+}
+
+impl Basis {
+    /// This computer's own `[auto]`.
+    #[must_use]
+    pub fn local(config: &Config) -> Self {
+        Self {
+            snapshot: config.auto.snapshot(),
+            connection: None,
+            overnight: false,
+            signed: false,
+        }
+    }
+
+    /// The phone-signed policy, as applied here.
+    #[must_use]
+    pub fn signed(e: &reins_policy::desktop_policy::Effective, overnight: bool) -> Self {
+        Self {
+            snapshot: e.snapshot.clone(),
+            connection: Some(e.connection.clone()),
+            overnight,
+            signed: true,
+        }
+    }
 }
 
 /// `remote.origin.url` of the repository holding `cwd`, read by the hook's strict reader of git's configuration
@@ -143,7 +182,7 @@ pub fn shadow(
     connection: &str,
     now: i64,
 ) -> Shadow {
-    shadow_of(config, a, cwd, command, connection, now, false)
+    shadow_of(config, &Basis::local(config), a, cwd, command, connection, now, false)
 }
 
 /// [`shadow`] of a planned net's `after` (the net runs before the effect): what Overnight's looser L1 needs.
@@ -156,11 +195,13 @@ pub fn shadow_netted(
     connection: &str,
     now: i64,
 ) -> Shadow {
-    shadow_of(config, after, cwd, command, connection, now, true)
+    shadow_of(config, &Basis::local(config), after, cwd, command, connection, now, true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn shadow_of(
     config: &Config,
+    basis: &Basis,
     a: &Analysis,
     cwd: Option<&str>,
     command: Option<&str>,
@@ -195,7 +236,7 @@ fn shadow_of(
         let read = head.remotes.get("origin");
         (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
     });
-    shadow_net(config, a, head.as_ref(), connection, now, netted)
+    shadow_net(config, basis, a, head.as_ref(), connection, now, netted)
 }
 
 /// `path`'s real place: the deepest folder of it that exists, with symlinks resolved, and the rest as written.
@@ -231,18 +272,20 @@ fn git_top(cwd: &str) -> Option<String> {
 /// [`shadow`] with the configuration of the repository the request acts in (`head`; `None`: not known).
 #[cfg(all(test, unix))]
 pub(crate) fn shadow_with(config: &Config, a: &Analysis, head: Option<&GitHead>, connection: &str, now: i64) -> Shadow {
-    shadow_net(config, a, head, connection, now, false)
+    shadow_net(config, &Basis::local(config), a, head, connection, now, false)
 }
 
 fn shadow_net(
     config: &Config,
+    basis: &Basis,
     a: &Analysis,
     head: Option<&GitHead>,
     connection: &str,
     now: i64,
     netted: bool,
 ) -> Shadow {
-    let snap = config.auto.snapshot();
+    let snap = &basis.snapshot;
+    let connection = basis.connection.as_deref().unwrap_or(connection);
     let remotes = head.map(|h| &h.remotes);
     let base = graph::Base {
         repo: remotes.and_then(|r| r.get("origin")).map(String::as_str),
@@ -257,19 +300,23 @@ fn shadow_net(
             connection,
             seen_resource: false,
             now,
-            // This computer doesn't know the phone's mode at hook time; Overnight is the phone's (P5).
-            overnight: false,
+            // The phone's mode, as it signed it (P5's Overnight); without the signed policy, never.
+            overnight: basis.overnight,
             netted,
         },
-        &snap,
+        snap,
     );
     Shadow {
         outcome: e.outcome,
         zone: e.zone,
         level: e.level,
         line: e.line(),
+        decided: basis.signed || (config.auto.matrix_decides && config.auto.setup_done),
+        task: e.why.iter().find_map(|w| match w {
+            matrix::Why::Task(id) => Some(id.clone()),
+            _ => None,
+        }),
         snapshot: e.snapshot,
-        decided: config.auto.matrix_decides && config.auto.setup_done,
     }
 }
 
@@ -331,8 +378,21 @@ pub fn evaluate_action(
     head: Option<&GitHead>,
     connection: &str,
 ) -> Option<(Summary, Shadow)> {
-    let (config, action, cwd, head, connection) =
-        (config.clone(), action.clone(), cwd.map(str::to_owned), head.cloned(), connection.to_owned());
+    evaluate_action_with(config, &Basis::local(config), action, cwd, head, connection)
+}
+
+/// [`evaluate_action`] against `basis`.
+#[must_use]
+pub fn evaluate_action_with(
+    config: &Config,
+    basis: &Basis,
+    action: &Action,
+    cwd: Option<&str>,
+    head: Option<&GitHead>,
+    connection: &str,
+) -> Option<(Summary, Shadow)> {
+    let (config, basis, action, cwd, head, connection) =
+        (config.clone(), basis.clone(), action.clone(), cwd.map(str::to_owned), head.cloned(), connection.to_owned());
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new().name("reins-matrix".to_owned()).stack_size(STACK).spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -344,7 +404,7 @@ pub fn evaluate_action(
                 Action::Command(c) => Some(c.as_str()),
                 _ => None,
             };
-            let sh = shadow(&config, &a, cwd.as_deref(), command, &connection, now);
+            let sh = shadow_of(&config, &basis, &a, cwd.as_deref(), command, &connection, now, false);
             Some((a.summary(), sh))
         }))
         .ok()
@@ -366,7 +426,20 @@ pub fn evaluate_netted(
     after: &Analysis,
     connection: &str,
 ) -> Option<Shadow> {
-    let (config, after, cwd, connection) = (config.clone(), after.clone(), call.cwd.clone(), connection.to_owned());
+    evaluate_netted_with(config, &Basis::local(config), call, after, connection)
+}
+
+/// [`evaluate_netted`] against `basis`.
+#[must_use]
+pub fn evaluate_netted_with(
+    config: &Config,
+    basis: &Basis,
+    call: &crate::hooks::HookCall,
+    after: &Analysis,
+    connection: &str,
+) -> Option<Shadow> {
+    let (config, basis, after, cwd, connection) =
+        (config.clone(), basis.clone(), after.clone(), call.cwd.clone(), connection.to_owned());
     let command = match &call.action {
         Action::Command(c) => Some(c.clone()),
         _ => None,
@@ -377,7 +450,7 @@ pub fn evaluate_netted(
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-            shadow_netted(&config, &after, cwd.as_deref(), command.as_deref(), &connection, now)
+            shadow_of(&config, &basis, &after, cwd.as_deref(), command.as_deref(), &connection, now, true)
         }))
         .ok();
         let _sent = tx.send(result);

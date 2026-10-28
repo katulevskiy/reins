@@ -598,3 +598,78 @@ pub fn quiet(paths: &Paths) {
     paths.ensure().unwrap();
     std::fs::write(paths.config_file(), "[notify]\nphone = false\n").unwrap();
 }
+
+/// The approval phone's device signing key, signing policy for this computer (Decisions v2, 08 R1).
+pub struct SigningPhone(ring::signature::Ed25519KeyPair);
+
+impl Default for SigningPhone {
+    fn default() -> Self {
+        let doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+        Self(ring::signature::Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap())
+    }
+}
+
+impl SigningPhone {
+    pub fn key(&self) -> String {
+        use ring::signature::KeyPair as _;
+        data_encoding::BASE64URL_NOPAD.encode(self.0.public_key().as_ref())
+    }
+
+    /// Signs `m`, seals it to the app at `paths` and hands it over as the server would.
+    pub fn send(
+        &self,
+        paths: &Paths,
+        identity: &Identity,
+        m: &reins_policy::desktop_policy::PolicyMessage,
+    ) -> reins_desktop::policy::Applied {
+        use reins_policy::desktop_policy::{PolicyMessage, sign};
+        use reins_proto::desktop::{MailedPolicy, PolicyKind, PolicyMail};
+        let signed = sign(m, &self.key(), &|b| data_encoding::BASE64URL_NOPAD.encode(self.0.sign(b).as_ref()));
+        let item = MailedPolicy {
+            version: m.version(),
+            kind: match m {
+                PolicyMessage::Snapshot(_) => PolicyKind::Snapshot,
+                PolicyMessage::Tighten(_) => PolicyKind::Tighten,
+            },
+            sealed: seal_to(&identity.public_key(), &serde_json::to_vec(&signed).unwrap()).unwrap(),
+        };
+        let mail = PolicyMail {
+            items: vec![item],
+            signing_key: Some(self.key()),
+        };
+        reins_desktop::policy::apply(paths, identity, &mail, reins_desktop::now_unix(), 0).unwrap()
+    }
+
+    /// A fresh Auto snapshot for the app at `paths`: dkat Mine, acme Work, the 01 §4 matrix, `roots` as signed.
+    pub fn auto_snapshot(
+        identity: &Identity,
+        version: u64,
+        roots: &[&str],
+    ) -> reins_policy::desktop_policy::DesktopPolicy {
+        use reins_policy::context::{FactKind, Zone};
+        use reins_policy::desktop_policy::{Binding, DesktopPolicy, ModeState, PERSONAL, VALIDITY_SECS};
+        let mut snapshot = reins_policy::matrix::Snapshot::default();
+        snapshot.facts.set(FactKind::Owner, "dkat", Zone::Mine);
+        snapshot.facts.set(FactKind::Owner, "acme", Zone::Work);
+        let now = reins_desktop::now_unix();
+        DesktopPolicy {
+            binding: Binding {
+                version,
+                issued_at: now,
+                not_after: now + VALIDITY_SECS,
+                client_key: identity.public_key(),
+                connection_id: "conn-desktop".to_owned(),
+                profile: PERSONAL.to_owned(),
+            },
+            decides: true,
+            mode: ModeState {
+                mode: reins_proto::autopilot::Mode::Auto,
+                until: None,
+            },
+            snapshot,
+            github_ids: std::collections::BTreeMap::new(),
+            roots: roots.iter().map(|r| (*r).to_owned()).collect(),
+            scratch: Vec::new(),
+        }
+    }
+}

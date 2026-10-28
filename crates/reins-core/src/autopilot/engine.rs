@@ -102,6 +102,8 @@ pub struct State {
     /// What Autopilot leans to for requests left to the user, to tell the server after the pass (the desktop app
     /// shows it on its ask).
     told: Mutex<Vec<(String, reins_proto::autopilot::Suggestion)>>,
+    /// One publish of the policy to the paired computers at a time (`desktop_policy`).
+    pub(crate) publish: tokio::sync::Mutex<()>,
 }
 
 /// A parked item, as the pass sees it.

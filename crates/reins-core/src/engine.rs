@@ -726,12 +726,20 @@ impl Engine {
     }
 
     /// Tells the server the phone's Autopilot modes, when they changed since the last report, so that the desktop apps
-    /// can show them (each sees only the global mode and its own). Only the phone that decides reports; a failure (an
-    /// older server, offline) is retried with the next sync or change.
+    /// can show them (each sees only the global mode and its own), and sends the paired computers the policy they
+    /// decide with when it changed (`autopilot::desktop_policy`). Only the phone that decides reports; a failure (an
+    /// older server, offline) is retried with the next sync or change, and one never holds up the other.
     pub(crate) async fn report_modes(&self, session: &Session) {
         if self.require_decider().is_err() || self.not_approval.load(Ordering::Acquire) {
             return;
         }
+        self.put_modes(session).await;
+        // Box: kept out of the callers' futures.
+        Box::pin(self.publish_desktop_policy(session)).await;
+    }
+
+    /// The modes report of [`Engine::report_modes`].
+    async fn put_modes(&self, session: &Session) {
         let report = match self.modes_report(unix_now()) {
             Ok(r) => r,
             Err(e) => {
