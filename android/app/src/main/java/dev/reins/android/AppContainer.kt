@@ -507,6 +507,8 @@ class AppContainer(private val context: Context) {
                         null
                     }
                 }
+                // The folders paired computers propose, as cards beside them: never notified either.
+                val folders = async { readOrNull { core.folderQuestions() } }
                 // Tasks, for Activity's chips; and what Overnight parked, for the one morning summary. A failed read keeps
                 // what is shown (and the summary as it was planned).
                 val tasks = async { readOrNull { core.tasks() } }
@@ -525,6 +527,7 @@ class AppContainer(private val context: Context) {
                 state.markLoaded()
                 state.setStartingPolicy(starting.await())
                 questions.await()?.let(state::setAutoQuestions)
+                folders.await()?.let(state::setFolderQuestions)
                 tasks.await()?.let(state::setTasks)
                 val morning = digest.await()
                 refreshCircles()
