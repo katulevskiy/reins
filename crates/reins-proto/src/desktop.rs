@@ -1889,6 +1889,66 @@ pub const POLICY_TTL_SECS: i64 = 86_400;
 /// The most computers one post names.
 pub const MAX_POLICY_ITEMS: usize = 100;
 
+/// What a folder a computer proposes is for (`reins_policy::desktop_folders`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderKind {
+    /// Its folders are projects (`[workspace] roots`).
+    Root,
+    /// Deleting in it loses nothing (`[workspace] scratch`).
+    Scratch,
+}
+
+/// One folder of a computer's `[workspace]`, canonicalized on the computer (absolute, symlinks resolved; `*` may stand
+/// for a part below the folder the computer resolved).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Folder {
+    pub path: String,
+    pub kind: FolderKind,
+}
+
+/// What a computer proposes the phone signs for it (`POST /reins/desktop/folders`): its `[workspace]` roots and
+/// scratch folders, and its home folder (what `~` is there), so the phone can refuse a folder as broad as the home.
+/// Nothing counts until the owner confirms it on the phone, which then signs it into this computer's snapshot.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderProposal {
+    pub home: String,
+    pub folders: Vec<Folder>,
+}
+
+impl FolderProposal {
+    /// Within the limits the server and the phone keep to.
+    #[must_use]
+    pub fn fits(&self) -> bool {
+        self.folders.len() <= MAX_FOLDERS
+            && self.home.len() <= MAX_FOLDER_CHARS
+            && self.folders.iter().all(|f| !f.path.is_empty() && f.path.len() <= MAX_FOLDER_CHARS)
+    }
+}
+
+/// A computer's latest proposal, as the phone reads it (`GET /reins/api/desktop/folders`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposedFolders {
+    pub connection_id: String,
+    pub proposal: FolderProposal,
+    /// Unix seconds: when the computer sent it.
+    pub at: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderProposals {
+    pub items: Vec<ProposedFolders>,
+}
+
+/// The most folders one proposal names.
+pub const MAX_FOLDERS: usize = 32;
+/// The longest folder path (and home folder) in a proposal.
+pub const MAX_FOLDER_CHARS: usize = 512;
+/// How long the server keeps a proposal (the computer sends it again every [`FOLDERS_RESEND_SECS`]).
+pub const FOLDERS_TTL_SECS: i64 = 7 * 86_400;
+/// How often a computer sends its proposal again when nothing changed (the server keeps it in memory only).
+pub const FOLDERS_RESEND_SECS: i64 = 1_800;
+
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
 /// command in order, the pack bytes and the push options.
 #[must_use]

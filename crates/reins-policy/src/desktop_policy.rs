@@ -20,6 +20,7 @@ use reins_proto::autopilot::Mode;
 use serde::{Deserialize, Serialize};
 
 use crate::context::{FactKind, Facts, Zone};
+use crate::desktop_folders;
 use crate::effects::normalize;
 use crate::matrix::{Matrix, Rule, Snapshot, Task, Then};
 
@@ -378,7 +379,8 @@ pub fn tighten_of(old: &DesktopPolicy, new: &DesktopPolicy) -> Option<Tightening
             (Some(then), Some(sooner)) => sooner < then,
             _ => false,
         };
-    let roots_gone = old.roots.iter().any(|r| !new.roots.contains(r));
+    let roots_gone =
+        old.roots.iter().any(|r| !new.roots.contains(r)) || old.scratch.iter().any(|s| !new.scratch.contains(s));
     tight.stop_auto = (old.decides && !new.decides)
         || mode_stricter
         || (ends_sooner && new.mode.mode != Mode::Lockdown)
@@ -429,6 +431,9 @@ pub struct Local<'a> {
     pub scratch: &'a [String],
     /// The home folder, for `~`.
     pub home: &'a str,
+    /// What the folders named here (local and signed) resolve to on this computer, symlinks followed (an entry missing:
+    /// it doesn't resolve, or isn't known).
+    pub canonical: &'a BTreeMap<String, String>,
 }
 
 /// How a request is decided here.
@@ -488,34 +493,80 @@ pub struct Effective {
     pub version: u64,
 }
 
-/// `path` is `root` or inside it (both as absolute paths, component by component).
-fn inside(root: &str, path: &str, home: &str) -> bool {
-    let (r, p) = (normalize(root, "/", home), normalize(path, "/", home));
-    let r = r.trim_end_matches('/');
-    !r.is_empty() && r.starts_with('/') && (p == r || p.starts_with(&format!("{r}/")))
+/// The forms a folder is read in on this computer: as written (`~` read as `home`) and, when it resolves, the folder
+/// it resolves to (`canonical`, symlinks followed, from the computer).
+fn forms(entry: &str, home: &str, canonical: &BTreeMap<String, String>) -> Vec<String> {
+    let mut out = vec![normalize(entry, "/", home)];
+    if let Some(c) = canonical.get(entry)
+        && !out.contains(c)
+    {
+        out.push(c.clone());
+    }
+    out
 }
 
-/// The local roots inside a signed one (and none without one).
-#[must_use]
-pub fn clamp_roots(signed: &[String], local: &[String], home: &str) -> Vec<String> {
-    local.iter().filter(|l| signed.iter().any(|s| inside(s, l, home))).cloned().collect()
+/// A folder in any of its forms is one [`desktop_folders::refusal`] refuses (an agent pointing a root's symlink at the
+/// home folder makes it as broad as the home).
+fn refused(entry: &str, home: &str, canonical: &BTreeMap<String, String>) -> bool {
+    forms(entry, home, canonical).iter().any(|f| desktop_folders::refusal(f, home).is_some())
 }
 
-/// The local scratch folders that count: one the phone signed as scratch (`signed_scratch`, the same words), or
-/// strictly inside a signed root (a scratch folder's deletes lose nothing, so a root itself, or anything above one,
-/// never is).
+/// The signed folders that count here, each in its forms (`~/Documents/dev` and what it resolves to), refused ones
+/// left out.
+fn signed_forms(signed: &[String], home: &str, canonical: &BTreeMap<String, String>) -> Vec<String> {
+    signed.iter().filter(|s| !refused(s, home, canonical)).flat_map(|s| forms(s, home, canonical)).collect()
+}
+
+/// The local roots inside a signed one, in any of their forms (and none without one); refused ones never.
 #[must_use]
-pub fn clamp_scratch(roots: &[String], signed_scratch: &[String], local: &[String], home: &str) -> Vec<String> {
-    let same = |a: &str, b: &str| {
-        normalize(a, "/", home).trim_end_matches('/') == normalize(b, "/", home).trim_end_matches('/')
+pub fn clamp_roots(
+    signed: &[String],
+    local: &[String],
+    home: &str,
+    canonical: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let signed = signed_forms(signed, home, canonical);
+    let mut out: Vec<String> = Vec::new();
+    let counts = |f: &str| signed.iter().any(|s| desktop_folders::inside(s, f, home));
+    for l in local.iter().filter(|l| !refused(l, home, canonical)) {
+        keep(&mut out, &forms(l, home, canonical), &counts);
+    }
+    out
+}
+
+/// Of a folder's forms (as written first, then what it resolves to): the written one when either counts (it is the same
+/// folder), the resolved one only when it counts itself.
+fn keep(out: &mut Vec<String>, forms: &[String], counts: &dyn Fn(&str) -> bool) {
+    let any = forms.iter().any(|f| counts(f));
+    for (i, f) in forms.iter().enumerate() {
+        if ((i == 0 && any) || counts(f)) && !out.contains(f) {
+            out.push(f.clone());
+        }
+    }
+}
+
+/// The local scratch folders that count: one the phone signed as scratch (the same folder), or strictly inside a signed
+/// root (a scratch folder's deletes lose nothing, so a root itself, or anything above one, never is); refused ones
+/// never.
+#[must_use]
+pub fn clamp_scratch(
+    roots: &[String],
+    signed_scratch: &[String],
+    local: &[String],
+    home: &str,
+    canonical: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let (roots, signed_scratch) = (signed_forms(roots, home, canonical), signed_forms(signed_scratch, home, canonical));
+    let same = |a: &str, b: &str| desktop_folders::same(a, b, home);
+    let mut out: Vec<String> = Vec::new();
+    let counts = |f: &str| {
+        signed_scratch.iter().any(|s| same(s, f))
+            || roots.iter().any(|r| desktop_folders::inside(r, f, home) && !same(r, f))
     };
-    local
-        .iter()
-        .filter(|l| {
-            signed_scratch.iter().any(|s| same(s, l)) || roots.iter().any(|r| inside(r, l, home) && !same(r, l))
-        })
-        .cloned()
-        .collect()
+    for l in local.iter().filter(|l| !refused(l, home, canonical)) {
+        keep(&mut out, &forms(l, home, canonical), &counts);
+    }
+    out
 }
 
 /// What this computer decides with at `now`: the snapshot (already checked), the tightenings newer than it (already
@@ -592,8 +643,8 @@ pub fn effective(
     };
     let (roots, scratch) = match policy {
         Some(p) => (
-            clamp_roots(&p.roots, local.roots, local.home),
-            clamp_scratch(&p.roots, &p.scratch, local.scratch, local.home),
+            clamp_roots(&p.roots, local.roots, local.home, local.canonical),
+            clamp_scratch(&p.roots, &p.scratch, local.scratch, local.home, local.canonical),
         ),
         None => (local.roots.to_vec(), local.scratch.to_vec()),
     };
@@ -672,8 +723,11 @@ mod tests {
             roots,
             scratch,
             home: "/home/me",
+            canonical: &NONE,
         }
     }
+
+    static NONE: BTreeMap<String, String> = BTreeMap::new();
 
     #[test]
     fn signed_bytes_are_domain_separated() {
@@ -859,8 +913,12 @@ mod tests {
         assert_eq!(e.snapshot.matrix, Matrix::default(), "an Auto-everywhere matrix loosens nothing");
         assert_eq!(e.snapshot.facts.get(FactKind::Owner, "acme"), Some(Zone::Work));
         assert_eq!(e.snapshot.facts.get(FactKind::Owner, "evil"), None);
-        assert_eq!(e.roots, ["~/Documents/dev/app"]);
-        assert_eq!(e.scratch, ["~/Documents/dev/tmp", "~/.claude/projects/*/memory"], "inside a root, or signed");
+        assert_eq!(e.roots, ["/home/me/Documents/dev/app"]);
+        assert_eq!(
+            e.scratch,
+            ["/home/me/Documents/dev/tmp", "/home/me/.claude/projects/*/memory"],
+            "inside a root, or signed"
+        );
         assert_eq!(zone_and_outcome(&e, "git push origin HEAD:refs/heads/feat").0, Zone::Work);
         // Stricter local settings do apply: acme as Outside, a stricter cell.
         let mut strict = Matrix::default();
@@ -870,6 +928,45 @@ mod tests {
         assert_eq!(e.snapshot.facts.get(FactKind::Owner, "acme"), Some(Zone::Outside));
         assert_eq!(e.snapshot.matrix.cell(Zone::Mine, Level::L1), Cell::Ask);
         assert_eq!(e.snapshot.matrix.cell(Zone::Work, Level::L0), Cell::Auto);
+    }
+
+    /// A folder counts in the forms it has on this computer: as written, and what it resolves to. One that resolves to
+    /// something too broad (an agent pointed its symlink at the home folder) counts in neither.
+    #[test]
+    fn folders_count_as_they_resolve() {
+        let mut p = policy(5, 1_000);
+        p.roots = vec!["~/Documents/dev".to_owned(), "/mnt/data/dev".to_owned(), "/".to_owned()];
+        p.scratch = vec!["/home/me/.claude/projects/*/memory".to_owned(), "~".to_owned()];
+        let (none, m) = (Facts::default(), Matrix::default());
+        let roots = vec!["~/Documents/dev".to_owned(), "~/work".to_owned(), "~/src".to_owned()];
+        let scratch = vec!["~/.claude/projects/*/memory".to_owned(), "~/Downloads".to_owned()];
+        let canonical = BTreeMap::from([
+            // `~/work` is a link to the signed `/mnt/data/dev`; `~/src` one an agent pointed at the home folder.
+            ("~/work".to_owned(), "/mnt/data/dev".to_owned()),
+            ("~/src".to_owned(), "/home/me".to_owned()),
+        ]);
+        let l = Local {
+            canonical: &canonical,
+            ..local(&none, &m, &roots, &scratch)
+        };
+        let e = effective(Some(&p), &[], &l, &BTreeMap::new(), 1_000);
+        assert_eq!(e.roots, ["/home/me/Documents/dev", "/home/me/work", "/mnt/data/dev"]);
+        assert_eq!(e.scratch, ["/home/me/.claude/projects/*/memory"], "a signed `~` is never scratch");
+        // The phone signs nothing: nothing local counts.
+        p.roots.clear();
+        p.scratch.clear();
+        let e = effective(Some(&p), &[], &l, &BTreeMap::new(), 1_000);
+        assert!(e.roots.is_empty() && e.scratch.is_empty(), "{e:?}");
+    }
+
+    #[test]
+    fn a_folder_removed_tightens_at_once() {
+        let mut old = policy(1, 1_000);
+        old.scratch.push("/home/me/.zeron/uploads".to_owned());
+        assert!(tighten_of(&old, &policy(2, 1_000)).is_some_and(|t| t.stop_auto), "a scratch folder removed");
+        let mut more = old.clone();
+        more.scratch.push("/home/me/Downloads/tmp".to_owned());
+        assert_eq!(tighten_of(&old, &more), None, "one more is looser");
     }
 
     #[test]
