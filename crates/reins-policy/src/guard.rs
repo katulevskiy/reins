@@ -212,9 +212,27 @@ pub const REINS_STATE: BuiltinGroup = BuiltinGroup {
     destructive: false,
     every_time: true,
     commands: &[],
-    // config.toml: what this computer lets Auto do (`[auto]`); an agent changing it is asked about.
-    files: &["reins/session.json", "reins/control.token", "reins/phone-key.json", "reins/config.toml"],
+    // config.toml: what this computer lets Auto do (`[auto]`); an agent changing it is asked about. policy.json: the
+    // phone-signed policy the computer decides with; tickets.json: the phone's signing key it checks it against.
+    files: &[
+        "reins/session.json",
+        "reins/control.token",
+        "reins/phone-key.json",
+        "reins/config.toml",
+        "reins/policy.json",
+        "reins/tickets.json",
+    ],
 };
+
+/// The built-in groups about Reins itself: asked about on the computer even where the phone-signed matrix decides
+/// (the matrix reads what a command does to the world, not what it does to Reins). Every other group is a label there.
+pub const ALWAYS_ASKED: &[&str] = &["reins", "secrets", "payments"];
+
+/// The [`ALWAYS_ASKED`] groups anything in `texts` matches (read leniently, as [`labels`]).
+#[must_use]
+pub fn always_asked(texts: &[&str]) -> Vec<&'static BuiltinGroup> {
+    labels(texts).into_iter().filter(|g| ALWAYS_ASKED.contains(&g.id)).collect()
+}
 
 /// Every built-in group, what cannot be undone first.
 pub const BUILTIN: &[BuiltinGroup] = &[

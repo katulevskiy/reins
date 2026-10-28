@@ -77,6 +77,8 @@ pub(super) fn save_session(paths: &Paths, session: &Session) -> Result<(), Strin
 
 /// Forgets the saved session. `Ok(false)` when there was none.
 pub fn logout(paths: &Paths) -> Result<bool, String> {
+    // The phone's policy is for the session's connection: it goes with it.
+    crate::policy::forget(paths);
     match std::fs::remove_file(paths.session_file()) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),

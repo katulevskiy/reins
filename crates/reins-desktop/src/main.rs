@@ -341,6 +341,7 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
                 out!("Daemon:        running on {}", s.listen);
                 out!("Mode:          {}", s.mode);
                 out!("Who decides:   {}", s.decides);
+                out!("Auto rules:    {}", reins_desktop::policy::status_line(paths, config, reins_desktop::now_unix()));
                 out!("Server:        {}", s.server.as_deref().unwrap_or("not logged in"));
                 out!("Key:           {}", s.fingerprint);
                 out!("Pending:       {}", s.pending);
@@ -367,6 +368,9 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
     if paths.identity_file().exists() {
         let id = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
         out!("Key:           {}", id.fingerprint());
+    }
+    if server::oauth::logged_in_server(paths).is_some() {
+        out!("Auto rules:    {}", reins_desktop::policy::status_line(paths, config, reins_desktop::now_unix()));
     }
     for p in &config.profiles {
         let work = paths.for_profile(&p.name);

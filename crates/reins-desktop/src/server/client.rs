@@ -202,6 +202,20 @@ impl DesktopClient {
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
     }
 
+    /// The phone-signed policy messages for this computer newer than `after` (`reins_policy::desktop_policy`, 08 R1),
+    /// waiting up to `wait` for one when there are none. A server too old to know them answers `LinkError::NotFound`.
+    pub async fn policy(&self, after: u64, wait: Duration) -> Result<reins_proto::desktop::PolicyMail, LinkError> {
+        let body = self
+            .send_raw(|server| {
+                self.http
+                    .get(format!("{server}/reins/desktop/policy"))
+                    .query(&[("after", after), ("wait", wait.as_secs())])
+            })
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
+    }
+
     /// Tells the server what this reader applied, so that it stops handing it those.
     pub async fn ack_revocations(&self, ack: &reins_proto::desktop::RevocationAck) -> Result<(), LinkError> {
         self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/revocations/ack")).json(ack)).await?;

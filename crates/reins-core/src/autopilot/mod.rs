@@ -14,6 +14,7 @@ pub mod adapter;
 pub mod context;
 pub mod decide;
 pub mod desktop;
+pub(crate) mod desktop_policy;
 pub(crate) mod engine;
 pub mod gates;
 pub mod memory;

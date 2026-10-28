@@ -126,7 +126,7 @@ async fn on_ask_asks_without_a_guard_rule() {
 
 /// Decisions v2 P2 with P3's nets: where only the matrix asks and a net is planned, it decides on the netted request
 /// (`NetPlan::after`). Deleting an untracked file in the workspace can't be undone (asked); kept in the Reins trash it
-/// can, so it's allowed without the phone and the harness gets the netted command.
+/// can, so with the phone-signed policy it's allowed without the phone and the harness gets the netted command.
 #[cfg(unix)]
 #[tokio::test]
 async fn on_a_net_that_lowers_it_the_matrix_decides_on_the_netted_request() {
@@ -148,6 +148,17 @@ async fn on_a_net_that_lowers_it_the_matrix_decides_on_the_netted_request() {
         "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "rm notes.txt"},
         "tool_use_id": "t"})
     .to_string();
+    // This computer's own matrix never allows: without the phone-signed policy the delete is asked.
+    let before = mock.with(|s| s.calls.len());
+    hooks::run(Harness::ClaudeCode, input.as_bytes(), &paths, &c, &NoPrompter).await;
+    assert!(mock.with(|s| s.calls.len()) > before, "asked without the signed policy");
+    // With it (08 R1), the matrix decides on the netted request.
+    let identity = reins_desktop::identity::Identity::load_or_create(&paths.identity_file()).unwrap();
+    let phone = d1_mock::SigningPhone::default();
+    let snapshot = d1_mock::SigningPhone::auto_snapshot(&identity, 1, &[ws.to_str().unwrap()]);
+    let applied =
+        phone.send(&paths, &identity, &reins_policy::desktop_policy::PolicyMessage::Snapshot(Box::new(snapshot)));
+    assert_eq!(applied.snapshots, 1, "{applied:?}");
     let before = mock.with(|s| s.calls.len());
     let (out, code, _) = hooks::run(Harness::ClaudeCode, input.as_bytes(), &paths, &c, &NoPrompter).await;
     assert_eq!(code, 0);
@@ -158,9 +169,11 @@ async fn on_a_net_that_lowers_it_the_matrix_decides_on_the_netted_request() {
     assert!(netted.contains("net run"), "{netted}");
     assert_eq!(mock.with(|s| s.calls.len()), before, "the phone wasn't asked");
     let log = journal::read(&paths, 10, 3_600);
-    let m = log[0].matrix.clone().unwrap();
+    let allowed =
+        log.iter().find(|e| e.decider == journal::Decider::Settings).expect("the netted allow is in Activity");
+    assert!(allowed.nets.is_some());
+    let m = allowed.matrix.clone().unwrap();
     assert!(m.decided && m.outcome == Outcome::Auto, "{m:?}");
-    assert!(log[0].nets.is_some());
     assert!(project.join("notes.txt").exists(), "nothing ran yet");
 }
 

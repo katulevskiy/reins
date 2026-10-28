@@ -1,10 +1,13 @@
-//! Engines a corpus is replayed through: `guard` (how Reins decides today) and `effects` (the consequence engine, the
-//! context graph and the matrix of `reins_policy`: the 01 §4 matrix, the 08 R3 rules and the 08 R4 floor).
+//! Engines a corpus is replayed through: `guard` (how Reins decides today), `effects` (the consequence engine, the
+//! context graph and the matrix of `reins_policy`: the 01 §4 matrix, the 08 R3 rules and the 08 R4 floor) and
+//! `desktop` (08 R1: hook requests decided on the computer with the phone-signed policy, as the computer applies it;
+//! everything else as `effects`).
 //!
 //! Zones come from the corpus context only (the owner's GitHub owners, the workspace, the owner's devices) as
 //! `reins_policy::context::Facts`, the way the setup screens confirm them. Nothing here reads a case's label: decisions never see the answer.
 
 use reins_policy::context::{self as graph, Facts, Zone};
+use reins_policy::desktop_policy;
 use reins_policy::effects::{self, Analysis, Certainty, Context as EngineContext, Workspace};
 use reins_policy::matrix::{self, Evaluation, Input, Outcome, Snapshot};
 use serde::{Deserialize, Serialize};
@@ -26,6 +29,10 @@ pub struct Policy {
     /// Safety nets (P3): a command from a harness whose hook can rewrite it is decided on its netted levels.
     #[serde(default)]
     pub nets: bool,
+    /// The desktop path (08 R1): the phone also signs the computer's scratch folders (the corpus's), as for an owner
+    /// who confirmed them. Off, as the phone signs today: only scratch folders inside a root count there.
+    #[serde(default)]
+    pub desktop_scratch: bool,
 }
 
 impl Default for Policy {
@@ -36,6 +43,7 @@ impl Default for Policy {
             snapshot: Snapshot::default(),
             ask_on_partial: false,
             nets: false,
+            desktop_scratch: false,
         }
     }
 }
@@ -47,6 +55,10 @@ pub enum EngineKind {
     Guard,
     /// The consequence engine and a policy.
     Effects,
+    /// Hook requests (commands, files) decided on the computer with the policy the phone signs for it
+    /// (`reins_policy::desktop_policy`): the facts it gets, its workspace, the nets, and the groups about Reins itself
+    /// always asked. The rest as [`EngineKind::Effects`].
+    Desktop,
 }
 
 /// One case's decision.
@@ -218,6 +230,19 @@ pub fn evaluate(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis) -> Ev
 pub fn evaluate_with(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis, overnight: bool) -> Evaluation {
     let mut snap = policy.snapshot.clone();
     snap.facts = facts(ctx, policy);
+    evaluate_snapshot(ctx, case, &snap, case.agent.as_deref().unwrap_or_default(), a, overnight)
+}
+
+/// What the matrix says of a case against `snap` (its facts included), for `connection`.
+#[must_use]
+pub fn evaluate_snapshot(
+    ctx: &Context,
+    case: &Case,
+    snap: &Snapshot,
+    connection: &str,
+    a: &Analysis,
+    overnight: bool,
+) -> Evaluation {
     let base = base_repo(ctx, case);
     let resolved = graph::request_zone(
         a,
@@ -232,14 +257,95 @@ pub fn evaluate_with(ctx: &Context, case: &Case, policy: &Policy, a: &Analysis, 
         &Input {
             analysis: a,
             resolved: &resolved,
-            connection: case.agent.as_deref().unwrap_or_default(),
+            connection,
             seen_resource: false,
             now: case.at,
             overnight,
             netted: false,
         },
-        &snap,
+        snap,
     )
+}
+
+/// The policy the phone signs for the recording computer (08 R1), as that computer applies it at `case.at`: the facts
+/// it gets (owners, repositories, hosts), the owner's rules and the connection's tasks, the corpus's workspace as both
+/// the signed and the local one.
+#[must_use]
+pub fn desktop_effective(ctx: &Context, case: &Case, policy: &Policy) -> desktop_policy::Effective {
+    let connection = case.agent.clone().unwrap_or_default();
+    let (facts, github_ids) = desktop_policy::desktop_facts(&facts(ctx, policy));
+    let snapshot = Snapshot {
+        facts,
+        rules: desktop_policy::desktop_rules(&policy.snapshot.rules, &connection),
+        tasks: desktop_policy::desktop_tasks(&policy.snapshot.tasks, &connection),
+        ..policy.snapshot.clone()
+    };
+    let signed = desktop_policy::DesktopPolicy {
+        binding: desktop_policy::Binding {
+            version: 1,
+            issued_at: case.at,
+            not_after: case.at + desktop_policy::VALIDITY_SECS,
+            client_key: String::new(),
+            connection_id: connection,
+            profile: desktop_policy::PERSONAL.to_owned(),
+        },
+        decides: true,
+        mode: desktop_policy::ModeState {
+            mode: reins_proto::autopilot::Mode::Auto,
+            until: None,
+        },
+        snapshot,
+        github_ids,
+        roots: ctx.roots.clone(),
+        scratch: if policy.desktop_scratch {
+            ctx.scratch.clone()
+        } else {
+            Vec::new()
+        },
+    };
+    let (none, matrix) = (Facts::default(), matrix::Matrix::default());
+    let local = desktop_policy::Local {
+        facts: &none,
+        matrix: &matrix,
+        roots: &ctx.roots,
+        scratch: &ctx.scratch,
+        home: &ctx.home,
+    };
+    desktop_policy::effective(Some(&signed), &[], &local, &std::collections::BTreeMap::new(), case.at)
+}
+
+/// A hook case decided on the computer ([`EngineKind::Desktop`]).
+fn decide_desktop(ctx: &Context, case: &Case, policy: &Policy) -> Decision {
+    let e = desktop_effective(ctx, case, policy);
+    let mut dctx = ctx.clone();
+    dctx.roots.clone_from(&e.roots);
+    dctx.scratch.clone_from(&e.scratch);
+    let a = if policy.nets {
+        netted(&dctx, case)
+    } else {
+        None
+    }
+    .unwrap_or_else(|| analyze(&dctx, case));
+    let ev = evaluate_snapshot(&dctx, case, &e.snapshot, &e.connection, &a, false);
+    let texts: Vec<&str> = match case.kind {
+        Kind::Command => case.command.as_deref().into_iter().collect(),
+        _ => case.files.iter().flatten().map(String::as_str).collect(),
+    };
+    let reins = reins_policy::guard::always_asked(&texts);
+    let (ask, why) = if let Some(g) = reins.first() {
+        (true, format!("always asked here: {}", g.label))
+    } else if policy.ask_on_partial && a.certainty == Certainty::Partial && ev.outcome == Outcome::Auto {
+        (true, "partly unread".to_owned())
+    } else {
+        (ev.outcome != Outcome::Auto, ev.line())
+    };
+    Decision {
+        ask,
+        why,
+        zone: Some(ev.zone),
+        analysis: Some(a),
+        evaluation: Some(ev),
+    }
 }
 
 /// Decides one case.
@@ -272,7 +378,8 @@ pub fn decide(ctx: &Context, case: &Case, policy: &Policy, engine: EngineKind) -
                 evaluation: None,
             }
         }
-        EngineKind::Effects => {
+        EngineKind::Desktop if matches!(case.kind, Kind::Command | Kind::File) => decide_desktop(ctx, case, policy),
+        EngineKind::Effects | EngineKind::Desktop => {
             let a = if policy.nets {
                 netted(ctx, case)
             } else {

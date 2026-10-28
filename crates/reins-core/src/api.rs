@@ -2513,7 +2513,9 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.start_task(draft, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async { engine.and_publish(engine.start_task(draft, owner.as_ref()).await).await })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2527,7 +2529,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.end_task(&id) }).await;
+            let result = engine.run_account(async { engine.and_publish(engine.end_task(&id)).await }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2547,8 +2549,11 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.approve_task(&request_id, draft, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async {
+                    engine.and_publish(engine.approve_task(&request_id, draft, owner.as_ref()).await).await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2595,8 +2600,11 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.set_world_zone(kind, &key, zone, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async {
+                    engine.and_publish(engine.set_world_zone(kind, &key, zone, owner.as_ref()).await).await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2616,8 +2624,11 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.set_matrix_cell(zone, level, cell, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async {
+                    engine.and_publish(engine.set_matrix_cell(zone, level, cell, owner.as_ref()).await).await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2631,7 +2642,9 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.finish_auto_setup(owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async { engine.and_publish(engine.finish_auto_setup(owner.as_ref()).await).await })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2645,7 +2658,9 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.set_matrix_decides(on, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async { engine.and_publish(engine.set_matrix_decides(on, owner.as_ref()).await).await })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2694,8 +2709,11 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.answer_auto_question(&id, zone, owner.as_ref()).await }).await;
+            let result = engine
+                .run_account(async {
+                    engine.and_publish(engine.answer_auto_question(&id, zone, owner.as_ref()).await).await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -2723,7 +2741,8 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.ask_me_next_time(&request_id) }).await;
+            let result =
+                engine.run_account(async { engine.and_publish(engine.ask_me_next_time(&request_id)).await }).await;
             runtime.finish(&engine, result)
         })
         .await
