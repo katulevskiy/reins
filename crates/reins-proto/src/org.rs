@@ -349,6 +349,57 @@ pub enum AdminAction {
         #[serde(default)]
         config: Option<String>,
     },
+    /// O5: audit streaming to the org's SIEM or object storage (06 §5.3). Its configuration is posted separately and
+    /// sealed; turning on names the digest of exactly that configuration.
+    SetAuditSink {
+        sink: SinkKind,
+        enabled: bool,
+        #[serde(default)]
+        config: Option<String>,
+    },
+}
+
+/// Where an org's audit log streams to (O5, 06 §5.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SinkKind {
+    Splunk,
+    Datadog,
+    Elastic,
+    Sentinel,
+    /// S3 or S3-compatible storage (GCS with HMAC keys), with object lock.
+    S3,
+}
+
+impl SinkKind {
+    pub const ALL: [Self; 5] = [Self::Splunk, Self::Datadog, Self::Elastic, Self::Sentinel, Self::S3];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Splunk => "splunk",
+            Self::Datadog => "datadog",
+            Self::Elastic => "elastic",
+            Self::Sentinel => "sentinel",
+            Self::S3 => "s3",
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Splunk => "Splunk",
+            Self::Datadog => "Datadog",
+            Self::Elastic => "Elastic",
+            Self::Sentinel => "Microsoft Sentinel",
+            Self::S3 => "S3 or GCS",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
 }
 
 /// Where an on-call schedule lives (O3).
@@ -506,6 +557,9 @@ impl AdminAction {
             }
             | Self::SetRetention {
                 ..
+            }
+            | Self::SetAuditSink {
+                ..
             } => Capability::ActivatePolicy,
             Self::RegisterExecutor {
                 ..
@@ -543,6 +597,8 @@ impl AdminAction {
                 | Self::SetGithubReader { .. }
                 | Self::SetOnCallSource { .. }
                 | Self::SetApprovalChannel { .. }
+                // O5: where the audit log goes.
+                | Self::SetAuditSink { .. }
         )
     }
 

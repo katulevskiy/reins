@@ -2,8 +2,6 @@
 //! GCS with HMAC keys, MinIO) and the AWS KMS key wrapper. Only what those need: header signing, a payload hash the
 //! caller gives, path segments already safe (the callers build them from `[A-Za-z0-9._/-]`).
 
-#![allow(dead_code, reason = "TEMP: the S3 sink and the AWS KMS wrapper use it")]
-
 use ring::{digest, hmac};
 use url::Url;
 use zeroize::Zeroizing;

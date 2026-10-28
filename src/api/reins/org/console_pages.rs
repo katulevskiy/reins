@@ -522,6 +522,19 @@ pub fn action_title(action: &AdminAction) -> String {
                 "off"
             }
         ),
+        AdminAction::SetAuditSink {
+            sink,
+            enabled,
+            ..
+        } => format!(
+            "Audit to {} {}",
+            sink.label(),
+            if *enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ),
     }
 }
 

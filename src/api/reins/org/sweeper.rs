@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing, witness};
+use super::{OrgError, audit, decisions, enabled, reviews, rollout, routing, sinks, witness};
 use crate::{
     api::reins::now_unix,
     db::{DbConnInner, DbPool, models::reins_org_request},
@@ -125,6 +125,8 @@ pub fn spawn(pool: DbPool) {
             }
             // O5: checkpoints timestamped by the configured authority (network calls, outside any transaction).
             witness::stamp_due(&pool).await;
+            // O5: the audit chains streamed to the orgs' SIEMs and object storage.
+            sinks::push_all(&pool, now_unix()).await;
             tokio::time::sleep(Duration::from_secs(every_secs())).await;
         }
     });

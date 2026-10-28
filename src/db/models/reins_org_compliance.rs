@@ -1,8 +1,6 @@
 //! Organizations, O5: audit streaming sinks (`api::reins::org::sinks`) and RFC 3161 timestamps of audit checkpoints
 //! (`api::reins::org::witness`).
 
-#![allow(dead_code, reason = "TEMP: the audit sinks and the console use the rest")]
-
 use diesel::prelude::*;
 
 use super::reins_org_exec::ReinsOrgCheckpoint;
@@ -85,6 +83,7 @@ pub struct ReinsOrgWitness {
     pub at: i64,
 }
 
+#[allow(dead_code, reason = "TEMP: the console serves it")]
 pub fn q_witness(c: &mut DbConnInner, org: &str, seq: i64) -> QueryResult<Option<ReinsOrgWitness>> {
     reins_org_witness::table
         .filter(reins_org_witness::org_uuid.eq(org))

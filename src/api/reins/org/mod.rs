@@ -64,6 +64,7 @@ pub mod roster;
 pub mod routing;
 pub mod scim;
 pub mod sigv4;
+pub mod sinks;
 pub mod simulation;
 pub mod sweeper;
 pub mod templates;
