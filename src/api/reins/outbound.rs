@@ -345,6 +345,19 @@ pub async fn get_once(url: &str, accept: &str, timeout: Duration) -> Result<Resp
 /// webhooks to URLs an agent registered.
 pub async fn post_once(
     url: &str,
+    mut headers: HeaderMap,
+    body: Vec<u8>,
+    timeout: Duration,
+) -> Result<Response, OutboundError> {
+    headers.insert(reqwest::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    request_once(Method::POST, url, headers, body, timeout).await
+}
+
+/// One request under the same guard (https, public addresses), without following redirects, with a total `timeout`:
+/// for deliveries to URLs an org admin configured (audit streaming). `headers` are sent as they are.
+pub async fn request_once(
+    method: Method,
+    url: &str,
     headers: HeaderMap,
     body: Vec<u8>,
     timeout: Duration,
@@ -352,9 +365,8 @@ pub async fn post_once(
     let url = check_url(url, allow_loopback())?;
     let host = url.host_str().unwrap_or_default().to_owned();
     client()
-        .post(url)
+        .request(method, url)
         .headers(headers)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(body)
         .timeout(timeout)
         .send()
@@ -399,6 +411,17 @@ pub async fn read_limited(mut response: Response, limit: usize) -> Result<(Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_once_refuses_http_and_private_hosts() {
+        let t = Duration::from_secs(1);
+        for url in
+            ["http://example.com/x", "https://10.0.0.1/x", "https://169.254.169.254/latest", "https://localhost/x"]
+        {
+            let r = request_once(Method::PUT, url, HeaderMap::new(), Vec::new(), t).await;
+            assert!(matches!(r, Err(OutboundError::Refused(_))), "{url}: {r:?}");
+        }
+    }
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
