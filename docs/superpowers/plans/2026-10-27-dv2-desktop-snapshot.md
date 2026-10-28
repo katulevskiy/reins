@@ -199,12 +199,12 @@ signing key, `TicketStore::see_signing_key`).
   people isn't sent at all (an empty envelope would cover any resource).
 - **Overnight parks** only questions a ticket can carry (a guard-matched request with a session); a matrix-only park
   is asked at once instead.
-- **Server budgets** (review round): per computer one snapshot (at most 384 KiB) and at most 4 tightenings of at
-  most 16 KiB each (its own oldest go; a tightening sent under Lockdown carries it, so the newest covers the older);
-  per account 32 computers and 16 MiB; per server 512 MiB of snapshots and, apart, a 64 MiB reserve for tightenings,
-  so snapshots others post never keep a Lockdown out. Over a budget the post is refused with 400 and the phone sends
-  it again; nothing kept for anyone is pushed out. A tightening too large to relay goes as "stop deciding" (with its
-  Lockdown); its rules come with the snapshot.
+- **Server budgets** (review round, settled): per computer one snapshot (at most 384 KiB) and one pending tightening
+  (at most 4 KiB; a newer one replaces it, and one sent under Lockdown carries it); per account 20 computers and
+  16 MiB; snapshots also have a 512 MiB server-wide ceiling. Tightenings have no cross-account cap: their memory is
+  accounts × 20 × 4 KiB. Over a budget the post is refused with 400 and the phone sends it again; nothing kept for
+  anyone is pushed out. A tightening too large to relay goes as "stop deciding" (with its Lockdown); its rules come
+  with the snapshot. Further cap tuning is a follow-up.
 - **Replay** (`--engine desktop`, `policy/nets.json`): hook requests 350, **33 asked (9.4%)** as the phone signs today,
   vs 27 (7.7%) on the phone's own engine; with the computer's scratch folders signed (`desktop_scratch`), 27, the same.
   The `reins`/`secrets`/`payments` groups add none. Recall 240/240, known false positives asked 0/75, needs-a-person

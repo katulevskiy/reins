@@ -1877,11 +1877,11 @@ pub struct PolicyMail {
 
 /// The longest sealed policy message the server keeps.
 pub const MAX_POLICY_CHARS: usize = 384 * 1024;
-/// The most tightenings kept per computer (beyond the newest snapshot). Each carries a Lockdown in force, so the newest
-/// covers what an older one locked down; the rest of an older one comes again with the snapshot.
-pub const MAX_TIGHTENS: usize = 4;
+/// The tightenings kept per computer beyond the newest snapshot: one, a newer one replacing it. A tightening sent
+/// while Lockdown is on carries it, and the snapshot that follows carries everything else.
+pub const MAX_TIGHTENS: usize = 1;
 /// The longest sealed tightening the server keeps (the phone sends a larger one as "stop deciding").
-pub const MAX_TIGHTEN_CHARS: usize = 16 * 1024;
+pub const MAX_TIGHTEN_CHARS: usize = 4 * 1024;
 /// The longest a computer's pick-up waits for news.
 pub const POLICY_WAIT_MAX_SECS: u64 = 25;
 /// How long the server keeps a policy message (they hold for hours at most).

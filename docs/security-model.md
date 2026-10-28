@@ -572,9 +572,12 @@ How it travels and is checked:
   before. With the phone offline for more than 10 minutes, that means hook requests wait for it.
 - A tightening (Lockdown, a new Deny or Review rule, an ended task, anything else stricter) is also sent first as a
   small signed "tighten now". It applies at once, with or without a snapshot and whatever versions came before, until
-  a snapshot as new arrives. The server keeps each computer's messages in its own budget, so another account can't
-  push them out (each account has its own budget too, and a post over it is refused and sent again). Lockdown
-  refuses every tool use. The daemon long-polls, so it arrives within seconds.
+  a snapshot as new arrives. Lockdown refuses every tool use. The daemon long-polls, so it arrives within seconds.
+- The relay's bounds: one pending tightening per computer (a newer one replaces it; one sent under Lockdown carries
+  it), at most 4 KiB, and at most 20 computers per account. Tightenings have no server-wide cap, so what other accounts
+  post never keeps a Lockdown out; their memory grows with real accounts only (accounts × 20 × 4 KiB), like any other
+  per-account storage. Snapshots have a per-account budget (16 MiB) and a server-wide ceiling. A post over a budget is
+  refused and the phone sends it again; nothing kept for anyone is pushed out.
 
 What the computer's own settings can do: only tighten. A local fact counts only where it is stricter than the signed
 one, a local matrix cell only where stricter, a local workspace root only inside a signed root, a scratch folder only
