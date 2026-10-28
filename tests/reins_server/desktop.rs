@@ -529,6 +529,9 @@ async fn a_computer_picks_up_the_policy_its_phone_sealed_to_it() {
         (0..=reins_proto::desktop::MAX_POLICY_ITEMS as u64).map(|v| item(100 + v, "tighten", "eA")).collect();
     let (status, _) = phone.post("/desktop/policy", &json!({"items": many})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // An item the server can't keep (empty, oversized) is an error, so the phone keeps the change and sends it again.
+    let (status, _) = phone.post("/desktop/policy", &json!({"items": [item(13, "tighten", "")]})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a refused item is never a silent 204");
     let other = server.phone("eve@example.com").await;
     other.register_device().await;
     let (status, _) = other.post("/desktop/policy", &json!({"items": [item(50, "snapshot", "ZXZl")]})).await;

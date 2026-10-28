@@ -14,15 +14,23 @@ use tokio::sync::watch;
 
 use super::now_unix;
 
-/// The most characters of sealed policy this server keeps in all, across computers. A post beyond it is dropped (the
-/// computer then asks the phone, as it does without a snapshot).
-pub const MAX_TOTAL_POLICY_CHARS: usize = 128 * 1024 * 1024;
+/// What became of one posted item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Posted {
+    Kept,
+    /// Not newer than what is kept: nothing to do.
+    Stale,
+    /// Empty or larger than [`MAX_POLICY_CHARS`]: the phone is told, and keeps the change.
+    Refused,
+}
 
 /// Per desktop connection: the newest snapshot and the tightenings newer than it, until the computer picks them up.
 /// Memory only, each kept [`POLICY_TTL_SECS`] after it was posted; a server that restarts forgot them, and the phone
 /// posts again within the hour.
 ///
-/// Every change happens under one lock, so a post and a pick-up never see half of another.
+/// Every change happens under one lock, so a post and a pick-up never see half of another. Each computer has its own
+/// budget (one snapshot, replaced by a newer one, and at most [`MAX_TIGHTENS`] tightenings, each at most
+/// [`MAX_POLICY_CHARS`]): what another account posts never pushes out this one's, a Lockdown included.
 #[derive(Default)]
 pub struct Policies {
     state: Mutex<State>,
@@ -31,8 +39,6 @@ pub struct Policies {
 #[derive(Default)]
 struct State {
     by_connection: HashMap<String, Mailbox>,
-    /// The characters of every message kept, for [`MAX_TOTAL_POLICY_CHARS`].
-    chars: usize,
 }
 
 struct Mailbox {
@@ -59,18 +65,17 @@ impl Mailbox {
         }
     }
 
+    #[cfg(test)]
     fn chars(&self) -> usize {
         self.snapshot.iter().chain(&self.tightens).map(|k| k.sealed.len()).sum()
     }
 
-    /// Drops what expired; returns how many characters went.
-    fn expire(&mut self, now: i64) -> usize {
-        let before = self.chars();
+    /// Drops what expired.
+    fn expire(&mut self, now: i64) {
         if self.snapshot.as_ref().is_some_and(|k| k.until <= now) {
             self.snapshot = None;
         }
         self.tightens.retain(|k| k.until > now);
-        before - self.chars()
     }
 
     fn is_idle(&self) -> bool {
@@ -83,32 +88,22 @@ impl Policies {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Keeps `item` for `connection` posted at `now`; whether it was kept. A snapshot replaces the kept one only when
-    /// newer, and drops the tightenings it covers; a tightening is kept only when newer than the snapshot, at most
-    /// [`MAX_TIGHTENS`] (the oldest go). An empty or oversized blob, a version already kept, or a post beyond
-    /// [`MAX_TOTAL_POLICY_CHARS`] is ignored.
-    pub fn post(&self, connection: &str, item: MailedPolicy, now: i64) -> bool {
+    /// Keeps `item` for `connection` posted at `now`. A snapshot replaces the kept one only when newer, and drops the
+    /// tightenings it covers; a tightening is kept only when newer than the snapshot, at most [`MAX_TIGHTENS`] (this
+    /// computer's oldest go). An empty or oversized blob is refused; a version already kept is stale.
+    pub fn post(&self, connection: &str, item: MailedPolicy, now: i64) -> Posted {
         if item.sealed.is_empty() || item.sealed.len() > MAX_POLICY_CHARS {
-            return false;
+            return Posted::Refused;
         }
         let mut state = self.lock();
-        let State {
-            by_connection,
-            chars,
-        } = &mut *state;
-        let mailbox = by_connection.entry(connection.to_owned()).or_insert_with(Mailbox::new);
-        *chars -= mailbox.expire(now);
+        let mailbox = state.by_connection.entry(connection.to_owned()).or_insert_with(Mailbox::new);
+        mailbox.expire(now);
         let floor = mailbox.snapshot.as_ref().map(|k| k.version);
         if floor.is_some_and(|v| item.version <= v)
             || (item.kind == PolicyKind::Tighten && mailbox.tightens.iter().any(|k| k.version == item.version))
         {
-            return false;
+            return Posted::Stale;
         }
-        if *chars + item.sealed.len() > MAX_TOTAL_POLICY_CHARS {
-            warn!("Dropped a desktop policy: this server holds {chars} characters of them already");
-            return false;
-        }
-        let before = mailbox.chars();
         let kept = Kept {
             version: item.version,
             sealed: item.sealed,
@@ -126,22 +121,17 @@ impl Policies {
                 mailbox.tightens.drain(..excess);
             }
         }
-        *chars = *chars - before + mailbox.chars();
         mailbox.changes.send_modify(|v| *v = v.wrapping_add(1));
-        true
+        Posted::Kept
     }
 
     /// What waits for `connection` newer than `after`: the snapshot, then the tightenings, by version.
     pub fn peek(&self, connection: &str, after: u64, now: i64) -> Vec<MailedPolicy> {
         let mut state = self.lock();
-        let State {
-            by_connection,
-            chars,
-        } = &mut *state;
-        let Some(mailbox) = by_connection.get_mut(connection) else {
+        let Some(mailbox) = state.by_connection.get_mut(connection) else {
             return Vec::new();
         };
-        *chars -= mailbox.expire(now);
+        mailbox.expire(now);
         let snapshot = mailbox.snapshot.iter().map(|k| (PolicyKind::Snapshot, k));
         let tightens = mailbox.tightens.iter().map(|k| (PolicyKind::Tighten, k));
         snapshot
@@ -179,13 +169,8 @@ impl Policies {
 
     /// Forgets what expired, and computers with nothing kept that nobody waits on.
     pub fn purge(&self, now: i64) {
-        let mut state = self.lock();
-        let State {
-            by_connection,
-            chars,
-        } = &mut *state;
-        by_connection.retain(|_, mailbox| {
-            *chars -= mailbox.expire(now);
+        self.lock().by_connection.retain(|_, mailbox| {
+            mailbox.expire(now);
             !mailbox.is_idle()
         });
     }
@@ -218,11 +203,11 @@ mod tests {
     #[test]
     fn policy_mailbox_keeps_the_newest_and_newer_tightenings() {
         let p = Policies::default();
-        assert!(p.post("c1", tighten(5), 100), "a tightening applies without a snapshot");
-        assert!(p.post("c1", snapshot(10), 100));
-        assert!(p.post("c1", tighten(12), 100));
-        assert!(p.post("c1", tighten(11), 100));
-        assert!(p.post("c2", snapshot(3), 100));
+        assert_eq!(Posted::Kept, p.post("c1", tighten(5), 100), "a tightening applies without a snapshot");
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(10), 100));
+        assert_eq!(Posted::Kept, p.post("c1", tighten(12), 100));
+        assert_eq!(Posted::Kept, p.post("c1", tighten(11), 100));
+        assert_eq!(Posted::Kept, p.post("c2", snapshot(3), 100));
         let all = p.peek("c1", 0, 101);
         assert_eq!(sealed(&all), ["s10", "t11", "t12"], "the snapshot covers t5; then by version");
         assert_eq!(all[0].kind, PolicyKind::Snapshot);
@@ -233,11 +218,11 @@ mod tests {
         assert_eq!(sealed(&p.peek("c2", 0, 101)), ["s3"], "each computer its own");
         assert!(p.peek("c3", 0, 101).is_empty());
         // A newer snapshot drops the tightenings it covers.
-        assert!(p.post("c1", snapshot(11), 102));
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(11), 102));
         assert_eq!(sealed(&p.peek("c1", 0, 103)), ["s11", "t12"]);
         // At most MAX_TIGHTENS tightenings: the oldest go.
         for v in 100..100 + MAX_TIGHTENS as u64 + 3 {
-            assert!(p.post("c1", tighten(v), 104));
+            assert_eq!(Posted::Kept, p.post("c1", tighten(v), 104));
         }
         let mail = p.peek("c1", 0, 105);
         assert_eq!(mail.len(), 1 + MAX_TIGHTENS);
@@ -249,13 +234,17 @@ mod tests {
     #[test]
     fn older_versions_never_replace() {
         let p = Policies::default();
-        assert!(p.post("c1", snapshot(10), 100));
-        assert!(!p.post("c1", snapshot(9), 100), "older");
-        assert!(!p.post("c1", item(10, PolicyKind::Snapshot, "other"), 100), "the same version");
-        assert!(!p.post("c1", tighten(10), 100), "a tightening the snapshot covers");
-        assert!(!p.post("c1", tighten(3), 100));
-        assert!(p.post("c1", tighten(20), 100));
-        assert!(!p.post("c1", item(20, PolicyKind::Tighten, "again"), 100), "a tightening already kept");
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(10), 100));
+        assert_ne!(Posted::Kept, p.post("c1", snapshot(9), 100), "older");
+        assert_ne!(Posted::Kept, p.post("c1", item(10, PolicyKind::Snapshot, "other"), 100), "the same version");
+        assert_ne!(Posted::Kept, p.post("c1", tighten(10), 100), "a tightening the snapshot covers");
+        assert_ne!(Posted::Kept, p.post("c1", tighten(3), 100));
+        assert_eq!(Posted::Kept, p.post("c1", tighten(20), 100));
+        assert_ne!(
+            Posted::Kept,
+            p.post("c1", item(20, PolicyKind::Tighten, "again"), 100),
+            "a tightening already kept"
+        );
         assert_eq!(sealed(&p.peek("c1", 0, 101)), ["s10", "t20"]);
     }
 
@@ -263,7 +252,7 @@ mod tests {
     async fn a_waiter_wakes_on_a_post() {
         let p = std::sync::Arc::new(Policies::default());
         let now = now_unix();
-        assert!(p.post("c1", snapshot(10), now));
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(10), now));
         // Something newer than `after` already waits: no wait at all.
         let started = tokio::time::Instant::now();
         assert_eq!(sealed(&p.wait("c1", 0, Duration::from_secs(20)).await), ["s10"]);
@@ -276,9 +265,9 @@ mod tests {
         while p.lock().by_connection.get("c1").is_none_or(|m| m.changes.receiver_count() == 0) {
             tokio::task::yield_now().await;
         }
-        assert!(!p.post("c1", snapshot(9), now), "an ignored post wakes nobody");
-        assert!(p.post("c2", snapshot(11), now), "nor does another computer's");
-        assert!(p.post("c1", tighten(11), now));
+        assert_ne!(Posted::Kept, p.post("c1", snapshot(9), now), "an ignored post wakes nobody");
+        assert_eq!(Posted::Kept, p.post("c2", snapshot(11), now), "nor does another computer's");
+        assert_eq!(Posted::Kept, p.post("c1", tighten(11), now));
         let woke = tokio::time::timeout(Duration::from_secs(5), waiter).await.expect("woke").expect("joined");
         assert_eq!(sealed(&woke), ["t11"]);
         // Nothing comes: an empty answer at the deadline.
@@ -291,28 +280,49 @@ mod tests {
     #[test]
     fn oversized_or_empty_blobs_are_ignored() {
         let p = Policies::default();
-        assert!(!p.post("c1", item(1, PolicyKind::Snapshot, ""), 100));
-        assert!(!p.post("c1", item(2, PolicyKind::Snapshot, &"x".repeat(MAX_POLICY_CHARS + 1)), 100));
-        assert!(!p.post("c1", item(3, PolicyKind::Tighten, ""), 100));
+        assert_eq!(p.post("c1", item(1, PolicyKind::Snapshot, ""), 100), Posted::Refused);
+        assert_eq!(
+            p.post("c1", item(2, PolicyKind::Snapshot, &"x".repeat(MAX_POLICY_CHARS + 1)), 100),
+            Posted::Refused
+        );
+        assert_eq!(p.post("c1", item(3, PolicyKind::Tighten, ""), 100), Posted::Refused);
         assert!(p.peek("c1", 0, 101).is_empty());
-        assert!(p.post("c1", item(4, PolicyKind::Snapshot, &"x".repeat(MAX_POLICY_CHARS)), 100), "at the limit");
-        assert_eq!(p.lock().chars, MAX_POLICY_CHARS);
+        assert_eq!(p.post("c1", item(4, PolicyKind::Snapshot, &"x".repeat(MAX_POLICY_CHARS)), 100), Posted::Kept);
+        assert_eq!(p.lock().by_connection["c1"].chars(), MAX_POLICY_CHARS);
+    }
+
+    /// Each computer has its own budget: another computer (another account's) filling its own never pushes out this
+    /// one's snapshot or Lockdown, and a computer's snapshots replace each other instead of piling up.
+    #[test]
+    fn each_computer_has_its_own_budget() {
+        let p = Policies::default();
+        let big = "x".repeat(MAX_POLICY_CHARS);
+        assert_eq!(p.post("mine", tighten(1), 100), Posted::Kept);
+        for v in 0..(MAX_TIGHTENS as u64 * 4) {
+            assert_eq!(p.post("theirs", item(10 + v, PolicyKind::Tighten, &big), 100), Posted::Kept);
+        }
+        assert_eq!(p.lock().by_connection["theirs"].tightens.len(), MAX_TIGHTENS, "their oldest go, not ours");
+        for v in 0..(MAX_TIGHTENS as u64 * 4) {
+            assert_eq!(p.post("theirs", item(1_000 + v, PolicyKind::Snapshot, &big), 100), Posted::Kept);
+        }
+        assert_eq!(sealed(&p.peek("mine", 0, 101)), ["t1"], "this computer's Lockdown stays");
+        let theirs = &p.lock().by_connection["theirs"];
+        assert!(theirs.snapshot.is_some() && theirs.tightens.len() <= MAX_TIGHTENS);
+        assert!(theirs.chars() <= MAX_POLICY_CHARS * (1 + MAX_TIGHTENS));
     }
 
     #[test]
     fn items_expire() {
         let p = Policies::default();
-        assert!(p.post("c1", snapshot(10), 100));
-        assert!(p.post("c1", tighten(11), 200));
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(10), 100));
+        assert_eq!(Posted::Kept, p.post("c1", tighten(11), 200));
         let ttl = POLICY_TTL_SECS;
         assert_eq!(sealed(&p.peek("c1", 0, 99 + ttl)), ["s10", "t11"]);
         assert_eq!(sealed(&p.peek("c1", 0, 100 + ttl)), ["t11"], "a day after it was posted");
         assert!(p.peek("c1", 0, 200 + ttl).is_empty());
-        assert_eq!(p.lock().chars, 0);
         // An expired snapshot no longer holds older versions back (the computer refuses a rollback itself).
-        assert!(p.post("c1", snapshot(5), 300 + ttl));
+        assert_eq!(Posted::Kept, p.post("c1", snapshot(5), 300 + ttl));
         p.purge(300 + 2 * ttl);
         assert!(p.lock().by_connection.is_empty(), "nothing kept, nobody waiting");
-        assert_eq!(p.lock().chars, 0);
     }
 }

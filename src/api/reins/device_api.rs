@@ -714,6 +714,7 @@ async fn post_policy(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbC
         return Err(bad_request(format!("at most {MAX_POLICY_ITEMS} items")));
     }
     let now = now_unix();
+    let mut refused = 0;
     for item in post.items {
         if ReinsConnection::find_by_uuid_and_user(&item.connection_id, &headers.user.uuid, &conn).await.is_some() {
             let mailed = MailedPolicy {
@@ -721,8 +722,14 @@ async fn post_policy(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbC
                 kind: item.kind,
                 sealed: item.sealed,
             };
-            HUB.policies.post(&item.connection_id, mailed, now);
+            if HUB.policies.post(&item.connection_id, mailed, now) == super::desktop_policy::Posted::Refused {
+                refused += 1;
+            }
         }
+    }
+    // The phone keeps what wasn't taken and sends it again (the rest of the post is kept either way).
+    if refused > 0 {
+        return Err(bad_request(format!("{refused} items empty or larger than the limit")));
     }
     Ok(Status::NoContent)
 }
