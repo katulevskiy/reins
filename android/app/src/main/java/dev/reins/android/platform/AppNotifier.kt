@@ -12,7 +12,6 @@ import android.media.AudioAttributes
 import android.net.Uri
 import dev.reins.android.ui.activity.field
 import dev.reins.android.ui.activity.pendingTone
-import dev.reins.android.ui.activity.parked
 import dev.reins.android.ui.activity.pressing
 import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
@@ -138,7 +137,8 @@ class AppNotifier(
         val nowSeconds = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
         // Parked by Overnight for the morning (Decisions v2, 01 §11): parking never notifies, in front or not. The one
         // morning summary ([OvernightDigest]) covers it.
-        if (item.parked(nowSeconds)) return
+        // `parked`, not the morning time: an Overnight without an end parks until now.
+        if (item.parked) return
         // A ticket can wait: it arrives quietly unless less than an hour is left (Decisions v2, 03 §5.2).
         val quiet = item.ticket?.let { !it.pressing(nowSeconds) } ?: false
         // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
@@ -255,6 +255,10 @@ class AppNotifier(
      */
     override fun circleChanged(event: CircleEvent) {
         onCircles()
+        if (event is CircleEvent.Alert) {
+            circleAlert(event)
+            return
+        }
         val review = (event as? CircleEvent.ReviewWaiting)?.review ?: return
         if (Foreground.focused) {
             // In front, For others shows it; the chime says something arrived.
@@ -284,6 +288,25 @@ class AppNotifier(
             .addExtras(android.os.Bundle().apply { putString(EXTRA_CIRCLE, review.id) })
             .build()
         manager.notify(tag, notificationId(CIRCLE_PREFIX + review.id), notification)
+    }
+
+    /**
+     * A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
+     * Posted in front too (it explains itself), quietly there.
+     */
+    private fun circleAlert(event: CircleEvent.Alert) {
+        if (!manager.areNotificationsEnabled()) return
+        val notification = Notification.Builder(context, channel(Kind.Status))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(untrusted(event.person).ifBlank { "Reins" })
+            .setContentText(untrusted(event.text))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setOnlyAlertOnce(Foreground.focused)
+            .setAutoCancel(true)
+            .setContentIntent(openForOthers(event.linkId))
+            .build()
+        manager.notify(tag, notificationId(CIRCLE_ALERT_PREFIX + event.linkId), notification)
     }
 
     /** Takes away the notifications of Circle reviews that no longer wait ([waiting] are the ids that do). */
@@ -552,7 +575,25 @@ class AppNotifier(
      * An org review waits for this member's signature (O2): something to act on, so it is notified, on [target]'s
      * channel; tapping opens that profile's reviews. Says nothing of the review itself.
      */
-    fun orgReview(target: WorkProfiles.Active, reviewId: String) {
+    fun orgReview(target: WorkProfiles.Active, reviewId: String) = orgAction(
+        target,
+        reviewId,
+        // A family's ask (P7): a member's request to leave for its guardians, or a guardian's question for the member.
+        when (reviewId) {
+            "family:leave" -> "A request to leave waits for you."
+            "family:minor" -> "Your family asks you something."
+            else -> "A review waits for you."
+        },
+    )
+
+    /**
+     * A web passkey the member added in the browser waits for this phone's confirmation (O3): notified like a review,
+     * opening the same screen, where its card shows the fingerprint.
+     */
+    fun orgPasskey(target: WorkProfiles.Active, credentialId: String) =
+        orgAction(target, credentialId, "Confirm your new passkey.")
+
+    private fun orgAction(target: WorkProfiles.Active, reviewId: String, text: String) {
         onChanged()
         if (!manager.areNotificationsEnabled()) return
         // A family's ask (P7): a member's request to leave for its guardians, or a guardian's question for the member.
@@ -572,13 +613,7 @@ class AppNotifier(
         val notification = Notification.Builder(context, channel(context, Kind.Approvals, settings(), silent = false, profile = target))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (target.managed) target.label else "Reins")
-            .setContentText(
-                when (reviewId) {
-                    "family:leave" -> "A request to leave waits for you."
-                    "family:minor" -> "Your family asks you something."
-                    else -> "A review waits for you."
-                },
-            )
+            .setContentText(text)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setContentIntent(open)
@@ -714,6 +749,7 @@ class AppNotifier(
         const val EXTRA_CIRCLE = "dev.reins.android.CIRCLE"
         /** Keeps a review's notification id apart from a request's of the same id. */
         private const val CIRCLE_PREFIX = "circle:"
+        private const val CIRCLE_ALERT_PREFIX = "circle-alert:"
         private const val REPLACED_ID = 1
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4

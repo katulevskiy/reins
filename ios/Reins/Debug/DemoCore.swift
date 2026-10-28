@@ -152,7 +152,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var questions: [AutoQuestion] = []
         /// The requests "Ask me next time" was used on.
         var askedNextTime: [String] = []
+        /// The changes previewed (02 §4).
+        var previewed: [PolicyChange] = []
     }
+
+    /// The changes the demo was asked to preview, in order.
+    var previewedChanges: [PolicyChange] { locked { $0.previewed } }
 
     /// The passkey the demo account starts with.
     static let demoPasskey = VaultPasskeyView(credentialId: Data("demo-passkey-1".utf8), name: "iPhone 16", createdAt: 1_760_000_000)
@@ -377,6 +382,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func orgReviews() async throws -> [OrgReviewView] { [] }
 
     func orgDecide(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
+
+    func orgPasskeys() async throws -> [OrgPasskeyView] { [] }
+
+    func orgConfirmPasskey(id: String, approve: Bool, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
     func orgSetMemberPolicy(body: String, version: UInt64, at: Int64, signature: String) async throws { throw CoreError.NotFound }
 
@@ -1044,6 +1053,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let id = s.pending[i].id
             guard ["req10", "req11", "req2", "req9"].contains(id) else { continue }
             s.pending[i].parkedUntil = morning
+            s.pending[i].parked = true
             s.pending[i].canDefer = false
             if id == "req10" || id == "req11" {
                 s.pending[i].taskId = demoTaskId
@@ -1052,8 +1062,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pending[i].batchable = id == "req10" || id == "req9"
             if id != "req9" { makeTicket(&s.pending[i], state: "deferred", deferredAt: now - 3_600, deadline: morning + expiry) }
         }
+        // Its own id: req40 is the desktop's question, which this would replace in the views and shadow in the list.
         let v = DemoData.view(
-            "req40", conn: "c1", label: "Claude", kind: .write, action: "write", service: "tasks", account: nil,
+            "req70", conn: "c1", label: "Claude", kind: .write, action: "write", service: "tasks", account: nil,
             createdAt: now - 20, waitUntil: now + 240, op: "propose", preview: ["Start a task: Release v2.1"], noStanding: true,
             opTitle: "Start a task"
         )
@@ -2167,6 +2178,23 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     /// Stricter only: no owner check. The demo keeps which requests it was used on.
     func askMeNextTime(requestId: String) async throws {
         locked { $0.askedNextTime.append(requestId) }
+    }
+
+    /// As the core, on the demo's own history: a looser cell lets 4 of its asks through, a stricter one or "Ask me next
+    /// time" asks 3 more. The demo keeps what it was asked to preview.
+    func previewPolicyChange(change: PolicyChange) async throws -> PreviewView {
+        locked { $0.previewed.append(change) }
+        switch change {
+        case let .setCell(zone, level, cell):
+            guard level <= 3 else { throw CoreError.Invalid(reason: "a level is 0 to 3") }
+            let row = Self.zones.firstIndex(of: zone) ?? 3
+            let old = locked { $0.matrix[row][Int(level)] }
+            let looser = Self.looseness(cell) < Self.looseness(old)
+            let line = looser ? "Last 30 days: 0 Auto → Ask, 4 Ask → Auto" : "Last 30 days: 3 Auto → Ask, 0 Ask → Auto"
+            return PreviewView(line: line, changed: looser ? 4 : 3, days: 30)
+        case .askMeNextTime:
+            return PreviewView(line: "Last 30 days: 3 Auto → Ask, 0 Ask → Auto", changed: 3, days: 30)
+        }
     }
 
     /// The section a kind of thing is listed in.

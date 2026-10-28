@@ -521,6 +521,10 @@ give that word another meaning are never rewritten:
 - `eval` or `source`;
 - a command word that isn't literal.
 
+Only the commands up to the first one off the allowlist are netted. What follows them runs after them, can't change
+them, and keeps its own level. Among them, a variable is allowed only when it is a one-letter name the script itself
+set to plain text before, and a `for` loop only when it goes over plain words.
+
 A net that can't be made deletes nothing and leaves the request at its own level.
 
 `reins net run` is bound to the hook's plan:
@@ -529,7 +533,8 @@ A net that can't be made deletes nothing and leaves the request at its own level
 - it runs only the planned programs, in the planned folders, within 12 hours;
 - it deletes for real only the scratch roots the hook recorded.
 
-Commands that set `HOME`, `PATH`, `XDG_*`, `GIT_*` or `REINS_*` are never netted.
+Nothing before a netted command may set `HOME`, `PATH`, `XDG_*`, `GIT_*` or `REINS_*`: only one-letter names, which no
+shell, git or Reins reads.
 
 Activity says Netted only once something was really kept. The trash keeps at most a tenth of its disk, oldest first.
 
@@ -649,6 +654,26 @@ an organization's member, which the phone and the desktop keep as a separate pro
   pending admin change takes the approver's enrolled phone (a device signature), so a console session alone approves
   nothing.
 
+### Zones from facts kept by id (Decisions v2 P2)
+
+The context graph decides a request's zone from facts only, looked up exactly. Two kinds of party are kept by the
+service's stable id, never by what an agent writes or by a name someone else can take:
+
+- **Telegram:** a chat is its numeric id. Before the matrix reads a send, the phone resolves the chat it names (a
+  handle, a title, an id) through Telegram exactly as the send would, and evaluates the chat that would receive it.
+  The owner's own chat (Saved Messages) is Mine by the account's own id. A chat Telegram can't find is Outside and
+  isn't a question; a handle or a name is only a label, and a title's label always carries its kind ("Mom
+  (group)") and never starts with `@`, so it can't pass for a handle. An automatic approval sends to the chat id it
+  was evaluated for, never to whatever the name resolves to by then. A fact kept by an `@handle` before ids is never
+  moved: when Telegram resolves that very handle (its username lookup, not a title), a question card for the chat's
+  id preselects the handle's zone and the owner confirms it; email and phone facts are never carried over.
+- **GitHub:** an owner the phone knows is kept by the account's numeric id (`#<id>`); the login is only its label.
+  A request names logins, so the phone asks GitHub which account each login is now (cached for an hour) and matches
+  by id: a login the owner gave up and someone else took is Outside. Without an answer (offline) it is Outside too.
+  The connected account is read as its token's own user. Facts kept by login before this move onto the id the
+  first time GitHub answers for them. The computer's own `[auto]` facts and an org's policy facts are still written
+  by login.
+
 ### Decisions in Managed mode (O2)
 
 A work account's agents never reach a phone: their calls go to the org's **decision service**, which decides with the
@@ -680,7 +705,22 @@ org's policy, and an **executor** runs what was decided with the org's own crede
 - **Leases.** A work daemon's repository credential is asked for like any request (judged by the repository's zone
   and the org's rules), minted by the executor for exactly that repository id, sealed to a key only the daemon holds,
   and lives 15 minutes. Removing a member revokes their leases at once, and the executor revokes the credential at
-  GitHub within its next pass.
+  GitHub within its next pass. Only the executor that minted a lease holds its token, so only it is told to revoke
+  it, and only it can say it did.
+- **Lease lifetime against GitHub's.** GitHub's installation tokens live one hour, whatever is asked, so a token can
+  outlive its 15-minute lease. What holds it to the lease:
+  - the executor mints only while the countersigned lease lasts, and revokes each token at its lease's end itself,
+    first thing every pass and without the server;
+  - the server's sweep ends every lease at its end (its sealed copy is deleted), and a token minted after that is
+    never handed out and goes to the revocation queue;
+  - deprovisioning revokes at once, as above.
+
+  **The residual window:** an executor that is offline (or was removed) from a lease's end until the token's own
+  expiry leaves that token valid at GitHub for up to an hour after it was minted, up to 45 minutes past its lease.
+  Nobody else holds the token, so nobody else can revoke it. Once that hour is over the server records
+  `lease.token_lapsed` and drops it from the queue.
+- **Flooding.** A connection may have 50 open org requests (under review, approved or running); beyond that the
+  agent is told to wait (03 §8), and nothing is recorded.
 - **Audit.** Every decision, review, execution, lease, policy and executor change and admin action is an event in the
   org's hash chain (O1's event table, kept as is), checkpointed and signed every 10 minutes. An export ends with a
   signed head; `reins-audit verify` checks every hash, link and signature and that the head covers the last event,
@@ -688,13 +728,116 @@ org's policy, and an **executor** runs what was decided with the org's own crede
   back since.
 - **Retention.** Request bodies are kept 0, 30 (default) or 365 days, set by a device-signed two-person change.
 
+### Approval routing (O3)
+
+Org reviews name people by **relationship** as well as by group or role: the requester's manager, the repository's
+code owners, a resource's owner, whoever is on call, a group's backup. The decision service resolves them at submit
+from verified sources only (never from the agent): the directory's `manager_email` (or a two-person admin change on
+the Team tier, which has no directory; on tiers with a directory only the directory's word counts), the default
+branch's `CODEOWNERS` through the org's read-only GitHub App (logins count only when SAML or the member's own
+authorization proved them), the on-call provider's API, and the policy's signed resource tags. The requester is never
+a reviewer through any of them, and a member without a device that may decide (or a confirmed web passkey) is
+skipped, so their reviews route to others.
+
+- **Escalation adds, never removes.** An obligation nobody can satisfy (no manager on record, owners unlinked, the
+  on-call API down) escalates at once along its chain (by default the group's backup, the manager, then Security
+  admins); an unanswered one escalates when its window passes. After the last step it expires as not approved: it
+  never auto-approves and never falls to the requester. Every resolution is audited with its source and a hash of the
+  provider's answer (`review.resolved`).
+- **What executors trust.** The countersigned decision carries the resolution. An executor checks groups, roles,
+  named members, the manager and group backups against the issuer-signed roster (which now lists managers and
+  backups), and drops anyone they don't admit. **Code owners, on-call and resource owners are dynamic: an executor
+  takes them on the decision service's countersignature.** A compromised decision service could therefore name an
+  accomplice for those obligations (the audit records the evidence it claimed); groups, roles and managers it can't
+  forge.
+- **Signed web approvals (L0–L2 only).** Slack and Teams carry one line (requester, agent, effect kind, resource,
+  level, who must decide: never a body) and a one-time link: 32 random bytes stored as SHA-256, for one member and one
+  request, valid until the review's deadline or an hour. The page needs that member's own console SSO session, and
+  the answer is a WebAuthn assertion over SHA-256 of the same review message a phone signs (org, request, digest,
+  decision, snapshot, time), at the server's origin, user-verified. The passkey must be one the member registered in
+  the console and confirmed on their enrolled phone (the phone signs the key's hash and registration time; a refusal
+  is an unsigned revoke); only then is it in the issuer-signed roster, where executors verify the assertion again and
+  refuse it for anything they judge L3. L3 always needs the app: no link is issued, an old link opens "Open the Reins
+  app", and the server refuses it too.
+- **Device binding is as the browser reports.** Registration uses attestation `none`, so "device-bound" (backup
+  eligibility clear) and user verification are the authenticator's own word: a synced passkey that lies about it
+  isn't caught. This is accepted for L0–L2 web approvals; the console says so.
+- **Channels never decide.** Inbound Slack events need a valid `X-Slack-Signature` within five minutes; Teams
+  activities a Bot Framework token (issuer, the org's bot as audience, a key endorsed for the channel, the activity's
+  `serviceUrl` in the token, Microsoft's connector hosts only). Both are acknowledged and change nothing else. A Teams
+  bot is one org's, claimed by proving its secret to Microsoft; reinstalling a channel with another app or secret
+  turns it off until two admins turn it on again, and a pending proposal to turn it on is bound to the install it was
+  made for.
+- Changes to who approves (managers, backups and windows, on-call sources, channels, the GitHub reader) are
+  two-person, device-signed admin changes. Their secrets (API keys, bot tokens, the reader's key) are sealed under the
+  tenant's data key as posted and never shown again.
+
 What this doesn't do yet:
 - With `LocalKms`, the issuer key, the decision service and the database share a host: an attacker holding all
   three can sign a policy. The split 08 R5 relies on (executing a non-compliant action needs the issuer key or an
   executor) holds fully with an HSM or customer KMS that enforces the two-signature rule itself (O5).
 - Checkpoints aren't published to an external witness yet (O5), so detecting a rewrite needs a checkpoint someone
   kept.
-- Play Integrity verdicts aren't verified (recorded only).
+- **Attestation:** a chain's certificates must be within their dates when the attestation is checked (a pinned root
+  is trusted by its key, whatever its certificate's dates). Android chains are checked against Google's attestation
+  status list, fetched at launch and every 6 hours; when it can't be fetched an attestation is verified without it
+  (its record says `unchecked`), and the next list re-checks every verified device, so one revoked since stops
+  counting as attested. Apple publishes no revocation for App Attest, so none is checked.
+- **Play Integrity is recorded only, never verified:** this server doesn't call Google's verdict API (that needs the
+  org's own Google Cloud service account). A Play Integrity token never makes a device attested, whatever it says,
+  and its record says `recorded_only`. A policy that requires attestation needs Android key attestation or App
+  Attest.
+- **A work account's desktop git calls** (`/reins/desktop/calls`: pushes and fetches through the desktop proxy) still
+  go to the work profile's phone, not to the org's decision service. They are decided on that phone with its own
+  credentials, as a Personal account's would be, and never reach the org's audit log. The org path for git is the
+  lease API above; the desktop daemon's side of it (fetching an org lease for an org remote) isn't built yet. Until
+  then, an org that needs every git credential to come from the org keeps work repositories off phone-held GitHub
+  accounts (05 §5, 08 R6).
+
+
+### Policy as code, simulation and staged rollout (O4)
+
+- **The policy repo is input, not authority.** An org may keep its policy in a GitHub repo (`acme/reins-policy`,
+  bound by a two-person change). The server reads it with the org's *GitHub reader*, a second App whose private key
+  and webhook secret are sealed under the org's data key; webhooks are verified (`X-Hub-Signature-256`, constant
+  time), must come from the org's installation and its bound repo, and are acted on once. A PR gets a check run (its
+  compile errors, or its simulation line); a merge saves and simulates a draft and only **proposes** the activation,
+  as the system. A first Security admin confirms it on their phone (becoming its proposer), and a second approves it
+  on theirs: merging the PR, re-posting the webhook or being the only admin activates nothing. Repos are read within
+  200 policy files and 1 MiB.
+- **Simulation is evidence.** Every decision keeps its body-free input (effects, zones, levels: decision metadata,
+  never the request body), and a draft is replayed over the last 30 days with the very evaluator the live service and
+  the executors run, each case at its own time. Replaying the *active* policy must reproduce what was recorded; a
+  difference is *drift*. Once a policy is active, `ActivatePolicy` names a report made for exactly that draft's hash,
+  at most a day old, with no drift: a draft changed after it was simulated is another hash and needs its own. Reports
+  name request ids only; opening one is an audited read by an Auditor or a Security admin.
+- **Two people, always.** Activation takes two holders of the capability (their device signatures), even with
+  two-person approval turned off and even with a single Security admin (then it is refused). A Family's guardians are
+  the exception: every guardian holding the capability decides, so a single guardian activates alone.
+- **Signed staged rollout.** With a policy active, activation makes the draft a *candidate*: the issuer signs it,
+  resolves the pilot group, and pre-signs every rollout step (pilot, 25%, everyone, then the rollback) as `Rollout`
+  envelopes. Each stage carries `not_before`, activation plus the dwell of the stages before it. The decision service
+  publishes the next stage only after the dwell with enough decisions in both cohorts and the guards green (ask rate
+  and median time to decision), and the rollback when a guard trips; a rollback is terminal and the candidate goes
+  back to draft. A member's cohort is a hash of (rollout, member), percentages nest and the pilot stays in, so nobody
+  flips back and forth. Every decision records the snapshot and rollout step it was made under.
+- **What a compromised decision service can and can't do.** Executors hold every signed step they've seen and refuse
+  a decision whose snapshot, or a job whose current policy, isn't the member's effective version under them: the
+  service can't put a member outside the cohort on the candidate, nor keep anyone on the candidate after a rollback.
+  A step whose `not_before` is still ahead counts for nobody, by the executor's own clock. What it *can* do is publish
+  a pre-signed stage as soon as its time comes even if a guard should have tripped, or withhold the rollback: either
+  only moves a rollout that two Security admins approved, no faster than its approved schedule. A decision made under
+  the previous stage still runs for two minutes after an executor first sees the next one; older, it is stale.
+  Executors keep the steps they've seen on disk (`state_dir/rollouts.log`), so a restart doesn't forget them.
+
+What this doesn't do yet:
+- An executor that never received a rollout's steps (the decision service withheld them from the start) can't tell
+  a candidate from the active policy: it falls back to O2's check, any issuer-signed snapshot and the policy named
+  current. Publishing the steps to a witness (O5) closes this.
+- One Connection admin can replace the GitHub reader's key and webhook secret. That lets them post check runs and
+  propose drafts, never activate one.
+- A rollout advanced by hand through its stages with too few decisions reaches "everyone" without a stable baseline:
+  there only the time-to-decision guard applies.
 
 ### Family: enforceable guardianship (P7)
 

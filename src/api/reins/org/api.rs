@@ -178,7 +178,7 @@ async fn post_device(headers: Headers, conn: DbConn, body: Data<'_>) -> PhoneRes
     let binding_bytes = reins_proto::org::attestation_binding(&request.challenge, &key_der);
     let binding = data_encoding::HEXLOWER.encode(&binding_bytes);
     let (attestation_state, attestation_detail) =
-        super::attest::verify_enrollment(&request.attestations, &binding_bytes, &key_der);
+        super::attest::verify_enrollment(&request.attestations, &binding_bytes, &key_der, now);
     let row = ReinsOrgDevice {
         org_uuid: org.clone(),
         user_uuid: user.clone(),
@@ -330,11 +330,16 @@ async fn post_review(
     let bytes = read_body_limited(body, 8 * 1024).await?;
     let answer: reins_proto::managed::ReviewAnswer =
         serde_json::from_slice(&bytes).map_err(|e| bad_request(format!("invalid answer: {e}")))?;
+    let review_id = id.to_owned();
     let (id, now) = (id.to_owned(), now_unix());
     let answered = conn
         .run(move |c| super::reviews::answer(c, &org, &user, &device, &id, &answer, now))
         .await
         .map_err(|e| review_err(&e))?;
+    if matches!(answered, super::reviews::Answered::Approved | super::reviews::Answered::Denied) {
+        // O3: Slack and Teams messages say how it ended.
+        super::channels::spawn_update(pool.inner(), &review_id, None);
+    }
     if let super::reviews::Answered::Applied(followups) = answered {
         for removal in followups {
             super::deprovision::finish(removal, Some(pool.inner())).await;

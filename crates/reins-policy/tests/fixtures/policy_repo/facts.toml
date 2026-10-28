@@ -1,0 +1,5 @@
+[owners]
+acme = "work"
+
+[domains]
+"acme.com" = "work"

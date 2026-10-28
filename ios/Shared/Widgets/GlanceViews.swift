@@ -946,9 +946,10 @@ struct BypassLiveViews {
         return "\(name) on · \(state.scope)"
     }
 
-    var line: String { overnight ? AutopilotText.overnightText(scope: state.scope) : AutopilotText.bypassStillAsks }
-
     var approved: String { state.approvedCount == 0 ? "Nothing approved yet" : "\(state.approvedCount) approved so far" }
+
+    /// Under an ended one's heading: what it let through.
+    var endedLine: String { state.approvedCount == 0 ? "Nothing was approved" : "\(state.approvedCount) approved" }
 
     @ViewBuilder func timer(size: CGFloat, color: Color) -> some View {
         if untilOff {
@@ -965,33 +966,35 @@ struct BypassLiveViews {
         }
     }
 
+    /// Stop: on the Lock Screen a pill sized to its words beside the countdown, on the island a button beside its timer.
     @ViewBuilder func stop(island: Bool) -> some View {
         let foreground = island ? Color.white : fill
         let background = island ? fill : Palette.onField
+        let label = GlanceButtonLabel(title: island ? "Stop" : "Stop now", foreground: foreground, background: background, height: island ? 40 : 36)
+            .fixedSize(horizontal: !island, vertical: false)
         Group {
             if overnight {
-                Button(intent: StopOvernightIntent()) {
-                    GlanceButtonLabel(title: island ? "Stop" : "Stop now", foreground: foreground, background: background, height: island ? 40 : 44)
-                }
+                Button(intent: StopOvernightIntent()) { label }
             } else {
-                Button(intent: StopBypassIntent()) {
-                    GlanceButtonLabel(title: island ? "Stop" : "Stop now", foreground: foreground, background: background, height: island ? 40 : 44)
-                }
+                Button(intent: StopBypassIntent()) { label }
             }
         }
         .buttonStyle(.plain)
     }
 
+    /// The Lock Screen's card, well inside the system's 160 pt (about 110): the heading row, then the countdown with
+    /// Stop beside it. What a bypass still asks is the Bypass sheet's, in the app. Taller content is cut off at the top
+    /// by the system.
     var lockScreen: some View {
         let ink: Color = ended ? Palette.ink : Palette.onField
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                FixedModeGlyph(mode: mode, size: 17)
+                FixedModeGlyph(mode: mode, size: 16)
                 Text(heading).font(RFont.fixedSans(14, .semibold)).lineLimit(1)
                 Spacer(minLength: 6)
                 if !ended {
                     HStack(spacing: 4) {
-                        FixedGlyph(.check, size: 14)
+                        FixedGlyph(.check, size: 13)
                         Text("\(state.approvedCount)").font(RFont.fixedSans(13.5, .semibold)).monospacedDigit()
                     }
                     .accessibilityElement(children: .ignore)
@@ -999,17 +1002,18 @@ struct BypassLiveViews {
                 }
             }
             if !ended {
-                timer(size: 48, color: ink)
-                Text(line).font(RFont.fixedSans(12)).foregroundStyle(ink.opacity(0.82)).lineLimit(1)
-                stop(island: false)
+                HStack(alignment: .center, spacing: 12) {
+                    timer(size: 40, color: ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    stop(island: false)
+                }
             } else {
-                Text(line).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(2)
+                Text(endedLine).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(1)
             }
         }
         .foregroundStyle(ink)
         .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 16)
+        .padding(.vertical, 14)
         .background { if !ended { WidgetGrain() } }
     }
 
@@ -1027,8 +1031,15 @@ struct BypassLiveViews {
                 .font(RFont.fixedMono(13, .semibold))
                 .monospacedDigit()
                 .foregroundStyle(islandInk)
-                .frame(maxWidth: 46)
+                .multilineTextAlignment(.trailing)
+                // Room for hours ("22:25:22") when it runs an hour or more, else for "47:12".
+                .frame(width: Self.compactTimerWidth(state), alignment: .trailing)
         }
+    }
+
+    /// The compact timer's width: enough for the longest it shows, which is its whole length.
+    static func compactTimerWidth(_ state: BypassActivityAttributes.ContentState) -> CGFloat {
+        state.until.timeIntervalSince(min(state.startedAt, state.until)) >= 3_600 ? 64 : 46
     }
 
     var minimal: some View {

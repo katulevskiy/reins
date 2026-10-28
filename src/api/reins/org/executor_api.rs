@@ -17,7 +17,7 @@ use rocket::{
 };
 use serde_json::{Value, json};
 
-use super::{OrgError, audit, decisions, enabled, kms, policy, roster};
+use super::{OrgError, audit, decisions, enabled, kms, policy, rollout, roster};
 use crate::{
     api::reins::{device_api::read_body_limited, now_unix},
     db::{
@@ -37,7 +37,7 @@ pub const SKEW_SECS: i64 = 120;
 const CLAIM: i64 = 10;
 
 pub fn routes() -> Vec<Route> {
-    routes![claim, keys, policy_by_hash, get_roster, receipt, revocations, revoked]
+    routes![claim, keys, policy_by_hash, get_roster, get_rollouts, receipt, revocations, revoked]
 }
 
 /// The signature headers and the path as the executor signed it.
@@ -148,6 +148,10 @@ fn job_of(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, current: &str) 
     };
     let lease = if row.kind == request_kind::LEASE {
         let l = reins_org_request::q_lease_of_request(c, org, &row.uuid)?.ok_or(OrgError::NotFound)?;
+        // A lease that ended (revoked, expired) is never minted.
+        if l.state != reins_org_request::lease_state::PENDING {
+            return Err(OrgError::Invalid("The lease ended before an executor took it."));
+        }
         let bound = record.lease.as_ref().ok_or(OrgError::Internal("a lease decision without its lease".into()))?;
         Some(LeaseJob {
             lease: l.uuid,
@@ -175,14 +179,18 @@ fn job_of(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest, current: &str) 
     })
 }
 
-/// Claims up to [`CLAIM`] approved requests of `org` for `executor`.
+/// Claims up to [`CLAIM`] approved requests of `org` for `executor`. Each job's current policy is its member's
+/// effective version now (a rollout's candidate for its cohort, else the active policy).
 pub fn q_claim_jobs(c: &mut DbConnInner, org: &str, executor: &str, now: i64) -> Result<Vec<Job>, OrgError> {
-    let current = policy::active(c, org)?.map(|(p, _)| p.hash()).unwrap_or_default();
+    let active = policy::active(c, org)?.map(|(p, _)| p.hash()).unwrap_or_default();
+    let steps: Vec<reins_proto::rollout::Rollout> =
+        rollout::published_for_org(c, org, now)?.iter().filter_map(|e| e.parse().ok()).collect();
     let mut jobs = Vec::new();
     for row in reins_org_request::q_claimable(c, org, now, CLAIM)? {
         if !reins_org_request::q_claim(c, org, &row.uuid, executor, now)? {
             continue;
         }
+        let current = reins_proto::rollout::effective(&steps, &row.user_uuid, &active, now);
         match job_of(c, org, &row, &current) {
             Ok(job) => jobs.push(job),
             Err(e) => {
@@ -219,6 +227,15 @@ async fn policy_by_hash(hash: &str, h: ExecHeaders, conn: DbConn) -> Result<Json
         .map_err(|e| internal(&e))?
         .map(Json)
         .ok_or(Status::NotFound)
+}
+
+/// The issuer-signed steps of the org's open and recently finished rollouts (O4): what an executor checks a decision's
+/// policy version against.
+#[get("/reins/org-exec/rollouts")]
+async fn get_rollouts(h: ExecHeaders, conn: DbConn) -> Result<Json<Vec<Envelope>>, Status> {
+    let ex = authenticate(&h, "GET", b"", &conn).await?;
+    let now = now_unix();
+    conn.run(move |c| rollout::published_for_org(c, &ex.org, now)).await.map(Json).map_err(|e| internal(&e))
 }
 
 #[get("/reins/org-exec/roster")]
@@ -294,9 +311,20 @@ pub fn q_receipt(c: &mut DbConnInner, ex: &Executor, env: &Envelope, now: i64) -
             let expires = r.result.get("expires_at").and_then(Value::as_i64).unwrap_or(lease.expires_at);
             match (r.status, sealed) {
                 (ReceiptStatus::Succeeded, Some(sealed)) => {
-                    // Never past what the decision bound.
+                    // Never past what the decision bound, and never once that has passed (an executor that was
+                    // offline minted it late): then it is not handed out, and its token is revoked upstream.
                     let until = expires.min(lease.expires_at);
-                    if reins_org_request::q_set_lease_issued(c, &ex.org, &lease.uuid, sealed, until, now)? {
+                    if until <= now {
+                        reins_org_request::q_end_lease(
+                            c,
+                            &ex.org,
+                            &lease.uuid,
+                            &[reins_org_request::lease_state::PENDING],
+                            reins_org_request::lease_state::EXPIRED,
+                            now,
+                        )?;
+                        reins_org_request::q_mark_issued_after_revocation(c, &ex.org, &lease.uuid, now)?;
+                    } else if reins_org_request::q_set_lease_issued(c, &ex.org, &lease.uuid, sealed, until, now)? {
                         audit::record(
                             c,
                             &ex.org,
@@ -353,14 +381,28 @@ async fn receipt(h: ExecHeaders, data: Data<'_>, conn: DbConn) -> Status {
     }
 }
 
+/// The leases whose token `ex` must revoke upstream: only those it minted (it claimed their request), since only it
+/// holds their tokens.
+pub fn q_revocations(c: &mut DbConnInner, ex: &Executor) -> Result<Vec<Value>, OrgError> {
+    Ok(reins_org_request::q_leases_to_revoke_by(c, &ex.org, &ex.id)?
+        .into_iter()
+        .map(|l| json!({"lease": l.uuid, "reason": l.state}))
+        .collect())
+}
+
+/// `ex` revoked lease `id`'s token upstream; false when it isn't one `ex` minted, or was already recorded.
+pub fn q_revoked(c: &mut DbConnInner, ex: &Executor, id: &str, now: i64) -> Result<bool, OrgError> {
+    if !reins_org_request::q_mark_revoke_done_by(c, &ex.org, id, &ex.id, now)? {
+        return Ok(false);
+    }
+    audit::record(c, &ex.org, audit::kinds::LEASE_REVOKED_UPSTREAM, None, Some(id), &json!({"executor": ex.id}), now)?;
+    Ok(true)
+}
+
 #[get("/reins/org-exec/revocations")]
 async fn revocations(h: ExecHeaders, conn: DbConn) -> Result<Json<Vec<Value>>, Status> {
     let ex = authenticate(&h, "GET", b"", &conn).await?;
-    let rows = conn
-        .run(move |c| reins_org_request::q_leases_to_revoke(c, &ex.org))
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows.into_iter().map(|l| json!({"lease": l.uuid, "reason": l.state})).collect()))
+    conn.run(move |c| q_revocations(c, &ex)).await.map(Json).map_err(|e| internal(&e))
 }
 
 #[post("/reins/org-exec/revoked/<id>", data = "<data>")]
@@ -374,23 +416,7 @@ async fn revoked(id: &str, h: ExecHeaders, data: Data<'_>, conn: DbConn) -> Stat
     };
     let id = id.to_owned();
     let now = now_unix();
-    let done = conn
-        .run(move |c| -> Result<bool, OrgError> {
-            if !reins_org_request::q_mark_revoke_done(c, &ex.org, &id, now)? {
-                return Ok(false);
-            }
-            audit::record(
-                c,
-                &ex.org,
-                audit::kinds::LEASE_REVOKED_UPSTREAM,
-                None,
-                Some(&id),
-                &json!({"executor": ex.id}),
-                now,
-            )?;
-            Ok(true)
-        })
-        .await;
+    let done = conn.run(move |c| q_revoked(c, &ex, &id, now)).await;
     match done {
         Ok(true) => Status::NoContent,
         Ok(false) => Status::NotFound,
@@ -522,6 +548,111 @@ mod tests {
         // Another tenant's executor can't finish it.
         let env = other.receipt(&jobs[0], ReceiptStatus::Succeeded, json!({}));
         assert!(q_receipt(&mut c, &other.me(), &env, 103).is_err());
+    }
+
+    /// Lee asks for a push lease on `repo` (Auto under the pilot policy); returns the lease id.
+    fn lease_for_lee(c: &mut DbConnInner, repo: &str, now: i64) -> String {
+        let lee = crate::db::models::ReinsConnection {
+            uuid: "conn-lee".into(),
+            user_uuid: crate::db::models::UserId::from("lee".to_owned()),
+            client_id: "c".into(),
+            client_name: "Reins desktop".into(),
+            client_host: "h".into(),
+            label: "Laptop".into(),
+            created_at: 1,
+            last_used_at: None,
+            sealed_name: None,
+        };
+        let ask = reins_proto::managed::LeaseRequest {
+            repo: repo.into(),
+            access: reins_proto::managed::LeaseAccess::Push,
+            box_key: reins_proto::canon::encode_payload(&[9u8; 32]),
+        };
+        super::super::leases::q_request_lease(c, &lee, &ask, &Default::default(), now).unwrap().0.id
+    }
+
+    /// `ex` claims the one lease job there is and reports it minted at `at`.
+    fn issue_lease(c: &mut DbConnInner, ex: &Exec, now: i64, at: i64) {
+        let jobs = q_claim_jobs(c, &ex.org, &ex.id, now).unwrap();
+        assert_eq!(jobs.len(), 1);
+        let expires = jobs[0].lease.as_ref().unwrap().expires_at;
+        q_receipt(
+            c,
+            &ex.me(),
+            &ex.receipt(&jobs[0], ReceiptStatus::Succeeded, json!({"sealed": "S", "expires_at": expires})),
+            at,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn revocations_go_only_to_the_executor_that_issued_the_lease() {
+        let mut c = db();
+        pilot(&mut c);
+        let e1 = Exec::register(&mut c, "o1", "e1");
+        let e2 = Exec::register(&mut c, "o1", "e2");
+        let l1 = lease_for_lee(&mut c, "acme/api", 100);
+        issue_lease(&mut c, &e1, 101, 102);
+        let l2 = lease_for_lee(&mut c, "acme/web", 103);
+        issue_lease(&mut c, &e2, 104, 105);
+        super::super::leases::q_revoke_for_deprovision(&mut c, "o1", "lee", 110).unwrap();
+        let listed = |c: &mut DbConnInner, ex: &Exec| -> Vec<String> {
+            q_revocations(c, &ex.me()).unwrap().into_iter().map(|v| v["lease"].as_str().unwrap().to_owned()).collect()
+        };
+        assert_eq!(listed(&mut c, &e1), std::slice::from_ref(&l1));
+        assert_eq!(listed(&mut c, &e2), std::slice::from_ref(&l2));
+        // Another executor can't say a lease it didn't issue was revoked upstream.
+        assert!(!q_revoked(&mut c, &e2.me(), &l1, 111).unwrap());
+        assert_eq!(listed(&mut c, &e1), std::slice::from_ref(&l1));
+        assert!(q_revoked(&mut c, &e1.me(), &l1, 111).unwrap());
+        assert!(listed(&mut c, &e1).is_empty());
+    }
+
+    #[test]
+    fn a_lease_minted_after_its_end_is_not_handed_out_and_is_revoked() {
+        let mut c = db();
+        pilot(&mut c);
+        let e1 = Exec::register(&mut c, "o1", "e1");
+        let id = lease_for_lee(&mut c, "acme/api", 100);
+        // The executor was offline: it claims after the lease's end.
+        let end = reins_org_request::q_lease(&mut c, "o1", &id).unwrap().unwrap().expires_at;
+        issue_lease(&mut c, &e1, 101, end + 5);
+        let l = reins_org_request::q_lease(&mut c, "o1", &id).unwrap().unwrap();
+        assert_eq!((l.state.as_str(), l.sealed.as_deref()), (reins_org_request::lease_state::EXPIRED, None));
+        // The token it minted is revoked upstream.
+        assert_eq!(q_revocations(&mut c, &e1.me()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_sweep_ends_leases_past_their_end() {
+        let mut c = db();
+        pilot(&mut c);
+        let e1 = Exec::register(&mut c, "o1", "e1");
+        let issued = lease_for_lee(&mut c, "acme/api", 100);
+        issue_lease(&mut c, &e1, 101, 102);
+        // Approved, never claimed (the executor is offline).
+        let pending = lease_for_lee(&mut c, "acme/web", 100);
+        let end = reins_org_request::q_lease(&mut c, "o1", &issued).unwrap().unwrap().expires_at;
+        super::super::sweeper::sweep_once(&mut c, end).unwrap();
+        for id in [&issued, &pending] {
+            let l = reins_org_request::q_lease(&mut c, "o1", id).unwrap().unwrap();
+            assert_eq!(
+                (l.state.as_str(), l.sealed.as_deref()),
+                (reins_org_request::lease_state::EXPIRED, None),
+                "{id}"
+            );
+            assert_eq!(l.revoked_at, Some(end), "{id}");
+        }
+        // The issued one's token is revoked upstream by the executor that minted it; the other was never minted.
+        let todo: Vec<Value> = q_revocations(&mut c, &e1.me()).unwrap();
+        assert_eq!(todo, [json!({"lease": issued, "reason": "expired"})]);
+        // A late claim of the other can't hand it out any more.
+        assert!(
+            q_claim_jobs(&mut c, "o1", "e1", end + 1)
+                .unwrap()
+                .iter()
+                .all(|j| j.lease.as_ref().is_none_or(|l| l.lease != pending))
+        );
     }
 
     #[test]

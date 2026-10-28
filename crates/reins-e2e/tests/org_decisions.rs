@@ -359,6 +359,7 @@ async fn an_org_decides_reviews_executes_audits_and_revokes() {
         org: org.clone(),
         issuer: pin(&keys.issuer),
         decision: pin(&keys.decision),
+        web_origin: reins_executor::config::web_origin(&server.base),
     };
     let decision_key = pins.decision.clone();
     let pem = reins_executor::connectors::testing::test_pem();

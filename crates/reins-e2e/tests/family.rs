@@ -186,6 +186,7 @@ async fn family_end_to_end() {
         org: org.clone(),
         issuer: pin(&keys.issuer),
         decision: pin(&keys.decision),
+        web_origin: reins_executor::config::web_origin(&server.base),
     };
     let state_dir = exec_dir.join("state");
     std::fs::create_dir_all(&state_dir).unwrap();

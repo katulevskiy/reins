@@ -859,6 +859,8 @@ class FakeCore : ReinsCoreInterface {
         orgReviews = emptyList()
         orgDecisions.clear()
         orgDecideError = null
+        orgPasskeys = emptyList()
+        passkeyConfirmations.clear()
         memberPolicies.clear()
         ssoBeginWorks.clear()
         enrollments.clear()
@@ -977,6 +979,20 @@ class FakeCore : ReinsCoreInterface {
         if (orgReviews.none { it.id == id }) throw CoreException.NotFound()
         orgDecisions += listOf(id, approve, at, signature)
         orgReviews = orgReviews.filterNot { it.id == id }
+    }
+
+    /** The member's web passkeys (`orgPasskeys`); a Personal account (no [org]) has none. */
+    @Volatile var orgPasskeys: List<dev.reins.core.OrgPasskeyView> = emptyList()
+
+    /** `orgConfirmPasskey` calls: (id, approve, at, signature). */
+    val passkeyConfirmations = CopyOnWriteArrayList<List<Any>>()
+
+    override suspend fun orgPasskeys(): List<dev.reins.core.OrgPasskeyView> = if (org == null) emptyList() else orgPasskeys
+
+    override suspend fun orgConfirmPasskey(id: String, approve: Boolean, at: Long, signature: String) {
+        if (orgPasskeys.none { it.credentialId == id }) throw CoreException.NotFound()
+        passkeyConfirmations += listOf(id, approve, at, signature)
+        orgPasskeys = if (approve) orgPasskeys.map { if (it.credentialId == id) it.copy(confirmed = true) else it } else orgPasskeys.filterNot { it.credentialId == id }
     }
 
     override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) {
@@ -1832,6 +1848,9 @@ class FakeCore : ReinsCoreInterface {
     val answeredQuestions = CopyOnWriteArrayList<Pair<String, ZoneChoice>>()
     val dismissedQuestions = CopyOnWriteArrayList<String>()
     val askedNextTime = CopyOnWriteArrayList<String>()
+    /** What a preview says (Decisions v2 O4), and the changes previewed. */
+    @Volatile var previewLine: String = "Last 30 days: 0 Auto → Ask, 4 Ask → Auto"
+    val previewCalls = CopyOnWriteArrayList<dev.reins.core.PolicyChange>()
     /** Every owner check the setup and the questions asked with, refused or not (their reasons). */
     val autoOwnerReasons = CopyOnWriteArrayList<String>()
 
@@ -1842,6 +1861,7 @@ class FakeCore : ReinsCoreInterface {
         matrix = defaultMatrix()
         autoQuestionList = emptyList()
         listOf(worldZoneCalls, matrixCellCalls, answeredQuestions, dismissedQuestions, askedNextTime, autoOwnerReasons).forEach { it.clear() }
+        previewCalls.clear()
         finishSetupCalls.set(0)
     }
 
@@ -1925,6 +1945,11 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun askMeNextTime(requestId: String) {
         askedNextTime += requestId
+    }
+
+    override suspend fun previewPolicyChange(change: dev.reins.core.PolicyChange): dev.reins.core.PreviewView {
+        previewCalls += change
+        return dev.reins.core.PreviewView(previewLine, 4u, 30u)
     }
 
     override suspend fun modelStatus(): ModelStatus = model

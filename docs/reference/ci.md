@@ -175,6 +175,14 @@ apart. On `main`, every suite runs unless `main` recorded a pass on its exact in
   that pull request.
 - The repository variable `CI_PR_TIER=full` turns the fast tier off for every pull request, but keeps reuse.
 
+### Flaky tests
+
+- **The Android minified Trust smoke test retries once** (`scripts/android-trust-smoke.sh`).
+  - `TrustReleaseTest.trustSurvivesAsyncRefreshesAndItsSheetsStillWork` sometimes fails on the CI emulator with the
+    app not in front: 9 pull request failures in 11 days, while the same code passed on `main`.
+  - A failed run warns and runs again after waking and unlocking the screen.
+  - A real regression fails both times, so the job still gates pull requests and `main`.
+
 ### iOS
 
 - Pull requests and manual runs of `ci.yml` run iOS as one macOS job:
@@ -295,6 +303,17 @@ own pull request.
   - re-runs the pull request's own CI if none is running and the last run didn't pass.
 
   It never cancels `main`'s CI or a release. If the label change or the re-run fails, it warns and carries on.
+
+### Closed pull requests
+
+When a pull request is closed or merged, `cancel-closed-pr-runs.yml` cancels its runs that are still queued or
+running: CI, iOS, the iOS core cache and the agents' iOS jobs on its branch (`scripts/ci/cancel-closed.py`).
+
+- A bundle merge closes many pull requests at once, and their old runs had kept taking the macOS runners a release
+  needed.
+- Only that job has `actions: write`.
+- It never touches a push run (`main`'s CI) or a release, nor a fork's branch of the same name.
+- Pull requests from forks are skipped: their read-only token can't cancel anything.
 
 ### Never blocking CI
 

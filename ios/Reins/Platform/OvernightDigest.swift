@@ -26,7 +26,10 @@ enum OvernightDigestNotice {
     }
 
     /// Whether `item` is parked for the morning now: no notification on its arrival, no reminder before then.
-    static func isParked(_ item: PendingItem, now: Int64) -> Bool { (item.parkedUntil ?? 0) > now }
+    /// Waits for a morning still to come (the "Parked" chip).
+    static func isParked(_ item: PendingItem, now: Int64) -> Bool { item.parked && (item.parkedUntil ?? 0) > now }
+    /// Never notified on arrival: parked by Overnight, whatever its morning (one without an end parks until now).
+    static func isQuiet(_ item: PendingItem) -> Bool { item.parked }
 
     /// The notification: a quiet status line that opens Activity (its "Waiting for you").
     static func content(title: String, body: String, settings: FeedbackSettings, profile: WorkProfiles.Active) -> UNMutableNotificationContent {

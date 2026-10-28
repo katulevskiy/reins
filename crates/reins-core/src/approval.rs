@@ -177,7 +177,8 @@ impl Engine {
             self.approve_claimed(request_id, choice, crate::authorization::AuthorizationSource::OwnerReview),
         )
         .await;
-        if result.is_ok() {
+        // Learned only from an approval that ran: one waiting for the Circle may still be denied.
+        if result.is_ok() && !self.circle_waiting(request_id) {
             self.ap_learn(request_id, Verdict::Approve);
         }
         result
@@ -210,7 +211,7 @@ impl Engine {
         let (_, mut parked) = self.parked(request_id)?;
         // A Circle request runs only once everyone it needs approved (04, 08 R3): the owner's tap fills the owner's
         // slot; until the others answer, nothing runs and the card waits.
-        if !self.circle_gate(request_id, &choice, source)? {
+        if !self.circle_gate(request_id, crate::circles::Tap::Request(&choice), source)? {
             return Ok(());
         }
         if self.store.invocation_started(request_id)? {
@@ -236,6 +237,11 @@ impl Engine {
             return self.approve_mcp(&session, request_id, &parked, &choice, now, source).await;
         }
         if matches!(parked.kind(), ApprovalKind::Fetch | ApprovalKind::Write) {
+            // An automatic approval runs the request it evaluated: a Telegram send to the chat id it was judged for.
+            if source == crate::authorization::AuthorizationSource::Automatic {
+                let chat = self.store.ap_suggestion(request_id)?.and_then(|s| s.matrix).and_then(|m| m.chat);
+                crate::autopilot::policy::pin_chat(&mut parked.request, chat.as_deref());
+            }
             let scope = self.blob_scope();
             return crate::blob::within(
                 scope,

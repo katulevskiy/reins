@@ -238,7 +238,6 @@ object AutopilotText {
             connections.map { Triple(it.connectionId, it.bypassUntil!!, it.bypassSince) },
             label,
             nowSeconds,
-            BYPASS_STILL_ASKS,
         )
     }
 
@@ -256,7 +255,6 @@ object AutopilotText {
             connections.map { Triple(it.connectionId, it.overnightUntil!!, it.overnightSince) },
             label,
             nowSeconds,
-            OVERNIGHT_STILL_ASKS,
         )
     }
 
@@ -266,7 +264,6 @@ object AutopilotText {
         connections: List<Triple<String, Long, Long?>>,
         label: (String) -> String,
         nowSeconds: Long,
-        stillAsks: String,
     ): BypassNotice? {
         if (global == null && connections.isEmpty()) return null
         val ends = listOfNotNull(global?.first) + connections.map { it.second }
@@ -278,7 +275,7 @@ object AutopilotText {
         }
         return BypassNotice(
             title = "${name(mode)} on · ${timeLeft(until, nowSeconds)}",
-            text = "For $who. $stillAsks",
+            text = "For $who.",
             until = until,
             global = global != null,
             connectionIds = connections.map { it.first },

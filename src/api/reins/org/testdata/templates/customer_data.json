@@ -1,0 +1,51 @@
+[
+  {
+    "id": "tpl.customer_data.1",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "data_read"
+      ],
+      "resource": "acme/customers-*",
+      "connection": null
+    },
+    "then": "permit",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Customer data: say why.",
+    "review": null,
+    "require_reason": true
+  },
+  {
+    "id": "tpl.customer_data.2",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "secret_out",
+        "message",
+        "publish",
+        "data_write"
+      ],
+      "resource": "acme/customers-*",
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "Customer data leaving: Security approves. Bypass never covers this.",
+    "review": {
+      "reviewers": {
+        "group": "sec"
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": true,
+      "class": "deferred",
+      "window_secs": 14400
+    }
+  }
+]

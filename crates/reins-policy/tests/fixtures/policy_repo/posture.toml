@@ -1,0 +1,4 @@
+screen_lock = true
+no_root = true
+attested = false
+max_age_days = 30

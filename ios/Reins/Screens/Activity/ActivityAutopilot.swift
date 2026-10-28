@@ -509,6 +509,8 @@ struct AskMeNextTimeDock: View {
     @State private var busy = false
     @State private var done = false
     @State private var error: String?
+    /// What it would have changed on this phone's last 30 days (02 §4).
+    @State private var preview: String?
 
     var body: some View {
         Group {
@@ -518,7 +520,13 @@ struct AskMeNextTimeDock: View {
                 Color.clear.frame(height: 0)
             }
         }
-        .task(id: entry.id) { requestId = await AskMeNextTime.requestId(entry, model: model) }
+        .task(id: entry.id) {
+            requestId = await AskMeNextTime.requestId(entry, model: model)
+            if let requestId {
+                let line = await PolicyPreview.line(model.core, .askMeNextTime(requestId: requestId))
+                preview = line.isEmpty ? nil : line
+            }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -546,6 +554,7 @@ struct AskMeNextTimeDock: View {
                 .buttonStyle(RowButtonStyle())
                 .disabled(busy)
                 .accessibilityIdentifier("askMeNextTime")
+                if let preview { PreviewLine(line: preview) }
             }
             if let error {
                 GlyphFact(glyph: .circleAlert, value: error, tint: Palette.danger, glyphTint: Palette.danger)

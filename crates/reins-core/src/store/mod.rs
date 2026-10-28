@@ -641,6 +641,41 @@ impl Store {
         self.meta_set(key, &data_encoding::BASE64.encode(&sealed))
     }
 
+    /// Reads, changes and writes the sealed value under `key` as one transaction: this process's connection is held
+    /// throughout, and `BEGIN IMMEDIATE` keeps another process (the iOS notification extension) from writing between
+    /// the read and the write. `change` gets the opened value (`None`: none yet) and returns the new one (`None`: keep
+    /// the row as it is) with its own result; an error rolls everything back.
+    pub(crate) fn meta_update_sealed<T>(
+        &self,
+        key: &str,
+        change: impl FnOnce(Option<Vec<u8>>) -> Result<(Option<Vec<u8>>, T), CoreError>,
+    ) -> Result<T, CoreError> {
+        let row = format!("app.{key}");
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let text: Option<String> =
+            tx.query_row("SELECT value FROM meta WHERE key = ?1", params![row], |r| r.get(0)).optional()?;
+        let current = match text {
+            Some(t) => {
+                let blob = data_encoding::BASE64
+                    .decode(t.as_bytes())
+                    .map_err(|_| CoreError::storage("corrupt sealed value"))?;
+                Some(self.unseal(key, &blob)?)
+            }
+            None => None,
+        };
+        let (next, out) = change(current)?;
+        if let Some(value) = next {
+            let sealed = data_encoding::BASE64.encode(&self.seal(key, &value)?);
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
+                params![row, sealed],
+            )?;
+        }
+        tx.commit()?;
+        Ok(out)
+    }
+
     pub(crate) fn bound_owner(&self) -> Option<Owner> {
         self.owner.clone().or_else(|| self.control_owner.lock().unwrap_or_else(PoisonError::into_inner).clone())
     }

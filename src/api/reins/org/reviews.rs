@@ -7,17 +7,19 @@
 //! (`ReviewDecision::Propose`) before anyone can approve them. Two device keys are needed, so one person with two
 //! accounts can't approve with one phone.
 
-use reins_policy::org::{Approval, Met, Obligation, OrgPolicy, PostureRule, Reviewers, obligations_met};
+use reins_policy::org::{
+    Approval, Met, Obligation, OrgPolicy, PostureRule, ResolvedSets, Reviewers, obligations_met_resolved,
+};
 use reins_proto::{
     managed::{
-        RequestBody, ReviewAnswer, ReviewDecision, ReviewItem, ReviewSignature, ReviewSubject, change_digest,
-        review_message,
+        RequestBody, ReviewAnswer, ReviewDecision, ReviewItem, ReviewSignature, ReviewSubject, WebAuthnError,
+        WebAuthnProof, change_digest, channel_allowed, review_message, webauthn_challenge, webauthn_signed_bytes,
     },
     org::{AdminAction, Role},
 };
 use serde_json::{Value, json};
 
-use super::{OrgError, admin, audit, decisions, kms, member_of, posture};
+use super::{OrgError, admin, audit, decisions, kms, member_of, posture, routing};
 use crate::db::{
     DbConnInner, DbPool,
     models::{
@@ -39,6 +41,147 @@ pub fn device_sig_ok(spki_b64: &str, sig_b64: &str, msg: &[u8]) -> bool {
         return false;
     };
     ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_ASN1, point).verify(msg, &sig).is_ok()
+}
+
+/// How a signed web approval's signature is stored: `webauthn:` and its signature with the assertion's data.
+const WEB_SIG: &str = "webauthn:";
+
+/// A stored signature: a device's, or a web approval's with its assertion.
+fn stored_sig(text: &str) -> (String, Option<WebAuthnProof>) {
+    let Some(json) = text.strip_prefix(WEB_SIG) else {
+        return (text.to_owned(), None);
+    };
+    let v: Value = serde_json::from_str(json).unwrap_or_default();
+    let proof = WebAuthnProof {
+        authenticator_data: v["authenticator_data"].as_str().unwrap_or_default().to_owned(),
+        client_data_json: v["client_data_json"].as_str().unwrap_or_default().to_owned(),
+    };
+    (v["sig"].as_str().unwrap_or_default().to_owned(), Some(proof))
+}
+
+/// A signed web approval's answer (O3): a passkey's WebAuthn assertion over [`webauthn_challenge`] of the review
+/// message.
+#[derive(Clone, Debug)]
+pub struct WebAnswer {
+    pub decision: ReviewDecision,
+    pub at: i64,
+    /// DER ECDSA P-256, base64.
+    pub signature: String,
+    pub proof: WebAuthnProof,
+}
+
+/// The server's web origin and relying party id, where web approvals and passkeys are asserted.
+#[must_use]
+pub fn web_origin() -> (String, String) {
+    let rp =
+        url::Url::parse(&crate::CONFIG.domain()).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
+    (crate::CONFIG.domain_origin(), rp)
+}
+
+/// Answers request `id` as `user` with a signed web approval from their confirmed passkey `credential` (05 §6: L0–L2
+/// only, SSO plus a device-bound passkey). The decision service checks what an executor will check again.
+pub fn answer_web(
+    c: &mut DbConnInner,
+    org: &str,
+    user: &str,
+    credential: &str,
+    id: &str,
+    ans: &WebAnswer,
+    now: i64,
+) -> Result<Answered, OrgError> {
+    use diesel::Connection;
+    if (now - ans.at).abs() > SKEW_SECS {
+        return Err(OrgError::Invalid("This page is too old. Open the link again."));
+    }
+    if ans.decision == ReviewDecision::Propose {
+        return Err(OrgError::Invalid("Approve or deny."));
+    }
+    c.transaction(|c| {
+        if member_of(c, org, user)?.is_none() {
+            return Err(OrgError::NotFound);
+        }
+        let key = crate::db::models::reins_org_routing::q_usable_passkeys(c, org, user)?
+            .into_iter()
+            .find(|p| p.credential_id == credential)
+            .ok_or(OrgError::Invalid("Confirm this passkey on your phone first."))?;
+        let row = reins_org_request::q_request(c, org, id)?.ok_or(OrgError::NotFound)?;
+        if row.state != request_state::REVIEWING || row.expires_at <= now {
+            return Err(OrgError::Invalid("This was already decided."));
+        }
+        let trace: Value = serde_json::from_str(&row.trace).unwrap_or_default();
+        if !channel_allowed(trace["level"].as_str().unwrap_or_default()) {
+            return Err(OrgError::Invalid("Open the Reins app to decide this."));
+        }
+        let msg = review_message(org, ReviewSubject::Request, id, &row.digest, ans.decision, &row.snapshot, ans.at);
+        let (origin, rp_id) = web_origin();
+        let signed = webauthn_signed_bytes(&ans.proof, &webauthn_challenge(&msg), &origin, &rp_id).map_err(|e| {
+            OrgError::Invalid(match e {
+                WebAuthnError::Synced => "Use a security key or a device-bound passkey.",
+                WebAuthnError::NotVerified => "Unlock your passkey to approve.",
+                _ => "The passkey didn't sign this review.",
+            })
+        })?;
+        if !device_sig_ok(&key.passkey, &ans.signature, &signed) {
+            return Err(OrgError::Invalid("The passkey didn't sign this review."));
+        }
+        let (groups, roles) = standing(c, org, user)?.ok_or(OrgError::NotFound)?;
+        let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
+        let resolved = routing::stored(row.resolved.as_deref());
+        if !obligations
+            .iter()
+            .any(|o| o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id)))
+        {
+            return Err(OrgError::Forbidden);
+        }
+        let stored = format!(
+            "{WEB_SIG}{}",
+            json!({"sig": ans.signature, "authenticator_data": ans.proof.authenticator_data,
+                   "client_data_json": ans.proof.client_data_json})
+        );
+        let fresh = reins_org_request::q_insert_approval(
+            c,
+            &ReinsOrgApproval {
+                subject_uuid: id.to_owned(),
+                user_uuid: user.to_owned(),
+                decision: ans.decision.as_str().to_owned(),
+                org_uuid: org.to_owned(),
+                device_uuid: credential.to_owned(),
+                at: ans.at,
+                sig: stored,
+                obligation: None,
+            },
+        )?;
+        if !fresh {
+            return Err(OrgError::Invalid("You already answered this."));
+        }
+        let kind = if ans.decision == ReviewDecision::Approve {
+            audit::kinds::REVIEW_APPROVED
+        } else {
+            audit::kinds::REVIEW_DENIED
+        };
+        audit::record(
+            c,
+            org,
+            kind,
+            Some(user),
+            Some(id),
+            &json!({"request": {"id": id, "digest": row.digest}, "policy": {"snapshot": row.snapshot},
+                    "channel": "web",
+                    "decided_by": [{"member": user, "passkey": credential, "sig": ans.signature, "at": ans.at}]}),
+            now,
+        )?;
+        match weigh(c, org, &row)? {
+            (Met::Yes, signatures) => {
+                decisions::finalize(c, org, &row, signatures, now)?;
+                Ok(Answered::Approved)
+            }
+            (Met::Denied, _) => {
+                decisions::deny(c, org, &row, user, now)?;
+                Ok(Answered::Denied)
+            }
+            (Met::Waiting(_), _) => Ok(Answered::Recorded),
+        }
+    })
 }
 
 /// What answering did.
@@ -69,6 +212,16 @@ fn standing(c: &mut DbConnInner, org: &str, user: &str) -> Result<Option<Standin
     Ok(Some((reins_org::q_groups_of(c, &membership)?, reins_org::q_roles_of(c, org, &membership)?)))
 }
 
+/// A user's email (empty when none).
+pub fn email_of_user(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
+    email_of(c, user)
+}
+
+/// An agent connection's label (empty when none).
+pub fn connection_label_of(c: &mut DbConnInner, connection: &str) -> Result<String, OrgError> {
+    connection_label(c, connection)
+}
+
 fn email_of(c: &mut DbConnInner, user: &str) -> Result<String, OrgError> {
     use crate::db::schema::users;
     use diesel::prelude::*;
@@ -91,13 +244,6 @@ fn connection_label(c: &mut DbConnInner, connection: &str) -> Result<String, Org
         .unwrap_or_default())
 }
 
-fn group_name(c: &mut DbConnInner, org: &str, group: &str) -> Result<String, OrgError> {
-    Ok(reins_org::q_groups(c, org)?
-        .into_iter()
-        .find(|(id, _, _)| id == group)
-        .map_or_else(|| "a group".to_owned(), |g| g.1))
-}
-
 /// Who an obligation asks, in short words ("Security", "You").
 fn requires(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result<String, OrgError> {
     Ok(match &o.spec.reviewers {
@@ -108,14 +254,37 @@ fn requires(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result
                 "The requester".to_owned()
             }
         }
-        Reviewers::Group(g) => group_name(c, org, g)?,
-        Reviewers::Role(r) => r.label().to_owned(),
-        Reviewers::Members(_) => "Named reviewers".to_owned(),
+        other => routing::label(c, org, other)?,
+    })
+}
+
+/// One line for a waiting obligation ("2 of Finance", "On-call: payments").
+fn need_line(c: &mut DbConnInner, org: &str, o: &Obligation, own: bool) -> Result<String, OrgError> {
+    let who = requires(c, org, o, own)?;
+    Ok(if o.spec.quorum > 1 {
+        format!("{} of {who}", o.spec.quorum)
+    } else {
+        who
     })
 }
 
 /// Every approval of a request as policy weighs it: from members still active, with their current groups and roles.
 fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, Vec<ReviewSignature>), OrgError> {
+    let (met, signatures, _) = weigh_counted(c, org, row)?;
+    Ok((met, signatures))
+}
+
+/// Whether a request's obligations are met by the answers so far.
+pub fn met(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<Met, OrgError> {
+    Ok(weigh(c, org, row)?.0)
+}
+
+/// Whether the obligations are met, the signatures so far, and how many eligible approvals each obligation has.
+type Weighed = (Met, Vec<ReviewSignature>, std::collections::BTreeMap<String, usize>);
+
+/// [`weigh`], with how many eligible approvals each obligation has.
+fn weigh_counted(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<Weighed, OrgError> {
+    let resolved: ResolvedSets = routing::stored(row.resolved.as_deref());
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
     let mut people: Vec<(String, Vec<String>, Vec<Role>, bool)> = Vec::new();
     let mut signatures = Vec::new();
@@ -125,12 +294,14 @@ fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, 
         };
         let approve = a.decision == ReviewDecision::Approve.as_str();
         if approve {
+            let (sig, webauthn) = stored_sig(&a.sig);
             signatures.push(ReviewSignature {
                 member: a.user_uuid.clone(),
                 device: a.device_uuid.clone(),
                 decision: ReviewDecision::Approve,
                 at: a.at,
-                sig: a.sig.clone(),
+                sig,
+                webauthn,
             });
         }
         people.push((a.user_uuid, groups, roles, approve));
@@ -144,7 +315,20 @@ fn weigh(c: &mut DbConnInner, org: &str, row: &ReinsOrgRequest) -> Result<(Met, 
             approve: *approve,
         })
         .collect();
-    Ok((obligations_met(&obligations, &row.user_uuid, &approvals), signatures))
+    let counts = obligations
+        .iter()
+        .map(|o| {
+            let n = approvals
+                .iter()
+                .filter(|a| {
+                    a.approve
+                        && o.spec.eligible_resolved(a.member, a.groups, a.roles, &row.user_uuid, resolved.get(&o.id))
+                })
+                .count();
+            (o.id.clone(), n)
+        })
+        .collect();
+    Ok((obligations_met_resolved(&obligations, &row.user_uuid, &approvals, &resolved), signatures, counts))
 }
 
 /// The open reviews `user` can answer in `org` (and their own to confirm).
@@ -161,12 +345,16 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
             continue;
         }
         let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
-        let Met::Waiting(waiting) = weigh(c, org, &row)?.0 else {
+        let resolved = routing::stored(row.resolved.as_deref());
+        let (Met::Waiting(waiting), _, counts) = weigh_counted(c, org, &row)? else {
             continue;
         };
         let mine: Vec<&Obligation> = obligations
             .iter()
-            .filter(|o| waiting.contains(&o.id) && o.spec.eligible(user, &groups, &roles, &row.user_uuid))
+            .filter(|o| {
+                waiting.contains(&o.id)
+                    && o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id))
+            })
             .collect();
         let Some(first) = mine.first() else {
             continue;
@@ -176,6 +364,17 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
         let plain = kms::open_data(c, org, &body.key_id, &format!("{}/request", row.uuid), &body.sealed)?;
         let call: Value = serde_json::from_slice(&plain).map_err(|e| OrgError::Internal(e.to_string()))?;
         let trace: Value = serde_json::from_str(&row.trace).unwrap_or_default();
+        let mut needs = Vec::new();
+        for o in obligations.iter().filter(|o| waiting.contains(&o.id)) {
+            needs.push(need_line(c, org, o, own)?);
+        }
+        let progress = if first.spec.quorum > 1 {
+            format!("{} of {}", counts.get(&first.id).copied().unwrap_or(0), first.spec.quorum)
+        } else {
+            String::new()
+        };
+        let step = escalated_to(c, org, &row.uuid, &waiting)?;
+        let urgent = obligations.iter().any(|o| waiting.contains(&o.id) && o.spec.urgent);
         out.push(ReviewItem {
             id: row.uuid.clone(),
             subject: ReviewSubject::Request,
@@ -204,6 +403,11 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
             zone: trace["zone"].as_str().unwrap_or_default().to_owned(),
             expires_at: row.expires_at,
             own,
+            needs,
+            progress,
+            step,
+            urgent,
+            reason: call["reason"].as_str().map(str::to_owned),
         });
     }
     for change in reins_org::q_pending_changes(c, org)? {
@@ -215,7 +419,12 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
         };
         let answers = reins_org_request::q_approvals(c, org, &change.uuid)?;
         let proposed = answers.iter().any(|a| a.decision == ReviewDecision::Propose.as_str());
-        let own = change.proposed_by == user;
+        // A change the policy repo proposed is every holder's to confirm (the first to confirm becomes its proposer).
+        let system = change.proposed_by == admin::SYSTEM_PROPOSER && {
+            let cap = admin::needed(c, org, &action)?;
+            super::can(c, org, user, cap)?
+        };
+        let own = change.proposed_by == user || system;
         let show = if own {
             action.needs_device_signatures() && !proposed
         } else {
@@ -232,6 +441,17 @@ pub fn items_for(c: &mut DbConnInner, org: &str, user: &str, now: i64) -> Result
     Ok(out)
 }
 
+/// Where an escalation took a request's waiting obligations ("Escalated to Security admin"), if anywhere.
+fn escalated_to(c: &mut DbConnInner, org: &str, request: &str, waiting: &[String]) -> Result<Option<String>, OrgError> {
+    let steps = crate::db::models::reins_org_routing::q_steps(c, request)?;
+    let last =
+        steps.iter().filter(|s| s.step > 0 && waiting.contains(&s.obligation)).max_by_key(|s| (s.started_at, s.step));
+    match last.and_then(|s| serde_json::from_str::<Reviewers>(&s.reviewers).ok()) {
+        Some(r) => Ok(Some(format!("Escalated to {}", routing::label(c, org, &r)?))),
+        None => Ok(None),
+    }
+}
+
 fn change_item(
     c: &mut DbConnInner,
     org: &str,
@@ -245,7 +465,11 @@ fn change_item(
         id: change.uuid.clone(),
         subject: ReviewSubject::Change,
         org_name: org_name.to_owned(),
-        requester: email_of(c, &change.proposed_by)?,
+        requester: if change.proposed_by == admin::SYSTEM_PROPOSER {
+            "Policy repo".to_owned()
+        } else {
+            email_of(c, &change.proposed_by)?
+        },
         connection: String::new(),
         title,
         request: None,
@@ -262,6 +486,11 @@ fn change_item(
         zone: String::new(),
         expires_at: change.expires_at,
         own,
+        needs: Vec::new(),
+        progress: String::new(),
+        step: None,
+        urgent: false,
+        reason: None,
     })
 }
 
@@ -371,7 +600,9 @@ fn answer_request(
     }
     let (groups, roles) = standing(c, org, user)?.ok_or(OrgError::NotFound)?;
     let obligations: Vec<Obligation> = serde_json::from_str(&row.obligations).unwrap_or_default();
-    if !obligations.iter().any(|o| o.spec.eligible(user, &groups, &roles, &row.user_uuid)) {
+    let resolved = routing::stored(row.resolved.as_deref());
+    if !obligations.iter().any(|o| o.spec.eligible_resolved(user, &groups, &roles, &row.user_uuid, resolved.get(&o.id)))
+    {
         return Err(OrgError::Forbidden);
     }
     record_answer(c, org, id, user, dev, ans)?;
@@ -426,9 +657,12 @@ fn answer_change(
     let answers = reins_org_request::q_approvals(c, org, id)?;
     match ans.decision {
         ReviewDecision::Propose => {
-            if change.proposed_by != user || !action.needs_device_signatures() {
+            if change.proposed_by == admin::SYSTEM_PROPOSER && action.needs_device_signatures() {
+                admin::adopt(c, org, id, user, now)?;
+            } else if change.proposed_by != user || !action.needs_device_signatures() {
                 return Err(OrgError::Forbidden);
             }
+            let change = reins_org::q_change(c, org, id)?.ok_or(OrgError::NotFound)?;
             record_answer(c, org, id, user, dev, ans)?;
             audit::record(
                 c,
@@ -492,6 +726,10 @@ pub fn device_approved(c: &mut DbConnInner, org: &str, id: &str, user: &str) -> 
 
 /// Wakes the approval phones of `users`: a review waits for them (they must act, so this notifies).
 pub fn notify(pool: &DbPool, users: &[String], subject: &str) {
+    // O3: requests also reach the org's Slack and Teams, after the push (L3 without a link).
+    if subject.starts_with("or_") && !users.is_empty() {
+        super::channels::spawn_fan_out(pool, subject, users);
+    }
     for user in users {
         crate::api::reins::push::spawn_push(
             pool.clone(),
@@ -601,7 +839,13 @@ pub(crate) mod tests {
         reins_org_request::q_request(c, "o1", id).unwrap().unwrap()
     }
 
-    fn approve_as(c: &mut DbConnInner, phone: &Phone, user: &str, id: &str, now: i64) -> Result<Answered, OrgError> {
+    pub fn approve_as(
+        c: &mut DbConnInner,
+        phone: &Phone,
+        user: &str,
+        id: &str,
+        now: i64,
+    ) -> Result<Answered, OrgError> {
         let r = row(c, id);
         let a = phone.answer("o1", ReviewSubject::Request, id, &r.digest, ReviewDecision::Approve, &r.snapshot, now);
         answer(c, "o1", user, &phone.device, id, &a, now)
@@ -722,6 +966,17 @@ pub(crate) mod tests {
         let a = kim.answer("o1", ReviewSubject::Request, &s.id, &r.digest, ReviewDecision::Deny, &r.snapshot, 101);
         assert!(matches!(answer(&mut c, "o1", "kim", "kim-phone", &s.id, &a, 101).unwrap(), Answered::Denied));
         assert_eq!(row(&mut c, &s.id).state, request_state::DENIED);
+    }
+
+    pub fn change_answer_as(
+        c: &mut DbConnInner,
+        phone: &Phone,
+        user: &str,
+        id: &str,
+        d: ReviewDecision,
+        now: i64,
+    ) -> Result<Answered, OrgError> {
+        change_answer(c, phone, user, id, d, now)
     }
 
     fn change_answer(

@@ -655,6 +655,7 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
             arguments,
             modern,
             defer,
+            ..
         } => {
             let run = ToolRun {
                 id,
@@ -776,6 +777,7 @@ mod tests {
             arguments: json!({}),
             modern: false,
             defer: false,
+            reason: None,
         };
         let r = rate_limited_reply(call, wait);
         assert_eq!(r.status, Status::Ok);

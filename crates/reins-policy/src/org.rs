@@ -10,14 +10,14 @@
 //!
 //! Pure and deterministic: the same request, policy and member policy always give the same [`ManagedVerdict`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use reins_proto::org::Role;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::context::{Base, Facts, GITHUB, Resolved, Zone, parse_repo, repo_zone, request_zone};
+use crate::context::{Base, FactKind, Facts, GITHUB, Resolved, Zone, parse_repo, repo_zone, request_zone};
 use crate::effects::{Analysis, Certainty, Effect, Level, analyze_tool};
 use crate::matrix::{self, Cell, Evaluation, Input, Issuer, Matrix, Outcome, Rule, Snapshot, Then, Why};
 
@@ -32,7 +32,19 @@ pub const DEFERRED_MAX_SECS: u64 = 7 * 24 * 3600;
 /// The tool a credential lease is evaluated as (`reins_proto::managed::LEASE_TOOL`).
 pub const LEASE_TOOL: &str = "git_lease";
 
+/// The longest escalation chain an obligation may name (05 §6: backup group, manager, then Security admin).
+pub const MAX_ESCALATION: usize = 3;
+/// The most reviewer sets one [`Reviewers::AnyOf`] may join.
+pub const MAX_ANY_OF: usize = 8;
+/// The longest reason a `require_reason` permit accepts.
+pub const MAX_REASON: usize = 500;
+
 /// Who satisfies a review.
+///
+/// `Requester`, `Group`, `Role` and `Members` are decided from the member's standing alone (the issuer-signed roster).
+/// The others are **relationships** (05 §6) the decision service resolves at submit from verified sources only (the
+/// directory, the org's read-only GitHub App, the on-call provider, the org's verified facts) and countersigns in the
+/// decision ([`reins_proto::managed::DecisionRecord::resolved`]).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reviewers {
@@ -44,6 +56,204 @@ pub enum Reviewers {
     Role(Role),
     /// One of these members (user ids).
     Members(Vec<String>),
+    /// The requester's manager, from the directory (or a Security admin on the Team tier).
+    Manager,
+    /// The repository's code owners, from its default branch's `CODEOWNERS`.
+    CodeOwners,
+    /// The owner named by the resource's verified `tag` fact.
+    ResourceOwner {
+        tag: String,
+    },
+    /// Whoever is on call now for the org's schedule `alias` (PagerDuty, Opsgenie, Incident.io).
+    OnCall {
+        alias: String,
+    },
+    /// The backup group of a group (the org's routing settings).
+    BackupOf(String),
+    /// Anyone any of these admits (flat: no `AnyOf` inside).
+    AnyOf(Vec<Reviewers>),
+}
+
+impl Reviewers {
+    /// Whether the member's own standing admits them (no resolution needed).
+    fn admits_static(&self, member: &str, groups: &[String], roles: &[Role], requester: &str) -> bool {
+        match self {
+            Self::Requester => member == requester,
+            Self::Group(g) => groups.iter().any(|x| x == g),
+            Self::Role(r) => roles.contains(r),
+            Self::Members(list) => list.iter().any(|x| x == member),
+            Self::AnyOf(list) => list.iter().any(|r| r.admits_static(member, groups, roles, requester)),
+            Self::Manager
+            | Self::CodeOwners
+            | Self::ResourceOwner {
+                ..
+            }
+            | Self::OnCall {
+                ..
+            }
+            | Self::BackupOf(_) => false,
+        }
+    }
+
+    /// Whether it names the requester (directly or in an `AnyOf`).
+    fn names_requester(&self) -> bool {
+        match self {
+            Self::Requester => true,
+            Self::AnyOf(list) => list.iter().any(Self::names_requester),
+            _ => false,
+        }
+    }
+
+    /// Whether resolving it takes the decision service (a relationship, on-call, a backup).
+    #[must_use]
+    pub fn is_dynamic(&self) -> bool {
+        match self {
+            Self::Requester | Self::Group(_) | Self::Role(_) | Self::Members(_) => false,
+            Self::AnyOf(list) => list.iter().any(Self::is_dynamic),
+            _ => true,
+        }
+    }
+
+    /// The first group it names (the default chain's backup is that group's).
+    #[must_use]
+    pub fn first_group(&self) -> Option<&str> {
+        match self {
+            Self::Group(g) => Some(g),
+            Self::AnyOf(list) => list.iter().find_map(Self::first_group),
+            _ => None,
+        }
+    }
+
+    /// The reviewer sets it joins (itself, or an `AnyOf`'s members).
+    #[must_use]
+    pub fn parts(&self) -> Vec<&Self> {
+        match self {
+            Self::AnyOf(list) => list.iter().collect(),
+            other => vec![other],
+        }
+    }
+
+    fn validate(&self, exclude_requester: bool, in_chain: bool) -> Result<(), String> {
+        match self {
+            Self::Members(m) if m.is_empty() => Err("a review by members names at least one".to_owned()),
+            Self::Requester if in_chain => Err("an escalation never goes to the requester".to_owned()),
+            Self::ResourceOwner {
+                tag,
+            } if !id_ok(tag) => Err(format!("resource owner tag {tag:?} must be 1-64 of a-z 0-9 . _ @ -")),
+            Self::OnCall {
+                alias,
+            } if !id_ok(alias) => Err(format!("on-call alias {alias:?} must be 1-64 of a-z 0-9 . _ @ -")),
+            Self::AnyOf(list) => {
+                if list.is_empty() || list.len() > MAX_ANY_OF {
+                    return Err(format!("any of joins 1 to {MAX_ANY_OF} reviewer sets"));
+                }
+                for r in list {
+                    if matches!(r, Self::AnyOf(_)) {
+                        return Err("any of can't hold another any of".to_owned());
+                    }
+                    if matches!(r, Self::Requester) && (exclude_requester || in_chain) {
+                        return Err("any of names the requester only when exclude_requester is off".to_owned());
+                    }
+                    r.validate(exclude_requester, in_chain)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the decision service may have resolved `member` for this reviewer set, judged from the issuer-signed
+    /// roster: groups, roles, members, the manager and group backups are checked; code owners, on-call and resource
+    /// owners are dynamic and trusted from the countersigned resolution (`docs/security-model.md`).
+    fn may_resolve(&self, member: &str, groups: &[String], roles: &[Role], facts: &RosterFacts<'_>) -> bool {
+        match self {
+            // The requester is never someone a resolution adds.
+            Self::Requester => false,
+            Self::Group(g) => groups.iter().any(|x| x == g),
+            Self::Role(r) => roles.contains(r),
+            Self::Members(list) => list.iter().any(|x| x == member),
+            Self::Manager => facts.requester_manager == Some(member),
+            Self::BackupOf(g) => facts.backups.get(g).is_some_and(|b| groups.iter().any(|x| x == b)),
+            Self::CodeOwners
+            | Self::ResourceOwner {
+                ..
+            }
+            | Self::OnCall {
+                ..
+            } => true,
+            Self::AnyOf(list) => list.iter().any(|r| r.may_resolve(member, groups, roles, facts)),
+        }
+    }
+}
+
+/// What an executor reads from the issuer-signed roster to check a countersigned resolution.
+#[derive(Clone, Copy, Debug)]
+pub struct RosterFacts<'a> {
+    /// The requester's manager (user id).
+    pub requester_manager: Option<&'a str>,
+    /// Group id → its backup group id.
+    pub backups: &'a BTreeMap<String, String>,
+}
+
+/// Obligation id → the members its relationships and escalations resolved to.
+pub type ResolvedSets = BTreeMap<String, BTreeSet<String>>;
+
+/// A weekly window in a time zone (a change window, business hours).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Hours {
+    /// The days it opens on.
+    pub days: Vec<chrono::Weekday>,
+    /// `HH:MM`, inclusive.
+    pub start: String,
+    /// `HH:MM`, exclusive; at or before `start` it closes the next day.
+    pub end: String,
+    /// IANA time zone (`Europe/Berlin`).
+    pub tz: String,
+}
+
+fn hhmm(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    if h.len() != 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+impl Hours {
+    fn validate(&self) -> Result<(), String> {
+        if self.days.is_empty() {
+            return Err("a window names at least one day".to_owned());
+        }
+        if hhmm(&self.start).is_none() || hhmm(&self.end).is_none() {
+            return Err("window times are HH:MM".to_owned());
+        }
+        if self.tz.parse::<chrono_tz::Tz>().is_err() {
+            return Err(format!("{:?} isn't a time zone", self.tz));
+        }
+        Ok(())
+    }
+
+    /// Whether `at` (Unix seconds) is inside the window. A window that can't be read is never open.
+    #[must_use]
+    pub fn contains(&self, at: i64) -> bool {
+        use chrono::{Datelike, TimeZone, Timelike};
+        let (Some(start), Some(end), Ok(tz)) = (hhmm(&self.start), hhmm(&self.end), self.tz.parse::<chrono_tz::Tz>())
+        else {
+            return false;
+        };
+        let Some(local) = tz.timestamp_opt(at, 0).single() else {
+            return false;
+        };
+        let minute = local.hour() * 60 + local.minute();
+        let today = self.days.contains(&local.weekday());
+        if start < end {
+            today && (start..end).contains(&minute)
+        } else {
+            // Overnight: from `start` on an opening day to `end` the day after.
+            (today && minute >= start) || (self.days.contains(&local.weekday().pred()) && minute < end)
+        }
+    }
 }
 
 /// Instant or Deferred (03 §1).
@@ -62,6 +272,11 @@ const fn yes() -> bool {
     true
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if takes a reference")]
+const fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A review obligation (02 §2's `review { reviewers, quorum, distinct_persons, exclude_requester, class, window }`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ReviewSpec {
@@ -78,6 +293,16 @@ pub struct ReviewSpec {
     /// Seconds; 0 is the class default.
     #[serde(default)]
     pub window_secs: u64,
+    /// Who it escalates to, step by step, when a window passes unanswered (at most [`MAX_ESCALATION`]). Empty is the
+    /// org default ([`ReviewSpec::chain`]). Escalation adds reviewers; it never removes any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalate: Vec<Reviewers>,
+    /// Breaks quiet hours (03 §5.2).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub urgent: bool,
+    /// A time-boxed approval: valid this long after the decision (at most the executor's 24 h).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_valid_secs: Option<u64>,
 }
 
 impl ReviewSpec {
@@ -91,7 +316,45 @@ impl ReviewSpec {
             exclude_requester: false,
             class: ReviewClass::Instant,
             window_secs: INSTANT_DEFAULT_SECS,
+            escalate: Vec::new(),
+            urgent: false,
+            approval_valid_secs: None,
         }
+    }
+
+    /// A review by `reviewers`: one person, not the requester, Deferred with the class window.
+    #[must_use]
+    pub fn by(reviewers: Reviewers) -> Self {
+        Self {
+            reviewers,
+            quorum: 1,
+            distinct_persons: true,
+            exclude_requester: true,
+            class: ReviewClass::Deferred,
+            window_secs: 0,
+            escalate: Vec::new(),
+            urgent: false,
+            approval_valid_secs: None,
+        }
+    }
+
+    /// The escalation steps after the first: `escalate`, or the org default (05 §6: the first group's backup, the
+    /// requester's manager, then Security admins). The requester's own review doesn't escalate.
+    #[must_use]
+    pub fn chain(&self) -> Vec<Reviewers> {
+        if !self.escalate.is_empty() {
+            return self.escalate.clone();
+        }
+        if self.reviewers == Reviewers::Requester {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if let Some(g) = self.reviewers.first_group() {
+            out.push(Reviewers::BackupOf(g.to_owned()));
+        }
+        out.push(Reviewers::Manager);
+        out.push(Reviewers::Role(Role::SecurityAdmin));
+        out
     }
 
     /// The window in seconds, the class default when unset.
@@ -115,37 +378,230 @@ impl ReviewSpec {
         if self.window_secs > max {
             return Err(format!("a {:?} review's window is at most {max} seconds", self.class));
         }
-        if let Reviewers::Members(m) = &self.reviewers
-            && m.is_empty()
-        {
-            return Err("a review by members names at least one".to_owned());
+        self.reviewers.validate(self.exclude_requester, false)?;
+        if self.escalate.len() > MAX_ESCALATION {
+            return Err(format!("an escalation has at most {MAX_ESCALATION} steps"));
+        }
+        for step in &self.escalate {
+            step.validate(true, true)?;
+        }
+        if self.approval_valid_secs.is_some_and(|s| s == 0 || s > 24 * 3600) {
+            return Err("a time-boxed approval lasts 1 second to 24 hours".to_owned());
         }
         Ok(())
     }
 
-    /// Whether `member` (with these groups and roles) may satisfy this review for `requester`.
+    /// Whether the requester may answer it themselves: only a review that names them, and only their own review when
+    /// `exclude_requester` is on (05 §6: no self-approval).
+    fn requester_may(&self) -> bool {
+        self.reviewers.names_requester() && (!self.exclude_requester || self.reviewers == Reviewers::Requester)
+    }
+
+    /// Whether `member` (with these groups and roles) may satisfy this review for `requester`, from their standing
+    /// alone (relationships need [`ReviewSpec::eligible_resolved`]).
     #[must_use]
     pub fn eligible(&self, member: &str, groups: &[String], roles: &[Role], requester: &str) -> bool {
-        if self.exclude_requester && member == requester && self.reviewers != Reviewers::Requester {
-            return false;
+        self.eligible_resolved(member, groups, roles, requester, None)
+    }
+
+    /// Whether `member` may satisfy this review: their standing admits them, or the obligation's resolution
+    /// (`resolved`: its relationships and escalations) names them. The requester counts only where
+    /// [`ReviewSpec::requester_may`], never through a resolution.
+    #[must_use]
+    pub fn eligible_resolved(
+        &self,
+        member: &str,
+        groups: &[String],
+        roles: &[Role],
+        requester: &str,
+        resolved: Option<&BTreeSet<String>>,
+    ) -> bool {
+        if member == requester {
+            return self.requester_may();
         }
-        match &self.reviewers {
-            Reviewers::Requester => member == requester,
-            Reviewers::Group(g) => groups.iter().any(|x| x == g),
-            Reviewers::Role(r) => roles.contains(r),
-            Reviewers::Members(list) => list.iter().any(|x| x == member),
-        }
+        self.reviewers.admits_static(member, groups, roles, requester) || resolved.is_some_and(|s| s.contains(member))
+    }
+
+    /// Whether a countersigned resolution may name `member` (not the requester) for this obligation: its reviewers or
+    /// a step of its escalation chain admit them, judged from the issuer-signed roster ([`RosterFacts`]).
+    #[must_use]
+    pub fn may_resolve(
+        &self,
+        member: &str,
+        groups: &[String],
+        roles: &[Role],
+        requester: &str,
+        facts: &RosterFacts<'_>,
+    ) -> bool {
+        member != requester
+            && (self.reviewers.may_resolve(member, groups, roles, facts)
+                || self.chain().iter().any(|r| r.may_resolve(member, groups, roles, facts)))
     }
 }
 
-/// An org rule: P2's [`Rule`] (issued by the org), with who reviews when it says `review`.
+/// An org rule: P2's [`Rule`] (issued by the org), with who reviews when it says `review`, and filters on facts the
+/// matrix doesn't know (who asks, a reason, the time, an amount, a new party). A rule whose filter doesn't hold is
+/// left out before the composed snapshot is built, so [`matrix::evaluate`] is unchanged.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrgRule {
     #[serde(flatten)]
     pub rule: Rule,
     #[serde(default)]
     pub review: Option<ReviewSpec>,
+    /// Only requests by these members (user ids).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+    /// Permits only: it holds when the agent gave a reason (1–[`MAX_REASON`] characters).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub require_reason: bool,
+    /// It applies only outside every one of these windows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside_hours: Vec<Hours>,
+    /// Deny and review only: a Money effect at or above this many minor units (an unknown amount counts as above).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_amount_minor: Option<u64>,
+    /// The currency `min_amount_minor` is in (ISO 4217); another currency counts as above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Deny and review only: a party the org's facts don't know (a new payee, a new recipient).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub new_party: bool,
 }
+
+impl OrgRule {
+    /// A rule with no filters.
+    #[must_use]
+    pub fn new(rule: Rule, review: Option<ReviewSpec>) -> Self {
+        Self {
+            rule,
+            review,
+            members: Vec::new(),
+            require_reason: false,
+            outside_hours: Vec::new(),
+            min_amount_minor: None,
+            currency: None,
+            new_party: false,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let id = &self.rule.id;
+        let permit = self.rule.then == Then::Permit;
+        if self.require_reason && !permit {
+            return Err(format!("rule {id}: only a permit requires a reason"));
+        }
+        if permit && (self.min_amount_minor.is_some() || self.new_party) {
+            // An unknown amount or party counts as matching: on a permit that would widen.
+            return Err(format!("rule {id}: amount and new-party filters are for deny and review rules"));
+        }
+        if self.currency.is_some() && self.min_amount_minor.is_none() {
+            return Err(format!("rule {id}: a currency goes with an amount"));
+        }
+        if let Some(c) = &self.currency
+            && reins_proto::payments::normalize_currency(c).is_err()
+        {
+            return Err(format!("rule {id}: {c:?} isn't a currency"));
+        }
+        for h in &self.outside_hours {
+            h.validate().map_err(|e| format!("rule {id}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the rule's filters hold for this request.
+    /// Whether the rule's filters hold for `input` (judged from what the request does, never its body).
+    fn applies(&self, input: &SimInput, resolved: &Resolved, facts: &Facts) -> bool {
+        if !self.members.is_empty() && !self.members.contains(&input.member) {
+            return false;
+        }
+        if self.require_reason && !input.reason_given {
+            return false;
+        }
+        if self.outside_hours.iter().any(|h| h.contains(input.at)) {
+            return false;
+        }
+        if let Some(min) = self.min_amount_minor
+            && !money_at_least(input, min, self.currency.as_deref())
+        {
+            return false;
+        }
+        if self.new_party && resolved.unknown.is_empty() && !unknown_payee(input, facts) {
+            return false;
+        }
+        true
+    }
+}
+
+/// Whether a Money effect pays someone the org's facts don't know: the merchant's site (`merchant_url`) has no domain
+/// or host fact. A payee that can't be named is unknown.
+fn unknown_payee(input: &SimInput, facts: &Facts) -> bool {
+    if !input.analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
+        return false;
+    }
+    let Some(host) = &input.payee_host else {
+        return true;
+    };
+    if facts.get(FactKind::Host, host).is_some() {
+        return false;
+    }
+    // The host or a parent domain of it (at least two labels) the org knows.
+    let labels: Vec<&str> = host.split('.').collect();
+    !(0..labels.len().saturating_sub(1)).any(|i| facts.get(FactKind::Domain, &labels[i..].join(".")).is_some())
+}
+
+/// Whether the request moves at least `min` minor units (of `currency`, when named). An amount or currency that can't
+/// be read counts as at least; a request with no Money effect doesn't.
+fn money_at_least(input: &SimInput, min: u64, currency: Option<&str>) -> bool {
+    use reins_proto::payments::normalize_currency;
+    if !input.analysis.effects.iter().any(|e| matches!(e, Effect::Money { .. })) {
+        return false;
+    }
+    let want = match currency.map(normalize_currency) {
+        Some(Ok(c)) => Some(c),
+        Some(Err(_)) => return true,
+        None => None,
+    };
+    // An amount that couldn't be read, or in another currency than the rule's, counts as at least `min`.
+    match &input.amount {
+        Some((code, minor)) if want.as_deref().is_none_or(|w| w == code) => *minor >= min,
+        _ => true,
+    }
+}
+
+/// The one amount a request moves, as (currency, minor units), when it can be read unambiguously; `None` otherwise
+/// (which every `min_amount` treats as at least its minimum).
+fn read_amount(tool: &str, args: &Value) -> Option<(String, u64)> {
+    use reins_proto::payments::{Cart, PAYMENTS, PURCHASE_REQUEST_OP, normalize_currency, parse_amount};
+    if tool == "payments_purchase_request" {
+        // What the payment charges, read by the payments consumer's own parser: its checked `total`.
+        let call = reins_proto::connector::ConnectorCall {
+            service: PAYMENTS.to_owned(),
+            op: PURCHASE_REQUEST_OP.to_owned(),
+            args: args.as_object().cloned().unwrap_or_default(),
+        };
+        let cart = Cart::from_call(&call).ok()?;
+        // Any other amount the agent names must be the same, or it's unknown.
+        let agrees = AMOUNT_FIELDS
+            .iter()
+            .filter_map(|k| args.get(*k))
+            .all(|v| parse_amount(v, &cart.currency, "amount").is_ok_and(|m| m == cart.total));
+        return agrees.then_some(()).and_then(|()| u64::try_from(cart.total).ok()).map(|t| (cart.currency, t));
+    }
+    // No currency, or one that can't be read: unknown.
+    let code = args.get("currency").and_then(Value::as_str).map(normalize_currency)?.ok()?;
+    // Every amount-like field is read (`payments_purchase_request` pays `total`; others name `amount`): they must all
+    // parse and agree, else the amount is unknown.
+    let mut amounts = Vec::new();
+    for v in AMOUNT_FIELDS.iter().filter_map(|k| args.get(*k)) {
+        amounts.push(parse_amount(v, &code, "amount").ok().and_then(|m| u64::try_from(m).ok())?);
+    }
+    amounts.sort_unstable();
+    amounts.dedup();
+    (amounts.len() == 1).then(|| (code, amounts[0]))
+}
+
+/// The arguments a payment's amount can be named by.
+const AMOUNT_FIELDS: &[&str] = &["amount", "total"];
 
 /// What a device must show to decide (06 §6). Checked by the decision service; executors trust the signed roster's
 /// `may_decide`.
@@ -203,6 +659,11 @@ pub struct OrgPolicy {
     /// family's guardians (P7). `None` (every other org): nothing changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hard_also: Option<ReviewSpec>,
+    /// Verified resource tags (05 §7.1: from cloud tags or the CMDB, signed into the policy): tag → resource glob (a
+    /// prefix ending in `*`, or exact) → owner (a member's email or a group id). [`Reviewers::ResourceOwner`] reads
+    /// them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource_tags: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 fn id_ok(id: &str) -> bool {
@@ -226,7 +687,24 @@ impl OrgPolicy {
             posture: PostureRule::default(),
             explain: String::new(),
             hard_also: None,
+            resource_tags: BTreeMap::new(),
         }
+    }
+
+    /// The owner the resource tag `tag` names for any of `resources` (the first glob that matches, in order).
+    #[must_use]
+    pub fn tag_owner(&self, tag: &str, resources: &[String]) -> Option<&str> {
+        let globs = self.resource_tags.get(tag)?;
+        resources
+            .iter()
+            .find_map(|r| {
+                let r = r.to_ascii_lowercase();
+                globs.iter().find(|(g, _)| match g.to_ascii_lowercase().strip_suffix('*') {
+                    Some(prefix) => r.starts_with(prefix),
+                    None => g.eq_ignore_ascii_case(&r),
+                })
+            })
+            .map(|(_, owner)| owner.as_str())
     }
 
     /// Hex SHA-256 of the policy's JSON (field order fixed by the types, maps ordered).
@@ -255,6 +733,7 @@ impl OrgPolicy {
             if r.rule.issuer != Issuer::Org(self.org.clone()) {
                 return Err(format!("rule {id} must be issued by this organization"));
             }
+            r.validate()?;
             match (r.rule.then, &r.review) {
                 (Then::Review, Some(spec)) => spec.validate().map_err(|e| format!("rule {id}: {e}"))?,
                 (Then::Review, None) => return Err(format!("rule {id} reviews but names no reviewers")),
@@ -294,8 +773,11 @@ pub struct ManagedRequest<'a> {
     pub connection: &'a str,
     pub tool: &'a str,
     pub args: &'a Value,
-    /// When it is judged (rules' `not_after`).
+    /// When it is judged (rules' `not_after`, `outside_hours`).
     pub now: i64,
+    /// Why the agent says it needs this (MCP `params._meta["dev.reins/reason"]`): shown to reviewers, and what a
+    /// `require_reason` permit asks for. Never evidence of anything else.
+    pub reason: Option<&'a str>,
 }
 
 /// What policy says.
@@ -399,12 +881,67 @@ pub fn stricter(org: &Matrix, member: &Matrix) -> Matrix {
     out
 }
 
-/// Evaluates a Managed request (see the module docs).
+/// Everything [`evaluate_analyzed`] judges a request by, and nothing of its body: what it does (its analysis), the
+/// repository a lease names, where it came from and when. The decision service keeps it with every decision so a draft
+/// policy can be replayed over history (simulation, 02 §4) with the very function the live path runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimInput {
+    pub analysis: Analysis,
+    /// A credential lease's repository as asked (a lease has no effect that names one); `None` for any other request.
+    #[serde(default)]
+    pub base_repo: Option<String>,
+    pub connection: String,
+    /// The requester's user id.
+    pub member: String,
+    /// The agent gave a reason, 1–[`MAX_REASON`] characters (O3's `require_reason`). The reason itself isn't kept.
+    #[serde(default)]
+    pub reason_given: bool,
+    /// When it is judged (rules' `not_after`, `outside_hours`).
+    pub at: i64,
+    /// The one amount it moves, (currency, minor units), when that can be read (O3's `min_amount`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<(String, u64)>,
+    /// The payee's site host, when it names one (O3's `new_party`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payee_host: Option<String>,
+}
+
+impl SimInput {
+    /// The input of a live request.
+    #[must_use]
+    pub fn from_request(req: &ManagedRequest<'_>) -> Self {
+        Self {
+            analysis: analyze_request(req.tool, req.args),
+            base_repo: (req.tool == LEASE_TOOL)
+                .then(|| req.args.get("repo").and_then(Value::as_str).unwrap_or_default().to_owned()),
+            connection: req.connection.to_owned(),
+            member: req.member.to_owned(),
+            reason_given: req.reason.is_some_and(|r| !r.trim().is_empty() && r.chars().count() <= MAX_REASON),
+            at: req.now,
+            amount: read_amount(req.tool, req.args),
+            payee_host: req
+                .args
+                .get("merchant_url")
+                .and_then(Value::as_str)
+                .and_then(|u| reins_proto::payments::https_host(u).ok()),
+        }
+    }
+}
+
+/// Evaluates a Managed request (see the module docs): [`evaluate_analyzed`] of its [`SimInput`].
 #[must_use]
 pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
-    let analysis = analyze_request(req.tool, req.args);
-    let resolved = resolve(req, &analysis, &org.facts);
-    let mut rules: Vec<Rule> = org.rules.iter().map(|r| r.rule.clone()).collect();
+    evaluate_analyzed(&SimInput::from_request(req), org, member)
+}
+
+/// Evaluates a request from what it does: the one evaluation the decision service, every executor and simulation run.
+#[must_use]
+pub fn evaluate_analyzed(input: &SimInput, org: &OrgPolicy, member: Option<&MemberPolicy>) -> ManagedVerdict {
+    let analysis = &input.analysis;
+    let resolved = resolve(input, &org.facts);
+    // Rules whose filters don't hold for this request are left out: the matrix never sees them.
+    let live: Vec<&OrgRule> = org.rules.iter().filter(|r| r.applies(input, &resolved, &org.facts)).collect();
+    let mut rules: Vec<Rule> = live.iter().map(|r| r.rule.clone()).collect();
     let mut matrix = org.matrix.clone();
     if let Some(m) = member {
         if let Some(mm) = &m.matrix {
@@ -427,13 +964,14 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
     };
     let evaluation = matrix::evaluate(
         &Input {
-            analysis: &analysis,
+            analysis,
             resolved: &resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
+            netted: false,
         },
         &snapshot,
     );
@@ -449,7 +987,7 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
             let mut why = evaluation.why.clone();
             // Hard obligations stop P2's evaluation before the cell. The org's cell review still applies: a member's
             // rule (or the floor) only adds to what the org requires, never stands in for it.
-            if hard && cell_needs_review(req, &analysis, &resolved, &snapshot, org) {
+            if hard && cell_needs_review(input, &resolved, &snapshot, &live) {
                 why.push(Why::Cell);
             }
             (ManagedOutcome::Review, obligations_of(&why, org))
@@ -472,9 +1010,10 @@ pub fn evaluate_managed(req: &ManagedRequest<'_>, org: &OrgPolicy, member: Optio
 
 /// Where a request acts. A lease names its repository directly (it has no effect that names one): the repository's
 /// zone, and the repository as the resource, so the org's resource rules apply to leases as to any other request.
-fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Resolved {
-    if req.tool == LEASE_TOOL {
-        let repo = req.args.get("repo").and_then(Value::as_str).and_then(|r| parse_repo(r, Some(GITHUB)));
+#[must_use]
+pub fn resolve(input: &SimInput, facts: &Facts) -> Resolved {
+    if let Some(asked) = &input.base_repo {
+        let repo = parse_repo(asked, Some(GITHUB));
         return match repo {
             Some(r) => {
                 let (zone, unknown) = repo_zone(facts, &r);
@@ -495,7 +1034,7 @@ fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Reso
         };
     }
     request_zone(
-        analysis,
+        &input.analysis,
         facts,
         &Base {
             repo: None,
@@ -507,29 +1046,24 @@ fn resolve(req: &ManagedRequest<'_>, analysis: &Analysis, facts: &Facts) -> Reso
 
 /// Whether the composed matrix cell asks, unless one of the org's permits satisfies it: judged as if there were no
 /// hard obligation (no floor, full certainty, no deny or review rules).
-fn cell_needs_review(
-    req: &ManagedRequest<'_>,
-    analysis: &Analysis,
-    resolved: &Resolved,
-    snapshot: &Snapshot,
-    org: &OrgPolicy,
-) -> bool {
-    let mut soft = analysis.clone();
+fn cell_needs_review(input: &SimInput, resolved: &Resolved, snapshot: &Snapshot, live: &[&OrgRule]) -> bool {
+    let mut soft = input.analysis.clone();
     soft.floor.clear();
     soft.certainty = Certainty::Full;
     let permits = Snapshot {
-        rules: org.rules.iter().filter(|r| r.rule.then == Then::Permit).map(|r| r.rule.clone()).collect(),
+        rules: live.iter().filter(|r| r.rule.then == Then::Permit).map(|r| r.rule.clone()).collect(),
         ..snapshot.clone()
     };
     let e = matrix::evaluate(
         &Input {
             analysis: &soft,
             resolved,
-            connection: req.connection,
+            connection: &input.connection,
             seen_resource: false,
-            now: req.now,
+            now: input.at,
             // Overnight is the owner's own mode (P5); an org's Managed decisions don't park.
             overnight: false,
+            netted: false,
         },
         &permits,
     );
@@ -627,11 +1161,28 @@ pub enum Met {
     Denied,
 }
 
-/// Weighs `approvals` against `obligations` (02 §3 rule 2): every obligation needs `quorum` distinct eligible people;
-/// with `distinct_persons`, one person counts toward one such obligation only. Any eligible deny denies.
+/// [`obligations_met_resolved`] without resolutions: standing alone decides.
 #[must_use]
 pub fn obligations_met(obligations: &[Obligation], requester: &str, approvals: &[Approval<'_>]) -> Met {
-    let eligible = |o: &Obligation, a: &Approval<'_>| o.spec.eligible(a.member, a.groups, a.roles, requester);
+    obligations_met_resolved(obligations, requester, approvals, &ResolvedSets::new())
+}
+
+/// Weighs `approvals` against `obligations` (02 §3 rule 2): every obligation needs `quorum` distinct eligible people;
+/// with `distinct_persons`, one person counts toward one such obligation only. Any eligible deny denies.
+///
+/// Eligibility ([`ReviewSpec::eligible_resolved`]): groups, roles and members from the reviewer's standing; every
+/// relationship, on-call schedule and escalation from `resolved[obligation id]`. The requester never counts through a
+/// resolution.
+#[must_use]
+pub fn obligations_met_resolved(
+    obligations: &[Obligation],
+    requester: &str,
+    approvals: &[Approval<'_>],
+    resolved: &ResolvedSets,
+) -> Met {
+    let eligible = |o: &Obligation, a: &Approval<'_>| {
+        o.spec.eligible_resolved(a.member, a.groups, a.roles, requester, resolved.get(&o.id))
+    };
     if approvals.iter().any(|a| !a.approve && obligations.iter().any(|o| eligible(o, a))) {
         return Met::Denied;
     }
@@ -691,8 +1242,8 @@ mod tests {
     }
 
     fn org_rule(id: &str, when: When, then: Then, review: Option<ReviewSpec>) -> OrgRule {
-        OrgRule {
-            rule: Rule {
+        OrgRule::new(
+            Rule {
                 id: id.to_owned(),
                 issuer: Issuer::Org("o1".to_owned()),
                 when,
@@ -702,29 +1253,38 @@ mod tests {
                 explain: format!("{id} says so"),
             },
             review,
-        }
+        )
     }
 
     fn sec(quorum: u8) -> ReviewSpec {
         ReviewSpec {
-            reviewers: Reviewers::Group("sec".to_owned()),
             quorum,
-            distinct_persons: true,
-            exclude_requester: true,
-            class: ReviewClass::Deferred,
-            window_secs: 0,
+            ..ReviewSpec::by(Reviewers::Group("sec".to_owned()))
         }
     }
 
     fn eval(tool: &str, args: &Value, p: &OrgPolicy, m: Option<&MemberPolicy>) -> ManagedVerdict {
+        eval_as("lee", tool, args, p, m, 1_000, None)
+    }
+
+    fn eval_as(
+        member: &str,
+        tool: &str,
+        args: &Value,
+        p: &OrgPolicy,
+        m: Option<&MemberPolicy>,
+        now: i64,
+        reason: Option<&str>,
+    ) -> ManagedVerdict {
         evaluate_managed(
             &ManagedRequest {
                 org: "o1",
-                member: "lee",
+                member,
                 connection: "c1",
                 tool,
                 args,
-                now: 1_000,
+                now,
+                reason,
             },
             p,
             m,
@@ -874,6 +1434,7 @@ mod tests {
             exclude_requester: true,
             class: ReviewClass::Deferred,
             window_secs: 86_400,
+            ..ReviewSpec::owner()
         };
         let mut p = acme();
         p.matrix = Matrix {
@@ -922,7 +1483,66 @@ mod tests {
         assert!(!serde_json::to_string(&acme()).unwrap().contains("hard_also"));
     }
 
+    #[test]
+    fn the_kept_input_carries_facts_not_the_body() {
+        let args = json!({"amount": "120.00", "currency": "usd", "merchant_url": "https://shop.example/x?token=s3cret",
+                          "memo": "the vendor's private note"});
+        let req = ManagedRequest {
+            org: "o1",
+            member: "lee",
+            connection: "c1",
+            tool: "payments_pay",
+            args: &args,
+            now: 5,
+            reason: Some("Paying the March invoice for Lee"),
+        };
+        let input = SimInput::from_request(&req);
+        assert!(input.reason_given);
+        assert_eq!(input.payee_host.as_deref(), Some("shop.example"));
+        let text = serde_json::to_string(&input).unwrap();
+        for secret in ["March invoice", "s3cret", "private note"] {
+            assert!(!text.contains(secret), "{secret}: {text}");
+        }
+        let back: SimInput = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, input);
+        // A reason that's blank or too long isn't one.
+        let long = "x".repeat(MAX_REASON + 1);
+        for r in ["  ", long.as_str()] {
+            assert!(
+                !SimInput::from_request(&ManagedRequest {
+                    reason: Some(r),
+                    ..req
+                })
+                .reason_given
+            );
+        }
+    }
+
     proptest! {
+        #[test]
+        fn evaluate_managed_is_evaluate_analyzed(
+            title in ".{0,40}",
+            repo in "(acme|someone|Acme)/(api|prod-db|forbidden|infra-x)",
+            tool in prop::sample::select(vec!["github_create_issue", "reins_list_accounts", "gmail_send", LEASE_TOOL]),
+            access in prop::sample::select(vec!["read", "push"]),
+            at in 0i64..3_000,
+        ) {
+            let mut p = acme();
+            p.rules.push(org_rule("prod-review", When { resource: Some("acme/prod-*".into()), ..When::default() },
+                Then::Review, Some(sec(1))));
+            p.rules.push(org_rule("deny", When { resource: Some("acme/forbidden".into()), ..When::default() },
+                Then::Deny, None));
+            let mut timed = org_rule("freeze", When::default(), Then::Deny, None);
+            timed.rule.not_after = Some(1_500);
+            p.rules.push(timed);
+            let args = json!({"repo": repo, "title": title, "access": access, "to": ["x@y.com"]});
+            let req = ManagedRequest { org: "o1", member: "lee", connection: "c1", tool, args: &args, now: at, reason: None };
+            let input = SimInput::from_request(&req);
+            // Through JSON too: the retained form judges the same.
+            let input: SimInput = serde_json::from_str(&serde_json::to_string(&input).unwrap()).unwrap();
+            prop_assert_eq!(evaluate_managed(&req, &p, None), evaluate_analyzed(&input, &p, None));
+        }
+
         #[test]
         fn same_inputs_same_verdict(title in ".{0,40}", repo in "(acme|someone)/[a-z]{1,8}") {
             let args = json!({"repo": repo, "title": title});
@@ -1110,5 +1730,342 @@ mod tests {
         let minimal: OrgPolicy = serde_json::from_value(json!({"version": 1, "org": "o1"})).unwrap();
         assert_eq!(minimal.cell_review, ReviewSpec::owner());
         assert!(minimal.posture.screen_lock && minimal.posture.no_root);
+    }
+
+    // ---- O3: relationship reviewers, escalation, rule filters, resolved sets.
+
+    fn rule_ids(v: &ManagedVerdict) -> Vec<String> {
+        v.obligations.iter().flat_map(|o| o.why.clone()).collect()
+    }
+
+    #[test]
+    fn new_reviewers_round_trip_and_validate() {
+        let all = Reviewers::AnyOf(vec![
+            Reviewers::Manager,
+            Reviewers::CodeOwners,
+            Reviewers::ResourceOwner {
+                tag: "owner".into(),
+            },
+            Reviewers::OnCall {
+                alias: "payments".into(),
+            },
+            Reviewers::BackupOf("sec".into()),
+            Reviewers::Group("fin".into()),
+        ]);
+        let text = serde_json::to_value(&all).unwrap();
+        assert_eq!(
+            text,
+            json!({"any_of": ["manager", "code_owners", {"resource_owner": {"tag": "owner"}},
+                              {"on_call": {"alias": "payments"}}, {"backup_of": "sec"}, {"group": "fin"}]})
+        );
+        assert_eq!(serde_json::from_value::<Reviewers>(text).unwrap(), all);
+        let mut p = acme();
+        p.rules.push(org_rule("r", When::default(), Then::Review, Some(ReviewSpec::by(all))));
+        assert!(p.validate().is_ok(), "{:?}", p.validate());
+        let invalid = |r: Reviewers, exclude: bool| {
+            let mut p = acme();
+            let mut spec = ReviewSpec::by(r);
+            spec.exclude_requester = exclude;
+            p.rules.push(org_rule("r", When::default(), Then::Review, Some(spec)));
+            p.validate().is_err()
+        };
+        assert!(invalid(Reviewers::AnyOf(vec![Reviewers::AnyOf(vec![Reviewers::Manager])]), true), "nested");
+        assert!(invalid(Reviewers::AnyOf(vec![Reviewers::Manager; 9]), true), "more than 8");
+        assert!(invalid(Reviewers::AnyOf(vec![]), true), "empty");
+        assert!(invalid(Reviewers::AnyOf(vec![Reviewers::Requester, Reviewers::Manager]), true), "self-approval");
+        assert!(!invalid(Reviewers::AnyOf(vec![Reviewers::Requester, Reviewers::Group("a".into())]), false));
+        assert!(invalid(
+            Reviewers::OnCall {
+                alias: "Bad Alias".into()
+            },
+            true
+        ));
+        // Older policies (no O3 fields) keep their hash: nothing new is written for them.
+        let old = acme();
+        let text = serde_json::to_string(&old).unwrap();
+        assert!(!text.contains("escalate") && !text.contains("resource_tags"), "{text}");
+        let mut with_review = acme();
+        with_review.rules.push(org_rule("prod", When::default(), Then::Review, Some(sec(1))));
+        let text = serde_json::to_string(&with_review).unwrap();
+        for absent in ["escalate", "urgent", "approval_valid_secs", "members", "outside_hours", "new_party"] {
+            assert!(!text.contains(absent), "{absent} in {text}");
+        }
+    }
+
+    #[test]
+    fn escalation_is_capped_at_three() {
+        let mut spec = sec(1);
+        assert_eq!(
+            spec.chain(),
+            [Reviewers::BackupOf("sec".into()), Reviewers::Manager, Reviewers::Role(Role::SecurityAdmin)]
+        );
+        assert!(ReviewSpec::owner().chain().is_empty(), "the requester's own review doesn't escalate");
+        spec.escalate = vec![Reviewers::Manager; 3];
+        assert_eq!(spec.chain(), [Reviewers::Manager, Reviewers::Manager, Reviewers::Manager]);
+        let mut p = acme();
+        p.rules.push(org_rule("r", When::default(), Then::Review, Some(spec.clone())));
+        assert!(p.validate().is_ok());
+        spec.escalate.push(Reviewers::Role(Role::SecurityAdmin));
+        let mut p = acme();
+        p.rules.push(org_rule("r", When::default(), Then::Review, Some(spec.clone())));
+        assert!(p.validate().unwrap_err().contains("at most 3"));
+        // Never to the requester.
+        spec.escalate = vec![Reviewers::Requester];
+        let mut p = acme();
+        p.rules.push(org_rule("r", When::default(), Then::Review, Some(spec)));
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn a_reason_is_needed_for_reason_permits() {
+        let mut p = acme();
+        let mut permit = org_rule(
+            "why",
+            When {
+                resource: Some("someone/*".into()),
+                ..When::default()
+            },
+            Then::Permit,
+            None,
+        );
+        permit.require_reason = true;
+        p.rules.push(permit);
+        assert!(p.validate().is_ok(), "{:?}", p.validate());
+        let tool = "github_create_issue";
+        let outcome = |reason: Option<&str>| eval_as("lee", tool, &issue("someone/x"), &p, None, 1_000, reason).outcome;
+        assert_eq!(outcome(None), ManagedOutcome::Review);
+        assert_eq!(outcome(Some("   ")), ManagedOutcome::Review);
+        assert_eq!(outcome(Some(&"x".repeat(MAX_REASON + 1))), ManagedOutcome::Review);
+        assert_eq!(outcome(Some("Debugging ticket 42")), ManagedOutcome::Auto);
+        // Only permits ask for a reason.
+        let mut p = acme();
+        let mut r = org_rule("why", When::default(), Then::Deny, None);
+        r.require_reason = true;
+        p.rules.push(r);
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn outside_hours_follow_the_time_zone() {
+        use chrono::Weekday;
+        let window = Hours {
+            days: vec![Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu, Weekday::Fri],
+            start: "09:00".into(),
+            end: "17:00".into(),
+            tz: "Europe/Berlin".into(),
+        };
+        // Monday 2026-03-23 (CET, UTC+1) and Monday 2026-03-30 (CEST, UTC+2), both 09:30 local.
+        let winter = 1_774_254_600; // 2026-03-23T08:30:00Z
+        let summer = 1_774_855_800; // 2026-03-30T07:30:00Z
+        assert!(window.contains(winter) && window.contains(summer));
+        // 08:30 local the same days: closed, though the UTC hour of the winter one is 08:30.
+        assert!(!window.contains(winter - 3600) && !window.contains(summer - 3600));
+        // Saturday 2026-03-28 12:00 CET.
+        assert!(!window.contains(1_774_695_600));
+        let overnight = Hours {
+            days: vec![Weekday::Fri],
+            start: "22:00".into(),
+            end: "02:00".into(),
+            tz: "UTC".into(),
+        };
+        assert!(overnight.contains(1_774_648_860), "Friday 22:01"); // 2026-03-27T22:01Z
+        assert!(overnight.contains(1_774_663_140), "Saturday 01:59"); // 2026-03-28T01:59Z
+        assert!(!overnight.contains(1_774_663_260), "Saturday 02:01");
+        // As a filter: Security reviews outside the window only.
+        let mut p = acme();
+        let mut r = org_rule(
+            "after-hours",
+            When {
+                resource: Some("acme/*".into()),
+                ..When::default()
+            },
+            Then::Review,
+            Some(sec(1)),
+        );
+        r.outside_hours = vec![window];
+        p.rules.push(r);
+        assert!(p.validate().is_ok());
+        let at = |t| eval_as("lee", "github_create_issue", &issue("acme/api"), &p, None, t, None).outcome;
+        assert_eq!(at(winter), ManagedOutcome::Auto);
+        assert_eq!(at(winter - 3600), ManagedOutcome::Review);
+        let mut bad = acme();
+        let mut r = org_rule("x", When::default(), Then::Deny, None);
+        r.outside_hours = vec![Hours {
+            days: vec![Weekday::Mon],
+            start: "9:00".into(),
+            end: "17:00".into(),
+            tz: "Mars/Olympus".into(),
+        }];
+        bad.rules.push(r);
+        assert!(bad.validate().is_err());
+    }
+
+    fn purchase(total: &str, currency: Option<&str>, merchant_url: Option<&str>) -> Value {
+        let mut v = json!({"merchant": "Acme Supplies", "total": total, "merchant_url": "https://shop.example/x",
+                           "items": [{"name": "Widget", "quantity": 1, "unit_price": total}]});
+        if let Some(c) = currency {
+            v["currency"] = json!(c);
+        }
+        if let Some(u) = merchant_url {
+            v["merchant_url"] = json!(u);
+        }
+        v
+    }
+
+    #[test]
+    fn amount_thresholds_and_unknown_amounts() {
+        let mut p = acme();
+        let mut r = org_rule("big", When::default(), Then::Review, Some(sec(2)));
+        r.min_amount_minor = Some(100_000);
+        r.currency = Some("usd".into());
+        p.rules.push(r);
+        assert!(p.validate().is_ok(), "{:?}", p.validate());
+        let big = |args: &Value| rule_ids(&eval("payments_purchase_request", args, &p, None)).contains(&"big".into());
+        assert!(!big(&purchase("999.99", Some("USD"), None)));
+        assert!(big(&purchase("1000.00", Some("USD"), None)));
+        assert!(big(&purchase("5000", Some("usd"), None)));
+        assert!(big(&purchase("12", Some("EUR"), None)), "another currency is unknown");
+        assert!(big(&purchase("12", None, None)), "no currency is unknown");
+        assert!(big(&purchase("lots", Some("USD"), None)), "an amount that can't be read is unknown");
+        // `total` is what a purchase pays: a small `amount` beside it doesn't hide it, and fields that disagree or
+        // don't parse count as above.
+        let mut both = purchase("5000", Some("USD"), None);
+        both["amount"] = json!(1);
+        assert!(big(&both), "amount 1 with total 5000");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("5000");
+        assert!(big(&both), "disagreeing fields");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("1.00");
+        assert!(!big(&both), "agreeing small fields");
+        let mut both = purchase("1", Some("USD"), None);
+        both["amount"] = json!("x");
+        assert!(big(&both), "one field that doesn't parse");
+        // Not a payment: the rule doesn't apply.
+        assert!(!rule_ids(&eval("github_create_issue", &issue("acme/api"), &p, None)).contains(&"big".into()));
+        // Never on a permit (unknown would widen).
+        let mut p = acme();
+        let mut r = org_rule("x", When::default(), Then::Permit, None);
+        r.min_amount_minor = Some(1);
+        p.rules.push(r);
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn new_party_rules_apply_to_unknown_payees_only() {
+        let mut p = acme();
+        p.facts.set(FactKind::Domain, "supplies.example", Zone::Work);
+        let mut r = org_rule("new-payee", When::default(), Then::Review, Some(sec(1)));
+        r.new_party = true;
+        p.rules.push(r);
+        let applies =
+            |args: &Value| rule_ids(&eval("payments_purchase_request", args, &p, None)).contains(&"new-payee".into());
+        assert!(!applies(&purchase("5", Some("USD"), Some("https://shop.supplies.example/cart"))));
+        assert!(applies(&purchase("5", Some("USD"), Some("https://unknown-vendor.example/"))));
+        assert!(applies(&purchase("5", Some("USD"), None)), "a payee that can't be named is new");
+        // An email to a stranger is a new party; one to a colleague isn't.
+        let send = |to: &str| json!({"to": to, "subject": "Hi", "body": "x"});
+        assert!(rule_ids(&eval("gmail_send", &send("x@stranger.example"), &p, None)).contains(&"new-payee".into()));
+        assert!(!rule_ids(&eval("gmail_send", &send("kim@acme.com"), &p, None)).contains(&"new-payee".into()));
+    }
+
+    #[test]
+    fn member_scoped_rules() {
+        let mut p = acme();
+        let mut r = org_rule(
+            "exec",
+            When {
+                resource: Some("acme/*".into()),
+                ..When::default()
+            },
+            Then::Review,
+            Some(ReviewSpec {
+                exclude_requester: false,
+                ..ReviewSpec::by(Reviewers::AnyOf(vec![Reviewers::Requester, Reviewers::Group("assistants".into())]))
+            }),
+        );
+        r.members = vec!["ceo".into()];
+        p.rules.push(r);
+        assert!(p.validate().is_ok(), "{:?}", p.validate());
+        let v = eval_as("ceo", "github_create_issue", &issue("acme/api"), &p, None, 1_000, None);
+        assert_eq!(v.outcome, ManagedOutcome::Review);
+        assert_eq!(eval("github_create_issue", &issue("acme/api"), &p, None).outcome, ManagedOutcome::Auto);
+        // The exec or an assistant decides; nobody else.
+        let assistants = vec!["assistants".to_owned()];
+        let none: Vec<String> = Vec::new();
+        let met = |member: &str, groups: &[String]| {
+            obligations_met(&v.obligations, "ceo", &[ap(member, groups, true)]) == Met::Yes
+        };
+        assert!(met("ceo", &none));
+        assert!(met("amy", &assistants));
+        assert!(!met("bob", &none));
+    }
+
+    #[test]
+    fn resolved_sets_decide_eligibility() {
+        let mut spec = ReviewSpec::by(Reviewers::Manager);
+        spec.quorum = 1;
+        let o = vec![Obligation {
+            id: "mgr".into(),
+            spec,
+            why: vec![],
+        }];
+        let none: Vec<String> = Vec::new();
+        let mut resolved = ResolvedSets::new();
+        resolved.insert("mgr".into(), ["kim".to_owned()].into());
+        assert_eq!(obligations_met_resolved(&o, "lee", &[ap("kim", &none, true)], &resolved), Met::Yes);
+        assert_eq!(
+            obligations_met_resolved(&o, "lee", &[ap("sam", &none, true)], &resolved),
+            Met::Waiting(vec!["mgr".into()])
+        );
+        // Without the resolution nobody can (never the requester, never widened).
+        assert_eq!(obligations_met(&o, "lee", &[ap("kim", &none, true)]), Met::Waiting(vec!["mgr".into()]));
+        // A resolution naming the requester doesn't make them eligible.
+        resolved.insert("mgr".into(), ["lee".to_owned()].into());
+        assert_eq!(
+            obligations_met_resolved(&o, "lee", &[ap("lee", &none, true)], &resolved),
+            Met::Waiting(vec!["mgr".into()])
+        );
+        // Escalation adds: a Security group obligation also counts its escalated members.
+        let o = vec![Obligation {
+            id: "prod".into(),
+            spec: sec(1),
+            why: vec![],
+        }];
+        let mut resolved = ResolvedSets::new();
+        resolved.insert("prod".into(), ["mia".to_owned()].into());
+        assert_eq!(obligations_met_resolved(&o, "lee", &[ap("mia", &none, true)], &resolved), Met::Yes);
+        assert_eq!(obligations_met_resolved(&o, "lee", &[ap("kim", &["sec".to_owned()], true)], &resolved), Met::Yes);
+    }
+
+    #[test]
+    fn a_resolution_is_checked_against_the_roster() {
+        let backups: BTreeMap<String, String> = [("sec".to_owned(), "sec-backup".to_owned())].into();
+        let facts = RosterFacts {
+            requester_manager: Some("kim"),
+            backups: &backups,
+        };
+        let none: Vec<String> = Vec::new();
+        let mgr = ReviewSpec::by(Reviewers::Manager);
+        assert!(mgr.may_resolve("kim", &none, &[], "lee", &facts));
+        assert!(!mgr.may_resolve("sam", &none, &[], "lee", &facts), "not the roster's manager");
+        assert!(!mgr.may_resolve("lee", &none, &[], "lee", &facts), "never the requester");
+        // The default chain: the backup group, the manager, Security admins.
+        let s = sec(1);
+        assert!(s.may_resolve("bo", &["sec-backup".to_owned()], &[], "lee", &facts));
+        assert!(s.may_resolve("kim", &none, &[], "lee", &facts));
+        assert!(s.may_resolve("dana", &none, &[Role::SecurityAdmin], "lee", &facts));
+        assert!(!s.may_resolve("eve", &["other".to_owned()], &[], "lee", &facts));
+        // Dynamic sources are taken on the countersignature.
+        assert!(ReviewSpec::by(Reviewers::CodeOwners).may_resolve("eve", &none, &[], "lee", &facts));
+    }
+
+    #[test]
+    fn resource_tags_name_owners() {
+        let mut p = acme();
+        p.resource_tags.insert("owner".into(), [("acme/payments-*".to_owned(), "fin".to_owned())].into());
+        assert_eq!(p.tag_owner("owner", &["acme/Payments-API".to_owned()]), Some("fin"));
+        assert_eq!(p.tag_owner("owner", &["acme/web".to_owned()]), None);
+        assert_eq!(p.tag_owner("team", &["acme/payments-api".to_owned()]), None);
     }
 }

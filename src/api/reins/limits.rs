@@ -483,6 +483,9 @@ pub static CIRCLE_INVITES: LazyLock<RateLimit<String>> = LazyLock::new(|| RateLi
 /// only keeps probing cheap to refuse).
 pub static CIRCLE_OPENS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(180, 20));
 
+/// Circle review packets an account sends (key: user id): one a second on average, 60 at once.
+pub static CIRCLE_PACKETS: LazyLock<RateLimit<String>> = LazyLock::new(|| RateLimit::with_period(1, 60));
+
 /// Housekeeping: drops rate-limit state of keys that are back at a full budget.
 pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
@@ -502,6 +505,7 @@ pub fn retain_recent() {
     JOIN_CREATIONS.retain_recent();
     CIRCLE_INVITES.retain_recent();
     CIRCLE_OPENS.retain_recent();
+    CIRCLE_PACKETS.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Reins is enabled.

@@ -90,7 +90,7 @@ pub async fn post(
         }
     };
     let action = mcp::handle(headers, body, Some(&services), &[]);
-    let (id, name, arguments, modern) = match action {
+    let (id, name, arguments, modern, reason) = match action {
         Action::Reply {
             status,
             body,
@@ -101,8 +101,9 @@ pub async fn post(
             name,
             arguments,
             modern,
+            reason,
             ..
-        } => (id, name, arguments, modern),
+        } => (id, name, arguments, modern, reason),
         // Ticket resources are the personal tickets' (P4); a managed connection's deferred decisions are the org's.
         Action::Resource {
             id,
@@ -138,17 +139,29 @@ pub async fn post(
         }
         Ok(ToolInvocation::GetResult(r)) => r.0,
         Ok(ToolInvocation::Relay(..)) => {
-            let (o, member, cid, label, tool, args, now) = (
+            let now = now_unix();
+            // Code owners and on-call are asked before the decision service's transaction (never by the agent).
+            let (touches, dynamic) =
+                super::routing::prefetch(pool, &org, &user, &connection_id, &name, &arguments, reason.as_deref(), now)
+                    .await;
+            let (o, member, cid, label, tool, args) = (
                 org.clone(),
                 user.clone(),
                 connection_id.clone(),
                 connection.label.clone(),
                 name.clone(),
                 arguments.clone(),
-                now_unix(),
             );
-            let submitted =
-                conn.run(move |c| decisions::submit(c, &o, &member, &cid, &label, &tool, &args, None, now)).await;
+            let submitted = conn
+                .run(move |c| {
+                    let extra = decisions::Extra {
+                        reason: reason.as_deref(),
+                        touches: &touches,
+                        dynamic: &dynamic,
+                    };
+                    decisions::submit_with(c, &o, &member, &cid, &label, &tool, &args, None, &extra, now)
+                })
+                .await;
             match submitted {
                 Ok(s) => {
                     super::reviews::notify(pool, &s.notify, &s.id);

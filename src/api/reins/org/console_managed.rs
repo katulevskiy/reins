@@ -102,10 +102,11 @@ async fn policy_page(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             days,
             can(c, &o, &u, Capability::AuthorPolicy)?,
             can(c, &o, &u, Capability::ActivatePolicy)?,
+            super::console_policy::summary(c, &o, now_unix())?,
         ))
     })
     .await;
-    let (Ok((active, drafts, draft_text, days, can_author, can_activate)), Some(name)) =
+    let (Ok((active, drafts, draft_text, days, can_author, can_activate, rollout_line)), Some(name)) =
         (loaded, frame_parts(&conn, org).await)
     else {
         return not_found();
@@ -121,6 +122,7 @@ async fn policy_page(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
             retention_days: days,
             can_author,
             can_activate,
+            rollout_line,
         },
     ))
 }
@@ -159,6 +161,8 @@ struct ActivateForm {
     csrf: String,
     revision: u64,
     hash: String,
+    /// The simulation report it rests on; the draft's newest when not named.
+    report: Option<String>,
 }
 
 #[post("/reins/org/<org>/policy/activate", data = "<form>")]
@@ -175,9 +179,20 @@ async fn activate(
     if !check_csrf(&s, &form.csrf) {
         return to_org(org, "/policy");
     }
+    let mut report = form.report.clone().filter(|r| !r.is_empty());
+    if report.is_none() {
+        let (o, h) = (org.to_owned(), form.hash.clone());
+        report = conn
+            .run(move |c| crate::db::models::reins_org_policy_code::q_last_simulation(c, &o, &h))
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.report_hash);
+    }
     let action = AdminAction::ActivatePolicy {
         revision: form.revision,
         hash: form.hash.clone(),
+        report,
     };
     signed_change(&conn, pool, org, &s, action).await;
     to_org(org, "/policy")

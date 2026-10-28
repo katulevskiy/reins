@@ -176,6 +176,15 @@ How it fits together:
   directory sync, which reads `dsync.*` events every `REINS_WORKOS_DSYNC_SECS` otherwise (keep it under 60, the
   deprovisioning target). A GitHub-org identity needs GitHub's `read:org` scope on the WorkOS GitHub connection, with
   provider tokens returned. See [security model](security-model.md#organizations-managed-work-profiles).
+- **Approval routing** (O3), in the console under Routing: group backups and windows, managers (Team tier; the
+  directory's `manager_email` custom attribute otherwise), the org's read-only GitHub App for code owners (`contents`,
+  `members`, `pull_requests` read; `checks` write for O4), and on-call sources (PagerDuty, Opsgenie, Incident.io; an
+  API key each). Under Channels, install the org's own Slack app (bot scopes `chat:write`, `users:read`,
+  `users:read.email`, `im:write`; Event Subscriptions and Interactivity to `https://<domain>/reins/org/slack/events`)
+  or its own single-tenant Azure Bot and Teams app (messaging endpoint `https://<domain>/reins/org/teams/messages`;
+  Graph `TeamsAppInstallation.ReadWriteSelfForUser.All` and `User.Read.All`), then turn it on (two admins). Members
+  add a device-bound passkey at `https://<domain>/reins/org/passkeys/new` and confirm it on their phone. Reports:
+  Routing › SLA.
 - **Org executors** run Managed requests with the org's credentials. Build `reins-executor`
   (`cargo build --release -p reins-executor`), then on the executor's host: `reins-executor keygen --out
   executor.key`, register its public key in the console (Executors; it takes two admins' phones), write a config
@@ -183,6 +192,31 @@ How it fits together:
   optional `[google]` service account), compare `reins-executor pin --config executor.toml` with the keys the console
   shows, then `pin --accept` and `reins-executor run --config executor.toml`. Run one per org, as its own user, with
   its state directory private; see [deployment](deployment.md#org-executors).
+- **Policy repo** (policy as code). An org can keep its policy in a GitHub repo it owns (`acme/reins-policy`): see the
+  [sample](../crates/reins-policy/tests/fixtures/policy_repo). The server reads it through the org's *GitHub reader*,
+  a second GitHub App the org creates with `contents: read`, `members: read`, `pull_requests: read` and `checks:
+  write`, subscribed to `pull_request` and `push`, with its webhook at `https://<domain>/reins/org/github/policy-webhook`
+  and a webhook secret. In the console: **Policy → GitHub reader** (app id and installation id take two admins; then
+  the private key and the webhook secret, sealed under the org's data key), then **Policy → Repo** (two admins). Every
+  PR to the default branch gets a `reins/policy` check: compile errors annotated by file and line, else the simulation
+  line on the org's last 30 days. A merge only proposes the activation: two Security admins still approve it on their
+  phones, and it rolls out in the stages `[rollout]` names. The same checks run in the repo's own CI:
+
+  ```yaml
+  # .github/workflows/reins-policy.yml
+  on: [pull_request]
+  jobs:
+    check:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - run: cargo install --git https://github.com/katulevskiy/reins reins-replay --locked
+        - run: reins-replay policy check .
+  ```
+
+  `reins-replay policy render .` writes the files in their normal form (what the console exports), and `reins-replay
+  policy simulate . --history history.jsonl --base ../main-checkout` replays a history exported from the console's
+  simulation page (Auditors and Security admins; the export is audited) and prints the same summary line.
 - **Deleting an account in the app** (Settings → Delete account) deletes the WorkOS user too
   (`DELETE /user_management/users/<id>` with `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET`), before the account
   itself; while WorkOS cannot, nothing is deleted and the app says to try again. Without WorkOS (password accounts, or

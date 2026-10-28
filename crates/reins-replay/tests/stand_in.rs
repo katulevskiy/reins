@@ -131,9 +131,10 @@ fn matrix_zones_are_never_looser_than_the_stand_in() {
         }
     }
     assert!(looser.is_empty(), "{}", looser.join("\n"));
-    // Where the graph is stricter: a remote on a host that isn't github.com (`gh-direct`), and commands that `cd`
-    // more than once, whose `origin` can't be read (the review's rule: Outside).
+    // Where the graph is stricter: a remote on a host that isn't github.com (`gh-direct`), and a command that works in
+    // two worktrees, whose `origin` is not one repository's (the review's rule: Outside). A `cd` into a worktree the
+    // command just added (`git worktree add P && cd P`) stays in the same repository.
     stricter.sort();
-    let known = ["593-ZcN3-XoL", "9JZnBzfbt8GP", "DzIu7YFWzuUV", "XPaCSf89MVZd", "squIutYcLgRP", "wNVSTPHsyh35"];
+    let known = ["9JZnBzfbt8GP", "XPaCSf89MVZd", "squIutYcLgRP"];
     assert_eq!(stricter, known, "a new difference: look at it, then list it here");
 }

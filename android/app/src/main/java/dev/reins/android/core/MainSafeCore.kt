@@ -273,6 +273,9 @@ class MainSafeCore(
     override suspend fun familyConsentLeave(member: String) = io { familyConsentLeave(member) }
     override suspend fun familyAnswerMinor(accept: Boolean) = io { familyAnswerMinor(accept) }
     override suspend fun orgDecide(id: String, approve: Boolean, at: Long, signature: String) = io { orgDecide(id, approve, at, signature) }
+    override suspend fun orgPasskeys(): List<dev.reins.core.OrgPasskeyView> = io { orgPasskeys() }
+    override suspend fun orgConfirmPasskey(id: String, approve: Boolean, at: Long, signature: String) =
+        io { orgConfirmPasskey(id, approve, at, signature) }
     override suspend fun orgSetMemberPolicy(body: String, version: ULong, at: Long, signature: String) =
         io { orgSetMemberPolicy(body, version, at, signature) }
     override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }
@@ -548,6 +551,9 @@ class MainSafeCore(
     override suspend fun dismissAutoQuestion(id: String) = io { dismissAutoQuestion(id) }
 
     override suspend fun askMeNextTime(requestId: String) = io { askMeNextTime(requestId) }
+
+    override suspend fun previewPolicyChange(change: dev.reins.core.PolicyChange): dev.reins.core.PreviewView =
+        io { previewPolicyChange(change) }
 
     override suspend fun modelStatus(): ModelStatus = io { modelStatus() }
 

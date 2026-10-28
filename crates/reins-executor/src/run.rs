@@ -21,7 +21,7 @@ use crate::config::{ExecutorConfig, MAX_ROSTER_AGE_SECS, Pins};
 use crate::connectors::{Connector, GithubApp, GoogleWorkspace, UserOAuth};
 use crate::leases::LeaseStore;
 use crate::seal::seal;
-use crate::verify::{Refusal, Verified, verify_job_with};
+use crate::verify::{HeldStep, Refusal, Verified, verify_job_with};
 use reins_proto::managed::OAuthProvider;
 
 /// How often [`run`] polls.
@@ -131,6 +131,9 @@ pub struct Context {
     pub leases: LeaseStore,
     pub done: DoneLog,
     policies: Mutex<HashMap<String, Envelope>>,
+    /// Every issuer-signed rollout step seen, with when it was first seen: a step the server stops sending still
+    /// counts (it can't take one back), across restarts too (`state_dir/rollouts.log`).
+    rollouts: Mutex<HeldLog>,
 }
 
 impl Context {
@@ -141,6 +144,7 @@ impl Context {
             return Err("the pins are for another organization".to_owned());
         }
         std::fs::create_dir_all(state_dir).map_err(|e| format!("creating {}: {e}", state_dir.display()))?;
+        let rollouts = HeldLog::open(&state_dir.join("rollouts.log"), &pins)?;
         Ok(Self {
             leases: LeaseStore::open(state_dir)?,
             done: DoneLog::open(state_dir)?,
@@ -151,6 +155,7 @@ impl Context {
             google: None,
             user_oauth: None,
             policies: Mutex::new(HashMap::new()),
+            rollouts: Mutex::new(rollouts),
         })
     }
 
@@ -241,6 +246,217 @@ impl Context {
     }
 }
 
+/// Most rollout steps held (old ones go first), evicted ones remembered, and bytes of the log read at start.
+const MAX_HELD_STEPS: usize = 2_000;
+const MAX_EVICTED: usize = 20_000;
+const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
+
+/// One line of `rollouts.log`: a held step, or the hash of one evicted (so a re-sent step stays out, and its dwell
+/// isn't restarted with a fresh `seen_at`).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum LogLine {
+    Held(HeldStep),
+    Evicted {
+        evicted: String,
+    },
+}
+
+/// The rollout steps an executor holds (`state_dir/rollouts.log`, JSON lines, 0600): each issuer-signed step once,
+/// with the time it was first seen; at most [`MAX_HELD_STEPS`], the oldest evicted first.
+pub struct HeldLog {
+    path: PathBuf,
+    held: Vec<HeldStep>,
+    evicted: std::collections::VecDeque<String>,
+}
+
+/// What identifies an envelope: SHA-256 of its signature and body.
+fn envelope_id(env: &Envelope) -> String {
+    let mut bytes = env.sig.as_bytes().to_vec();
+    bytes.push(0);
+    bytes.extend_from_slice(env.body.as_bytes());
+    reins_proto::canon::hex32(&reins_proto::canon::sha256(&bytes))
+}
+
+impl HeldLog {
+    /// Reads the log (its last [`MAX_LOG_BYTES`] at most), keeping only steps `pins`' issuer signed for its org, each
+    /// once with its earliest `seen_at`; rewrites it when anything was dropped.
+    pub fn open(path: &Path, pins: &Pins) -> Result<Self, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut text = String::new();
+        let mut cut = false;
+        match std::fs::File::open(path) {
+            Ok(mut f) => {
+                let len = f.metadata().map_err(|e| e.to_string())?.len();
+                if len > MAX_LOG_BYTES {
+                    f.seek(SeekFrom::Start(len - MAX_LOG_BYTES)).map_err(|e| e.to_string())?;
+                    cut = true;
+                }
+                let mut raw = Vec::new();
+                f.take(MAX_LOG_BYTES).read_to_end(&mut raw).map_err(|e| format!("reading {}: {e}", path.display()))?;
+                text = String::from_utf8_lossy(&raw).into_owned();
+                if cut {
+                    // The first line was cut in the middle.
+                    text = text.split_once('\n').map(|(_, rest)| rest.to_owned()).unwrap_or_default();
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("reading {}: {e}", path.display())),
+        }
+        let mut log = Self {
+            path: path.to_owned(),
+            held: Vec::new(),
+            evicted: std::collections::VecDeque::new(),
+        };
+        let mut dirty = cut;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            match serde_json::from_str::<LogLine>(line) {
+                Ok(LogLine::Evicted {
+                    evicted,
+                }) => log.remember(evicted),
+                Ok(LogLine::Held(h)) if trusted(&h.envelope, pins) => {
+                    let id = envelope_id(&h.envelope);
+                    if log.evicted.contains(&id) {
+                        dirty = true;
+                    } else if let Some(old) = log.held.iter_mut().find(|x| x.envelope == h.envelope) {
+                        old.seen_at = old.seen_at.min(h.seen_at);
+                        dirty = true;
+                    } else {
+                        log.held.push(h);
+                    }
+                }
+                _ => dirty = true,
+            }
+        }
+        dirty |= log.evict();
+        if dirty {
+            log.rewrite()?;
+        }
+        Ok(log)
+    }
+
+    fn remember(&mut self, id: String) {
+        if !self.evicted.contains(&id) {
+            self.evicted.push_back(id);
+        }
+        while self.evicted.len() > MAX_EVICTED {
+            self.evicted.pop_front();
+        }
+    }
+
+    /// Drops the oldest steps over [`MAX_HELD_STEPS`], remembering them; whether any went.
+    fn evict(&mut self) -> bool {
+        let excess = self.held.len().saturating_sub(MAX_HELD_STEPS);
+        let gone: Vec<HeldStep> = self.held.drain(..excess).collect();
+        for h in &gone {
+            self.remember(envelope_id(&h.envelope));
+        }
+        !gone.is_empty()
+    }
+
+    fn lines(&self) -> Result<String, String> {
+        let mut text = String::new();
+        for id in &self.evicted {
+            text.push_str(
+                &serde_json::to_string(&LogLine::Evicted {
+                    evicted: id.clone(),
+                })
+                .map_err(|e| e.to_string())?,
+            );
+            text.push('\n');
+        }
+        for h in &self.held {
+            text.push_str(&serde_json::to_string(h).map_err(|e| e.to_string())?);
+            text.push('\n');
+        }
+        Ok(text)
+    }
+
+    fn open_options(append: bool) -> std::fs::OpenOptions {
+        let mut opts = std::fs::OpenOptions::new();
+        if append {
+            opts.create(true).append(true);
+        } else {
+            opts.create(true).write(true).truncate(true);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        opts
+    }
+
+    /// Writes the whole log to a temporary file beside it, then renames it over the log.
+    fn rewrite(&self) -> Result<(), String> {
+        let tmp = self.path.with_extension("log.tmp");
+        let err = |e: std::io::Error| format!("writing {}: {e}", tmp.display());
+        let mut f = Self::open_options(false).open(&tmp).map_err(err)?;
+        f.write_all(self.lines()?.as_bytes()).map_err(err)?;
+        f.sync_data().map_err(err)?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| format!("writing {}: {e}", self.path.display()))
+    }
+
+    /// Adds the trusted steps of `envs` that are neither held nor evicted, first seen `now`; a step held already keeps
+    /// its first `seen_at`.
+    pub fn hold(&mut self, envs: Vec<Envelope>, pins: &Pins, now: i64) -> Result<(), String> {
+        let mut fresh: Vec<HeldStep> = Vec::new();
+        for env in envs {
+            if !trusted(&env, pins)
+                || self.held.iter().chain(&fresh).any(|h| h.envelope == env)
+                || self.evicted.contains(&envelope_id(&env))
+            {
+                continue;
+            }
+            fresh.push(HeldStep {
+                envelope: env,
+                seen_at: now,
+            });
+        }
+        if fresh.is_empty() {
+            return Ok(());
+        }
+        let mut text = String::new();
+        for h in &fresh {
+            text.push_str(&serde_json::to_string(h).map_err(|e| e.to_string())?);
+            text.push('\n');
+        }
+        self.held.extend(fresh);
+        if self.evict() {
+            return self.rewrite();
+        }
+        let err = |e: std::io::Error| format!("writing {}: {e}", self.path.display());
+        let mut f = Self::open_options(true).open(&self.path).map_err(err)?;
+        f.write_all(text.as_bytes()).map_err(err)?;
+        f.sync_data().map_err(err)
+    }
+
+    #[must_use]
+    pub fn steps(&self) -> &[HeldStep] {
+        &self.held
+    }
+}
+
+/// Whether `env` is a rollout step the pinned issuer signed for the pinned org.
+fn trusted(env: &Envelope, pins: &Pins) -> bool {
+    env.kind == reins_proto::managed::EnvelopeKind::Rollout
+        && env.org == pins.org
+        && verify_envelope(env, std::slice::from_ref(&pins.issuer))
+}
+
+impl Context {
+    /// Adds the issuer-signed rollout steps in `envs` not held yet, first seen `now`, and keeps them on disk.
+    pub fn hold_rollouts(&self, envs: Vec<Envelope>, now: i64) -> Result<(), String> {
+        self.rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).hold(envs, &self.pins, now)
+    }
+
+    /// The rollout steps held.
+    #[must_use]
+    pub fn held_rollouts(&self) -> Vec<HeldStep> {
+        self.rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).steps().to_vec()
+    }
+}
+
 /// What one pass did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunStats {
@@ -258,6 +474,9 @@ pub struct RunStats {
 /// One pass: refresh the roster, claim, verify, act, receipt, then revocations.
 pub async fn run_once(ctx: &Context) -> Result<RunStats, String> {
     let mut stats = RunStats::default();
+    // Leases past their end first, before any job and without the server: an executor back from being offline revokes
+    // the tokens that outlived their lease (GitHub keeps an installation token alive for an hour) before anything else.
+    revoke_expired(ctx, &mut stats).await;
     let jobs = run_jobs(ctx, &mut stats).await;
     // Revocations run every pass, whatever happened to the jobs.
     let revoked = revocations(ctx, &mut stats).await;
@@ -282,6 +501,8 @@ pub async fn run(ctx: &Context) {
 
 async fn run_jobs(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
     let roster = ctx.client.roster().await?;
+    // Refreshed with the roster, before any job: a decision is judged against every stage published so far.
+    ctx.hold_rollouts(ctx.client.rollouts().await?, crate::now())?;
     let jobs = ctx.client.claim().await?;
     stats.claimed = jobs.len();
     for job in jobs {
@@ -349,7 +570,8 @@ async fn verify(ctx: &Context, roster: &Envelope, job: &Job) -> Result<Verified,
     let claimed: DecisionRecord = job.decision.parse().map_err(|_| Refusal::BadCountersig)?;
     let policy = ctx.policy(&claimed.snapshot).await.map_err(|_| Refusal::UnsignedPolicy)?;
     let current = ctx.policy(&job.current_policy).await.map_err(|_| Refusal::UnsignedPolicy)?;
-    verify_job_with(job, &ctx.pins, &policy, &current, roster, crate::now(), ctx.max_roster_age_secs)
+    let held = ctx.held_rollouts();
+    verify_job_with(job, &ctx.pins, &policy, &current, roster, &held, crate::now(), ctx.max_roster_age_secs)
 }
 
 async fn decide_and_act(ctx: &Context, roster: &Envelope, job: &Job, stats: &mut RunStats) -> Receipt {
@@ -460,14 +682,16 @@ async fn connect_jobs(ctx: &Context, oauth: &UserOAuth) -> Result<(), String> {
     Ok(())
 }
 
-async fn revocations(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
-    // Expired leases first, without waiting for the server.
+async fn revoke_expired(ctx: &Context, stats: &mut RunStats) {
     for lease in ctx.leases.expired(crate::now()) {
         match revoke_lease(ctx, &lease).await {
             Ok(n) => stats.revoked += n,
             Err(e) => log::warn!("revoking expired lease {lease}: {e}"),
         }
     }
+}
+
+async fn revocations(ctx: &Context, stats: &mut RunStats) -> Result<(), String> {
     for r in ctx.client.revocations().await? {
         if !ctx.leases.knows(&r.lease) {
             // Not one this executor issued: it has nothing to revoke, and must not say it did.
@@ -511,6 +735,11 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/reins/org-exec/roster"))
             .respond_with(ok(serde_json::to_value(f.roster_env()).unwrap()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/reins/org-exec/rollouts"))
+            .respond_with(ok(serde_json::json!([])))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -591,6 +820,74 @@ mod tests {
                 env.parse().unwrap()
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn held_rollout_steps_survive_a_restart() {
+        let f = Fixture::new();
+        let w = world(&f, Vec::new()).await;
+        let steps = f.rollout_steps("ro_1", "S", "C", &[LEE], 100);
+        let mut forged = Fixture::new();
+        forged.issuer = ed25519(9);
+        let fake = forged.rollout_steps("ro_1", "S", "C", &[LEE], 100);
+        w.ctx.hold_rollouts(vec![steps[0].clone(), steps[1].clone(), fake[2].clone()], 500).unwrap();
+        // Seen again later: still first seen at 500.
+        w.ctx.hold_rollouts(vec![steps[1].clone()], 900).unwrap();
+        let held = w.ctx.held_rollouts();
+        assert_eq!(
+            held.iter().map(|h| (h.envelope.clone(), h.seen_at)).collect::<Vec<_>>(),
+            [(steps[0].clone(), 500), (steps[1].clone(), 500)]
+        );
+        // A restarted executor holds the same steps, even if the server stops sending them.
+        let client =
+            Client::new(&w.server.uri(), ORG, "ex-1", Arc::new(Ed25519KeyPair::from_seed_unchecked(&[8; 32]).unwrap()))
+                .unwrap();
+        let again = Context::new(client, f.pins(), w.dir.path()).unwrap();
+        assert_eq!(again.held_rollouts(), held);
+    }
+
+    #[test]
+    fn re_sending_a_step_does_not_restart_its_dwell() {
+        let f = Fixture::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollouts.log");
+        let steps = f.rollout_steps("ro_1", "S", "C", &[LEE], 100);
+        let mut log = HeldLog::open(&path, &f.pins()).unwrap();
+        log.hold(vec![steps[1].clone()], &f.pins(), 500).unwrap();
+        log.hold(vec![steps[1].clone()], &f.pins(), 900).unwrap();
+        assert_eq!(log.steps().iter().map(|h| h.seen_at).collect::<Vec<_>>(), [500]);
+        // A log with the step twice (a later seen_at appended by hand, a crash): the earliest counts, once.
+        let dup = serde_json::to_string(&HeldStep {
+            envelope: steps[1].clone(),
+            seen_at: 50,
+        })
+        .unwrap();
+        std::fs::write(&path, format!("{}\n{dup}\n", std::fs::read_to_string(&path).unwrap())).unwrap();
+        let log = HeldLog::open(&path, &f.pins()).unwrap();
+        assert_eq!(log.steps().iter().map(|h| h.seen_at).collect::<Vec<_>>(), [50]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1, "rewritten once deduplicated");
+        // An evicted step, sent again, stays out: it gets no fresh seen_at.
+        let mut log = HeldLog::open(&path, &f.pins()).unwrap();
+        let id = envelope_id(&steps[1]);
+        log.held.clear();
+        log.remember(id);
+        log.rewrite().unwrap();
+        let mut log = HeldLog::open(&path, &f.pins()).unwrap();
+        log.hold(vec![steps[1].clone()], &f.pins(), 2_000).unwrap();
+        assert!(log.steps().is_empty());
+        // Over the cap, the oldest go and are remembered; the log is rewritten atomically (no temp file left).
+        let mut log = HeldLog::open(&path, &f.pins()).unwrap();
+        let many: Vec<Envelope> = (0..MAX_HELD_STEPS + 3)
+            .map(|i| f.rollout_steps(&format!("ro_m{i}"), "S", "C", &[LEE], 100).remove(0))
+            .collect();
+        log.hold(many.clone(), &f.pins(), 3_000).unwrap();
+        assert_eq!(log.steps().len(), MAX_HELD_STEPS);
+        assert!(!path.with_extension("log.tmp").exists());
+        let log = HeldLog::open(&path, &f.pins()).unwrap();
+        assert_eq!(log.steps().len(), MAX_HELD_STEPS);
+        let mut log = log;
+        log.hold(vec![many[0].clone()], &f.pins(), 4_000).unwrap();
+        assert!(!log.steps().iter().any(|h| h.envelope == many[0]), "an evicted step isn't taken back");
     }
 
     #[tokio::test]
@@ -682,7 +979,8 @@ mod tests {
     async fn a_lease_is_kept_before_it_is_sealed_and_revoked_when_the_server_says() {
         let f = Fixture::new();
         let (opener, box_key) = Opener::new().unwrap();
-        let w = world(&f, vec![f.lease_job(&box_key)]).await;
+        let job = f.lease_job(&box_key);
+        let w = world(&f, vec![job.clone()]).await;
         Mock::given(method("GET"))
             .and(path("/reins/org-exec/revocations"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
@@ -694,7 +992,7 @@ mod tests {
         let r = &receipts(&w).await[0];
         let sealed = r.result["sealed"].as_str().unwrap();
         assert_eq!(opener.open(sealed).unwrap().as_slice(), b"ghs_t");
-        assert_eq!(r.result["expires_at"], f.lease_job(&box_key).lease.unwrap().expires_at);
+        assert_eq!(r.result["expires_at"], job.lease.unwrap().expires_at);
         assert_eq!(w.ctx.leases.tokens("ls_1")[0].token, "ghs_t");
         // Minted for exactly the countersigned repository's id (after a metadata-only lookup).
         let minted = &hits(&w.server, "POST", "/app/installations/77/access_tokens").await[1];

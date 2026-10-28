@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Reins
 
@@ -118,13 +119,34 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(views.title, "Overnight on · every AI")
         XCTAssertEqual(views.mode, .overnight, "an Overnight has its own glyph")
         XCTAssertEqual(views.fill, Palette.modeOvernight, "and its own colour")
-        XCTAssertEqual(views.line, "For every AI. Parks what it would ask.")
+        XCTAssertEqual(BypassLiveViews(state: state, stale: true).endedLine, "3 approved", "an ended one says what it let through")
         // The same end of a bypass, after it, is a new ring.
         let bypass = try XCTUnwrap(Glance.bypassState(global: now + 8 * 3_600, connections: [], previous: state, approvedSince: { _ in 0 }, now: now + 10))
         XCTAssertNil(bypass.overnight)
         XCTAssertNotEqual(bypass.startedAt, state.startedAt)
         XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on · every AI")
         XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).fill, Palette.fieldDelete, "a bypass is a red field")
+    }
+
+    /// The Lock Screen draws a Live Activity at most 160 pt tall and cuts the rest off at the top: a bypass of a day with
+    /// many approvals, an Overnight, one until turned off and one that ended all fit, at the narrowest phone's width, as
+    /// the heading row and the countdown with Stop (no caption: what a bypass still asks is the app's Bypass sheet's).
+    func testABypassFitsTheLockScreen() throws {
+        let until = Date(timeIntervalSince1970: TimeInterval(now + 22 * 3_600 + 25 * 60 + 22))
+        let day = BypassActivityAttributes.ContentState(until: until, startedAt: until.addingTimeInterval(-86_400), scope: "every AI", approvedCount: 87)
+        var night = day
+        night.overnight = true
+        let off = try XCTUnwrap(Glance.bypassState(global: AutopilotText.untilOff, connections: [], previous: nil, approvedSince: { _ in 41 }, now: now))
+        for (state, stale) in [(day, false), (night, false), (off, false), (day, true)] {
+            let card = UIHostingController(rootView: BypassLiveViews(state: state, stale: stale).lockScreen)
+            let height = card.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
+            let name = stale ? "An ended bypass" : state.overnight == true ? "Overnight" : "Bypass"
+            XCTAssertLessThanOrEqual(height, 120, "\(name) is \(height) pt tall")
+        }
+        // The compact island's timer has room for hours when it runs an hour or more.
+        XCTAssertEqual(BypassLiveViews.compactTimerWidth(day), 64)
+        let short = BypassActivityAttributes.ContentState(until: until, startedAt: until.addingTimeInterval(-15 * 60), scope: "every AI", approvedCount: 0)
+        XCTAssertEqual(BypassLiveViews.compactTimerWidth(short), 46)
     }
 
     func testAssistedFromAnOlderSnapshotShowsAsManual() {

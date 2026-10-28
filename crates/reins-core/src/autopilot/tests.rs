@@ -4246,9 +4246,13 @@ async fn held_execution_history_keeps_account_inspection_and_braking_available()
 // ---- Decisions v2: the matrix in shadow and deciding, the setup, questions, "Ask me next time" ------------------------
 
 mod decisions_v2 {
+    use std::collections::BTreeMap;
+
+    use reins_proto::gmail::ToolCall;
+
     use super::*;
     use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
-    use reins_policy::context::Zone;
+    use reins_policy::context::{FactKind, Zone};
     use reins_policy::effects::EffectKind;
     use reins_policy::matrix::{Issuer, Rule, Then, When};
 
@@ -4352,6 +4356,180 @@ mod decisions_v2 {
         let entry = env.core.activity(1).await.unwrap().remove(0);
         assert_eq!(entry.decided_by, "rule");
         assert_eq!(entry.autopilot.unwrap().matrix.unwrap().line, "Deny · No mail from agents");
+    }
+
+    /// A connector that says who parties are, as a script says.
+    struct Parties {
+        service: &'static str,
+        known: Mutex<BTreeMap<String, crate::connector::Party>>,
+    }
+
+    impl Parties {
+        fn new(service: &'static str, known: &[(&str, &str, &str, bool)]) -> Self {
+            let p = Self {
+                service,
+                known: Mutex::new(BTreeMap::new()),
+            };
+            for (written, id, label, own) in known {
+                p.say(written, id, label, *own);
+            }
+            p
+        }
+
+        fn say(&self, written: &str, id: &str, label: &str, own: bool) {
+            self.known.lock().unwrap().insert(
+                written.to_owned(),
+                crate::connector::Party {
+                    id: id.to_owned(),
+                    label: label.to_owned(),
+                    own,
+                    handle: None,
+                },
+            );
+        }
+
+        /// `written` was resolved as a handle (Telegram's username lookup).
+        fn handle(&self, written: &str) {
+            if let Some(p) = self.known.lock().unwrap().get_mut(written) {
+                p.handle = Some(written.to_owned());
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::connector::Connector for Parties {
+        fn service(&self) -> &'static str {
+            self.service
+        }
+        async fn party(&self, _account: &str, written: &str) -> Result<Option<crate::connector::Party>, CoreError> {
+            Ok(self.known.lock().unwrap().get(written).cloned())
+        }
+        async fn status(&self, _account: &str) -> crate::types::GmailStatus {
+            crate::types::GmailStatus::Ready
+        }
+    }
+
+    fn tg_send(chat: &str) -> Value {
+        json!({"tool": "connector", "service": "telegram", "op": "send", "args": {"chat": chat, "text": "hi"}})
+    }
+
+    fn gh_issue(repo: &str) -> Value {
+        json!({"tool": "connector", "service": "github", "op": "create_issue", "args": {"repo": repo, "title": "x"}})
+    }
+
+    #[tokio::test]
+    async fn a_telegram_chat_is_judged_by_the_id_a_send_would_reach() {
+        let env = env(false).await;
+        env.store().add_account("telegram", "+15550100", 1).unwrap();
+        let engine_arc = env.core.engine();
+        let engine = &*engine_arc;
+        // Before ids: the owner had zoned a handle, and an address.
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.facts.people.insert("@pal".to_owned(), Zone::Friends);
+        snap.facts.people.insert("pal@x.com".to_owned(), Zone::Friends);
+        engine.ap_put_snapshot(&snap).unwrap();
+        let tg = Parties::new("telegram", &[("me", "42", "Saved Messages", true)]);
+        tg.say("@pal", "123456", "@pal", false);
+        tg.handle("@pal");
+        // A group titled like the handle, reached by its title: another chat, labelled as a group.
+        tg.say("Pal", "-100777", "Pal (group)", false);
+        let judge = |written: &str| {
+            let r = request("r", OLD, tg_send(written));
+            let tg = &tg;
+            async move {
+                let id = engine.ap_identify_with(&r, unix_now(), Some(tg), None).await;
+                let (note, unknown) = engine
+                    .ap_evaluate_identified(&id.request, &id.github_ids, false, unix_now(), false)
+                    .unwrap()
+                    .unwrap();
+                (note, unknown, id)
+            }
+        };
+        // The title reaches the group: Outside, nothing carried over, no question offering the handle's zone.
+        let (note, _, id) = judge("Pal").await;
+        assert_eq!((note.zone, id.chat.as_deref()), (Zone::Outside, Some("-100777")));
+        assert!(env.core.auto_questions().await.unwrap().iter().all(|q| q.proposed != ZoneChoice::Friends));
+        // The handle Telegram resolved: still Outside until the owner confirms, and the card offers the handle's zone.
+        let (note, _, id) = judge("@pal").await;
+        assert_eq!((note.zone, id.chat.as_deref()), (Zone::Outside, Some("123456")));
+        let q = env.core.auto_questions().await.unwrap().into_iter().find(|q| q.id.ends_with(":123456")).unwrap();
+        assert_eq!((q.key.as_str(), q.proposed), ("@pal", ZoneChoice::Friends));
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("123456"), None, "never moved silently");
+        env.core.answer_auto_question(q.id, ZoneChoice::Friends, owner_yes()).await.unwrap();
+        assert_eq!(judge("@pal").await.0.zone, Zone::Friends);
+        // Other kinds of fact are never touched.
+        assert_eq!(engine.ap_snapshot().unwrap().facts.people.get("pal@x.com"), Some(&Zone::Friends));
+        // The owner's own chat (Saved Messages) is Mine, by the account's id.
+        assert_eq!(judge("me").await.0.zone, Zone::Mine);
+        assert_eq!(engine.ap_snapshot().unwrap().facts.chats.get("42"), Some(&Zone::Mine));
+        // A chat Telegram can't find stays as written: Outside, no question about a name.
+        let (note, unknown, id) = judge("Someone").await;
+        assert_eq!((note.zone, unknown.len(), id.chat), (Zone::Outside, 0, None));
+    }
+
+    #[tokio::test]
+    async fn an_automatic_send_goes_to_the_chat_it_was_judged_for() {
+        // Judged for chat 123456 (what "Pal" resolved to then); by the time it runs, "Pal" may name another chat.
+        let mut r = request("r", OLD, tg_send("Pal"));
+        crate::autopilot::policy::pin_chat(&mut r, Some("123456"));
+        let ToolCall::Connector(call) = &r.call else {
+            panic!("a connector call")
+        };
+        assert_eq!(call.str_arg("chat"), Some("123456"));
+        assert_eq!(call.str_arg("text"), Some("hi"), "nothing else changes");
+        // Only a Telegram send is pinned.
+        let mut other = request("r", OLD, gh_issue("octo/x"));
+        crate::autopilot::policy::pin_chat(&mut other, Some("123456"));
+        let ToolCall::Connector(call) = &other.call else {
+            panic!("a connector call")
+        };
+        assert_eq!(call.str_arg("chat"), None);
+        // The note an Auto pass keeps names the chat it judged.
+        let env = env(false).await;
+        env.store().add_account("telegram", "+15550100", 1).unwrap();
+        let engine = env.core.engine();
+        let tg = Parties::new("telegram", &[("Pal", "123456", "Pal (user)", false)]);
+        let id = engine.ap_identify_with(&request("r", OLD, tg_send("Pal")), unix_now(), Some(&tg), None).await;
+        assert_eq!(id.chat.as_deref(), Some("123456"));
+    }
+
+    #[tokio::test]
+    async fn github_owners_are_kept_by_account_id_and_a_taken_login_is_outside() {
+        let env = env(false).await;
+        env.store().add_account("github", "dkat", 1).unwrap();
+        let engine_arc = env.core.engine();
+        let engine = &*engine_arc;
+        // Before ids: facts by login.
+        let mut snap = engine.ap_snapshot().unwrap();
+        snap.facts.owners.insert("octo".to_owned(), Zone::Friends);
+        snap.facts.owners.insert("dkat".to_owned(), Zone::Mine);
+        engine.ap_put_snapshot(&snap).unwrap();
+        let gh = Parties::new("github", &[("dkat", "583231", "dkat", true), ("octo", "77", "octo", false)]);
+        let now = unix_now();
+        let judge = |repo: &str, at: i64| {
+            let r = request("r", OLD, gh_issue(repo));
+            let gh = &gh;
+            async move {
+                let id = engine.ap_identify_with(&r, at, None, Some(gh)).await;
+                engine.ap_evaluate_identified(&id.request, &id.github_ids, false, at, false).unwrap().unwrap().0
+            }
+        };
+        assert_eq!(judge("octo/x", now).await.zone, Zone::Friends);
+        // Migrated: kept by the accounts' ids, the logins only their labels.
+        let facts = engine.ap_snapshot().unwrap().facts;
+        assert_eq!((facts.owners.get("#77"), facts.owners.get("octo")), (Some(&Zone::Friends), None));
+        assert_eq!((facts.owners.get("#583231"), facts.owners.get("dkat")), (Some(&Zone::Mine), None));
+        assert_eq!(facts.label(FactKind::Owner, "#77"), Some("octo"));
+        assert_eq!(judge("dkat/reins", now).await.zone, Zone::Mine);
+        // The setup lists it by its label, and the own account isn't put back by its login.
+        let world = env.core.auto_setup().await.unwrap().world;
+        let me = world.iter().find(|w| w.key == "#583231").unwrap();
+        assert_eq!((me.label.as_str(), me.zone), ("dkat", ZoneChoice::Mine));
+        assert!(!world.iter().any(|w| w.key == "dkat"), "{world:?}");
+        // Later the login `octo` is someone else's: GitHub is asked again after an hour, and it's Outside.
+        gh.say("octo", "999", "octo", false);
+        assert_eq!(judge("octo/x", now + 60).await.zone, Zone::Friends, "within the hour, as GitHub said");
+        assert_eq!(judge("octo/x", now + crate::autopilot::policy::GITHUB_ID_SECS + 1).await.zone, Zone::Outside);
     }
 
     #[tokio::test]
@@ -4593,6 +4771,149 @@ mod decisions_v2 {
     }
 }
 
+// ---- Decisions v2 O4: a matrix or rule change previewed on the phone's own history (02 §4) -------------------------
+
+mod decisions_v2_o4_preview {
+    use super::*;
+    use crate::autopilot::preview::{PolicyChange, PreviewInput};
+    use crate::autopilot::types::{CellChoice, FactChoice, ZoneChoice};
+
+    async fn with_friend() -> Env {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+        env.core
+            .set_world_zone(FactChoice::Person, "friend@x.com".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env
+    }
+
+    #[tokio::test]
+    async fn preview_counts_changes_on_local_history_only() {
+        let env = with_friend().await;
+        for i in 0..3 {
+            env.relay(&format!("p{i}"), OLD, email("friend@x.com", "hi")).await;
+        }
+        // Let the relays' own traffic (answers, acks) settle first.
+        let mut before = env.server.received_requests().await.unwrap_or_default().len();
+        loop {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let now = env.server.received_requests().await.unwrap_or_default().len();
+            if now == before {
+                break;
+            }
+            before = now;
+        }
+        // Friends L2 (mail to a friend) is Auto by default: asking there would have asked all three.
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!((v.line.as_str(), v.changed, v.days), ("Last 30 days: 3 Auto → Ask, 0 Ask → Auto", 3, 30));
+        // "Ask me next time" on one of them: the same three.
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::AskMeNextTime {
+                request_id: "p0".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.changed, 3, "{v:?}");
+        // Nothing was asked of the server, and nothing changed.
+        let all = env.server.received_requests().await.unwrap_or_default();
+        // Only the account's own sealed state, which every call to the core schedules, may go: nothing of the preview.
+        let new: Vec<String> = all[before..]
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.url.path()))
+            .filter(|r| r != "PUT /reins/api/account-state")
+            .collect();
+        assert!(new.is_empty(), "{new:?}");
+        assert!(env.core.engine().ap_snapshot().unwrap().rules.is_empty());
+        assert!(
+            env.core
+                .preview_policy_change(PolicyChange::SetCell {
+                    zone: ZoneChoice::Friends,
+                    level: 9,
+                    cell: CellChoice::Ask
+                })
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn notes_without_input_are_skipped() {
+        let env = with_friend().await;
+        let empty = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(empty.line, "No history yet");
+        env.relay("q1", OLD, email("friend@x.com", "hi")).await;
+        // A note kept before O4 has no input: it is skipped, so there is no history again.
+        let store = env.store();
+        let mut s = store.ap_suggestion("q1").unwrap().unwrap();
+        s.matrix.as_mut().unwrap().input = None;
+        store.ap_put_suggestion(&s).unwrap();
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.line, "No history yet");
+        // And Activity never carries the input.
+        let rec = env.store().activity(10).unwrap();
+        assert!(
+            rec.iter().all(|r| r
+                .info
+                .autopilot
+                .as_ref()
+                .and_then(|a| a.matrix.as_ref())
+                .is_none_or(|m| m.input.is_none()))
+        );
+    }
+
+    #[tokio::test]
+    async fn inputs_are_dropped_after_30_days() {
+        let env = with_friend().await;
+        env.relay("old", OLD, email("friend@x.com", "hi")).await;
+        let store = env.store();
+        let s = store.ap_suggestion("old").unwrap().unwrap();
+        let input: &PreviewInput = s.matrix.as_ref().unwrap().input.as_ref().unwrap();
+        let text = serde_json::to_string(input).unwrap();
+        assert!(!text.contains("\"hi\""), "no body: {text}");
+        // The sweep drops the suggestion, and its input, 30 days on.
+        store.ap_prune(s.at + crate::autopilot::store::SUGGESTION_RETENTION_SECS + 1).unwrap();
+        assert!(store.ap_suggestion("old").unwrap().is_none());
+        let v = env
+            .core
+            .preview_policy_change(PolicyChange::SetCell {
+                zone: ZoneChoice::Friends,
+                level: 2,
+                cell: CellChoice::Ask,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v.line, "No history yet");
+    }
+}
+
 // ---- Decisions v2 P5: Overnight parks for the morning, never denies; tasks widen Auto inside their envelope -----------
 
 mod decisions_v2_p5 {
@@ -4637,6 +4958,8 @@ mod decisions_v2_p5 {
             auto: 0,
             asked: 0,
             parked: 0,
+            any: false,
+            requested_ceiling: 2,
         }
     }
 
@@ -4770,8 +5093,16 @@ mod decisions_v2_p5 {
         env.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
         let card = item(&env, "p1").await.task_proposal.expect("the envelope on the card");
         assert_eq!(card.people, vec!["ann@acme.io", "bob@acme.io"]);
-        assert_eq!(card.ceiling, 2);
+        // Asked up to Reaches people, shown at the default for its (no) repositories: Recoverable; the owner may raise it
+        // to what was asked, no higher.
+        assert_eq!((card.ceiling, card.requested_ceiling), (1, 2));
         assert_eq!(card.reason.as_deref(), Some("ceiling L3 please"));
+        let mut too_high = card.clone();
+        too_high.ceiling = 3;
+        assert!(env.core.approve_task("p1".to_owned(), too_high, owner_yes()).await.is_err());
+        let mut any = card.clone();
+        any.any = true;
+        assert!(env.core.approve_task("p1".to_owned(), any, owner_yes()).await.is_err(), "Any is the owner's own");
         // The plain approval (a notification, the generic card) can't start it: only the card's, after the owner check.
         let once = ApprovalChoice {
             selected_message_ids: vec![],
@@ -4807,5 +5138,69 @@ mod decisions_v2_p5 {
 
     fn owner_no() -> Arc<testing::FakeOwner> {
         testing::FakeOwner::new(Ok(false))
+    }
+
+    /// An Overnight with no end parks until now: the item says it's parked anyway, and no digest notification is set.
+    #[tokio::test]
+    async fn an_overnight_without_an_end_still_parks_quietly() {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core.start_overnight(None, None, owner_yes()).await.unwrap();
+        env.relay("r1", OLD, email("stranger@x.com", "hi")).await;
+        assert!(env.decided().is_empty());
+        let i = item(&env, "r1").await;
+        assert!(i.parked, "parked, so never notified on arrival");
+        assert!(i.parked_until.is_some_and(|u| u <= unix_now()), "until now: shown when Reins is opened");
+        let digest = env.core.overnight_digest().await.unwrap().expect("listed");
+        assert_eq!(digest.at, None, "no notification for an Overnight without an end");
+        assert!(env.told().contains("r1"), "the list is updated; the app keys notifications on `parked`");
+    }
+
+    /// A task stopped between the evaluation and the spend covers nothing: the use isn't spent and it waits.
+    #[tokio::test]
+    async fn a_stopped_task_spends_nothing() {
+        let env = env_risk().await;
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        let task = env.core.start_task(draft(OLD, &["ann@acme.io"], Some(3)), owner_yes()).await.unwrap();
+        env.core.end_task(task.id.clone()).await.unwrap();
+        let engine = env.core.engine();
+        assert!(engine.ap_task_count(&task.id, crate::autopilot::tasks::Count::Auto).is_err());
+        assert_eq!(env.core.tasks().await.unwrap()[0].uses_left, Some(3));
+    }
+
+    /// The owner names what a task covers, or chooses Any explicitly.
+    #[tokio::test]
+    async fn a_task_names_what_it_covers_or_says_any() {
+        let env = env_risk().await;
+        let mut d = draft(OLD, &[], None);
+        assert!(env.core.start_task(d.clone(), owner_yes()).await.is_err());
+        d.any = true;
+        let t = env.core.start_task(d, owner_yes()).await.unwrap();
+        assert!(t.any);
+    }
+
+    /// "Approve all" covers only the soft matrix asks: not what waits for a closer look, a pause or the floor.
+    #[tokio::test]
+    async fn approve_all_covers_only_soft_matrix_asks() {
+        let env = env_risk().await;
+        env.mode(None, AutopilotMode::Auto).await;
+        env.unlock("gmail/send").await;
+        env.model.set_default(logits(0.97, 0.01, 0.02));
+        env.core.finish_auto_setup(owner_yes()).await.unwrap();
+        env.core
+            .set_world_zone(FactChoice::Person, "pal@pal.dev".to_owned(), ZoneChoice::Friends, owner_yes())
+            .await
+            .unwrap();
+        env.core.start_overnight(None, Some(8 * 60), owner_yes()).await.unwrap();
+        // Friends · Reaches people is Auto by the matrix: what still waits is the model's (a new target), not soft.
+        env.relay("r1", OLD, email("pal@pal.dev", "hi")).await;
+        if !env.decided().iter().any(|(id, ..)| id == "r1") {
+            assert!(!item(&env, "r1").await.batchable, "a model's doubt is not a soft matrix ask");
+        }
+        // The floor (a standing permission) parks, and is never batched.
+        env.relay("r2", OLD, grant()).await;
+        assert!(!item(&env, "r2").await.batchable);
+        assert_eq!(env.core.approve_all(OLD.to_owned(), None).await.unwrap(), 0);
     }
 }

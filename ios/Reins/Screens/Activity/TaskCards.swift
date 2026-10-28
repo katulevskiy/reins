@@ -154,8 +154,8 @@ struct TaskDraft: Equatable {
         return true
     }
 
-    /// The ceilings offered: the proposal's and lower.
-    var ceilingChoices: [UInt8] { TaskText.ceilings.filter { $0 <= min(proposed.ceiling, 2) } }
+    /// The ceilings offered: up to what the agent asked (the card starts at the default for its repositories).
+    var ceilingChoices: [UInt8] { TaskText.ceilings.filter { $0 <= min(max(proposed.requestedCeiling, proposed.ceiling), 2) } }
 
     /// Only lower than (or as) proposed.
     @discardableResult
@@ -314,10 +314,20 @@ struct TaskProposalCard: View {
                         chips(field, values)
                     }
                 }
-                HStack(spacing: 6) {
-                    ceilingMenu
-                    lengthMenu
-                    if more || proposal.budget != nil { budgetMenu }
+                // The ceiling is never cut ("Up to: Reaches people"): it takes a line of its own when the row is full.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        ceilingMenu
+                        lengthMenu
+                        if more || proposal.budget != nil { budgetMenu }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        ceilingMenu
+                        HStack(spacing: 6) {
+                            lengthMenu
+                            if more || proposal.budget != nil { budgetMenu }
+                        }
+                    }
                 }
                 if let error {
                     Text(error).font(RFont.sans(13.5, .medium)).foregroundStyle(Palette.onField).lineLimit(3)

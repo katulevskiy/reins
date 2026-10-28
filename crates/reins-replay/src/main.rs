@@ -11,7 +11,9 @@ use reins_replay::report::{self, Baseline};
 
 const USAGE: &str = "usage:
   reins-replay run [--engine guard|effects] [--policy FILE] [--corpus DIR] [--baseline FILE] [--check] [--json] [--verbose] [--write-baseline]
-  reins-replay import --log FILE --labels FILE --out FILE";
+  reins-replay import --log FILE --labels FILE --out FILE
+  reins-replay policy check|render DIR
+  reins-replay policy simulate DIR --history FILE.jsonl --base DIR [--out report.json]";
 
 fn value(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|p| args.get(p + 1)).cloned()
@@ -121,12 +123,17 @@ fn import(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `reins-replay explain ID…`: a case's request, effects and decision, for reviewing labels and the engine.
+/// `reins-replay explain [--policy FILE] ID…`: a case's request, effects and decision, for reviewing labels and the engine.
 fn explain(args: &[String]) -> Result<ExitCode, String> {
     let corpus_dir = value(args, "--corpus").map_or_else(reins_replay::default_corpus, PathBuf::from);
     let corpus = Corpus::load(&corpus_dir)?;
-    let policy = Policy::default();
-    for id in args.iter().filter(|a| !a.starts_with("--")) {
+    let policy_file = value(args, "--policy");
+    let policy: Policy = match &policy_file {
+        Some(p) => read_json(&PathBuf::from(p))?,
+        None => Policy::default(),
+    };
+    let flag_values = [value(args, "--corpus"), policy_file];
+    for id in args.iter().filter(|a| !a.starts_with("--") && !flag_values.iter().flatten().any(|v| v == *a)) {
         let Some(case) = corpus.cases.iter().find(|c| &c.id == id) else {
             eprintln!("{id}: no such case");
             continue;
@@ -215,6 +222,7 @@ fn main() -> ExitCode {
         Some("explain") => explain(&args[1..]),
         Some("unresolved") => unresolved(&args[1..]),
         Some("list") => list(&args[1..]),
+        Some("policy") => reins_replay::policy_cmd::main(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {

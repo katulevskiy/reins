@@ -24,7 +24,7 @@ final class OvernightDigestTests: XCTestCase {
             action: "send", count: 1, service: "gmail", account: nil, waitUntil: due, op: "", opTitle: "", suggestion: nil,
             quick: true,
             ticket: ticket ? TicketView(ticket: "rt_\(id)", state: "deferred", deferredAt: deferred, deadline: due, question: nil, agentReply: nil, stale: nil) : nil,
-            parkedUntil: parkedUntil, batchable: true
+            parkedUntil: parkedUntil, batchable: true, parked: parkedUntil != nil
         )
     }
 
@@ -146,6 +146,10 @@ final class OvernightDigestTests: XCTestCase {
         XCTAssertTrue(OvernightDigestNotice.isParked(parked, now: now))
         XCTAssertFalse(OvernightDigestNotice.isParked(parked, now: now + 6 * 3_600), "the morning came")
         XCTAssertFalse(OvernightDigestNotice.isParked(item("q", parkedUntil: nil), now: now))
+        // An Overnight without an end parks until now: still quiet, whatever the time says.
+        let endless = item("e", parkedUntil: now)
+        XCTAssertTrue(OvernightDigestNotice.isQuiet(endless))
+        XCTAssertFalse(OvernightDigestNotice.isQuiet(item("q", parkedUntil: nil)))
         // What the notification extension posts for it (it cannot drop a push): no sound, no lit screen.
         let c = NotificationContent.pending(parked, settings: FeedbackSettings(), now: now)
         XCTAssertEqual(c.interruptionLevel, .passive)

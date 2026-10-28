@@ -373,7 +373,8 @@ impl Engine {
             (self.store.evaluate_read_holding(connection, account, &facts, &held, now)?, BTreeSet::new())
         };
         let mut summaries: Vec<MessageSummary> = parsed.iter().map(|p| p.summary.clone()).collect();
-        if decision.fully_allowed() {
+        // A read grant releases nothing a co-signer or a guardian must approve: it is parked with what it covers.
+        if decision.fully_allowed() && !self.circle_requires_review(request) {
             self.authorization_preflight(request)?;
             for i in &headlines_only {
                 if let Some(m) = summaries.get_mut(*i) {

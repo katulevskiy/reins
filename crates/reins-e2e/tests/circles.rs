@@ -21,12 +21,36 @@ struct World {
     ai: AiClient,
 }
 
+/// How Dana's phone is set up.
+#[derive(Clone, Default)]
+struct Setup {
+    /// Gmail connected the current way (managed permission defaults).
+    managed: bool,
+    /// Payments' card provider (a fake Privacy.com).
+    privacy: Option<String>,
+}
+
 /// Two accounts with phone roles; an AI connected to Dana's.
 async fn world() -> World {
+    world_with(Setup::default()).await
+}
+
+async fn world_with(setup: Setup) -> World {
     let server = Server::start(6, 3).await;
     server.register(DANA).await;
     server.register(ALEX).await;
-    let dana = with_roster(&server, DANA).await;
+    let dana = if setup.managed {
+        let phone = Phone::sign_in(&server.base, DANA).await;
+        phone.core.roster_create("Phone".to_owned(), Some(PASSWORD.to_owned())).await.expect("roster");
+        phone
+    } else if let Some(base) = setup.privacy {
+        let phone =
+            Phone::sign_in_with_existing_gmail_config(&server.base, DANA, move |cfg| cfg.privacy_base = base).await;
+        phone.core.roster_create("Phone".to_owned(), Some(PASSWORD.to_owned())).await.expect("roster");
+        phone
+    } else {
+        with_roster(&server, DANA).await
+    };
     let alex = with_roster(&server, ALEX).await;
     let mut ai = AiClient::new(&server.base);
     ai.register_client().await;
@@ -309,6 +333,11 @@ async fn a_lying_server_changes_nothing() {
     w.dana.core.approve(first.id.clone(), none()).await.unwrap();
     let review = review_for(&w.alex).await;
     assert!(review.detail.is_none() && review.subtitle.is_empty(), "a summary card carries no detail: {review:?}");
+    let shown = format!("{} {} {} {}", review.title, review.headline, review.line, review.agent);
+    assert!(
+        !shown.contains("Quarterly") && !shown.contains("ann@acme.com"),
+        "a summary names no subject or recipient: {shown}"
+    );
     w.alex.core.circle_answer(review.id.clone(), true, None).await.unwrap();
     poll(async || {
         w.dana.core.sync(1).await.unwrap();
@@ -377,4 +406,216 @@ async fn nobody_shares_control_with_themself() {
     let start = w.dana.core.circle_invite_create(cosign(false)).await.unwrap();
     let err = w.dana.core.circle_join_open(start.link).await.unwrap_err();
     assert!(err.to_string().contains("own invitation"), "{err}");
+}
+
+/// Keeps the app open (polling) until `until` finishes.
+async fn app_open<T>(phone: &Phone, until: impl Future<Output = T>) -> T {
+    let mut until = std::pin::pin!(until);
+    loop {
+        tokio::select! {
+            r = &mut until => return r,
+            _ = phone.core.sync(2) => {}
+        }
+    }
+}
+
+/// Dana's phone (open) until a request she has to look at arrives; it must carry its Circle line.
+async fn circled(dana: &Phone, title_has: &str) -> PendingItem {
+    poll(async || {
+        let items = dana.core.sync(1).await.expect("sync");
+        items.into_iter().find(|i| i.title.contains(title_has))
+    })
+    .await
+}
+
+/// Alex approves the review waiting, Dana approves her card, and Dana's phone runs it.
+async fn both_approve(w: &World, item: &PendingItem) {
+    assert!(item.circle.is_some(), "it waits for the co-signer: {item:?}");
+    w.dana.core.approve(item.id.clone(), none()).await.unwrap();
+    let review = review_for(&w.alex).await;
+    w.alex.core.circle_answer(review.id, true, None).await.unwrap();
+    poll(async || {
+        let items = w.dana.core.sync(1).await.unwrap();
+        items.iter().all(|i| i.id != item.id).then_some(())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_legacy_grant_never_skips_the_cosigner() {
+    let w = world().await;
+    w.dana.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
+    // Before the Circle: Dana gives the AI a standing read permission for her bank's mail.
+    let ask = json!({"action": "read", "duration_seconds": 3600, "reason": "Bank statements", "from": ["@bank.com"]});
+    let (granted, ()) = tokio::join!(w.ai.tool("reins_request_access", &ask), async {
+        let item = w.dana.wait_for_item(Duration::from_secs(20)).await;
+        w.dana.core.approve(item.id, none()).await.unwrap();
+    });
+    assert_eq!(granted["structuredContent"]["granted"], true, "{granted}");
+    invite(&w, cosign(false)).await;
+    // The grant covers the search, but a co-signer must approve: it is parked, not released.
+    let query = json!({"query": "from:bank"});
+    let (result, ()) = tokio::join!(w.ai.tool("gmail_search", &query), async {
+        let item = circled(&w.dana, "search").await;
+        both_approve(&w, &item).await;
+    });
+    assert_eq!(result["isError"], false, "{result}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_managed_permit_never_skips_the_cosigner() {
+    let w = world_with(Setup {
+        managed: true,
+        ..Setup::default()
+    })
+    .await;
+    w.dana.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
+    // Dana's account permissions let the AI search without asking.
+    let agent = w.dana.core.connections().await.unwrap().remove(0).id;
+    let mut defaults = w
+        .dana
+        .core
+        .account_permission_draft(
+            "gmail".into(),
+            reins_e2e::phone::GMAIL_ACCOUNT.into(),
+            reins_core::permission_types::AccountPermissionPreset::ReadAssist,
+        )
+        .await
+        .unwrap();
+    defaults.agent_ids = vec![agent];
+    defaults.grant_account_access = true;
+    w.dana.core.save_account_permissions(defaults, std::sync::Arc::new(Owner)).await.unwrap();
+    invite(&w, cosign(false)).await;
+    let query = json!({"query": "from:bank"});
+    let (result, ()) = tokio::join!(w.ai.tool("gmail_search", &query), async {
+        let item = circled(&w.dana, "search").await;
+        both_approve(&w, &item).await;
+    });
+    assert_eq!(result["isError"], false, "{result}");
+    let permissions =
+        w.dana.core.account_permissions("gmail".into(), reins_e2e::phone::GMAIL_ACCOUNT.into()).await.unwrap();
+    assert_eq!(permissions.used, 0, "the permit never ran it");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bypass_minted_grant_never_skips_the_cosigner() {
+    let w = world().await;
+    w.dana.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
+    w.dana.core.start_bypass(None, Some(60)).await.unwrap();
+    // Bypass grants the AI's request for a read permission by itself: a grant marked as the bypass's.
+    let ask = json!({"action": "read", "duration_seconds": 3600, "reason": "Bank statements", "from": ["@bank.com"]});
+    let granted = app_open(&w.dana, w.ai.tool("reins_request_access", &ask)).await;
+    assert_eq!(granted["structuredContent"]["granted"], true, "{granted}");
+    assert!(!w.dana.core.grants().await.unwrap().is_empty(), "the bypass minted a grant");
+    invite(&w, cosign(false)).await;
+    let query = json!({"query": "from:bank"});
+    // Under the same Bypass, the same search now waits for the co-signer.
+    let (result, ()) = tokio::join!(w.ai.tool("gmail_search", &query), async {
+        let item = circled(&w.dana, "search").await;
+        both_approve(&w, &item).await;
+    });
+    assert_eq!(result["isError"], false, "{result}");
+}
+
+async fn fake_privacy() -> wiremock::MockServer {
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let privacy = wiremock::MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/cards"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [], "page": 1})))
+        .mount(&privacy)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/cards"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "token": "0f3c1d1e-5b7a-4f00-9a51-2b4b5f0f6a11", "pan": "4000123412341234", "cvv": "321",
+            "exp_month": "10", "exp_year": "2031", "last_four": "1234", "state": "OPEN", "type": "MERCHANT_LOCKED"})))
+        .mount(&privacy)
+        .await;
+    privacy
+}
+
+async fn cards_made(privacy: &wiremock::MockServer) -> usize {
+    privacy.received_requests().await.unwrap_or_default().iter().filter(|r| r.method.as_str() == "POST").count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_purchase_pays_only_once_the_cosigner_approved() {
+    let privacy = fake_privacy().await;
+    let w = world_with(Setup {
+        privacy: Some(privacy.uri()),
+        ..Setup::default()
+    })
+    .await;
+    w.dana.core.add_service_account("payments".to_owned(), String::new()).await.unwrap();
+    w.dana.core.payments_connect_provider("privacy".into(), "personal-key".into(), false, false).await.unwrap();
+    w.dana.core.sync(0).await.unwrap();
+    invite(&w, cosign(false)).await;
+    let cart = json!({"merchant": "Example Books", "merchant_url": "https://books.example.com/b/42",
+        "items": [{"name": "Ebook", "unit_price": "12.00"}], "currency": "USD", "total": "12.00",
+        "ship_to": "none", "payment_method": "virtual_card", "note": "The book."});
+    let (result, ()) = tokio::join!(w.ai.tool("payments_purchase_request", &cart), async {
+        let item = circled(&w.dana, "buy").await;
+        assert!(item.circle.is_some(), "{item:?}");
+        let choice = reins_core::connector::payments::PurchaseChoice {
+            method_id: None,
+            address_id: None,
+            limit: None,
+        };
+        // Dana approves on the purchase screen: nothing is paid yet.
+        w.dana.core.approve_purchase(item.id.clone(), choice).await.unwrap();
+        assert_eq!(cards_made(&privacy).await, 0, "a co-signed purchase pays nothing before the co-signer");
+        let review = review_for(&w.alex).await;
+        w.alex.core.circle_answer(review.id, true, None).await.unwrap();
+        poll(async || {
+            w.dana.core.sync(1).await.unwrap();
+            (cards_made(&privacy).await == 1).then_some(())
+        })
+        .await;
+    });
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(cards_made(&privacy).await, 1, "paid once, with Dana's picks");
+}
+
+struct Owner;
+
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for Owner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        Ok(true)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_upload_is_released_only_once_the_cosigner_approved() {
+    reins_e2e::init_tls();
+    let w = world().await;
+    invite(&w, cosign(false)).await;
+    let content = "quarterly numbers\n".repeat(1_000).into_bytes();
+    let args = json!({"name": "report.txt", "size": content.len(), "reason": "attach the report"});
+    let ready = app_open(&w.dana, w.ai.tool("reins_upload", &args)).await;
+    assert_eq!(ready["structuredContent"]["status"], "upload_ready", "{ready}");
+    let upload_url = ready["structuredContent"]["upload_url"].as_str().unwrap().to_owned();
+    let download_url = ready["structuredContent"]["download_url"].as_str().unwrap().to_owned();
+    let http = reqwest::Client::new();
+    assert!(http.put(&upload_url).body(content.clone()).send().await.unwrap().status().is_success());
+    let item = poll(async || {
+        let items = w.dana.core.sync(1).await.unwrap();
+        items.into_iter().find(|i| i.kind == reins_core::PendingKind::Blob)
+    })
+    .await;
+    assert!(item.circle.is_some(), "the upload waits for the co-signer too: {item:?}");
+    // Dana approves: still nobody can download it.
+    w.dana.core.answer_blob(item.id.clone(), true).await.unwrap();
+    assert!(!http.get(&download_url).send().await.unwrap().status().is_success());
+    let review = review_for(&w.alex).await;
+    w.alex.core.circle_answer(review.id, true, None).await.unwrap();
+    poll(async || {
+        w.dana.core.sync(1).await.unwrap();
+        http.get(&download_url).send().await.unwrap().status().is_success().then_some(())
+    })
+    .await;
 }

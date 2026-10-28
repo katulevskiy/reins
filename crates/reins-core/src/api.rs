@@ -355,6 +355,42 @@ impl ReinsCore {
         .await
     }
 
+    /// The web passkeys this member registered in the browser (a work profile's), confirmed or not; empty for a
+    /// Personal account. Confirm one by signing `org_passkey_confirm_message(...)` with the enrolled key, then
+    /// `org_confirm_passkey`.
+    pub async fn org_passkeys(&self) -> Result<Vec<crate::org::OrgPasskeyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.org_passkeys().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Confirms (`approve`) or refuses web passkey `id` with the enrolled key's `signature` over
+    /// `org_passkey_confirm_message(org, id, spki_hash, created_at, at)`. Refusing revokes it.
+    pub async fn org_confirm_passkey(
+        &self,
+        id: String,
+        approve: bool,
+        at: i64,
+        signature: String,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.org_confirm_passkey(&id, approve, at, signature).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Sets the member's own stricter policy: `body` its canonical JSON, `signature` the enrolled key's over
     /// `org_member_policy_message(org, member, version, at, body)`. `version`: greater than the one it replaces (the
     /// app uses the current Unix milliseconds); `at`: when it was signed (Unix seconds).
@@ -2523,6 +2559,23 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_matrix_decides(on, owner.as_ref()).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// What `change` would have done on this phone's own last 30 days (02 §4): shown before a matrix cell or a rule
+    /// changes. Read on the phone only; nothing is sent.
+    pub async fn preview_policy_change(
+        &self,
+        change: crate::autopilot::preview::PolicyChange,
+    ) -> Result<crate::autopilot::preview::PreviewView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.preview_policy_change(&change) }).await;
             runtime.finish(&engine, result)
         })
         .await

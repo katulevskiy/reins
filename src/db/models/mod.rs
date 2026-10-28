@@ -20,8 +20,12 @@ pub mod reins_family_conn;
 pub mod reins_org;
 pub mod reins_org_event;
 pub mod reins_org_exec;
+#[allow(dead_code, reason = "shared with O4, whose policy repo looks readers up by installation")]
+pub mod reins_org_github_reader;
 pub mod reins_org_keys;
+pub mod reins_org_policy_code;
 pub mod reins_org_request;
+pub mod reins_org_routing;
 mod reins_roster;
 mod reins_ticket;
 mod reins_vault_passkey;

@@ -116,13 +116,13 @@ pub(crate) struct Subject {
     floor_weighable: bool,
     pub(crate) item: PendingItem,
     /// What approving it once selects (as the approval screen preselects).
-    choice: ApprovalChoice,
+    pub(crate) choice: ApprovalChoice,
     /// What a bypass approves: every message or item shown, every account offered.
     everything: ApprovalChoice,
     /// An AI asking for a standing permission (a bypass caps it at its own end).
-    grant: bool,
+    pub(crate) grant: bool,
     /// A purchase, approved through its own path (with the defaults its screen would show).
-    purchase: bool,
+    pub(crate) purchase: bool,
     /// The origin a permission granted while deciding it is stored with (a bypass marks its own).
     grant_origin: Option<String>,
     /// What the approval screen shows (requests only): the risk context is worked out from it.
@@ -306,7 +306,11 @@ fn note_of(s: &Suggestion, suggested: Verdict) -> AuditAutopilot {
         neighbours: neighbour_lines(j),
         reason: s.reason.clone(),
         risk: s.risk.clone(),
-        matrix: s.matrix.clone(),
+        // The note without its preview input: that stays on the sealed suggestion, never in Activity.
+        matrix: s.matrix.clone().map(|mut m| {
+            m.input = None;
+            m
+        }),
     }
 }
 
@@ -765,6 +769,7 @@ impl Engine {
             matrix: None,
             task: None,
             parked: None,
+            batchable: false,
         }
     }
 
@@ -782,7 +787,7 @@ impl Engine {
         }
     }
 
-    fn ap_subject(&self, row: &PendingRow) -> Result<Option<Subject>, CoreError> {
+    pub(crate) fn ap_subject(&self, row: &PendingRow) -> Result<Option<Subject>, CoreError> {
         let corrupt = || CoreError::storage("corrupt parked item");
         Ok(match row.kind {
             PendingKind::Pairing | PendingKind::Join => None,
@@ -917,6 +922,7 @@ impl Engine {
                 matrix: None,
                 task: None,
                 parked: None,
+                batchable: false,
             };
             self.store.ap_put_suggestion(&s)?;
             let mut item = views::pairing_item(&pairing);
@@ -947,14 +953,26 @@ impl Engine {
                 return self.ap_wait(&subject, &suggestion);
             }
         }
-        if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
+        if matches!(row.kind, PendingKind::Request | PendingKind::Blob) && mode != AutopilotMode::Lockdown {
             // A Circle request (04, 08 R3): others decide it too, so no automatic mode approves it; the owner's tap
             // fills the owner's slot. Routed again here (idempotent), and when that fails it waits for the owner too.
-            let routed = self.circle_route(&row.id);
+            let routed = if row.kind == PendingKind::Request {
+                self.circle_route(&row.id)
+            } else {
+                serde_json::from_slice::<BlobInfo>(&row.payload)
+                    .map_err(|_| CoreError::storage("corrupt parked upload"))
+                    .and_then(|info| {
+                        self.circle_route_blob(
+                            &row.id,
+                            &crate::blob::blob_request(&info),
+                            &crate::blob::blob_item(&info),
+                        )
+                    })
+            };
             if let Err(e) = &routed {
                 log::warn!("a Circle could not be applied; the request waits: {e}");
             }
-            if routed.is_err() || self.circle_hold(&row.id).is_some() {
+            if routed.is_err() || !matches!(self.circle_hold(&row.id), Ok(None)) {
                 let reason = self
                     .circle_progress(&row.id)
                     .map(|p| p.line)
@@ -992,8 +1010,17 @@ impl Engine {
             PendingKind::Request => {
                 let parked: ParkedRequest =
                     serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
-                match self.ap_evaluate(&parked.request, !novel, now, overnight_mode) {
+                // Its parties by the services' ids (a Telegram chat as a send would reach it, GitHub accounts).
+                let identified = self.ap_identify(&parked.request, now).await;
+                match self.ap_evaluate_identified(
+                    &identified.request,
+                    &identified.github_ids,
+                    !novel,
+                    now,
+                    overnight_mode,
+                ) {
                     Ok(Some((mut note, unknown))) => {
+                        note.chat.clone_from(&identified.chat);
                         if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
                             log::warn!("Autopilot could not keep a question: {e}");
                         }
@@ -1039,6 +1066,7 @@ impl Engine {
             matrix: matrix.clone(),
             task: None,
             parked: None,
+            batchable: false,
         };
 
         match mode {
@@ -1067,6 +1095,8 @@ impl Engine {
                     // The owner's Review rules are hard in any automatic mode; the matrix's cells only where it decides.
                     o if o.reviews() && (m.by_rule || deciding) => {
                         s.reason = format!("Asks: {}", m.line);
+                        // The one place "Approve all" may cover a request: the matrix asked it softly, below L3.
+                        s.batchable = !o.hard() && m.level < reins_policy::effects::Level::L3;
                         return self.ap_wait(&subject, &s);
                     }
                     // Permitted: the model is the sanity check below, and can only make it an ask.
@@ -1416,6 +1446,7 @@ impl Engine {
             matrix: None,
             task: None,
             parked: None,
+            batchable: false,
         };
         subject.choice = subject.everything.clone();
         if subject.grant {
@@ -1677,7 +1708,8 @@ impl Engine {
         let mut item = subject.item.clone();
         item.suggestion = suggestion_line(s);
         item.parked_until = s.parked.as_ref().map(|p| p.until);
-        item.batchable = s.parked.as_ref().map_or_else(|| super::parking::batchable(s, item.quick), |p| p.batchable);
+        item.parked = s.parked.is_some();
+        item.batchable = super::parking::batchable(s);
         item.task_id.clone_from(&s.task);
         self.names().item(&mut item);
         self.notifier.item_pending(item);
@@ -2659,6 +2691,7 @@ impl Engine {
                 matrix: None,
                 task: None,
                 parked: None,
+                batchable: false,
             });
             s.mode = AutopilotMode::Lockdown;
             "Lockdown: every request is denied".clone_into(&mut s.reason);
@@ -2715,6 +2748,7 @@ impl Engine {
             matrix: None,
             task: None,
             parked: None,
+            batchable: false,
         };
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);

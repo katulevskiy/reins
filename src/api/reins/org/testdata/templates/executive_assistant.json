@@ -1,0 +1,38 @@
+[
+  {
+    "id": "tpl.executive_assistant.1",
+    "issuer": "owner",
+    "when": {
+      "zones": [],
+      "levels": [],
+      "effects": [
+        "message",
+        "data_write"
+      ],
+      "resource": null,
+      "connection": null
+    },
+    "then": "review",
+    "not_after": null,
+    "accepted": false,
+    "explain": "The exec or an assistant decides.",
+    "review": {
+      "reviewers": {
+        "any_of": [
+          "requester",
+          {
+            "group": "asst"
+          }
+        ]
+      },
+      "quorum": 1,
+      "distinct_persons": true,
+      "exclude_requester": false,
+      "class": "instant",
+      "window_secs": 0
+    },
+    "members": [
+      "ceo"
+    ]
+  }
+]

@@ -389,6 +389,21 @@ pub fn org_review_message(org_id: String, review: crate::org::OrgReviewView, app
     crate::org::review_message_for(&org_id, &review, approve, at)
 }
 
+/// The bytes the enrolled device key signs to confirm (or refuse) a web passkey as the member's own
+/// (`reins_proto::managed::passkey_confirm_message`): `spki_hash` and `registered_at` are the listed passkey's
+/// (`OrgPasskeyView::spki_hash`, `created_at`), `at` the signing time (Unix seconds).
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value, reason = "UniFFI passes owned values")]
+pub fn org_passkey_confirm_message(
+    org_id: String,
+    credential_id: String,
+    spki_hash: String,
+    registered_at: i64,
+    at: i64,
+) -> Vec<u8> {
+    reins_proto::managed::passkey_confirm_message(&org_id, &credential_id, &spki_hash, registered_at, at)
+}
+
 /// The bytes the enrolled device key signs to set the member's own policy
 /// (`reins_proto::managed::member_policy_message`); `member` is the user id, `version` greater than the one it
 /// replaces, `at` the signing time (Unix seconds), `body` the policy's canonical JSON.

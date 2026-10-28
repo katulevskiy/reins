@@ -25,15 +25,21 @@
 //! - deprovisioning (`deprovision::q_deprovision`, reached only for an account whose state row is in this org): the
 //!   account's devices, sessions, roster and connections, and, for a directory delete, the account itself.
 
+pub mod activation;
 pub mod admin;
 pub mod api;
 pub mod attest;
 pub mod audit;
+pub mod channels;
 pub mod console;
 pub mod console_family;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
+pub mod console_policy;
+pub mod console_policy_pages;
+pub mod console_routing;
+pub mod console_routing_pages;
 pub mod decisions;
 pub mod deprovision;
 pub mod dns;
@@ -42,17 +48,30 @@ pub mod family;
 pub mod family_connect;
 pub mod gate;
 pub mod github;
+#[allow(
+    dead_code,
+    clippy::type_complexity,
+    reason = "shared with O4 (kept identical), whose policy repo uses its writes and webhook secret"
+)]
+pub mod github_reader;
 pub mod invariants;
 pub mod kms;
 pub mod leases;
 pub mod managed_mcp;
 pub mod policy;
+pub mod policy_repo;
 pub mod posture;
 pub mod reviews;
+pub mod rollout;
 pub mod roster;
+pub mod routing;
 pub mod scim;
+pub mod simulation;
 pub mod sweeper;
+pub mod templates;
 pub mod tenant;
+pub mod web_approval;
+pub mod web_approval_pages;
 pub mod workos_api;
 
 use reins_proto::org::{Capability, Role, role_grants};
@@ -79,10 +98,15 @@ pub fn routes() -> Vec<Route> {
     routes.extend(console::routes());
     routes.extend(console_family::routes());
     routes.extend(console_managed::routes());
+    routes.extend(console_policy::routes());
     routes.extend(executor_api::routes());
     routes.extend(family::routes());
     routes.extend(family_connect::routes());
     routes.extend(leases::routes());
+    routes.extend(routing::sla::routes());
+    routes.extend(channels::slack::routes());
+    routes.extend(channels::teams::routes());
+    routes.extend(policy_repo::routes());
     routes
 }
 

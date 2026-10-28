@@ -42,6 +42,20 @@ pub mod kinds {
     pub const REVIEW_APPROVED: &str = "review.approved";
     pub const REVIEW_DENIED: &str = "review.denied";
     pub const REVIEW_EXPIRED: &str = "review.expired";
+    /// O3: whom an obligation's relationships, on-call schedule or escalation step named, with the source's evidence.
+    pub const REVIEW_RESOLVED: &str = "review.resolved";
+    /// O3: an obligation's window passed and it reached its next reviewers.
+    pub const REVIEW_ESCALATED: &str = "review.escalated";
+    /// O3: managers, group backups, on-call sources, channels or the GitHub reader changed (a two-person change).
+    pub const ROUTING_CHANGED: &str = "routing.changed";
+    /// O3: a review answered through a signed web approval link (the link spent).
+    pub const WEB_APPROVAL: &str = "review.web";
+    /// O3: a member's web passkey added (unconfirmed), confirmed on their phone, or revoked.
+    pub const PASSKEY_ADDED: &str = "passkey.added";
+    /// O3: a Slack or Teams app's secrets posted (still off until a two-person change).
+    pub const CHANNEL_INSTALLED: &str = "channel.installed";
+    pub const PASSKEY_CONFIRMED: &str = "passkey.confirmed";
+    pub const PASSKEY_REVOKED: &str = "passkey.revoked";
     pub const REQUEST_CANCELLED: &str = "request.cancelled";
     pub const REQUEST_EXECUTED: &str = "request.executed";
     pub const REQUEST_FAILED: &str = "request.failed";
@@ -52,6 +66,9 @@ pub mod kinds {
     pub const LEASE_ISSUED: &str = "lease.issued";
     pub const LEASE_REVOKED: &str = "lease.revoked";
     pub const LEASE_REVOKED_UPSTREAM: &str = "lease.revoked_upstream";
+    /// Nobody revoked a lease's token upstream (its executor was offline or removed) and GitHub's own lifetime for it
+    /// has passed: it is dead, and leaves the revocation queue.
+    pub const LEASE_TOKEN_LAPSED: &str = "lease.token_lapsed";
     pub const POLICY_DRAFTED: &str = "policy.drafted";
     pub const POLICY_ACTIVATED: &str = "policy.activated";
     pub const MEMBER_POLICY_SET: &str = "member_policy.set";
@@ -59,6 +76,16 @@ pub mod kinds {
     pub const EXECUTOR_REMOVED: &str = "executor.removed";
     pub const RETENTION_SET: &str = "retention.set";
     pub const AUDIT_EXPORTED: &str = "audit.exported";
+    pub const AUDIT_READ: &str = "audit.read";
+    pub const POLICY_SIMULATED: &str = "policy.simulated";
+    pub const POLICY_STAGE_ADVANCED: &str = "policy.stage_advanced";
+    pub const POLICY_ROLLED_BACK: &str = "policy.rolled_back";
+    pub const POLICY_ROLLOUT_COMPLETED: &str = "policy.rollout_completed";
+    pub const POLICY_ROLLOUT_PAUSED: &str = "policy.rollout_paused";
+    pub const POLICY_ROLLOUT_RESUMED: &str = "policy.rollout_resumed";
+    pub const POLICY_REPO_BOUND: &str = "policy_repo.bound";
+    pub const POLICY_REPO_CHECKED: &str = "policy_repo.checked";
+    pub const GITHUB_READER_SET: &str = "github_reader.set";
 }
 
 /// Appends an event to `org`'s chain; returns its sequence number.

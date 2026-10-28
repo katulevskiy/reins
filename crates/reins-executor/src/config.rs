@@ -188,6 +188,7 @@ impl ExecutorConfig {
             org: self.org.clone(),
             issuer: parse("issuer", &self.pins.issuer)?,
             decision: parse("decision", &self.pins.decision)?,
+            web_origin: web_origin(&self.server),
         })
     }
 }
@@ -199,6 +200,16 @@ pub struct Pins {
     pub org: String,
     pub issuer: TrustedKey,
     pub decision: TrustedKey,
+    /// The server's web origin (`https://host[:port]`): a signed web approval (O3) must be asserted there. `None`
+    /// refuses every web approval.
+    pub web_origin: Option<String>,
+}
+
+/// The web origin of the server at `url`.
+#[must_use]
+pub fn web_origin(url: &str) -> Option<String> {
+    let u = reqwest::Url::parse(url).ok()?;
+    matches!(u.scheme(), "https" | "http").then(|| u.origin().ascii_serialization())
 }
 
 /// `<key id>=<base64url>`, as the pins are written.

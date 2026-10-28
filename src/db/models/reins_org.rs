@@ -579,6 +579,29 @@ pub fn q_pending_changes(c: &mut DbConnInner, org: &str) -> QueryResult<Vec<Rein
         .load(c)
 }
 
+/// A pending change's proposer becomes `to` (an admin confirming a system-proposed change); `false` unless it was
+/// pending and proposed by `from`.
+pub fn q_adopt_change(c: &mut DbConnInner, uuid: &str, from: &str, to: &str) -> QueryResult<bool> {
+    let n = diesel::update(
+        reins_org_changes::table
+            .filter(reins_org_changes::uuid.eq(uuid))
+            .filter(reins_org_changes::state.eq(CHANGE_PENDING))
+            .filter(reins_org_changes::proposed_by.eq(from)),
+    )
+    .set(reins_org_changes::proposed_by.eq(to))
+    .execute(c)?;
+    Ok(n == 1)
+}
+
+/// The org's newest changes, any state.
+pub fn q_changes(c: &mut DbConnInner, org: &str, limit: i64) -> QueryResult<Vec<ReinsOrgChange>> {
+    reins_org_changes::table
+        .filter(reins_org_changes::org_uuid.eq(org))
+        .order(reins_org_changes::proposed_at.desc())
+        .limit(limit)
+        .load(c)
+}
+
 /// Moves a pending change to `state`; `false` when it was no longer pending (decided by someone else meanwhile).
 pub fn q_decide(c: &mut DbConnInner, uuid: &str, state: &str, by: &str, at: i64) -> QueryResult<bool> {
     let n = diesel::update(
@@ -652,6 +675,29 @@ pub fn q_set_posture(
 /// Devices whose attestations were never verified (enrolled before verification existed).
 pub fn q_unverified_devices(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgDevice>> {
     reins_org_devices::table.filter(reins_org_devices::attestation_state.eq(attestation::UNVERIFIED)).load(c)
+}
+
+/// Devices whose attestation verified (re-checked when a new revocation list arrives).
+pub fn q_verified_devices(c: &mut DbConnInner) -> QueryResult<Vec<ReinsOrgDevice>> {
+    reins_org_devices::table.filter(reins_org_devices::attestation_state.eq(attestation::VERIFIED)).load(c)
+}
+
+/// A verified `device`'s attestation was revoked since: it fails from now on, unless it enrolled a new key meanwhile.
+pub fn q_fail_attestation(c: &mut DbConnInner, device: &ReinsOrgDevice, detail: &str) -> QueryResult<bool> {
+    diesel::update(
+        reins_org_devices::table
+            .filter(reins_org_devices::org_uuid.eq(&device.org_uuid))
+            .filter(reins_org_devices::user_uuid.eq(&device.user_uuid))
+            .filter(reins_org_devices::device_uuid.eq(&device.device_uuid))
+            .filter(reins_org_devices::public_key.eq(&device.public_key))
+            .filter(reins_org_devices::attestation_state.eq(attestation::VERIFIED)),
+    )
+    .set((
+        reins_org_devices::attestation_state.eq(attestation::FAILED),
+        reins_org_devices::attestation_detail.eq(detail),
+    ))
+    .execute(c)
+    .map(|n| n == 1)
 }
 
 /// Records what verifying `device`'s attestations found, unless it was settled or enrolled a new key meanwhile;

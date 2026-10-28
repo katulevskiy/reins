@@ -213,7 +213,7 @@ pub const AGENT: &str = "the AI agent";
 pub const ACCOUNTS: &str = "accounts and their addresses";
 
 /// What a request does, as the engine read it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Analysis {
     pub effects: Vec<Effect>,
     pub level: Level,
@@ -221,8 +221,19 @@ pub struct Analysis {
     pub floor: Vec<Floor>,
     /// What could not be read or resolved, in words ("the value of $DIR").
     pub unresolved: Vec<String>,
-    /// The guard groups the request matches: labels for people, never triggers (01 §2.2).
+    /// The guard groups the request matches: labels for people, never triggers (01 §2.2). Read back, only the
+    /// built-in groups' labels are kept.
+    #[serde(default, deserialize_with = "known_labels")]
     pub labels: Vec<&'static str>,
+}
+
+/// Labels as written, kept when they are a built-in group's (the type holds static strings).
+fn known_labels<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<&'static str>, D::Error> {
+    let names = Vec::<String>::deserialize(d)?;
+    Ok(names
+        .iter()
+        .filter_map(|n| crate::guard::BUILTIN.iter().find(|g| g.label == n.as_str()).map(|g| g.label))
+        .collect())
 }
 
 impl Default for Analysis {

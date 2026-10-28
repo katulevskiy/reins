@@ -9,6 +9,9 @@ license = "Apache-2.0"
 publish.workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "std"] }
+# Org rules' `outside_hours` windows in the org's own time zone (DST-aware).
+chrono-tz = "0.10.4"
 data-encoding = "2.11.1"
 reins-proto = { path = "../reins-proto" }
 regex = "1.13.1"
@@ -16,6 +19,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
 thiserror = "2.0.20"
+toml = "0.8.23"
 
 [dev-dependencies]
 proptest = "1"

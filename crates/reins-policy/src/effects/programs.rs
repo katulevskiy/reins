@@ -9,6 +9,46 @@ use super::model::{Area, Certainty, CodeSource, Effect, FileKind, InfraChange, N
 use super::shell::{Exp, Input, UNKNOWN, Walk, file_kind};
 use crate::shell::program_name;
 
+/// A Hyprland dispatch in its Lua form that only moves, sizes or focuses a window: exactly one call
+/// `hl.dsp.window.<action>({ name = value, … })` of the actions below, whose values are numbers, `true`/`false`, or
+/// strings with no quote, backslash, `;` or `,` in them. Hyprland runs the text as Lua: nothing else in it (another
+/// function, a concatenation, a long string, a second statement) is taken.
+fn lua_window_action(text: &str) -> bool {
+    const ACTIONS: &[&str] = &["float", "resize", "center", "move", "focus"];
+    let ident = |s: &str| {
+        let mut c = s.chars();
+        c.next().is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
+            && c.all(|x| x.is_ascii_alphanumeric() || x == '_')
+    };
+    let value = |v: &str| {
+        let number = v.strip_prefix('-').unwrap_or(v);
+        (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit() || c == '.') && !number.starts_with('.'))
+            || matches!(v, "true" | "false")
+            || v.len() >= 2
+                && v.starts_with('"')
+                && v.ends_with('"')
+                && !v[1..v.len() - 1].contains(['"', '\\', ';', ',', '\n', '['])
+    };
+    let Some(rest) = text.trim().strip_prefix("hl.dsp.window.") else {
+        return false;
+    };
+    let Some((action, call)) = rest.split_once('(') else {
+        return false;
+    };
+    let Some(table) = call.trim_end().strip_suffix(')').map(str::trim) else {
+        return false;
+    };
+    let Some(fields) = table.strip_prefix('{').and_then(|t| t.strip_suffix('}')) else {
+        return false;
+    };
+    ACTIONS.contains(&action)
+        && fields
+            .split(',')
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .all(|f| f.split_once('=').is_some_and(|(k, v)| ident(k.trim()) && value(v.trim())))
+}
+
 /// Programs that only read their file arguments and print (writes with `-o`/`--output` are read too, see
 /// [`reader`]). Each was checked: none runs code, writes elsewhere or reaches the network, whatever its arguments.
 const READERS: &[&str] = &[
@@ -78,6 +118,9 @@ const READERS: &[&str] = &[
     "llvm-objdump",
     "llvm-nm",
 ];
+
+/// Readers that read a file's name, size, times or link, never its contents: their operands are no secret read.
+const METADATA_READERS: &[&str] = &["ls", "exa", "eza", "du", "stat", "realpath", "readlink", "basename", "dirname"];
 
 /// A reader's options that take a value as the next word.
 fn reader_values(p: &str) -> &'static [&'static str] {
@@ -1770,9 +1813,41 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
         }
         p if READERS.contains(&p) => {
             let values = reader_values(p);
-            let read = positional(args, values);
-            for f in &read {
+            // `--files0-from F` (or any prefix of it GNU takes, `--f F`, `--files0=F`): the names come from F, which is
+            // read (`du` prints its text back in errors).
+            let files0 = |t: &str| {
+                t.strip_prefix("--").is_some_and(|o| !o.is_empty() && !o.contains('=') && "files0-from".starts_with(o))
+            };
+            let mut lists: Vec<Exp> = Vec::new();
+            for (k, a) in args.iter().enumerate() {
+                if files0(&a.text) {
+                    lists.extend(args.get(k + 1).cloned());
+                } else if let Some((o, f)) = a.text.split_once('=')
+                    && files0(o)
+                {
+                    lists.push(Exp {
+                        text: f.to_owned(),
+                        ..a.clone()
+                    });
+                }
+            }
+            let list_words: Vec<&Exp> = args.windows(2).filter(|ab| files0(&ab[0].text)).map(|ab| &ab[1]).collect();
+            let read: Vec<&Exp> = positional(args, values)
+                .into_iter()
+                .filter(|r| !list_words.iter().any(|l| std::ptr::eq(*l, *r)))
+                .collect();
+            for f in &lists {
                 w.read_file(f);
+                if !METADATA_READERS.contains(&p) {
+                    w.read_file(&super::shell::unknown("the files a list names".to_owned()));
+                }
+            }
+            for f in &read {
+                if METADATA_READERS.contains(&p) {
+                    w.read_meta(f);
+                } else {
+                    w.read_file(f);
+                }
             }
             // Whatever else names a secret is read as one (the floor holds whatever the options are).
             for a in args {
@@ -2040,6 +2115,17 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
         }
         // The window manager: queries are nothing; `exec` (anywhere, also in `--batch` and after `;`) runs a program;
         // anything else is not read.
+        // Without `--batch`, a Lua dispatch is one chunk: Hyprland runs all of it, `;` included.
+        "hyprctl"
+            if !has(args, "--batch")
+                && words.first().is_some_and(|x| *x == "dispatch")
+                && words.get(1).is_some_and(|x| x.trim_start().starts_with("hl.")) =>
+        {
+            let chunk = words[1..].join(" ");
+            if !(args.iter().all(Exp::known) && lua_window_action(&chunk)) {
+                unmodelled(w, program, &format!("dispatch {chunk}"));
+            }
+        }
         "hyprctl" | "swaymsg" => {
             let raw = args.iter().map(|a| a.text.as_str()).collect::<Vec<_>>().join(" ");
             let commands: Vec<Vec<&str>> = raw.split(';').map(|c| c.split_whitespace().collect()).collect();
@@ -2094,6 +2180,12 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
                     && args.iter().all(|a| !a.text.contains(['"', '\'', '(', '{']))
                 {
                     // A window action (focus, move, resize): nothing lasting.
+                } else if program == "hyprctl"
+                    && words.first().is_some_and(|x| *x == "dispatch")
+                    && args.iter().all(Exp::known)
+                    && lua_window_action(&words[1..].join(" "))
+                {
+                    // The same, in the Lua form: one window call with literal values.
                 } else if words.first().is_some_and(|x| matches!(*x, "keyword" | "reload" | "setcursor")) {
                     settings_write(w, "Changes the desktop's settings");
                 } else {

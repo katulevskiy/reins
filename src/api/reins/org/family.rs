@@ -123,12 +123,13 @@ pub fn guardian_review() -> ReviewSpec {
         exclude_requester: true,
         class: ReviewClass::Deferred,
         window_secs: GUARDIAN_WINDOW_SECS,
+        ..ReviewSpec::owner()
     }
 }
 
 fn guardian_rule(org: &str, id: &str, when: When, explain: &str) -> OrgRule {
-    OrgRule {
-        rule: Rule {
+    OrgRule::new(
+        Rule {
             id: id.to_owned(),
             issuer: Issuer::Org(org.to_owned()),
             when,
@@ -137,8 +138,8 @@ fn guardian_rule(org: &str, id: &str, when: When, explain: &str) -> OrgRule {
             accepted: false,
             explain: explain.to_owned(),
         },
-        review: Some(guardian_review()),
-    }
+        Some(guardian_review()),
+    )
 }
 
 /// A family's first policy: O2's default matrix, the child deciding their own soft asks, and a guardian approving
@@ -263,6 +264,8 @@ pub fn create_family(
             &AdminAction::ActivatePolicy {
                 revision,
                 hash,
+                // The family's first policy: no history to simulate (O4).
+                report: None,
             },
             None,
             now,
@@ -1081,6 +1084,7 @@ pub(crate) mod tests {
                     tool,
                     args: &args,
                     now: 1_000,
+                    reason: None,
                 },
                 &p,
                 None,
@@ -1111,9 +1115,13 @@ pub(crate) mod tests {
         // Two guardians: the next activation waits for the other.
         let body = serde_json::to_string(&family_baseline(&org)).unwrap();
         let (revision, hash) = super::super::policy::save_draft(&mut c, &org, "mom", &body, now).unwrap();
+        // A policy is active: the next one rests on a simulation (O4).
+        let report =
+            super::super::simulation::run(&mut c, &org, "mom", revision, None, None, None, now).unwrap().hash();
         let action = AdminAction::ActivatePolicy {
             revision,
             hash,
+            report: Some(report),
         };
         let (Proposed::Pending(change), _) = admin::propose(&mut c, &org, "mom", &action, None, now).unwrap() else {
             panic!("it waits");

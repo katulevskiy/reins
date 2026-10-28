@@ -24,6 +24,7 @@ pub mod pairing;
 pub mod payments;
 pub mod relay;
 pub mod remote_mcp;
+pub mod rollout;
 pub mod roster;
 pub mod ticket;
 mod validate;

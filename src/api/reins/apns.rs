@@ -174,6 +174,7 @@ pub fn notification(push: &PushMessage) -> Notification {
         PushKind::Join => "join",
         PushKind::Handover => "handover",
         PushKind::OrgReview => "org_review",
+        PushKind::OrgPasskey => "org_passkey",
         // Only a review waiting for a helper, and a guardianship ending, alert (the extension writes the text from
         // what it fetches); every other Circle push is news the app fetches quietly.
         PushKind::Circle if super::circles::alerts(&push.id) => "circle",

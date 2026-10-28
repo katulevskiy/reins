@@ -46,6 +46,11 @@ class OrgReviewsTest : FlowHarness() {
         snapshot = "snap",
         expiresAt = 1_700_000_900,
         own = own,
+        needs = emptyList(),
+        progress = "",
+        step = null,
+        urgent = false,
+        reason = null,
     )
 
     private var registryBefore: dev.reins.android.profiles.RegistryFactory? = null

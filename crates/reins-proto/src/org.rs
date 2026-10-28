@@ -391,6 +391,9 @@ pub enum AdminAction {
     ActivatePolicy {
         revision: u64,
         hash: String,
+        /// The simulation report this activation rests on (O4): its hash. Needed once a policy is active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
     },
     /// How long request bodies are kept: 0, 30 or 365 days (06 §4).
     SetRetention {
@@ -411,6 +414,117 @@ pub enum AdminAction {
         invite: String,
         email: String,
     },
+    /// Binds the org's policy repo (`owner/name` on GitHub, O4); an empty `repo` unbinds it. The repo is input, never
+    /// authority: a merge there only proposes an activation.
+    BindPolicyRepo {
+        repo: String,
+        /// The repo's default branch as the org's GitHub reader saw it when this was proposed.
+        #[serde(default)]
+        default_branch: String,
+    },
+    /// O3: a member's manager (membership ids), on the Team tier, which has no directory to say.
+    SetManager {
+        member: String,
+        #[serde(default)]
+        manager: Option<String>,
+    },
+    /// O3: a group's backup group and review window (escalation, 05 §6).
+    SetGroupRouting {
+        group: String,
+        #[serde(default)]
+        backup: Option<String>,
+        #[serde(default)]
+        window_secs: Option<u64>,
+    },
+    /// O3: the org's read-only GitHub App (code owners, GitHub login links). Its key is posted separately, sealed.
+    SetGithubReader {
+        app_id: u64,
+        installation_id: u64,
+    },
+    /// O3: an on-call schedule reviewers can name (`on_call: <alias>`). Its API key is posted separately, sealed.
+    SetOnCallSource {
+        alias: String,
+        provider: OnCallProvider,
+        schedule_id: String,
+    },
+    /// O3: Slack or Teams review notifications (links to the signed web approval, L0–L2).
+    SetApprovalChannel {
+        channel: ChannelKind,
+        enabled: bool,
+        /// Turning on: the digest of the installed app and secret this was proposed for. Approving it turns on
+        /// exactly that install, never one swapped in meanwhile.
+        #[serde(default)]
+        config: Option<String>,
+    },
+}
+
+/// Where an on-call schedule lives (O3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnCallProvider {
+    Pagerduty,
+    Opsgenie,
+    IncidentIo,
+}
+
+impl OnCallProvider {
+    pub const ALL: [Self; 3] = [Self::Pagerduty, Self::Opsgenie, Self::IncidentIo];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pagerduty => "pagerduty",
+            Self::Opsgenie => "opsgenie",
+            Self::IncidentIo => "incident_io",
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pagerduty => "PagerDuty",
+            Self::Opsgenie => "Opsgenie",
+            Self::IncidentIo => "Incident.io",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+}
+
+/// A third-party approval channel (O3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelKind {
+    Slack,
+    Teams,
+}
+
+impl ChannelKind {
+    pub const ALL: [Self; 2] = [Self::Slack, Self::Teams];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Slack => "slack",
+            Self::Teams => "teams",
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Slack => "Slack",
+            Self::Teams => "Microsoft Teams",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
 }
 
 /// Where an org executor runs (05 §5).
@@ -478,11 +592,17 @@ impl AdminAction {
             }
             | Self::SetTwoPerson {
                 ..
+            }
+            | Self::BindPolicyRepo {
+                ..
             } => Capability::SetUpOrg,
             Self::RemoveMember {
                 ..
             }
             | Self::ConfirmDirectoryRemovals {
+                ..
+            }
+            | Self::SetManager {
                 ..
             } => {
                 if touches_privileged {
@@ -502,6 +622,18 @@ impl AdminAction {
             }
             | Self::RemoveExecutor {
                 ..
+            }
+            | Self::SetGroupRouting {
+                ..
+            }
+            | Self::SetGithubReader {
+                ..
+            }
+            | Self::SetOnCallSource {
+                ..
+            }
+            | Self::SetApprovalChannel {
+                ..
             } => Capability::ManageConnections,
         }
     }
@@ -515,6 +647,12 @@ impl AdminAction {
                 | Self::SetRetention { .. }
                 | Self::RegisterExecutor { .. }
                 | Self::RemoveExecutor { .. }
+                // O3: who approves (managers, backups, on-call, channels, the GitHub reader) is security-relevant.
+                | Self::SetManager { .. }
+                | Self::SetGroupRouting { .. }
+                | Self::SetGithubReader { .. }
+                | Self::SetOnCallSource { .. }
+                | Self::SetApprovalChannel { .. }
         )
     }
 
@@ -933,7 +1071,22 @@ mod tests {
         let activate = AdminAction::ActivatePolicy {
             revision: 3,
             hash: "h".to_owned(),
+            report: None,
         };
+        // O2's stored changes (no report) still read.
+        let old: AdminAction = serde_json::from_str(r#"{"kind":"activate_policy","revision":3,"hash":"h"}"#).unwrap();
+        assert_eq!(old, activate);
+        assert_eq!(serde_json::to_string(&activate).unwrap(), r#"{"kind":"activate_policy","revision":3,"hash":"h"}"#);
+        let bind = AdminAction::BindPolicyRepo {
+            repo: "acme/reins-policy".to_owned(),
+            default_branch: "main".to_owned(),
+        };
+        assert_eq!(bind.capability(&[]), Capability::SetUpOrg);
+        let reader = AdminAction::SetGithubReader {
+            app_id: 1,
+            installation_id: 2,
+        };
+        assert_eq!(reader.capability(&[]), Capability::ManageConnections);
         assert_eq!(activate.capability(&[]), Capability::ActivatePolicy);
         assert!(activate.needs_device_signatures());
         let exec = AdminAction::RegisterExecutor {
