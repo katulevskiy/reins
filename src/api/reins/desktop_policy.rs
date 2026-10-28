@@ -29,7 +29,9 @@ pub enum Posted {
 pub const MAX_ACCOUNT_POLICY_CHARS: usize = 16 * 1024 * 1024;
 /// The most computers one account keeps policy for.
 pub const MAX_ACCOUNT_MAILBOXES: usize = 32;
-/// The most characters kept in all, across accounts: a backstop that refuses new posts, never evicts.
+/// The most characters kept in all, across accounts: a backstop that refuses new snapshots, never evicts. Tightenings
+/// (small, and what a Lockdown travels as) are bounded per computer and per account only, so no one else's posts can
+/// keep them out.
 pub const MAX_TOTAL_POLICY_CHARS: usize = 512 * 1024 * 1024;
 
 /// Per desktop connection: the newest snapshot and the tightenings newer than it, until the computer picks them up.
@@ -44,9 +46,19 @@ pub const MAX_TOTAL_POLICY_CHARS: usize = 512 * 1024 * 1024;
 /// - per server: [`MAX_TOTAL_POLICY_CHARS`].
 ///
 /// A post over a budget is refused, and the phone sends it again.
-#[derive(Default)]
 pub struct Policies {
     state: Mutex<State>,
+    /// [`MAX_TOTAL_POLICY_CHARS`] (smaller in tests).
+    ceiling: usize,
+}
+
+impl Default for Policies {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            ceiling: MAX_TOTAL_POLICY_CHARS,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -157,7 +169,7 @@ impl Policies {
         let account_chars = state.by_account.get(account).copied().unwrap_or(0);
         if (new_mailbox && mailboxes >= MAX_ACCOUNT_MAILBOXES)
             || account_chars + grows > MAX_ACCOUNT_POLICY_CHARS
-            || state.chars + grows > MAX_TOTAL_POLICY_CHARS
+            || (item.kind == PolicyKind::Snapshot && state.chars + grows > self.ceiling)
         {
             warn!(
                 "Refused a desktop policy over its budget (account {account_chars} characters, {mailboxes} computers)"
@@ -424,6 +436,20 @@ mod tests {
         p.purge(100 + POLICY_TTL_SECS);
         assert!(p.lock().by_account.is_empty());
         assert_eq!(p.lock().chars, 0);
+    }
+
+    /// With the server's ceiling filled by others, a new snapshot is refused, but a tightening (a Lockdown) still gets
+    /// through: only the per-computer and per-account bounds hold it.
+    #[test]
+    fn a_full_server_still_takes_a_tightening() {
+        let p = Policies {
+            ceiling: 1_000,
+            ..Policies::default()
+        };
+        assert_eq!(p.post("others", "c1", item(1, PolicyKind::Snapshot, &"x".repeat(1_000)), 100), Posted::Kept);
+        assert_eq!(p.post("me", "mine", item(1, PolicyKind::Snapshot, "s"), 100), Posted::Refused, "full");
+        assert_eq!(p.post("me", "mine", item(2, PolicyKind::Tighten, "lockdown"), 100), Posted::Kept);
+        assert_eq!(sealed(&p.peek("mine", 0, 101)), ["lockdown"]);
     }
 
     #[test]

@@ -28,7 +28,7 @@ Local `[auto]` configuration only tightens. Lockdown and other tightenings reach
   `GET /reins/desktop/policy?after=<version>&wait=<secs>` (the desktop's token) answers what is newer than `after`,
   long-polling up to 25 s, with the approval device's signing key (as `/reins/desktop/tickets` names it).
 - **Phone (`reins-core::autopilot::desktop_policy`).** For each paired computer with a pinned key: build the body,
-  compare with what was last sent, and when it changed (or is an hour old) sign it with the device key, seal it to
+  compare with what was last sent, and when it changed (or is 4 minutes old) sign it with the device key, seal it to
   the computer, and post it, a `Tighten` first when `tighten_of` finds one. Runs with every mode report (each sync and
   pass, and right after a mode change) and right after each policy, fact and task change. Versions only grow
   (`max(last + 1, now in ms)`). No new UniFFI surface: the apps don't change.
@@ -65,9 +65,10 @@ signing key, `TicketStore::see_signing_key`).
 - **Same outcomes as the phone:** `matrix::evaluate` with the snapshot's matrix, rules and tasks, `connection` = the
   computer's connection id (tasks and rules are per connection), `overnight` from the mode, `netted` from the plan.
   Auto never denies; Deny only by a rule.
-- **Freshness:** valid only while `now < not_after` (6 h after issue; the phone refreshes hourly), `issued_at` at most
-  5 min ahead, a validity of at most 24 h, a version above the highest applied for that signing key (rollback), signed
-  by the pinned key (P4), for this computer's key and the Personal profile (08 R6). Anything else: fall back to asking.
+- **Freshness:** valid only within 10 minutes of its signed issue time and before `not_after` (the phone refreshes
+  every 4 minutes), `issued_at` at most 5 min ahead, newer than what is kept (and than what the daemon saw from that
+  key), signed by the pinned key (P4), for this computer's key and the Personal profile (08 R6). Anything else: fall
+  back to asking.
   A mode whose `until` passed: fall back.
 - **Tightenings apply at once,** with or without a snapshot, until a snapshot of the same or a later version arrives
   or they expire (24 h). Lockdown refuses every tool use.
@@ -172,3 +173,37 @@ signing key, `TicketStore::see_signing_key`).
 - A desktop app screen for the snapshot: `reins status` names it; Activity shows each local decision.
 - A Managed profile's command policy on the computer (O1/R6: org command policy applies to Managed agents through the
   Managed daemon).
+
+## What changed while building (for the reviewer)
+
+- **Freshness is the rollback protection** (review round). A snapshot is used for 10 minutes after the phone signed it
+  (`VALIDITY_SECS`, by the computer's clock, whatever the signed `not_after` says); the phone signs again every 4
+  minutes (`REFRESH_SECS`) during its syncs and at once on any change. A first design kept the highest version in
+  `policy.json` and a second guarded file; the agent can write both, so it was replaced. The daemon keeps the newest
+  version per phone key in memory only, as a tiebreak inside the window. The signer is only the key pinned in
+  `tickets.json`. What's left: a snapshot from the last 10 minutes can be replayed until it goes stale (tightenings
+  sent since still apply on top). With the phone offline more than 10 minutes, hook requests go to the phone again.
+- **Tightenings apply whatever versions came before,** with or without a snapshot, until a snapshot as new arrives:
+  a floor can never hold back a Lockdown.
+- **Logged out, nothing kept is used.** Logging out also deletes `policy.json`.
+- **The built-in guard groups are labels where the signed policy decides,** except `reins`, `secrets` and `payments`
+  (`reins_policy::guard::ALWAYS_ASKED`), whatever `disabled_groups` says; the user's own guard rules still ask.
+- **A matrix Auto with no guard match returns no opinion** (the harness's own settings apply, as P2 decided); a
+  matrix Auto where the guard would have asked is an explicit allow with an Activity entry.
+- **This computer's own unsigned matrix never allows.** P2/P3's local netted allow (`[auto] matrix_decides`) is
+  gone; without a signed snapshot the local matrix only adds asks.
+- **Signed scratch folders.** The snapshot carries `scratch` besides `roots`: a local scratch folder counts only when
+  signed, or strictly inside a signed root. The phone signs none yet (no screen for it), so writes to scratch folders
+  outside the roots ask on the computer: that's the whole difference on the replay (below).
+- **Task people stay on the phone.** A task's `people` are cleared in the computer's copy; a task bounded only by
+  people isn't sent at all (an empty envelope would cover any resource).
+- **Overnight parks** only questions a ticket can carry (a guard-matched request with a session); a matrix-only park
+  is asked at once instead.
+- **Server budgets** (review round): per computer (one snapshot, 16 tightenings), per account (32 computers, 16 MiB),
+  per server (512 MiB backstop, for snapshots only: a tightening is never kept out by others). Over a budget, the post is refused with 400 and the phone sends it again; nothing kept
+  for another account is pushed out.
+- **Replay** (`--engine desktop`, `policy/nets.json`): hook requests 350, **33 asked (9.4%)** as the phone signs today,
+  vs 27 (7.7%) on the phone's own engine; with the computer's scratch folders signed (`desktop_scratch`), 27, the same.
+  The `reins`/`secrets`/`payments` groups add none. Recall 240/240, known false positives asked 0/75, needs-a-person
+  249/249. Developer requests 738: 33 asked (4.5%).
+- **e2e:** Lockdown reached the computer's daemon in 77 ms.
