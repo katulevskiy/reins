@@ -399,6 +399,11 @@ impl Demo {
                         kept: true,
                     }),
                     matrix: Self::matrix(i),
+                    // The email Codex sent is still held: "Sending in … · Undo" for a minute after the demo starts.
+                    hold: (service == Some("gmail_send")).then(|| reins_desktop::journal::HoldRecord {
+                        id: "demo-hold-1".to_owned(),
+                        until: self.base + 60,
+                    }),
                 }
             })
             .collect()

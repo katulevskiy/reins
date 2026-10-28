@@ -110,8 +110,8 @@ fun latestWidgetModel(activity: List<ActivityEntry>, nowSeconds: Long): LatestWi
                 actionKey = words.action,
                 time = compactTime(entry.at, nowSeconds),
                 allowed = when (outcomeOf(entry)) {
-                    Outcome.Approved, Outcome.Auto, Outcome.Overnight, Outcome.Grant, Outcome.Permission, Outcome.Bypass, Outcome.Withheld -> true
-                    Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Lockdown, Outcome.Failed -> false
+                    Outcome.Approved, Outcome.Auto, Outcome.Overnight, Outcome.Grant, Outcome.Permission, Outcome.Bypass, Outcome.Withheld, Outcome.Held -> true
+                    Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Lockdown, Outcome.Failed, Outcome.Undone, Outcome.NotSent -> false
                     Outcome.Started, Outcome.Unknown -> null
                 },
             )

@@ -43,6 +43,7 @@ pub mod quick;
 pub mod roles;
 pub mod rt;
 mod secrets;
+pub mod send_hold;
 pub mod services;
 pub mod session;
 pub mod sso;
@@ -81,6 +82,7 @@ pub use roles::{
     EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview,
     RosterMemberView, RosterSummary,
 };
+pub use send_hold::{ActivityHold, HoldState, HoldsReleased};
 pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, StoreLockGuard};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{

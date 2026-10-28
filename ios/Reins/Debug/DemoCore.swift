@@ -49,6 +49,7 @@ enum DemoCore {
             overnight: args.contains("-demoOvernight"),
             circles: args.contains("-demoCircles"),
             circlesAvailable: !args.contains("-demoNoCircles"),
+            holds: args.contains("-demoHold"),
             folders: args.contains("-demoFolders")
         )
     }
@@ -131,6 +132,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var autoUpdate = true
         /// How long what Overnight parks waits after the morning (the core's default, 12 h).
         var overnightExpiryHours: UInt32 = 12
+        /// How long an approved email waits before it goes (the core's default, 30 s; 0: off).
+        var sendHoldSecs: UInt32 = 30
         /// Tasks: live ones, then those that ended (`-demoOvernight` seeds one of each).
         var tasks: [TaskView] = []
         var nextTask = 1
@@ -194,7 +197,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
         keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
         quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false, overnight: Bool = false, circles: Bool = false, circlesAvailable: Bool = true,
-        folders: Bool = false
+        holds: Bool = false, folders: Bool = false
     ) {
         let now = Self.now()
         self.circles = DemoCircleStore(seeded: circles, available: circlesAvailable, now: now)
@@ -216,6 +219,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 DemoData.entry(1_000 + Int64(i), at: now - 61 - Int64(i), action: "read", outcome: "released", detail: "Email \(i + 1)")
             }
             s.activity = (s.activity + more).sorted { $0.at > $1.at }
+        }
+        // `-demoHold`: an email Auto approved waits out its hold ("Sending in 25 s" · Undo), and one the phone woke too
+        // late for asks "Still send?". Off by default so the history stays as tests expect.
+        if holds {
+            s.activity = (DemoData.holds(now) + s.activity).sorted { $0.at > $1.at }
         }
         s.grants = DemoData.grants(now)
         s.accounts = DemoData.accounts(now)
@@ -1922,6 +1930,66 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func setOvernightExpiry(hours: UInt32) async throws {
         guard (1...48).contains(hours) else { throw CoreError.Invalid(reason: "parked requests expire after 1 to 48 hours") }
         locked { $0.overnightExpiryHours = hours }
+    }
+
+    // ---- the email send hold (08 R10) -------------------------------------------------------------------------------
+
+    func sendHoldSecs() async throws -> UInt32 { locked { $0.sendHoldSecs } }
+
+    /// As the core: 0 (off) to 120 seconds, no owner check.
+    func setSendHoldSecs(secs: UInt32) async throws {
+        guard secs <= 120 else { throw CoreError.Invalid(reason: "the send hold is 0 to 120 seconds") }
+        locked { $0.sendHoldSecs = secs }
+    }
+
+    /// As the core: each held email whose time has come on this phone's clock is sent, and logged as its own entry;
+    /// the held entry keeps its outcome and loses its hold.
+    func releaseHolds() async throws -> HoldsReleased {
+        let now = Self.now()
+        return locked { s in
+            var sent: UInt32 = 0
+            for i in s.activity.indices {
+                guard let hold = s.activity[i].hold, hold.state == .waiting, hold.releaseAt <= now else { continue }
+                s.activity[i].hold = nil
+                Self.logHold(&s, from: s.activity[i], outcome: "sent", detail: s.activity[i].detail, at: now)
+                sent += 1
+            }
+            return HoldsReleased(sent: sent, late: 0)
+        }
+    }
+
+    /// As the core: Undo of a waiting email (it is not sent), or Discard of a "Still send?".
+    func undoSend(holdId: String) async throws {
+        try locked { s in
+            guard let i = s.activity.firstIndex(where: { $0.hold?.id == holdId }), let hold = s.activity[i].hold,
+                  hold.state != .sending else { throw CoreError.NotFound }
+            s.activity[i].hold = nil
+            if hold.state == .waiting { Self.logHold(&s, from: s.activity[i], outcome: "undone", detail: "Undone", at: Self.now()) }
+        }
+    }
+
+    /// As the core: "Still send?" answered Send. It goes now, as the owner's approval.
+    func sendLate(holdId: String) async throws {
+        try await latency()
+        try locked { s in
+            guard let i = s.activity.firstIndex(where: { $0.hold?.id == holdId && $0.hold?.state == .late }) else { throw CoreError.NotFound }
+            s.activity[i].hold = nil
+            var from = s.activity[i]
+            from.decidedBy = ""
+            from.autopilot = nil
+            Self.logHold(&s, from: from, outcome: "sent", detail: from.info.email.map { "To " + $0.to.joined(separator: ", ") } ?? from.detail, at: Self.now())
+        }
+    }
+
+    /// A held email's next entry (sent, undone), as the core logs it.
+    private static func logHold(_ s: inout State, from entry: ActivityEntry, outcome: String, detail: String, at: Int64) {
+        var next = entry
+        next.id = nextActivityId(s)
+        next.at = at
+        next.outcome = outcome
+        next.detail = detail
+        next.hold = nil
+        s.activity.insert(next, at: 0)
     }
 
     // ---- Overnight's parks and tasks (Decisions v2 P5) ---------------------------------------------------------------

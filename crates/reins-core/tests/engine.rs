@@ -2188,3 +2188,243 @@ async fn a_ticket_marked_delivered_but_never_kept_comes_back_from_the_list() {
     assert!(env.core.sync(0).await.is_err(), "the broken ticket is reported");
     assert!(env.core.sync(0).await.unwrap().iter().any(|i| i.id == "r8"), "and the rest goes on");
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The email send hold (08 R10)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// A server's holds, as `/reins/api/holds` keeps them: at most one, `h1`.
+#[derive(Clone, Default)]
+struct Holds {
+    /// The ciphertext the phone gave and the request it is for, until claimed or undone.
+    kept: Arc<std::sync::Mutex<Option<(String, String)>>>,
+    /// What the phone sealed, as it arrived (for the opacity check).
+    seen: Arc<std::sync::Mutex<Vec<Value>>>,
+    late: Arc<std::sync::atomic::AtomicBool>,
+    /// The claim hands out this request's ciphertext instead (a server replaying another one).
+    swap_to: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl Holds {
+    async fn mount(&self, env: &Env) {
+        let now = reins_core::store::unix_now;
+        let h = self.clone();
+        Mock::given(method("POST"))
+            .and(path("/reins/api/holds"))
+            .respond_with(move |r: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&r.body).unwrap();
+                h.seen.lock().unwrap().push(body.clone());
+                let request = body["request_id"].as_str().unwrap().to_owned();
+                *h.kept.lock().unwrap() = Some((body["sealed"].as_str().unwrap().to_owned(), request));
+                let secs = body["secs"].as_i64().unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({"id": "h1", "release_at": now() + secs, "now": now()}))
+            })
+            .mount(&env.server)
+            .await;
+        let h = self.clone();
+        Mock::given(method("GET"))
+            .and(path("/reins/api/holds"))
+            .respond_with(move |_: &wiremock::Request| {
+                let holds: Vec<Value> = h
+                    .kept
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(_, request)| json!({"id": "h1", "request_id": request, "release_at": now()}))
+                    .collect();
+                ResponseTemplate::new(200).set_body_json(json!({"holds": holds, "now": now()}))
+            })
+            .mount(&env.server)
+            .await;
+        let h = self.clone();
+        Mock::given(method("POST"))
+            .and(path("/reins/api/holds/h1/claim"))
+            .respond_with(move |_: &wiremock::Request| match h.kept.lock().unwrap().take() {
+                Some((sealed, request)) => {
+                    let sealed = h.swap_to.lock().unwrap().clone().unwrap_or(sealed);
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"id": "h1", "request_id": request, "sealed": sealed,
+                        "release_at": now(), "now": now(), "late": h.late.load(Ordering::SeqCst)}))
+                }
+                None => ResponseTemplate::new(404).set_body_json(json!({"error": "not_found", "message": "gone"})),
+            })
+            .mount(&env.server)
+            .await;
+        let h = self.clone();
+        Mock::given(method("DELETE"))
+            .and(path("/reins/api/holds/h1"))
+            .respond_with(move |_: &wiremock::Request| {
+                h.kept.lock().unwrap().take();
+                ResponseTemplate::new(204)
+            })
+            .mount(&env.server)
+            .await;
+    }
+}
+
+async fn accept_sends(env: &Env) {
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "s1", "threadId": "t1"})))
+        .mount(&env.gmail)
+        .await;
+}
+
+async fn gmail_sends(env: &Env) -> usize {
+    env.gmail.received_requests().await.unwrap().iter().filter(|r| r.url.path() == "/users/me/messages/send").count()
+}
+
+/// The owner approves send `id`, which the phone holds for two seconds.
+async fn held(env: &Env, holds: &Holds, id: &str) {
+    holds.mount(env).await;
+    accept_sends(env).await;
+    env.core.set_send_hold_secs(2).await.unwrap();
+    serve_pending(env, &[send_request(id, "c1", "boss@work.com")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+}
+
+async fn outcomes(env: &Env) -> Vec<(String, Option<reins_core::HoldState>)> {
+    let mut all: Vec<_> = env
+        .core
+        .activity(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "send")
+        .map(|e| (e.outcome, e.hold.map(|h| h.state)))
+        .collect();
+    all.reverse();
+    all
+}
+
+#[tokio::test]
+async fn a_held_send_waits_out_its_hold_then_goes_exactly_once() {
+    let env = env().await;
+    let holds = Holds::default();
+    assert_eq!(env.core.send_hold_secs().await.unwrap(), 30, "on by default, 30 s");
+    held(&env, &holds, "r1").await;
+
+    // The agent hears it is held, with a ticket to cancel it by; nothing went to Gmail.
+    let answer = &answers(&env).await[0].1["result"];
+    assert_eq!(
+        (answer["kind"].as_str(), answer["data"]["status"].as_str()),
+        (Some("connector"), Some("held")),
+        "{answer}"
+    );
+    assert!(answer["data"]["note"].as_str().unwrap().contains("in 2 s unless undone"));
+    assert_eq!(gmail_sends(&env).await, 0);
+    assert_eq!(outcomes(&env).await, [("held".to_owned(), Some(reins_core::HoldState::Waiting))]);
+    // The server only ever saw a ciphertext: no recipient, subject or body in clear.
+    let seen = holds.seen.lock().unwrap()[0].to_string();
+    for clear in ["boss@work.com", "Hello", "Body"] {
+        assert!(!seen.contains(clear), "{clear} reached the server in clear: {seen}");
+    }
+
+    // Never before its time on this phone's clock, even when the server would hand it out.
+    assert_eq!(env.core.release_holds().await.unwrap().sent, 0);
+    assert_eq!(gmail_sends(&env).await, 0);
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    assert_eq!(env.core.release_holds().await.unwrap().sent, 1);
+    assert_eq!(gmail_sends(&env).await, 1);
+    // A second release, a push, a sync: nothing more goes.
+    assert_eq!(env.core.release_holds().await.unwrap().sent, 0);
+    env.core.handle_push("hold".to_owned(), "h1".to_owned()).await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 1, "sent exactly once");
+    assert_eq!(outcomes(&env).await, [("held".to_owned(), None), ("sent".to_owned(), None)]);
+}
+
+#[tokio::test]
+async fn undo_deletes_the_ciphertext_and_nothing_is_sent() {
+    let env = env().await;
+    let holds = Holds::default();
+    held(&env, &holds, "r1").await;
+    env.core.undo_send("h1".to_owned()).await.unwrap();
+    assert!(holds.kept.lock().unwrap().is_none(), "the server deleted it");
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    env.core.release_holds().await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 0);
+    assert_eq!(outcomes(&env).await, [("held".to_owned(), None), ("undone".to_owned(), None)]);
+    assert!(env.core.undo_send("h1".to_owned()).await.is_err(), "undone once");
+}
+
+#[tokio::test]
+async fn a_send_undone_on_another_device_is_dropped_unsent() {
+    let env = env().await;
+    let holds = Holds::default();
+    held(&env, &holds, "r1").await;
+    // The desktop app (or the agent's reins_cancel) undid it on the server.
+    holds.kept.lock().unwrap().take();
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    env.core.handle_push("hold".to_owned(), "h1".to_owned()).await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 0);
+    assert_eq!(outcomes(&env).await, [("held".to_owned(), None), ("undone".to_owned(), None)]);
+}
+
+#[tokio::test]
+async fn a_late_release_asks_again_instead_of_sending() {
+    let env = env().await;
+    let holds = Holds::default();
+    holds.late.store(true, Ordering::SeqCst);
+    held(&env, &holds, "r1").await;
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let released = env.core.release_holds().await.unwrap();
+    assert_eq!((released.sent, released.late), (0, 1));
+    assert_eq!(gmail_sends(&env).await, 0);
+    assert_eq!(
+        outcomes(&env).await,
+        [("held".to_owned(), None), ("not_sent".to_owned(), Some(reins_core::HoldState::Late))]
+    );
+    // "Still send?" → Send: it goes now, once.
+    env.core.send_late("h1".to_owned()).await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 1);
+    assert!(env.core.send_late("h1".to_owned()).await.is_err(), "never twice");
+    assert_eq!(gmail_sends(&env).await, 1);
+}
+
+#[tokio::test]
+async fn a_changed_ciphertext_never_opens_or_sends() {
+    let env = env().await;
+    let holds = Holds::default();
+    held(&env, &holds, "r1").await;
+    // The server hands out a ciphertext it changed: it is bound to this phone's key and this request.
+    let other = holds.kept.lock().unwrap().clone().unwrap().0;
+    let mut bytes = data_encoding::BASE64URL_NOPAD.decode(other.as_bytes()).unwrap();
+    bytes[0] ^= 1;
+    *holds.swap_to.lock().unwrap() = Some(data_encoding::BASE64URL_NOPAD.encode(&bytes));
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    env.core.release_holds().await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 0, "a changed or foreign ciphertext is never sent");
+    assert_eq!(outcomes(&env).await[1].0, "not_sent");
+}
+
+#[tokio::test]
+async fn an_owner_approval_whose_hold_fails_is_sent_at_once() {
+    let env = env().await;
+    accept_sends(&env).await;
+    Mock::given(method("POST"))
+        .and(path("/reins/api/holds"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({"error": "too_many_holds", "message": "full"})))
+        .mount(&env.server)
+        .await;
+    serve_pending(&env, &[send_request("r1", "c1", "boss@work.com")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
+    // The owner was asked at its own level: no Undo, sent as approved.
+    assert_eq!(gmail_sends(&env).await, 1);
+    assert_eq!(answers(&env).await[0].1["result"]["kind"], "sent");
+}
+
+#[tokio::test]
+async fn the_hold_is_zero_to_two_minutes_and_zero_sends_at_once() {
+    let env = env().await;
+    assert!(env.core.set_send_hold_secs(121).await.is_err());
+    env.core.set_send_hold_secs(0).await.unwrap();
+    accept_sends(&env).await;
+    serve_pending(&env, &[send_request("r1", "c1", "boss@work.com")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
+    assert_eq!(gmail_sends(&env).await, 1);
+    let asked = env.server.received_requests().await.unwrap();
+    assert!(!asked.iter().any(|r| r.url.path() == "/reins/api/holds"), "off: nothing is held");
+}

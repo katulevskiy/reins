@@ -181,6 +181,8 @@ fun ActivityScreen(
     onApproveAll: (AgentTickets) -> Unit = {},
     /** For others (Circles): answers another account's request; a message when it did not go through. */
     onAnswerCircle: suspend (dev.reins.core.CircleReviewView, Boolean, String?) -> String? = { _, _, _ -> null },
+    /** A held send's Undo, Send (the owner check first) or Discard (08 R10). */
+    onHold: (dev.reins.core.ActivityHold, HoldButton) -> Unit = { _, _ -> },
 ) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
@@ -513,6 +515,8 @@ fun ActivityScreen(
                                     terms = if (searching) terms else emptyList(),
                                     snippet = row.snippet,
                                     divider = !top && rows.getOrNull(at - 1) is RiverItem.Entry && row.index != newMarkerAt,
+                                    onHold = onHold,
+                                    onHoldDue = { releaseDueHolds(container) },
                                 ) { onOpenEntry(row.entry.id) }
                             }
                         }

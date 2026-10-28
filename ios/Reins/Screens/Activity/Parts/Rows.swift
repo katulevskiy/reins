@@ -41,6 +41,9 @@ struct OutcomeTag: View {
         case "granted": OutcomePill(text: "Granted", tone: .accent)
         case "sent": OutcomePill(text: "Sent")
         case "released": OutcomePill(text: "Allowed")
+        case "held": OutcomePill(text: "Sending", tone: .accent)
+        case "undone": OutcomePill(text: "Undone")
+        case "not_sent": TintTag(text: "Not sent", tint: Palette.warning)
         default: OutcomePill(text: outcome.prefix(1).uppercased() + outcome.dropFirst())
         }
     }
@@ -55,6 +58,9 @@ struct OutcomeTag: View {
         case "granted": "Granted"
         case "sent": "Sent"
         case "released": "Allowed"
+        case "held": "Sending"
+        case "undone": "Undone"
+        case "not_sent": "Not sent"
         default: outcome.prefix(1).uppercased() + outcome.dropFirst()
         }
     }
@@ -72,10 +78,18 @@ enum EntryText {
     }
 
     /// How an entry ended, as the history row's trailing mark.
-    enum Mark: Equatable { case approved, denied, failed, auto, grant, permission, overnight, bypass, lockdown, started, unknown, withheld }
+    enum Mark: Equatable {
+        case approved, denied, failed, auto, grant, permission, overnight, bypass, lockdown, started, unknown, withheld
+        /// A held email (08 R10): waiting out its hold or being sent (`sending`), undone, or not sent (too late).
+        case held(sending: Bool), undone, notSent
+    }
 
     static func mark(_ entry: ActivityEntry) -> Mark {
         switch entry.outcome {
+        // A held send's own outcomes come before who decided it: approved, it still has not gone.
+        case "held": return .held(sending: entry.hold != nil)
+        case "undone": return .undone
+        case "not_sent": return .notSent
         case "started": return .started
         case "unknown": return .unknown
         case "succeeded_withheld": return .withheld
@@ -159,6 +173,9 @@ enum EntryMark {
         case .overnight: "Decided during \(AutopilotText.overnightName)"
         case .bypass: "Approved by a bypass"
         case .lockdown: "Denied by Lockdown"
+        case let .held(sending): sending ? "Sending" : "Held"
+        case .undone: "Undone; not sent"
+        case .notSent: "Not sent"
         }
     }
 }
@@ -200,6 +217,9 @@ enum EntryRowText {
         case .started: return .attention(word: "Waiting", spoken: EntryMark.spoken(mark))
         case .unknown: return .attention(word: "Unknown", spoken: EntryMark.spoken(mark))
         case .withheld: return .attention(word: "Withheld", spoken: EntryMark.spoken(mark))
+        case let .held(sending): return .held(word: sending ? "Sending" : "Held")
+        case .undone: return .undone
+        case .notSent: return .notSent
         }
     }
 

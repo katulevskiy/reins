@@ -67,8 +67,9 @@ private fun countDays(items: List<Triple<Long, ActivityOutcome, ActivityDecider>
 
 /** An entry's outcome as the core's filters read it. */
 fun outcomeKind(outcome: String): ActivityOutcome = when (outcome) {
-    "denied" -> ActivityOutcome.DENIED
-    "error", "started", "unknown", "succeeded_withheld" -> ActivityOutcome.FAILED
+    // An undone send counts as denied, one not sent needs attention; a held one is approved (as the core groups them).
+    "denied", "undone" -> ActivityOutcome.DENIED
+    "error", "started", "unknown", "succeeded_withheld", "not_sent" -> ActivityOutcome.FAILED
     else -> ActivityOutcome.APPROVED
 }
 

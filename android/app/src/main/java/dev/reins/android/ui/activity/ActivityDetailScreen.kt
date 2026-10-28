@@ -160,6 +160,13 @@ fun ActivityDetailScreen(
     val commits = remember(entryId, container) {
         container?.core?.let { core -> dev.reins.android.ui.approval.EntryCommits { sha -> core.activityCommitChange(entryId, sha) } }
     }
+    // A held send's Undo, Send or Discard (08 R10), as on its Activity row.
+    val onHold: ((dev.reins.core.ActivityHold, HoldButton) -> Unit)? = if (container != null && authenticator != null) {
+        { hold, button -> scope.launch { answerHold(container, authenticator, hold, button)?.let { error = it } } }
+    } else {
+        null
+    }
+    val onHoldDue: () -> Unit = { container?.let(::releaseDueHolds) }
     val dock: (@Composable () -> Unit)? = if (entry != null && (correctable || thanked || error != null)) {
         { EntryDock(correctable, thanked, busy, error) { asking = true } }
     } else {
@@ -177,7 +184,7 @@ fun ActivityDetailScreen(
             onDone = onBack,
             record = ApprovalRecord(
                 header = {
-                    DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd))
+                    DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd), onHold, onHoldDue)
                 },
                 below = {
                   androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
@@ -246,7 +253,7 @@ fun ActivityDetailScreen(
                     } else if (entry == null) {
                         EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
                     } else {
-                        DecidedHeader(entry)
+                        DecidedHeader(entry, onHold = onHold, onHoldDue = onHoldDue)
                         // Activity 06: the facts in raised groups, as on the boards.
                         androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
                             AskedSections(entry)
@@ -320,7 +327,12 @@ internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
 
 /** A completed request uses paper: its kind and time, the past-tense action, then who decided and any risk. */
 @Composable
-private fun DecidedHeader(entry: ActivityEntry, sentence: dev.reins.android.ui.common.AskSentence = askSentence(entry)) {
+private fun DecidedHeader(
+    entry: ActivityEntry,
+    sentence: dev.reins.android.ui.common.AskSentence = askSentence(entry),
+    onHold: ((dev.reins.core.ActivityHold, HoldButton) -> Unit)? = null,
+    onHoldDue: () -> Unit = {},
+) {
     val c = LocalColors.current
     Column(
         Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 12.dp)
@@ -339,6 +351,8 @@ private fun DecidedHeader(entry: ActivityEntry, sentence: dev.reins.android.ui.c
             }
         }
         Box(Modifier.testTag("entryAutopilot")) { OutcomeLine(entry) }
+        val hold = entry.hold
+        if (hold != null && onHold != null) HoldRow(hold, { onHold(hold, it) }, onHoldDue)
         // The risk explanation is never truncated on a history page.
         RiskChip(entry.autopilot?.risk, maxLines = Int.MAX_VALUE)
     }
@@ -462,8 +476,9 @@ private fun OutcomeLine(entry: ActivityEntry) {
         Outcome.Auto, Outcome.Grant, Outcome.Permission -> c.violet
         Outcome.Overnight -> c.kindNight
         Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
-        Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld -> c.warning
-        Outcome.Approved -> c.ink2
+        Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld, Outcome.NotSent -> c.warning
+        Outcome.Held -> c.violet
+        Outcome.Approved, Outcome.Undone -> c.ink2
     }
     // Activity 06: how it ended as a pill in its colour, with who decided as its mark.
     val glyph = when (entry.decidedBy) {

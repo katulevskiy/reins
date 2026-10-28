@@ -151,8 +151,9 @@ enum ActivityDays {
     /// An entry as the core stamps it (how it ended, who decided), for days worked out from what is loaded.
     static func stamp(_ e: ActivityEntry) -> ActivityStamp {
         let outcome: ActivityOutcome = switch e.outcome {
-        case "denied": .denied
-        case "error", "started", "unknown", "succeeded_withheld": .failed
+        // As the core files them: an undone send with the denied, one not sent with the failed.
+        case "denied", "undone": .denied
+        case "error", "started", "unknown", "succeeded_withheld", "not_sent": .failed
         default: .approved
         }
         let decider: ActivityDecider = switch e.decidedBy {

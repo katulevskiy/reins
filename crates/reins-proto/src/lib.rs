@@ -15,6 +15,7 @@ pub mod desktop;
 pub mod device;
 pub mod enroll;
 pub mod gmail;
+pub mod hold;
 pub mod ids;
 pub mod join;
 pub mod managed;

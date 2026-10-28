@@ -870,6 +870,8 @@ impl Engine {
             "orgreview" => check_id(id),
             // Circles: handled after the pass (`circles_after`), with everything else that is new.
             "circle" => Ok(()),
+            // A held send is due, or was undone elsewhere (08 R10): silent, whatever it finds.
+            "hold" => Box::pin(self.release_holds()).await.map(drop),
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;
@@ -920,6 +922,10 @@ impl Engine {
         self.autopilot_pass().await;
         let news = matches!(&result, Ok(true));
         self.circles_after(news).await;
+        // Held sends that came due while the phone slept go now (or ask again, when it slept too long).
+        if let Err(e) = Box::pin(self.release_holds()).await {
+            log::info!("held sends: {e}");
+        }
         result?;
         self.pending()
     }
@@ -1473,6 +1479,7 @@ impl Engine {
             .map(|r| {
                 let mut entry = views::activity_entry(r);
                 names.entry(&mut entry);
+                entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
                 entry
             })
             .collect())
@@ -1484,6 +1491,7 @@ impl Engine {
         Ok(self.store.audit_entry(entry_id)?.map(|r| {
             let mut entry = views::activity_entry(&r);
             self.names().entry(&mut entry);
+            entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
             entry
         }))
     }
@@ -1504,6 +1512,7 @@ impl Engine {
                 .map(|f| {
                     let mut entry = views::activity_entry(&f.record);
                     names.entry(&mut entry);
+                    entry.hold = self.hold_of(&entry, f.record.info.hold.as_deref());
                     crate::types::ActivityHit {
                         entry,
                         snippet: f.snippet,

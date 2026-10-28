@@ -177,6 +177,7 @@ fun TrustScreen(
                     ModelRows(autopilot, s2, sheets, onTryIt)
                 }
             }
+            ui.sendHoldSecs?.let { secs -> SendHoldSection(secs, @DontMemoize { autopilot.setSendHold(it) }) }
             StartingRuleSection(startingPolicy, Modifier.padding(horizontal = 24.dp).padding(top = 26.dp).testTag("startingRule"), onStartingPolicy)
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
         }
@@ -205,4 +206,26 @@ internal fun decidedLine(n: Int): String = when (n) {
     0 -> "Autopilot decided nothing yet today."
     1 -> "Autopilot decided 1 thing today."
     else -> "Autopilot decided $n things today."
+}
+
+/** Settings' send hold (08 R10): Off, 10, 30, 60 or 120 s; what it does only behind its (?). */
+@Composable
+internal fun SendHoldSection(secs: UInt, onPick: (UInt) -> Unit) {
+    var help by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().testTag("sendHold")) {
+        dev.reins.android.design.SectionHeader(
+            dev.reins.android.ui.activity.SEND_HOLD_TITLE,
+            glyph = Glyph.Undo,
+            trailing = { dev.reins.android.design.HelpButton(help, dev.reins.android.ui.activity.SEND_HOLD_TITLE) { help = it } },
+        )
+        dev.reins.android.design.Chooser(
+            (dev.reins.android.ui.activity.SEND_HOLD_CHOICES + secs).distinct().sorted().map {
+                dev.reins.android.design.Choice(it, dev.reins.android.ui.activity.sendHoldLabel(it), "sendHold:$it")
+            },
+            secs,
+            onPick,
+            Modifier.padding(horizontal = 16.dp),
+        )
+        dev.reins.android.design.HelpText(dev.reins.android.ui.activity.SEND_HOLD_HELP, help, Modifier.padding(horizontal = 24.dp).padding(top = 8.dp))
+    }
 }

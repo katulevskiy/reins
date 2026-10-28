@@ -5204,3 +5204,34 @@ mod decisions_v2_p5 {
         assert_eq!(env.core.approve_all(OLD.to_owned(), None).await.unwrap(), 0);
     }
 }
+
+/// The send hold (08 R10) on an automatic decision: held when it can be, and asked (never sent unheld) when the hold
+/// fails. No notification either way.
+#[tokio::test]
+async fn an_automatic_send_is_held_and_a_failed_hold_never_sends_it() {
+    let env = env(false).await;
+    env.mode(None, AutopilotMode::Bypass).await;
+    let now = unix_now();
+    Mock::given(method("POST"))
+        .and(path("/reins/api/holds"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({"error": "too_many_holds", "message": "full"})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    assert_eq!(env.sent().await, 0, "a failed hold never sends the automatic decision");
+    assert!(env.answer("r1").await.is_none(), "nothing was answered");
+    assert!(env.decided().is_empty(), "not decided: it is tried again");
+
+    // The hold works now: the next pass holds it, answers "held", and still nothing went to Gmail.
+    mount(&env.server, "POST", "/reins/api/holds", 200, json!({"id": "h1", "release_at": now + 30, "now": now})).await;
+    env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
+    assert_eq!(env.sent().await, 0);
+    let answer = env.answer("r1").await.expect("answered");
+    assert_eq!(answer["result"]["data"]["status"], "held", "{answer}");
+    assert!(env.notes.pending.lock().unwrap().is_empty(), "an automatic hold is never a notification");
+    let held = env.core.activity(10).await.unwrap().into_iter().find(|e| e.outcome == "held").expect("logged");
+    assert_eq!(held.hold.map(|h| (h.id, h.state)), Some(("h1".to_owned(), crate::HoldState::Waiting)));
+    assert_eq!(held.decided_by, "bypass");
+}

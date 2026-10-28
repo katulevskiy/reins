@@ -408,6 +408,9 @@ private fun TabContent(
             onApproveAll = { group ->
                 questionScope.launch { dev.reins.android.ui.activity.approveAllForTask(container, authenticator, group)?.let(app::showNotice) }
             },
+            onHold = { hold, button ->
+                questionScope.launch { dev.reins.android.ui.activity.answerHold(container, authenticator, hold, button)?.let(app::showNotice) }
+            },
             onConnectComputer = { app.open(Route.ConnectComputer) },
             onOpenSettings = { app.selectTab(Tab.Settings) },
             onConnectAi = {

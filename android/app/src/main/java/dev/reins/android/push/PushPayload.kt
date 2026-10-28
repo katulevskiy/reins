@@ -1,8 +1,8 @@
 package dev.reins.android.push
 
 /**
- * A validated FCM data message (contracts §A): `t` is `req`, `pair`, `blob`, `join`, `replaced`, `orgreview`, `orgpasskey` or
- * `circle`, `id` a server-issued id (a Circle's is `review:`, `alert:` or `news:` and an id; the core then syncs Circles;
+ * A validated FCM data message (contracts §A): `t` is `req`, `pair`, `blob`, `join`, `replaced`, `orgreview`, `orgpasskey`,
+ * `circle` or `hold` (a held email is due, or was undone elsewhere: silent, 08 R10), `id` a server-issued id (a Circle's is `review:`, `alert:` or `news:` and an id; the core then syncs Circles;
  * an org passkey's is its credential id), and `p` (optional) the tag of the account it is for
  * (`reins_proto::pairing::push_profile_tag`), so a phone with a
  * work profile knows which profile a push belongs to.
@@ -20,7 +20,9 @@ data class PushPayload(val kind: String, val id: String, val profileTag: String?
         /** Something about Circles is new (a review, a guardian notice, a change): the core syncs them. */
         const val CIRCLE = "circle"
         private val CIRCLE_ID = Regex("(review|alert|news):[A-Za-z0-9_-]{1,120}")
-        private val KINDS = setOf("req", "pair", "blob", "join", "replaced", ORG_REVIEW, ORG_PASSKEY, CIRCLE)
+        /** A held email is due or was undone elsewhere (08 R10): never notified; the phone releases what is due. */
+        const val HOLD = "hold"
+        private val KINDS = setOf("req", "pair", "blob", "join", "replaced", ORG_REVIEW, ORG_PASSKEY, CIRCLE, HOLD)
         /** A WebAuthn credential id is up to 1023 bytes, base64url. */
         private val CREDENTIAL_ID = Regex("[A-Za-z0-9_-]{1,1400}")
 

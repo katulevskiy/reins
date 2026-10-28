@@ -69,6 +69,11 @@ import dev.reins.android.ui.common.actionField
 import dev.reins.android.ui.common.askSentence
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityHold
+import dev.reins.core.HoldState
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.ButtonStyle
+import kotlinx.coroutines.delay
 import dev.reins.core.ConnectionView
 import dev.reins.core.ActivityDecider
 import dev.reins.core.ActivityFacets
@@ -198,6 +203,10 @@ fun RiverRow(
     /** Where a search matched outside what the row shows: one more line under it. */
     snippet: ActivitySnippet? = null,
     divider: Boolean = true,
+    /** A held send's Undo, Send or Discard (08 R10); null: the row shows no hold (a list on another page). */
+    onHold: ((ActivityHold, HoldButton) -> Unit)? = null,
+    /** A held send's countdown ran out on this phone: release it (again every few seconds while it still shows). */
+    onHoldDue: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -258,6 +267,10 @@ fun RiverRow(
                 RiskLine(AutopilotText.riskLine(risk), Modifier.padding(top = 3.dp).testTag("rowRisk:${entry.id}"))
             }
             if (landed) RText(outcomeLine(entry), RType.meta, c.violet, Modifier.padding(top = 2.dp), maxLines = 1)
+            val hold = entry.hold
+            if (hold != null && onHold != null) {
+                HoldRow(hold, { onHold(hold, it) }, onHoldDue, Modifier.padding(top = 6.dp))
+            }
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             RText(compactTime(entry.at, nowSeconds), RType.sans(12.5f, FontWeight.Medium, tracking = 0.01f).copy(fontFeatureSettings = "tnum"), c.inkMeta, maxLines = 1)
@@ -266,6 +279,63 @@ fun RiverRow(
         }
     }
 }
+
+/**
+ * A held send under its row (08 R10): "Sending in 23 s" ticking down with Undo; "Sending" once it runs out (then
+ * [onDue] releases it); "Still send?" with Send and Discard. A tapped button stays off until the entry changes.
+ */
+@Composable
+fun HoldRow(hold: ActivityHold, onButton: (HoldButton) -> Unit, onDue: () -> Unit, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    val waiting = hold.state == HoldState.WAITING
+    val nowMillis by dev.reins.android.design.rememberNowState(intervalMillis = 250, untilMillis = if (waiting) hold.releaseAt * 1000 else null)
+    val now = nowMillis / 1000
+    val line = holdLine(hold, now)
+    val due = holdDue(hold, now)
+    // Released by the push, the next sync or this: tried again while the row still says it waits (a server a little
+    // behind this phone's clock claims it a moment later).
+    LaunchedEffect(hold, due) {
+        while (due) {
+            onDue()
+            delay(HOLD_RETRY_MS)
+        }
+    }
+    var tapped by remember(hold) { mutableStateOf(false) }
+    val late = hold.state == HoldState.LATE
+    val tint = if (late) c.warning else c.violet
+    Row(
+        modifier.fillMaxWidth().testTag("hold:${hold.id}"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(if (late) Glyph.CircleAlert else Glyph.Timer, tint, size = 14.dp)
+        RText(
+            line.text,
+            RType.sans(13f, FontWeight.SemiBold).copy(fontFeatureSettings = "tnum"),
+            tint,
+            Modifier.weight(1f).testTag("holdText:${hold.id}"),
+            maxLines = 1,
+        )
+        line.buttons.forEach { button ->
+            dev.reins.android.design.SignalButton(
+                button.label,
+                Modifier.testTag("${button.tag}:${hold.id}"),
+                style = if (button == HoldButton.Send) ButtonStyle.Inverse else ButtonStyle.Soft,
+                size = ButtonSize.Compact,
+                glyph = button.glyph,
+                enabled = !tapped,
+            ) {
+                if (!tapped) {
+                    tapped = true
+                    onButton(button)
+                }
+            }
+        }
+    }
+}
+
+/** How often a held send whose countdown ran out is released again while its row still says it waits. */
+private const val HOLD_RETRY_MS = 10_000L
 
 /** A hairline above a row of a pane: from past the tile to 16 dp short of the right edge. */
 fun Modifier.ruleAbove(c: dev.reins.android.design.RColors, start: androidx.compose.ui.unit.Dp = 62.dp): Modifier = drawBehind {
@@ -341,6 +411,9 @@ fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier, share: String? =
         Outcome.Started -> OutcomeTag("Awaiting outcome", Glyph.CircleAlert, c.warning, modifier, spoken = "Attempted; awaiting outcome")
         Outcome.Unknown -> OutcomeTag("Outcome unknown", Glyph.CircleAlert, c.warning, modifier, spoken = "Outcome unknown; do not repeat")
         Outcome.Withheld -> OutcomeTag("Response withheld", Glyph.CircleAlert, c.warning, modifier, spoken = "Completed; response withheld; do not repeat")
+        Outcome.Held -> OutcomeTag(SENDING, Glyph.Timer, c.violet, modifier, spoken = "Approved; sending soon")
+        Outcome.Undone -> OutcomeTag("Undone", Glyph.Undo, c.ink2, modifier, spoken = "Undone; not sent")
+        Outcome.NotSent -> OutcomeTag("Not sent", Glyph.CircleAlert, c.warning, modifier)
     }
 }
 

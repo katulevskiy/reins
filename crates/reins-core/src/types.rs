@@ -1086,6 +1086,10 @@ pub struct ActivityEntry {
     /// What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
     #[uniffi(default)]
     pub request: Option<ActivityRequest>,
+    /// A held email send (08 R10): "Sending in 30 s · Undo" while it waits, "Still send?" when it was not sent in time.
+    /// `None` once it went, or was undone.
+    #[uniffi(default)]
+    pub hold: Option<crate::send_hold::ActivityHold>,
 }
 
 /// How an Activity entry ended, as search filters and day counts group it.

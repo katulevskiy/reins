@@ -178,7 +178,7 @@ pub fn notification(push: &PushMessage) -> Notification {
         // Only a review waiting for a helper, and a guardianship ending, alert (the extension writes the text from
         // what it fetches); every other Circle push is news the app fetches quietly.
         PushKind::Circle if super::circles::alerts(&push.id) => "circle",
-        PushKind::Replaced | PushKind::Circle => return silent(),
+        PushKind::Replaced | PushKind::Circle | PushKind::Hold => return silent(),
         PushKind::Sync => {
             if push.sync_head().is_none_or(|(_, alert)| !alert) {
                 return silent();
@@ -513,6 +513,14 @@ mod tests {
         let n = notification(&push(PushKind::Replaced, ""));
         assert_eq!((n.push_type, n.priority), ("background", 5));
         assert_eq!(n.payload, json!({"aps": {"content-available": 1}, "t": "replaced", "id": ""}));
+    }
+
+    #[test]
+    fn a_held_send_wakes_the_phone_silently() {
+        // An automatic hold is never a notification (08 R10): the app releases it in the background.
+        let n = notification(&push(PushKind::Hold, "h1"));
+        assert_eq!((n.push_type, n.priority), ("background", 5));
+        assert_eq!(n.payload, json!({"aps": {"content-available": 1}, "t": "hold", "id": "h1"}));
     }
 
     #[test]

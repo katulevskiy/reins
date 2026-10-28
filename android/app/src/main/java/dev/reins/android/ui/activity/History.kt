@@ -168,6 +168,9 @@ fun OutcomeMark(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.Grant -> Marker(Icons.Rounded.Key, "Grant", c.accent, modifier)
         Outcome.Bypass -> Marker(Icons.Rounded.Bolt, "Bypass", c.danger, modifier)
         Outcome.Lockdown -> Marker(Icons.Rounded.Lock, "Lockdown", c.secondary, modifier)
+        Outcome.Held -> Marker(dev.reins.android.design.Glyph.Timer.vector, SENDING, c.accent, modifier)
+        Outcome.Undone -> Marker(dev.reins.android.design.Glyph.Undo.vector, "Undone", c.secondary, modifier)
+        Outcome.NotSent -> Marker(Icons.Rounded.Warning, "Not sent", c.warning, modifier)
     }
 }
 

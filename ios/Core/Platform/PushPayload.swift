@@ -1,7 +1,7 @@
 import Foundation
 
 /// A validated push from the server (contracts §A, the Android app's `PushPayload`): `t` is `req`, `pair`, `blob`,
-/// `replaced`, `circle`, `orgreview` or `orgpasskey`, `id` a server-issued id (a Circle push's id says why it came: `review:`, `alert:` or `news:`
+/// `replaced`, `circle`, `orgreview`, `orgpasskey` or `hold`, `id` a server-issued id (a Circle push's id says why it came: `review:`, `alert:` or `news:`
 /// before the id). Push is only a hint that something waits; the phone fetches the real data
 /// itself, so anything that is not exactly this shape is dropped.
 struct PushPayload: Equatable {
@@ -28,7 +28,14 @@ struct PushPayload: Equatable {
     /// opens the same reviews, where its card is.
     static let orgPasskey = "orgpasskey"
 
-    static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview, orgPasskey, "circle"]
+    /// A held email is due (08 R10), or was undone elsewhere: a silent background push. The app sends it; nothing is
+    /// shown, unless one now asks "Still send?".
+    static let hold = "hold"
+
+    static let kinds: Set<String> = ["req", "pair", "blob", "replaced", orgReview, orgPasskey, "circle", hold]
+
+    /// A held send's push: it only wakes the app, and is never a notification of its own.
+    var silent: Bool { kind == Self.hold }
 
     /// A WebAuthn credential id: up to 1023 bytes, base64url.
     static func isCredentialId(_ value: String) -> Bool {

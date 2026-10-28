@@ -2461,6 +2461,73 @@ impl ReinsCore {
         .await
     }
 
+    /// The email send hold in seconds (08 R10): 30 until changed, 0 when off.
+    pub async fn send_hold_secs(&self) -> Result<u32, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { Ok(engine.send_hold_secs()) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sets the email send hold, 0 (off) to 120 seconds.
+    pub async fn set_send_hold_secs(&self, secs: u32) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_send_hold_secs(secs) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Undo of a held email (its Activity entry's `hold`): it is not sent. On a "Still send?", it is dropped.
+    pub async fn undo_send(&self, hold_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.undo_send(&hold_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Still send?" answered Send: a held email that was not sent in time goes now, as the owner's approval.
+    pub async fn send_late(&self, hold_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.send_late(&hold_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Sends the held emails that are due (the app calls it when a countdown ends and when a hold push arrives); those
+    /// that came due too long ago ask "Still send?" instead (`late`: the app may say so, it is an ask).
+    pub async fn release_holds(&self) -> Result<crate::send_hold::HoldsReleased, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.release_holds().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// The morning digest of what Overnight parked and still waits, grouped by agent and task (`None`: nothing waits).
     /// The app shows it as one notification at `at`, and on Activity when opened.
     pub async fn overnight_digest(&self) -> Result<Option<OvernightDigest>, CoreError> {

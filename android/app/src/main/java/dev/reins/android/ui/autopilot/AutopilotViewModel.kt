@@ -68,6 +68,8 @@ data class AutopilotUi(
     val setupRequested: Boolean = false,
     /** A cell about to be made looser, with what it would have done on this phone's last 30 days (02 §4). */
     val loosen: LoosenCell? = null,
+    /** How long an approved email waits with Undo before it goes, in seconds (0: off; 08 R10); null until read. */
+    val sendHoldSecs: UInt? = null,
 )
 
 /** A looser matrix cell waiting for the owner to look at its preview. */
@@ -121,6 +123,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     /** The Autopilot page opened: its profiles, and this week's numbers. */
     fun showingAutopilot() {
+        viewModelScope.launch { loadSendHold() }
         viewModelScope.launch {
             loadProfiles()
             try {
@@ -130,6 +133,33 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
                 throw e
             } catch (_: Exception) {
                 // The strip shows dashes; nothing else depends on it.
+            }
+        }
+    }
+
+    /** The send hold as the core has it; a failed read leaves the setting out (it shows once it is known). */
+    private suspend fun loadSendHold() {
+        try {
+            val secs = container.core.sendHoldSecs()
+            _ui.update { it.copy(sendHoldSecs = secs) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * How long an approved email waits with Undo before it goes (08 R10): 0 (off) to 120 seconds. Shown at once; a
+     * refusal says why and shows the setting as the core has it.
+     */
+    fun setSendHold(secs: UInt) {
+        if (_ui.value.sendHoldSecs == secs) return
+        _ui.update { it.copy(sendHoldSecs = secs) }
+        perform {
+            try {
+                container.core.setSendHoldSecs(secs)
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { loadSendHold() }
             }
         }
     }

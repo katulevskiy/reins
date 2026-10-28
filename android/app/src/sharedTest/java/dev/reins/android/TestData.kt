@@ -660,7 +660,8 @@ object TestData {
         request: dev.reins.core.ActivityRequest? = null,
         service: String = "gmail",
         op: String = "",
-    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, service, "me@gmail.com", count, info, op, opTitle, decidedBy, autopilot, label, request)
+        hold: dev.reins.core.ActivityHold? = null,
+    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, service, "me@gmail.com", count, info, op, opTitle, decidedBy, autopilot, label, request, hold)
 
     /** What a request is, as the core labels it. */
     fun label(provider: String, action: String, lead: String, subject: String = "", code: Boolean = false, tail: String = "") =

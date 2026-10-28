@@ -811,6 +811,22 @@ enum DemoData {
         ]
     }
 
+    /// `-demoHold` (08 R10): an email Auto approved, waiting out its hold, and one the phone woke too late for ("Still
+    /// send?").
+    static func holds(_ now: Int64) -> [ActivityEntry] {
+        let email = EmailView(to: ["ann@corp.example"], cc: [], subject: "Lunch on Friday", body: "Hi Ann,\n\nFriday at 12:30 works.\n\nBest")
+        var waiting = entry(1_100, at: now - 5, action: "send", outcome: "held", detail: "To ann@corp.example",
+                            info: info(email: email), decidedBy: "autopilot", autopilot: note(),
+                            requestLabel: requestLabel("gmail", "send", "Send an email to", "ann@corp.example"))
+        waiting.hold = ActivityHold(id: "hold-1", releaseAt: now + 25, state: .waiting)
+        let report = EmailView(to: ["bob@corp.example"], cc: [], subject: "Weekly report", body: "Hi Bob,\n\nThe weekly report is attached.")
+        var late = entry(1_101, at: now - 1_200, conn: "c5", label: "Cursor", action: "send", outcome: "not_sent",
+                         detail: "Not sent: the phone woke too late.", info: info(email: report),
+                         requestLabel: requestLabel("gmail", "send", "Send an email to", "bob@corp.example"))
+        late.hold = ActivityHold(id: "hold-2", releaseAt: now - 2_400, state: .late)
+        return [waiting, late]
+    }
+
     // ---- grants -------------------------------------------------------------------------------------------------
 
     static func scope(senderDomains: [String] = [], recipientDomains: [String] = [], resources: [String] = [], classes: [String] = [], allMail: Bool = false) -> GrantScopeChoice {

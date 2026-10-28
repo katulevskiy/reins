@@ -499,6 +499,16 @@ class MainSafeCore(
 
     override suspend fun setOvernightExpiry(hours: UInt) = io { setOvernightExpiry(hours) }
 
+    override suspend fun sendHoldSecs(): UInt = io { sendHoldSecs() }
+
+    override suspend fun setSendHoldSecs(secs: UInt) = io { setSendHoldSecs(secs) }
+
+    override suspend fun undoSend(holdId: String) = io { undoSend(holdId) }
+
+    override suspend fun sendLate(holdId: String) = io { sendLate(holdId) }
+
+    override suspend fun releaseHolds(): dev.reins.core.HoldsReleased = io { releaseHolds() }
+
     override suspend fun overnightDigest(): dev.reins.core.OvernightDigest? = io { overnightDigest() }
 
     override suspend fun approveAll(connectionId: String, taskId: String?): UInt = io { approveAll(connectionId, taskId) }

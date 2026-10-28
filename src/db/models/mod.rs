@@ -30,6 +30,7 @@ pub mod reins_org_policy_code;
 pub mod reins_org_request;
 pub mod reins_org_routing;
 mod reins_roster;
+mod reins_send_hold;
 mod reins_ticket;
 mod reins_vault_passkey;
 pub mod reins_workos;
@@ -68,6 +69,7 @@ pub use self::reins_roster::{
     Listed, LogLimits, OpsQuota, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
     ReinsRosterRow, WriteError,
 };
+pub use self::reins_send_hold::{Claim as HoldClaim, Inserted as HoldInserted, ReinsSendHold};
 #[cfg(all(test, sqlite))]
 pub use self::reins_ticket::tests::ticket as test_ticket;
 pub use self::reins_ticket::{ReinsCallback, ReinsDeviceKeys, ReinsTicket, ReinsTicketEvent};

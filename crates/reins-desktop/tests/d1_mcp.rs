@@ -185,6 +185,47 @@ async fn lines_that_are_not_json_get_a_parse_error() {
     assert!(by_id(&out, 1).get("result").is_some());
 }
 
+#[tokio::test]
+async fn a_held_send_is_logged_with_its_hold_and_undo_deletes_it_once() {
+    use reins_desktop::journal::{self, HoldRecord, Outcome};
+    use reins_desktop::server::LinkError;
+    use reins_desktop::server::client::{DesktopClient, HOLD_GONE};
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let call = |id: u64, name: &str| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": {"to": "a@b"}}});
+    let out = bridge(
+        &app.paths,
+        Some("Claude Code"),
+        &lines(&[init(1), initialized(), call(2, "gmail_send"), call(3, "echo")]),
+    )
+    .await;
+    assert_eq!(by_id(&out, 2)["result"]["structuredContent"]["status"], "held", "the agent hears it as it was");
+    let log = journal::read(&app.paths, 10, i64::MAX);
+    let entry = |service: &str| log.iter().find(|e| e.service.as_deref() == Some(service)).unwrap();
+    let sent = entry("gmail_send");
+    assert_eq!(sent.outcome, Outcome::Approved);
+    assert_eq!(
+        sent.hold,
+        Some(HoldRecord {
+            id: "h-1".to_owned(),
+            until: 1_793_095_230,
+        })
+    );
+    assert_eq!(entry("echo").hold, None, "a plain result holds nothing");
+
+    let client = DesktopClient::new(&app.paths).unwrap();
+    client.undo_hold("h-1").await.unwrap();
+    assert!(mock.with(|s| s.holds.is_empty()));
+    // Gone now: the server says so, and the app says it was sent or undone already.
+    match client.undo_hold("h-1").await {
+        Err(LinkError::Failed(m)) => assert_eq!(m, HOLD_GONE),
+        other => panic!("{other:?}"),
+    }
+    // An id the server could not have made never leaves this computer.
+    assert!(matches!(client.undo_hold("../tickets").await, Err(LinkError::Failed(_))));
+    assert_eq!(mock.with(|s| s.undos.clone()), ["/reins/desktop/holds/h-1", "/reins/desktop/holds/h-1"]);
+}
+
 #[test]
 fn the_command_line_bridges_stdin_and_stdout() {
     use std::io::Write as _;

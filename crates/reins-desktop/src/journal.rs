@@ -160,6 +160,18 @@ pub struct Entry {
     /// What the matrix decided on this computer, or would have decided in shadow (Decisions v2).
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub matrix: Option<crate::consequences::Shadow>,
+    /// An approved email held before it goes (Decisions v2 08 R10): Undo may stop it until `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub hold: Option<HoldRecord>,
+}
+
+/// An approved send the server holds before the phone sends it ("Sending in 30 s · Undo").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoldRecord {
+    /// The hold id (`DELETE /reins/desktop/holds/<id>`).
+    pub id: String,
+    /// Unix seconds when it is released (the server's clock).
+    pub until: i64,
 }
 
 /// A safety net applied to a request, as Activity shows it ("Netted · Restore").
@@ -277,6 +289,7 @@ impl Entry {
             effects: None,
             nets: None,
             matrix: None,
+            hold: None,
         }
     }
 
@@ -333,6 +346,13 @@ impl Entry {
     #[must_use]
     pub fn matrix(mut self, matrix: Option<crate::consequences::Shadow>) -> Self {
         self.matrix = matrix;
+        self
+    }
+
+    /// The send hold applied to it.
+    #[must_use]
+    pub fn hold(mut self, hold: Option<HoldRecord>) -> Self {
+        self.hold = hold;
         self
     }
 
@@ -706,6 +726,30 @@ mod tests {
         )
         .unwrap();
         assert!(odd.matrix.is_none(), "a newer shape is dropped, not an error");
+    }
+
+    #[test]
+    fn holds_are_kept_and_older_lines_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        paths.ensure().unwrap();
+        let hold = HoldRecord {
+            id: "0b8c2d4e-1f2a".to_owned(),
+            until: 1_800_000_030,
+        };
+        let mut e = Entry::new(Kind::Mcp, "Claude Code: gmail_send").hold(Some(hold.clone()));
+        e.end(Outcome::Approved, None);
+        Journal::new(&paths).record(&e);
+        assert_eq!(read(&paths, 10, i64::MAX)[0].hold.as_ref(), Some(&hold));
+        let line = serde_json::to_string(&Entry::new(Kind::Ask, "x")).unwrap();
+        assert!(!line.contains("hold"), "no hold, no field: {line}");
+        let old: Entry =
+            serde_json::from_str(r#"{"id":"a","at":1,"kind":"mcp","what":"x","outcome":"approved"}"#).unwrap();
+        assert!(old.hold.is_none());
+        let odd: Entry =
+            serde_json::from_str(r#"{"id":"a","at":1,"kind":"mcp","what":"x","outcome":"approved","hold":"h"}"#)
+                .unwrap();
+        assert!(odd.hold.is_none(), "a newer shape is dropped, not an error");
     }
 
     #[test]

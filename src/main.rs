@@ -629,6 +629,8 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         if api::reins::enabled() {
             api::reins::tickets::spawn_sweeper(pool.clone());
             api::reins::circles::spawn_sweeper(pool.clone());
+            // The email send hold: releases due, holds nobody claimed.
+            api::reins::holds::spawn_sweeper(pool.clone());
         }
         // Organizations: the decision service's sweeper (expiries, leases, retention, audit checkpoints).
         api::reins::org::sweeper::spawn(pool.clone());

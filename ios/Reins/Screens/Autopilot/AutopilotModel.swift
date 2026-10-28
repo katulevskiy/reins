@@ -20,6 +20,8 @@ final class AutopilotModel {
     private(set) var stats: AutopilotStats?
     /// What a profile's last 30 days would have been at the thresholds being set; nil until read.
     private(set) var replay: ThresholdReplay?
+    /// How long an approved email waits before it goes, in seconds (08 R10; 0: off); nil until read.
+    private(set) var sendHoldSecs: UInt32?
 
     @ObservationIgnored private weak var app: AppModel?
 
@@ -81,6 +83,13 @@ final class AutopilotModel {
         guard let app else { return }
         await app.refreshAutopilot()
         await loadProfiles()
+        await loadSendHold()
+    }
+
+    /// The send hold as the core holds it (kept as it was when it cannot be read).
+    func loadSendHold() async {
+        guard let app else { return }
+        if let secs = try? await app.core.sendHoldSecs() { sendHoldSecs = secs }
     }
 
     private func loadProfiles() async {
@@ -279,6 +288,18 @@ final class AutopilotModel {
             try await app.core.setOvernightExpiry(hours: hours)
             await app.refreshAutopilot()
         }
+    }
+
+    /// How long an approved email waits before it goes (0 to 120 s; 0: off). The level of a send is the same with or
+    /// without it, so no owner check; shown at once, and put back if the core refuses.
+    func setSendHold(_ secs: UInt32) async {
+        guard let app, sendHoldSecs != secs else { return }
+        app.feedback.play(.selection)
+        let before = sendHoldSecs
+        sendHoldSecs = secs
+        let saved = await run { try await app.core.setSendHoldSecs(secs: secs) }
+        if !saved { sendHoldSecs = before }
+        await loadSendHold()
     }
 
     /// Ends the global Lockdown: back to the mode picked before it, or Manual.
