@@ -114,7 +114,8 @@ O5 adds `reins_org_audit_sinks` (sealed streaming destinations and how far each 
 `reins_org_witness` (RFC 3161 timestamps of checkpoints); the audit routes are under `/reins/org/<org>/audit/`
 (`export`, `report`, `keys.json`, `checkpoints/<seq>.json|tsr`, `streaming`).
 Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
-`reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`. Everything else is in memory with a time limit, so
+`reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`; guardianship adds
+`reins_circle_changes` (each signed change and when it arrived) and `reins_guardian_notices`. Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows
@@ -264,6 +265,14 @@ settle, `reins-core/src/circles` the phone side and `src/api/reins/circles.rs` t
 - **Changes:** pause, resume and end are signed changes (`…/links/<id>/change`); ending drops a delegate's or
   co-signer's part of what waits and lapses a guardian's.
 - **Receipts:** the owner's Activity names who decided ("Approved by …"); the helper's keeps "Approved for …".
+- **Guardianship** (P7, `reins-core/src/circles/guardian.rs`, `src/api/reins/guardian_notices.rs`): the ward's end is
+  a signed `EndRequested` that keeps the link until `effective_at` (the Circle sweep then ends it); a minor's waits for
+  the guardian's `EndConsented`. Every change is logged with its arrival time and returned in `GET …/circles/links`
+  (`changes`), so the guardian's phone checks each step against its own terms. The server writes guardian notices
+  for a reset, a deletion (before the rows go), roster changes and the ward's changes; `GET /reins/api/guardian/notices`
+  returns them until `POST …/notices/seen` acknowledges them, and one that needs the guardian pushes `alert:<link>`.
+  A link keeps at most 200 changes. The ward opts in to a weekly digest (one
+  Notice packet after Monday 09:00 UTC).
 
 ### Pairing an AI or the desktop app
 

@@ -868,6 +868,29 @@ table! {
         last_change -> Nullable<Text>,
         created_at -> BigInt,
         updated_at -> BigInt,
+        effective_at -> Nullable<BigInt>,
+    }
+}
+
+table! {
+    reins_circle_changes (link_id, seq) {
+        link_id -> Text,
+        seq -> BigInt,
+        change_body -> Text,
+        at -> BigInt,
+    }
+}
+
+table! {
+    reins_guardian_notices (id) {
+        id -> Text,
+        guardian_uuid -> Text,
+        link_id -> Text,
+        kind -> Text,
+        detail -> Text,
+        at -> BigInt,
+        pushed -> Bool,
+        fetched -> Bool,
     }
 }
 

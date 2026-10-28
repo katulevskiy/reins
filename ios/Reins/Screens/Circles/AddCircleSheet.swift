@@ -4,7 +4,8 @@ import UIKit
 
 /// Settings › Circles › Add someone (04 §3): the role, what it covers, Instant or Deferred; then the link (shared, or
 /// shown as a QR code), the six digits both phones show once they opened it, and, after they accepted, Confirm held and
-/// checked with Face ID, Touch ID or the passcode, as loosening Autopilot is.
+/// checked with Face ID, Touch ID or the passcode, as loosening Autopilot is. A guardianship's ward (this account)
+/// picks the notice to leave (0, 3 or 7 days) before the link, so the guardian sees it before accepting.
 @Observable
 @MainActor
 final class AddCircleModel {
@@ -25,13 +26,17 @@ final class AddCircleModel {
     var role: CircleRole = .delegate
     var preset: CircleScopePreset = .everything
     var deferred = true
+    /// A guardianship's notice, the ward's pick; none until chosen (the link waits for it).
+    var noticeDays: UInt8?
     private(set) var start: CircleInviteStart?
     private(set) var busy = false
     var error: String?
     /// How long to wait between asks while the other phone has not moved.
     var pollInterval: Duration = .milliseconds(1500)
 
-    var draft: CircleDraft { CircleLogic.draft(role: role, preset: preset, deferred: deferred) }
+    var draft: CircleDraft { GuardianLogic.draft(role: role, preset: preset, deferred: deferred, noticeDays: noticeDays) }
+
+    var canMakeLink: Bool { !busy && GuardianLogic.canMakeLink(role: role, noticeDays: noticeDays) }
 
     func back() {
         switch step {
@@ -42,7 +47,7 @@ final class AddCircleModel {
     }
 
     func create(_ app: AppModel) async {
-        guard !busy, start == nil else { return }
+        guard canMakeLink, start == nil else { return }
         busy = true
         error = nil
         defer { busy = false }
@@ -159,6 +164,7 @@ struct AddCircleSheet: View {
         .interactiveDismissDisabled(vm.busy)
         .task(id: vm.start?.id) { await vm.poll(model) }
         .onDisappear { Task { await vm.cancel(model) } }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("addCircleSheet")
     }
 
@@ -276,6 +282,9 @@ struct AddCircleSheet: View {
                 .foregroundStyle(Palette.inkMeta)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
+            if vm.role == .guardian {
+                GuardianTermsStep(days: $vm.noticeDays)
+            }
         }
         .padding(.top, 12)
     }
@@ -350,6 +359,7 @@ struct AddCircleSheet: View {
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("circleHelper")
+                if let days = vm.draft.noticeDays { GuardianNoticeFact(days: days) }
             }
             CircleCode(code: code)
                 .padding(.top, 26)
@@ -407,7 +417,7 @@ struct AddCircleSheet: View {
                     }
                 }
                 .buttonStyle(SignalButtonStyle(.inverse))
-                .disabled(vm.busy)
+                .disabled(!vm.canMakeLink)
                 .accessibilityIdentifier("circleCreate")
             }
         case .accepted:

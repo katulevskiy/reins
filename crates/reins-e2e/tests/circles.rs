@@ -85,6 +85,7 @@ fn cosign(deferred: bool) -> CircleDraft {
         window_secs: None,
         fall_back_to_me: false,
         full_cards: true,
+        notice_days: None,
     }
 }
 
@@ -385,7 +386,7 @@ async fn a_lying_server_changes_nothing() {
         (id(DANA), id(ALEX))
     };
     db().execute(
-        "INSERT INTO reins_circle_links VALUES (?1, ?2, ?3, 'delegate', 'active', 'AAAA', 'AAAA', NULL, 1, 1)",
+        "INSERT INTO reins_circle_links VALUES (?1, ?2, ?3, 'delegate', 'active', 'AAAA', 'AAAA', NULL, 1, 1, NULL)",
         rusqlite::params!["f".repeat(32), dana_id, alex_id],
     )
     .unwrap();

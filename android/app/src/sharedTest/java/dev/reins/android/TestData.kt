@@ -143,7 +143,9 @@ object TestData {
         scopeLine: String = "Money",
         deferred: Boolean = true,
         state: dev.reins.core.CircleLinkState = dev.reins.core.CircleLinkState.ACTIVE,
-    ) = dev.reins.core.CirclePerson(linkId, peer, role, mine, scopeLine, deferred, 14_400uL, state, 1_699_000_000)
+        ending: Long? = null,
+        needsConsent: Boolean = false,
+    ) = dev.reins.core.CirclePerson(linkId, peer, role, mine, scopeLine, deferred, 14_400uL, state, 1_699_000_000, ending, needsConsent)
 
     /** A request of [person]'s account waiting for this phone, due [left] seconds after the frozen now. */
     fun circleReview(
@@ -161,7 +163,31 @@ object TestData {
     )
 
     fun circleNotice(id: String = "n1", person: String = "sam@example.com", text: String = "Sam turned on Bypass for 1 h", at: Long = 1_700_000_000) =
-        dev.reins.core.CircleNoticeView(id, person, text, null, at)
+        dev.reins.core.CircleNoticeView(id, person, text, null, at, emptyList())
+
+    /** The ward's view of its guardianship [linkId], with [guardian] ("mom@example.com"). */
+    fun wardView(
+        linkId: String = "g1",
+        guardian: String = "mom@example.com",
+        noticeDays: Int = 3,
+        minor: Boolean = false,
+        minorProposed: Boolean = false,
+        decisions: List<dev.reins.core.GuardianDecisionView> = emptyList(),
+        ending: Long? = null,
+        needsConsent: Boolean = false,
+        digest: Boolean = false,
+    ) = dev.reins.core.WardView(linkId, guardian, "Purchases", noticeDays.toUByte(), minor, minorProposed, decisions, ending, needsConsent, digest)
+
+    /** What a guardian is told about [ward]. */
+    fun guardianNotice(
+        id: String = "gn1",
+        linkId: String = "g1",
+        ward: String = "sam@example.com",
+        line: String = "Asked to leave",
+        verified: Boolean = true,
+        needsConsent: Boolean = false,
+        at: Long = 1_700_000_000,
+    ) = dev.reins.core.GuardianNoticeView(id, linkId, ward, line, at, verified, needsConsent)
 
     /** A request that became a ticket [age] seconds before [now], due [left] seconds after it. */
     fun ticket(

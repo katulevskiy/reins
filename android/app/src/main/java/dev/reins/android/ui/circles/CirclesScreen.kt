@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Handshake
 import androidx.compose.material.icons.rounded.PersonAdd
-import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -57,7 +56,7 @@ import dev.reins.core.CircleRole
 fun roleIcon(role: CircleRole): ImageVector = when (role) {
     CircleRole.DELEGATE -> Icons.Rounded.Handshake
     CircleRole.COSIGN -> Icons.Rounded.Group
-    CircleRole.GUARDIAN -> Icons.Rounded.Shield
+    CircleRole.GUARDIAN -> ShieldPerson
     CircleRole.WATCHER -> Icons.Rounded.Visibility
 }
 
@@ -77,12 +76,38 @@ fun CirclesScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val add by viewModel.add.collectAsStateWithLifecycle()
     val join by viewModel.join.collectAsStateWithLifecycle()
+    val ward by viewModel.ward.collectAsStateWithLifecycle()
+    val guarding by viewModel.guarding.collectAsStateWithLifecycle()
     val revision by container.state.circleRevision.collectAsStateWithLifecycle()
     val connections by container.state.connections.collectAsStateWithLifecycle()
     var ending by remember { mutableStateOf<CirclePerson?>(null) }
     LaunchedEffect(viewModel) { viewModel.load(fromServer = true) }
     // The core said something changed (a person joined, left, was paused): read them again, quietly.
     LaunchedEffect(revision) { if (revision > 0) viewModel.load(fromServer = false) }
+
+    // A guardianship, opened from its row: the ward's own screen, or the guardian's notices.
+    val openWard = ward
+    val openGuarding = guarding
+    if (openWard != null) {
+        GuardianWardScreen(
+            openWard,
+            onLeave = viewModel::leaveWard,
+            onAcceptMinor = { viewModel.acceptMinor(authenticator) },
+            onIgnoreMinor = viewModel::ignoreMinor,
+            onDigest = viewModel::setDigest,
+            onBack = viewModel::closeWard,
+        )
+        return
+    }
+    if (openGuarding != null) {
+        GuardianNoticesScreen(
+            openGuarding,
+            onAllow = { viewModel.consentEnd(it, authenticator) },
+            onProposeMinor = viewModel::proposeMinor,
+            onBack = viewModel::closeGuarding,
+        )
+        return
+    }
 
     Screen(title = "Circles", onBack = onBack) {
         when (ui.available) {
@@ -107,7 +132,7 @@ fun CirclesScreen(
                     )
                 }
                 ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), BannerKind.Error, tag = "circlesError") }
-                People(ui, onPause = viewModel::pause, onEnd = { ending = it })
+                People(ui, onPause = viewModel::pause, onEnd = { ending = it }, onOpen = viewModel::openPerson)
             }
         }
         Spacer(Modifier.padding(bottom = 32.dp))
@@ -137,6 +162,7 @@ fun CirclesScreen(
             onPreset = viewModel::pickPreset,
             onAgent = viewModel::pickAgent,
             onDeferred = viewModel::setDeferred,
+            onNotice = viewModel::pickNotice,
             onCreate = viewModel::createInvite,
             onConfirm = { viewModel.confirmInvite(authenticator) },
             onBack = { if (!viewModel.addBack()) viewModel.closeAdd() },
@@ -156,7 +182,7 @@ fun CirclesScreen(
 
 /** The people, by side; a short line when there is no one yet. */
 @Composable
-private fun People(ui: CirclesUi, onPause: (CirclePerson, Boolean) -> Unit, onEnd: (CirclePerson) -> Unit) {
+private fun People(ui: CirclesUi, onPause: (CirclePerson, Boolean) -> Unit, onEnd: (CirclePerson) -> Unit, onOpen: (CirclePerson) -> Unit) {
     val c = LocalColors.current
     val people = ui.people
     if (people == null) {
@@ -174,7 +200,7 @@ private fun People(ui: CirclesUi, onPause: (CirclePerson, Boolean) -> Unit, onEn
         Group(header = "Helping you", footer = "They decide with you, for you, or are told, within what each covers. Pause stops sending them anything.") {
             groups.helpingYou.forEachIndexed { i, person ->
                 if (i > 0) Hairline(inset = 44.dp)
-                PersonRow(person, busy = ui.busy == person.linkId, onPause = onPause, onEnd = onEnd)
+                PersonRow(person, busy = ui.busy == person.linkId, onPause = onPause, onEnd = onEnd, onOpen = onOpen)
             }
         }
     }
@@ -182,21 +208,40 @@ private fun People(ui: CirclesUi, onPause: (CirclePerson, Boolean) -> Unit, onEn
         Group(header = "You help", footer = "Their requests wait under For others in Activity. You can leave at any time.") {
             groups.youHelp.forEachIndexed { i, person ->
                 if (i > 0) Hairline(inset = 44.dp)
-                PersonRow(person, busy = ui.busy == person.linkId, onPause = onPause, onEnd = onEnd)
+                PersonRow(person, busy = ui.busy == person.linkId, onPause = onPause, onEnd = onEnd, onOpen = onOpen)
             }
         }
     }
 }
 
-/** One arrangement: who, their role and scope, its state, then Pause or Resume (owner) and End or Leave. */
+/**
+ * One arrangement: who, their role and scope, its state, then Pause or Resume (owner) and End or Leave. A guardianship
+ * opens its own screen; the ward leaves from there (its notice shows first), and never pauses it.
+ */
 @Composable
-private fun PersonRow(person: CirclePerson, busy: Boolean, onPause: (CirclePerson, Boolean) -> Unit, onEnd: (CirclePerson) -> Unit) {
+private fun PersonRow(
+    person: CirclePerson,
+    busy: Boolean,
+    onPause: (CirclePerson, Boolean) -> Unit,
+    onEnd: (CirclePerson) -> Unit,
+    onOpen: (CirclePerson) -> Unit,
+) {
     val c = LocalColors.current
+    val opens = person.role == CircleRole.GUARDIAN && person.state != CircleLinkState.ENDED
     Row(
         Modifier.fillMaxWidth().padding(vertical = 10.dp).testTag("circlePerson:${person.linkId}"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val open = if (opens) {
+            Modifier
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                .pressable(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), label = "Open") { onOpen(person) }
+                .testTag("circleOpen:${person.linkId}")
+        } else {
+            Modifier
+        }
+        Row(Modifier.weight(1f).then(open), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         BlobAvatar(person.peer, size = 32.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             RText(untrusted(person.peer), RType.row, c.ink, maxLines = 1)
@@ -212,12 +257,21 @@ private fun PersonRow(person: CirclePerson, busy: Boolean, onPause: (CirclePerso
                     textTag = "circleState:${person.linkId}",
                 )
             }
+            if (person.state != CircleLinkState.ENDED) {
+                val now by dev.reins.android.design.rememberNowState(30_000)
+                guardianBadge(person, now / 1000)?.let { EndingPill(it, "circleEnding:${person.linkId}") }
+            }
+        }
+        if (opens) dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkFaint, size = 16.dp)
         }
         if (canPause(person)) {
             val paused = person.state == CircleLinkState.PAUSED
             TextAction(if (paused) "Resume" else "Pause", c.ink, "circlePause:${person.linkId}", enabled = !busy) { onPause(person, !paused) }
         }
-        TextAction(endLabel(person), c.danger, "circleEnd:${person.linkId}", enabled = !busy) { onEnd(person) }
+        // The ward leaves from its guardianship's screen, where the notice shows first.
+        if (!wardsGuardianship(person)) {
+            TextAction(endLabel(person), c.danger, "circleEnd:${person.linkId}", enabled = !busy) { onEnd(person) }
+        }
     }
 }
 

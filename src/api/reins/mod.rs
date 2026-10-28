@@ -13,6 +13,7 @@ pub mod desktop_routes;
 pub mod device_api;
 pub mod device_flow;
 pub mod fcm;
+pub mod guardian_notices;
 pub mod join;
 pub mod limits;
 pub mod live;
@@ -500,6 +501,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(desktop_routes::routes());
     routes.extend(ticket_routes::routes());
     routes.extend(circles::routes());
+    routes.extend(guardian_notices::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
     routes.extend(pages::routes());

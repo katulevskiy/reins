@@ -241,10 +241,12 @@ private fun SettledRow(review: CircleReviewView, nowSeconds: Long) {
     }
 }
 
-/** What a watcher was told: a line, no buttons. */
+/** What a watcher was told: a line, no buttons. A guardian's weekly summary has its lines behind More. */
 @Composable
 private fun NoticeRow(notice: CircleNoticeView) {
     val c = LocalColors.current
+    var more by rememberSaveable(notice.id) { mutableStateOf(false) }
+    Column {
     Row(
         Modifier
             .fillMaxWidth()
@@ -259,6 +261,15 @@ private fun NoticeRow(notice: CircleNoticeView) {
             RText(untrusted(notice.text), RType.sans(13.5f), c.ink2, maxLines = 2)
             notice.outcome?.let(::untrusted)?.ifBlank { null }?.let { RText(it, RType.sans(12.5f), c.inkMeta, maxLines = 1) }
         }
+        if (notice.lines.isNotEmpty() && !more) {
+            SignalButton("More", Modifier.testTag("noticeMore:${notice.id}"), style = ButtonStyle.Soft, size = ButtonSize.Compact) { more = true }
+        }
+    }
+    if (more) {
+        Column(Modifier.padding(start = 40.dp, end = 14.dp, bottom = 9.dp).testTag("noticeLines:${notice.id}")) {
+            notice.lines.forEach { RText(untrusted(it), RType.sans(12.5f), c.inkMeta, maxLines = 2) }
+        }
+    }
     }
 }
 

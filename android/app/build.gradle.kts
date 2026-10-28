@@ -379,6 +379,9 @@ dependencies {
     // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
     implementation(libs.onnxruntime.android)
     implementation(libs.glance.appwidget)
+    // A guardianship's minor mark asks Google Play for an age signal (platform/AgeSignals.kt). Play answers only for
+    // an app it installed, so the `full` APK reads as Unavailable, which never blocks.
+    implementation(libs.play.age.signals)
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)

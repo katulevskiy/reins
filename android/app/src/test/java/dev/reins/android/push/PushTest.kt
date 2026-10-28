@@ -24,6 +24,19 @@ class PushTest {
     }
 
     @Test
+    fun `circle pushes carry a kind of news and an id`() {
+        assertEquals(PushPayload("circle", "review:rv_1-a"), PushPayload.parse(mapOf("t" to "circle", "id" to "review:rv_1-a")))
+        assertEquals(PushPayload("circle", "alert:link-1"), PushPayload.parse(mapOf("t" to "circle", "id" to "alert:link-1")))
+        assertEquals(PushPayload("circle", "news:x"), PushPayload.parse(mapOf("t" to "circle", "id" to "news:x")))
+        assertNull(PushPayload.parse(mapOf("t" to "circle", "id" to "other:x")))
+        assertNull(PushPayload.parse(mapOf("t" to "circle", "id" to "review:")))
+        assertNull(PushPayload.parse(mapOf("t" to "circle", "id" to "review:../x")))
+        assertNull(PushPayload.parse(mapOf("t" to "circle", "id" to "plain")))
+        // Only a Circle's ids have a colon.
+        assertNull(PushPayload.parse(mapOf("t" to "req", "id" to "review:x")))
+    }
+
+    @Test
     fun `the sync backoff doubles up to thirty seconds`() {
         assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L, 30_000L),
             (0..6).map(ForegroundSync::backoffMillis))

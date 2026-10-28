@@ -5,6 +5,10 @@ import SwiftUI
 /// account helps ("You help"), each with their role, scope and class. The owner pauses, resumes or ends what they set
 /// up; a helper leaves. Add invites someone, Join opens a link someone sent. Circles need this phone to be the
 /// account's primary phone: without it, one line and the existing setup.
+///
+/// Guardianship (P7, 04 §4): a ward's row opens what the guardian sees and decided, and Leave with its notice (never
+/// Pause); a guardian sees a minor's request to leave as "Sam asked to leave. Allow?", and what it was told about its
+/// wards.
 @Observable
 @MainActor
 final class CirclesModel {
@@ -61,6 +65,8 @@ struct CirclesScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var vm = CirclesModel()
+    @State private var guardian = GuardianNoticesModel()
+    @State private var ward: CirclePerson?
     @State private var adding = false
     @State private var joining = false
     @State private var ending: CirclePerson?
@@ -68,7 +74,7 @@ struct CirclesScreen: View {
 
     var body: some View {
         QuietPage("Circles", lead: AnyView(SymbolTile(symbol: "person.2", tint: Palette.violet, side: 36))) {
-            if let error = vm.error { QuietBanner(text: error).accessibilityIdentifier("circlesError") }
+            if let error = vm.error ?? guardian.error { QuietBanner(text: error).accessibilityIdentifier("circlesError") }
             switch vm.available {
             case .none:
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
@@ -104,8 +110,15 @@ struct CirclesScreen: View {
             }
         }
         // The first read asks the server; the core's news (`circleTick`) is read from the phone.
-        .task(id: model.circleTick) { await vm.load(model, fromServer: vm.people == nil) }
-        .refreshable { await vm.load(model, fromServer: true) }
+        .task(id: model.circleTick) {
+            let first = vm.people == nil
+            await vm.load(model, fromServer: first)
+            if vm.available == true { await guardian.load(model, fromServer: first) }
+        }
+        .refreshable {
+            await vm.load(model, fromServer: true)
+            if vm.available == true { await guardian.load(model, fromServer: true) }
+        }
         .animation(.smooth(duration: 0.25), value: vm.people)
         .sheet(isPresented: $adding, onDismiss: { Task { await vm.load(model, fromServer: false) } }) {
             AddCircleSheet { adding = false }
@@ -114,6 +127,13 @@ struct CirclesScreen: View {
         }
         .sheet(isPresented: $joining, onDismiss: { Task { await vm.load(model, fromServer: false) } }) {
             JoinCircleSheet { joining = false }
+                .environment(model)
+                .environment(\.feedback, feedback)
+        }
+        .sheet(item: Binding(get: { ward.map(WardSheet.init) }, set: { ward = $0?.person }), onDismiss: {
+            Task { await vm.load(model, fromServer: false) }
+        }) { sheet in
+            GuardianWardScreen(person: sheet.person) { ward = nil }
                 .environment(model)
                 .environment(\.feedback, feedback)
         }
@@ -137,6 +157,7 @@ struct CirclesScreen: View {
             Text(person.mine ? "Nothing goes to them any more." : "You no longer decide for them.")
         }
         .presentationFeedback(ending != nil)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("circlesScreen")
     }
 
@@ -163,8 +184,17 @@ struct CirclesScreen: View {
 
     @ViewBuilder private var list: some View {
         let split = CircleLogic.split(vm.people ?? [])
+        ForEach(GuardianLogic.consents(vm.people ?? []), id: \.linkId) { person in
+            GuardianConsentCard(ward: person, busy: guardian.busy) {
+                Task {
+                    await guardian.allow(person, model)
+                    await vm.load(model, fromServer: false)
+                }
+            }
+        }
         section("Helping you", people: split.helpingYou, empty: "Nobody yet", id: "helpingYou")
         section("You help", people: split.youHelp, empty: "Nobody yet", id: "youHelp")
+        if !guardian.notices.isEmpty { GuardianNoticeList(notices: guardian.notices) }
     }
 
     @ViewBuilder private func section(_ title: String, people: [CirclePerson], empty: String, id: String) -> some View {
@@ -178,27 +208,66 @@ struct CirclesScreen: View {
                     .accessibilityIdentifier("\(id)Empty")
             }
             ForEach(people, id: \.linkId) { person in
-                CirclePersonRow(person: person, busy: vm.busy) { change in
-                    if change == .end {
+                CirclePersonRow(person: person, busy: vm.busy || guardian.busy) { change in
+                    switch change {
+                    case .end where GuardianLogic.isWard(person):
+                        // A ward leaves from its guardianship's page, where the notice is.
+                        ward = person
+                        feedback.play(.open)
+                    case .end:
                         ending = person
-                    } else {
-                        Task { await vm.change(person, change, model) }
+                    case .open:
+                        ward = person
+                        feedback.play(.open)
+                    case .proposeMinor:
+                        Task { await guardian.proposeMinor(person, model) }
+                    case .pause, .resume:
+                        Task { await vm.change(person, change == .pause ? .pause : .resume, model) }
                     }
                 }
             }
         }
+        // A container first: an identifier on the group alone replaces every row's own ("circlePerson:l6").
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(id)
     }
 }
 
+/// A ward's guardianship, as the sheet it opens.
+private struct WardSheet: Identifiable {
+    var person: CirclePerson
+    var id: String { person.linkId }
+}
+
 /// One arrangement: the person, their role, the scope and class, its state; Pause or Resume (the owner's) and End or
-/// Leave behind the menu.
+/// Leave behind the menu. A ward's guardianship opens its page (and never pauses); a guardian may ask to mark the
+/// ward's account a minor's.
 private struct CirclePersonRow: View {
+    enum Action { case pause, resume, end, open, proposeMinor }
+
     var person: CirclePerson
     var busy: Bool
-    var onChange: (CirclesModel.Change) -> Void
+    var onChange: (Action) -> Void
+
+    /// A ward's running guardianship: the row opens its page (Leave is there, with the notice).
+    private var opens: Bool { GuardianLogic.isWard(person) && person.state != .ended }
 
     var body: some View {
+        if opens {
+            Button {
+                onChange(.open)
+            } label: {
+                row
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .accessibilityIdentifier("circlePerson:\(person.linkId)")
+        } else {
+            row.accessibilityIdentifier("circlePerson:\(person.linkId)")
+        }
+    }
+
+    private var row: some View {
         HStack(alignment: .top, spacing: 12) {
             BlobAvatar(seed: untrusted(person.peer), size: 36)
             VStack(alignment: .leading, spacing: 4) {
@@ -210,6 +279,11 @@ private struct CirclePersonRow: View {
                     CircleRoleChip(role: person.role)
                     if let badge = CircleLogic.badge(person.state) {
                         Pill(badge, tone: person.state == .suspended ? .danger : person.state == .paused ? .warning : .neutral)
+                    }
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        if let badge = GuardianLogic.badge(person, now: Int64(context.date.timeIntervalSince1970)) {
+                            Pill(badge, tone: .warning).accessibilityIdentifier("guardianBadge:\(person.linkId)")
+                        }
                     }
                 }
                 Text(verbatim: untrustedName(person.peer, limit: 64))
@@ -226,7 +300,9 @@ private struct CirclePersonRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if CircleLogic.canEnd(person) {
+            if opens {
+                RowChevron().frame(height: 44)
+            } else if CircleLogic.canEnd(person) {
                 Menu {
                     if CircleLogic.canPause(person) {
                         if person.state == .paused {
@@ -234,6 +310,9 @@ private struct CirclePersonRow: View {
                         } else {
                             Button("Pause", systemImage: "pause") { onChange(.pause) }
                         }
+                    }
+                    if GuardianLogic.canProposeMinor(person) {
+                        Button("Mark as a minor's", systemImage: "figure.child") { onChange(.proposeMinor) }
                     }
                     Button(CircleLogic.endTitle(person), systemImage: "xmark.circle", role: .destructive) { onChange(.end) }
                 } label: {
@@ -250,7 +329,7 @@ private struct CirclePersonRow: View {
         }
         .padding(.vertical, 12)
         .opacity(person.state == .ended ? 0.5 : 1)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("circlePerson:\(person.linkId)")
     }
 }

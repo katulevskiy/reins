@@ -108,6 +108,13 @@ pub async fn last_owner(uuid: &UserId, conn: &DbConn) -> bool {
 /// The Reins data goes even when Vaultwarden then refuses (the last owner of an organization): callers that must not
 /// lose it check [`last_owner`] first, as [`delete_user`] does.
 pub async fn erase(uuid: &UserId, conn: &DbConn) -> EmptyResult {
+    // Its guardians hear before the links go (08 R7); the Circle sweep sends the pushes.
+    super::guardian_notices::notify_guardians(
+        uuid.as_ref(),
+        &reins_proto::circle::GuardianNoticeKind::AccountDeleted,
+        conn,
+    )
+    .await;
     HUB.forget_user(uuid.as_ref());
     reins_workos::delete_reins_data(uuid, conn).await?;
     if let Err(e) = account_state::forget(uuid.as_ref()) {
