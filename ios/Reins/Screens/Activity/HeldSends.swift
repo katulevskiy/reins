@@ -163,34 +163,25 @@ private struct HeldSendRow: View {
     @State private var busy = false
 
     var body: some View {
-        let line = EntryLook.line(entry)
         let late = hold.state == .late
-        HStack(spacing: 10) {
-            RequestIcon(spec: line.icon, size: 30, ring: Palette.paperRaised)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: entry.label.map(RequestLabelLook.plain) ?? EntryText.title(entry))
-                    .font(RFont.sans(13.5, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                Text(HoldText.status(hold, now: now))
-                    .font(RFont.sans(12.5, .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(late ? Palette.warning : Palette.inkMeta)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("holdStatus:\(hold.id)")
+        // One row when what it sends, its status and the buttons all fit; else what it sends keeps the width and the
+        // buttons go under it. Send is never beside an email cut to "Send…".
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                icon
+                words(titleLines: 1)
+                Spacer(minLength: 4)
+                buttons
             }
-            Spacer(minLength: 4)
-            if hold.state == .sending {
-                ProgressView().controlSize(.small)
-            }
-            ForEach(HoldText.actions(hold.state), id: \.self) { action in
-                Button { run(action) } label: {
-                    Label(action.title, systemImage: action.symbol)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 10) {
+                    icon
+                    words(titleLines: 2).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(SignalButtonStyle(action == .send ? .inverse : .outline, size: .small, fill: false))
-                .fixedSize()
-                .accessibilityIdentifier("\(action.identifier):\(hold.id)")
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    buttons
+                }
             }
         }
         .padding(.leading, 10)
@@ -201,6 +192,41 @@ private struct HeldSendRow: View {
         .disabled(busy)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("hold:\(hold.id)")
+    }
+
+    private var icon: some View {
+        RequestIcon(spec: EntryLook.line(entry).icon, size: 30, ring: Palette.paperRaised)
+            .accessibilityHidden(true)
+    }
+
+    /// What it sends, then its countdown or "Still send?".
+    private func words(titleLines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: entry.label.map(RequestLabelLook.plain) ?? EntryText.title(entry))
+                .font(RFont.sans(13.5, .semibold))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(titleLines)
+            Text(HoldText.status(hold, now: now))
+                .font(RFont.sans(12.5, .medium))
+                .monospacedDigit()
+                .foregroundStyle(hold.state == .late ? Palette.warning : Palette.inkMeta)
+                .lineLimit(1)
+                .accessibilityIdentifier("holdStatus:\(hold.id)")
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if hold.state == .sending {
+            ProgressView().controlSize(.small)
+        }
+        ForEach(HoldText.actions(hold.state), id: \.self) { action in
+            Button { run(action) } label: {
+                Label(action.title, systemImage: action.symbol)
+            }
+            .buttonStyle(SignalButtonStyle(action == .send ? .inverse : .outline, size: .small, fill: false))
+            .fixedSize()
+            .accessibilityIdentifier("\(action.identifier):\(hold.id)")
+        }
     }
 
     private func run(_ action: HoldAction) {
