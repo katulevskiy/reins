@@ -191,7 +191,8 @@ pub fn requests(frame: &Frame<'_>, rows: &[RequestRow], c: &Counts) -> String {
 pub struct AuditView {
     pub intact: bool,
     pub head: Option<i64>,
-    pub checkpoint: Option<(i64, String)>,
+    /// The last checkpoint: its event, when, and whether an RFC 3161 authority timestamped it.
+    pub checkpoint: Option<(i64, String, bool)>,
     pub decision_key: (String, String),
     pub issuer_key: (String, String),
     pub kms: String,
@@ -204,13 +205,30 @@ pub fn audit(frame: &Frame<'_>, v: &AuditView) -> String {
     } else {
         format!("<span class=\"pill bad\">{}Chain broken</span>", svg(icon::WARNING))
     };
-    let checkpoint =
-        v.checkpoint.as_ref().map_or_else(|| "none yet".to_owned(), |(seq, at)| format!("event {seq} · {}", e(at)));
+    let checkpoint = v.checkpoint.as_ref().map_or_else(
+        || "none yet".to_owned(),
+        |(seq, at, stamped)| {
+            let files = format!(
+                " · <a href=\"{org}/audit/checkpoints/{seq}.json\">checkpoint</a>{}",
+                if *stamped {
+                    format!(" · <a href=\"{org}/audit/checkpoints/{seq}.tsr\">timestamp</a>")
+                } else {
+                    String::new()
+                }
+            );
+            format!("event {seq} · {}{files}", e(at))
+        },
+    );
     let key = |k: &(String, String)| format!("<div class=\"record mono\">{}={}</div>", e(&k.0), e(&k.1));
     let body = format!(
         "<div class=\"row\"><h1>{}Audit</h1>{chain}</div><section><h2>Chain</h2><p>{} events · last checkpoint \
-{checkpoint}</p><p><a class=\"button\" href=\"{org}/audit/export\">Export</a></p></section>\
-<section><h2>Verify</h2><p class=\"meta\">reins-audit verify export.jsonl --key &lt;decision key&gt;</p>\
+{checkpoint}</p><p><a class=\"button\" href=\"{org}/audit/export\">Export</a> \
+<a href=\"{org}/audit/streaming\">Streaming</a></p></section>\
+<section><h2>Evidence</h2><p><a href=\"{org}/audit/report?framework=soc2\">SOC 2</a> · \
+<a href=\"{org}/audit/report?framework=iso27001\">ISO 27001</a> · \
+<a href=\"{org}/audit/report?framework=soc2&amp;format=json\">JSON</a></p></section>\
+<section><h2>Verify</h2><p class=\"meta\">reins-audit verify export.jsonl --keys keys.json</p>\
+<p><a href=\"{org}/audit/keys.json\">keys.json</a></p>\
 <h2>Decision service key</h2>{}<h2>Issuer key</h2>{}<p class=\"meta\">Keys sealed by {}</p></section>",
         svg(icon::LIST),
         v.head.unwrap_or(0),
@@ -335,7 +353,7 @@ mod tests {
         let v = AuditView {
             intact: true,
             head: Some(12),
-            checkpoint: Some((10, "today".into())),
+            checkpoint: Some((10, "today".into(), true)),
             decision_key: ("dec-1".into(), "KEY".into()),
             issuer_key: ("iss-1".into(), "IKEY".into()),
             kms: "local:ab".into(),
@@ -343,6 +361,31 @@ mod tests {
         let html = audit(&frame(), &v);
         assert!(html.contains("/reins/org/o1/audit/export"));
         assert!(html.contains("dec-1=KEY") && html.contains("Chain intact"));
+    }
+
+    #[test]
+    fn the_audit_page_links_reports_keys_and_streaming() {
+        let mut v = AuditView {
+            intact: true,
+            head: Some(12),
+            checkpoint: Some((10, "today".into(), true)),
+            decision_key: ("dec-1".into(), "KEY".into()),
+            issuer_key: ("iss-1".into(), "IKEY".into()),
+            kms: "local:ab".into(),
+        };
+        let html = audit(&frame(), &v);
+        for link in [
+            "/reins/org/o1/audit/report?framework=soc2",
+            "/reins/org/o1/audit/report?framework=iso27001",
+            "/reins/org/o1/audit/keys.json",
+            "/reins/org/o1/audit/streaming",
+            "/reins/org/o1/audit/checkpoints/10.json",
+            "/reins/org/o1/audit/checkpoints/10.tsr",
+        ] {
+            assert!(html.contains(link), "{link} missing");
+        }
+        v.checkpoint = Some((10, "today".into(), false));
+        assert!(!audit(&frame(), &v).contains("10.tsr"), "no timestamp, no link");
     }
 
     #[test]

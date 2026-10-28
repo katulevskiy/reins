@@ -473,7 +473,7 @@ pub async fn push_all(pool: &DbPool, now: i64) {
     let Ok(conn) = pool.get().await else {
         return;
     };
-    let sinks = match conn.run(|c| reins_org_compliance::q_enabled_sinks(c)).await {
+    let sinks = match conn.run(reins_org_compliance::q_enabled_sinks).await {
         Ok(s) => s,
         Err(e) => {
             warn!("Audit streaming: {e:?}");

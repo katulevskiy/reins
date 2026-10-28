@@ -199,7 +199,7 @@ async fn activate(
 }
 
 /// Proposes a change that needs device signatures and tells the proposer to confirm it on their phone.
-async fn signed_change(conn: &DbConn, pool: &DbPool, org: &str, s: &console::Signed, action: AdminAction) {
+pub(super) async fn signed_change(conn: &DbConn, pool: &DbPool, org: &str, s: &console::Signed, action: AdminAction) {
     let r = propose(conn, pool, org, &s.user, action, None).await;
     if let Ok(super::admin::Proposed::Pending(id)) = &r {
         super::reviews::notify(pool, std::slice::from_ref(&s.user), id);
@@ -319,7 +319,14 @@ async fn audit_page(org: &str, cookies: &CookieJar<'_>, conn: DbConn) -> Page {
         Ok(pages::AuditView {
             intact: audit::intact(c, &o)?,
             head: reins_org_event::q_head(c, &o)?.map(|(seq, _)| seq),
-            checkpoint: reins_org_exec::q_last_checkpoint(c, &o)?.map(|cp| (cp.seq, when(cp.at))),
+            checkpoint: match reins_org_exec::q_last_checkpoint(c, &o)? {
+                Some(cp) => Some((
+                    cp.seq,
+                    when(cp.at),
+                    crate::db::models::reins_org_compliance::q_witness(c, &o, cp.seq)?.is_some(),
+                )),
+                None => None,
+            },
             decision_key: keys.decision,
             issuer_key: keys.issuer,
             kms: kms::kms()?.id(),

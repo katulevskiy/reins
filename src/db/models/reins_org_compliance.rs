@@ -83,7 +83,6 @@ pub struct ReinsOrgWitness {
     pub at: i64,
 }
 
-#[allow(dead_code, reason = "TEMP: the console serves it")]
 pub fn q_witness(c: &mut DbConnInner, org: &str, seq: i64) -> QueryResult<Option<ReinsOrgWitness>> {
     reins_org_witness::table
         .filter(reins_org_witness::org_uuid.eq(org))
