@@ -390,6 +390,14 @@ private fun TabContent(
             onDismissQuestion = { q ->
                 questionScope.launch { dev.reins.android.ui.activity.dismissQuestion(container, q)?.let(app::showNotice) }
             },
+            onTrustFolder = { q ->
+                questionScope.launch {
+                    dev.reins.android.ui.activity.trustFolder(container, authenticator, q.connectionId, q.path, q.kind)?.let(app::showNotice)
+                }
+            },
+            onNotNowFolder = { q ->
+                questionScope.launch { dev.reins.android.ui.activity.dismissFolder(container, q)?.let(app::showNotice) }
+            },
             onApproveTask = { item, draft ->
                 questionScope.launch { dev.reins.android.ui.activity.approveTaskProposal(container, authenticator, item, draft)?.let(app::showNotice) }
             },

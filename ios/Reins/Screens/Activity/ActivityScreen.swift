@@ -346,8 +346,9 @@ struct ActivityScreen: View {
             let instant = TicketInbox.instant(model.pending)
             let waiting = TicketInbox.groups(model.pending)
             let proposals = TicketInbox.proposals(model.pending)
-            if !instant.isEmpty || !model.autoQuestions.isEmpty || !proposals.isEmpty {
-                // What waits, then the agents' task proposals (`TaskProposalCards`), then what Auto asks (`QuestionCards`).
+            if !instant.isEmpty || !model.autoQuestions.isEmpty || !model.folderQuestions.isEmpty || !proposals.isEmpty {
+                // What waits, then the agents' task proposals (`TaskProposalCards`), then what Auto asks (`QuestionCards`),
+                // then the folders the computers propose (`FolderCards`).
                 VStack(spacing: 10) {
                     if !instant.isEmpty {
                         WaitStack(groups: WaitGroup.of(instant), suggestions: suggestions)
@@ -358,6 +359,9 @@ struct ActivityScreen: View {
                     }
                     if !model.autoQuestions.isEmpty {
                         QuestionCards(questions: model.autoQuestions)
+                    }
+                    if !model.folderQuestions.isEmpty {
+                        FolderCards(questions: model.folderQuestions)
                     }
                 }
                 .padding(.top, wallpaper ? 70 : 14)

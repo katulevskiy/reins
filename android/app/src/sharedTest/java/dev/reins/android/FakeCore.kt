@@ -1977,6 +1977,70 @@ class FakeCore : ReinsCoreInterface {
         listOf(worldZoneCalls, matrixCellCalls, answeredQuestions, dismissedQuestions, askedNextTime, autoOwnerReasons).forEach { it.clear() }
         previewCalls.clear()
         finishSetupCalls.set(0)
+        resetFolders()
+    }
+
+    // ---- A computer's folders: proposed by it, signed by this phone -------------------------------------------------
+
+    /** A folder a computer proposes: which computer (its id and name), the folder, and when (Unix seconds). */
+    data class FolderProposal(val connectionId: String, val computer: String, val folder: FolderView, val at: Long)
+
+    /** What the computers propose now; confirmed (signed) folders per computer; and those dismissed with "Not now". */
+    @Volatile var folderProposals: List<FolderProposal> = emptyList()
+    @Volatile var confirmedFolders: Map<String, List<FolderView>> = emptyMap()
+    @Volatile var dismissedFolders: Set<Pair<String, FolderView>> = emptySet()
+    /** The calls that changed something: connection id and folder. */
+    val folderConfirmCalls = CopyOnWriteArrayList<Pair<String, FolderView>>()
+    val folderDismissCalls = CopyOnWriteArrayList<Pair<String, FolderView>>()
+    val folderRemoveCalls = CopyOnWriteArrayList<Pair<String, FolderView>>()
+    val computerFoldersReads = java.util.concurrent.atomic.AtomicInteger()
+
+    fun resetFolders() {
+        folderProposals = emptyList()
+        confirmedFolders = emptyMap()
+        dismissedFolders = emptySet()
+        listOf(folderConfirmCalls, folderDismissCalls, folderRemoveCalls).forEach { it.clear() }
+        computerFoldersReads.set(0)
+    }
+
+    private fun confirmedOf(connectionId: String) = confirmedFolders[connectionId].orEmpty()
+
+    private fun proposed(connectionId: String, folder: FolderView) =
+        folderProposals.any { it.connectionId == connectionId && it.folder == folder } && folder !in confirmedOf(connectionId)
+
+    override suspend fun folderQuestions(): List<FolderQuestion> = folderProposals
+        .filter { proposed(it.connectionId, it.folder) && (it.connectionId to it.folder) !in dismissedFolders }
+        .sortedByDescending { it.at }
+        .map { FolderQuestion(it.connectionId, it.computer, it.folder.path, it.folder.kind, it.at) }
+
+    override suspend fun computerFolders(connectionId: String): ComputerFolders {
+        computerFoldersReads.incrementAndGet()
+        val suggested = folderProposals.filter { it.connectionId == connectionId && proposed(connectionId, it.folder) }.map { it.folder }
+        return ComputerFolders(connectionId, confirmedOf(connectionId), suggested)
+    }
+
+    override suspend fun confirmComputerFolder(connectionId: String, path: String, kind: FolderKindChoice, owner: OwnerCheck) {
+        val folder = FolderView(path, kind)
+        // As the core: only what the computer proposes now, and it loosens, so the owner is asked first.
+        if (!proposed(connectionId, folder)) throw CoreException.NotFound()
+        ownerConfirms(owner, "Trust $path as ${if (kind == FolderKindChoice.ROOT) "projects" else "scratch"}")
+        folderConfirmCalls += connectionId to folder
+        dismissedFolders = dismissedFolders - (connectionId to folder)
+        confirmedFolders = confirmedFolders + (connectionId to (confirmedOf(connectionId) + folder))
+    }
+
+    override suspend fun dismissComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) {
+        val folder = FolderView(path, kind)
+        if (!proposed(connectionId, folder)) throw CoreException.NotFound()
+        folderDismissCalls += connectionId to folder
+        dismissedFolders = dismissedFolders + (connectionId to folder)
+    }
+
+    override suspend fun removeComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) {
+        val folder = FolderView(path, kind)
+        if (folder !in confirmedOf(connectionId)) throw CoreException.NotFound()
+        folderRemoveCalls += connectionId to folder
+        confirmedFolders = confirmedFolders + (connectionId to (confirmedOf(connectionId) - folder))
     }
 
     private fun defaultMatrix(): List<List<CellChoice>> = listOf(

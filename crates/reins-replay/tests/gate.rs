@@ -134,8 +134,9 @@ fn overnight_gate() {
 
 /// 08 R1: hook requests decided on the computer with the policy the phone signs for it (the facts it gets, its
 /// workspace as signed, the nets, the groups about Reins itself always asked). Every labelled risk is still asked and
-/// no known false positive is. As the phone signs today (roots, no scratch folders), the computer asks a little more
-/// than the phone's own engine: scratch folders outside the roots aren't trusted until the phone signs them.
+/// no known false positive is. With the computer's folders proposed and confirmed on the phone, it decides as the
+/// phone's own engine does; before the owner confirmed them (roots only, no scratch folders), it asks a little more:
+/// scratch folders outside the roots aren't trusted until the phone signs them.
 #[test]
 fn desktop_path_keeps_recall() {
     let corpus = Corpus::load(&reins_replay::default_corpus()).expect("the corpus loads");
@@ -151,10 +152,12 @@ fn desktop_path_keeps_recall() {
     }
     // Only hook requests are decided differently; the rest is the phone's.
     assert_eq!(desktop.asks - desktop.hook_asks, phone.asks - phone.hook_asks);
-    assert!(desktop.hook_asks >= phone.hook_asks, "local settings never loosen");
-    assert!(desktop.hook_asks <= 33, "{}", report::text(&desktop, false));
-    // With the computer's scratch folders signed too, it decides as the phone's own engine does.
-    policy.desktop_scratch = true;
-    let signed = report::run(&corpus, &policy, EngineKind::Desktop);
-    assert_eq!(signed.hook_asks, phone.hook_asks, "{}", report::text(&signed, false));
+    // The computer's folders proposed and confirmed: the same as the phone's own engine.
+    assert_eq!(desktop.hook_asks, phone.hook_asks, "{}", report::text(&desktop, false));
+    // Before the owner confirmed them: a little more, never less.
+    policy.unconfirmed_folders = true;
+    let unconfirmed = report::run(&corpus, &policy, EngineKind::Desktop);
+    assert!(unconfirmed.hook_asks >= phone.hook_asks, "local settings never loosen");
+    assert!(unconfirmed.hook_asks <= 33, "{}", report::text(&unconfirmed, false));
+    assert_eq!(unconfirmed.asks - unconfirmed.hook_asks, phone.asks - phone.hook_asks);
 }

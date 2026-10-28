@@ -84,6 +84,19 @@ class AppState {
         _autoQuestions.value = _autoQuestions.value.filter { it.id != id }
     }
 
+    /** Folders a paired computer proposes for its signed policy, as question cards (never notified), newest first. */
+    private val _folderQuestions = MutableStateFlow<List<dev.reins.core.FolderQuestion>>(emptyList())
+    val folderQuestions: StateFlow<List<dev.reins.core.FolderQuestion>> = _folderQuestions.asStateFlow()
+
+    fun setFolderQuestions(questions: List<dev.reins.core.FolderQuestion>) {
+        _folderQuestions.value = questions
+    }
+
+    /** A trusted or dismissed folder card leaves at once; the next read settles the list. */
+    fun removeFolderQuestion(connectionId: String, path: String, kind: dev.reins.core.FolderKindChoice) {
+        _folderQuestions.value = _folderQuestions.value.filterNot { it.connectionId == connectionId && it.path == path && it.kind == kind }
+    }
+
     /** Tasks (Decisions v2, 01 §12): the live ones, then those that ended in the last day. */
     private val _tasks = MutableStateFlow<List<dev.reins.core.TaskView>>(emptyList())
     val tasks: StateFlow<List<dev.reins.core.TaskView>> = _tasks.asStateFlow()
@@ -332,6 +345,7 @@ class AppState {
             _services.value = emptyList()
             _startingPolicy.value = null
             _autoQuestions.value = emptyList()
+            _folderQuestions.value = emptyList()
             _tasks.value = emptyList()
             _circleReviews.value = emptyList()
             _circleNotices.value = emptyList()

@@ -227,6 +227,11 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::POST, "/desktop/policy").json(post)).await.map(drop)
     }
 
+    /// The folders each paired computer proposes the phone signs for it (`reins_policy::desktop_folders`).
+    pub async fn desktop_folders(&self) -> Result<reins_proto::desktop::FolderProposals, ApiFailure> {
+        Self::json(self.request(Method::GET, "/desktop/folders")).await
+    }
+
     /// A2 `GET /pending?wait=` (long-poll, `wait` clamped to 25 s).
     pub async fn pending(&self, wait_secs: u32) -> Result<Pending, ApiFailure> {
         let wait = wait_secs.min(MAX_WAIT_SECS);

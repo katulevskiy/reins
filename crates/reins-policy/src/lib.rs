@@ -7,6 +7,7 @@
 pub mod authorization;
 pub mod circles;
 pub mod context;
+pub mod desktop_folders;
 pub mod desktop_policy;
 pub mod effects;
 mod evaluate;

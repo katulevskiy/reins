@@ -74,7 +74,8 @@ pub fn routes() -> Vec<Route> {
         delete_device,
         post_logout,
         post_revocations,
-        post_policy
+        post_policy,
+        get_folders
     ]
 }
 
@@ -734,6 +735,23 @@ async fn post_policy(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbC
         return Err(bad_request(format!("{refused} items refused: empty, too large, or over this account's budget")));
     }
     Ok(Status::NoContent)
+}
+
+/// Decisions v2: the folders each of this account's computers proposes the phone signs for it
+/// (`reins_policy::desktop_folders`), for the approval device to show as question cards. Read with the syncs; nothing
+/// here is a decision.
+#[get("/reins/api/desktop/folders")]
+async fn get_folders(
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<reins_proto::desktop::FolderProposals>> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let ids: Vec<String> =
+        ReinsConnection::find_by_user(&headers.user.uuid, &conn).await.into_iter().map(|c| c.uuid).collect();
+    Ok(Json(reins_proto::desktop::FolderProposals {
+        items: HUB.folders.of(&headers.user.uuid.to_string(), &ids),
+    }))
 }
 
 /// A9: the devices signed in to the account (phones, Bitwarden apps, the web vault), the approval device marked.

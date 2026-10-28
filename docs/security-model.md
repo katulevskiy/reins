@@ -618,7 +618,9 @@ commands, file tools) with them, without a round trip and with the phone offline
 - the matrix, the owner's Deny and Review rules (and permits that name no person), the connection's tasks;
 - the facts it needs: owners, repositories and hosts. People, domains, chats and the owner's addresses stay on the
   phone;
-- the mode for that connection and when it ends, whether the phone's matrix decides, and the workspace roots.
+- the mode for that connection and when it ends, whether the phone's matrix decides, and the workspace folders: the
+  standard roots (`~/Documents/dev`, `~/src`, `~/code`, `~/projects`) and the roots and scratch folders the owner
+  confirmed for that computer (below).
 
 How it travels and is checked:
 
@@ -644,9 +646,26 @@ How it travels and is checked:
   per-account storage. Snapshots have a per-account budget (16 MiB) and a server-wide ceiling. A post over a budget is
   refused and the phone sends it again; nothing kept for anyone is pushed out.
 
+The computer's folders. The daemon proposes its own `[workspace]` roots and scratch folders to the phone
+(`POST /reins/desktop/folders`), each canonicalized on the computer (`~` expanded, symlinks resolved). The server keeps
+the latest proposal per computer in memory, and the phone reads it with its syncs. No push is sent. The phone shows
+each folder that isn't signed yet as a question card, with the path exactly as the computer resolved it:
+
+- Confirming a folder loosens, so it needs the owner check. Only a folder the computer proposed can be confirmed.
+- Removing one only tightens. It applies at once, and a "stop deciding" tightening goes first.
+- Some folders are refused on the computer before it proposes them, on the phone before it shows or signs them, and on
+  the computer again before it decides with them (`reins_policy::desktop_folders::refusal`). Those are: `/`, a
+  whole-disk folder, the home folder or anything above it (`~`, `/home/<user>`, `/Users/<user>`), a relative or
+  non-canonical path, and any folder that is or holds keys (`.ssh`, `.gnupg`, `.aws`, ...) or Reins's own state and
+  configuration.
+- On the computer, a local folder counts in the forms it has there: as written, and what it resolves to now. If an
+  agent re-points a root's symlink at the home folder, that root stops counting at once.
+- **What's left:** the server could send a made-up proposal, as it could send any desktop request. It still needs the
+  owner's check on the phone, with the exact path shown, and refused paths are never shown.
+
 What the computer's own settings can do: only tighten. A local fact counts only where it is stricter than the signed
 one, a local matrix cell only where stricter, a local workspace root only inside a signed root, a scratch folder only
-inside one or signed. Where the signed policy decides, the built-in guard groups are labels, except those about Reins
+strictly inside one or signed. Where the signed policy decides, the built-in guard groups are labels, except those about Reins
 itself (its session, its keys, `config.toml`, `policy.json` and `tickets.json`, secrets and payments), which are always
 asked, and the user's own guard rules, which still ask.
 

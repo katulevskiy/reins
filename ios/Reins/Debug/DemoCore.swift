@@ -18,7 +18,8 @@ import Foundation
 /// asks who a few things are (the question cards in Activity). `-demoOvernight`: Overnight parked a few requests for
 /// the morning (Cursor's under its task "Fix CI"), Claude proposes a task, and one task ended today. `-demoCircles`:
 /// people in Circles both ways, reviews waiting under "For others", a watcher's notices, and a request that needs a
-/// co-signer too; `-demoNoCircles`: Circles need the primary-phone setup first.
+/// co-signer too; `-demoNoCircles`: Circles need the primary-phone setup first. `-demoFolders`: the paired computers
+/// propose folders (the "Trust this folder?" cards, and each computer's Folders).
 enum DemoCore {
     static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
@@ -48,7 +49,8 @@ enum DemoCore {
             overnight: args.contains("-demoOvernight"),
             circles: args.contains("-demoCircles"),
             circlesAvailable: !args.contains("-demoNoCircles"),
-            holds: args.contains("-demoHold")
+            holds: args.contains("-demoHold"),
+            folders: args.contains("-demoFolders")
         )
     }
 }
@@ -76,6 +78,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         func base(_ now: Int64) -> AutopilotMode? {
             mode == .overnight && !overnighting(now) ? overnightReturn.flatMap { $0 == .overnight ? nil : $0 } : mode
         }
+    }
+
+    /// A paired computer's folders, as the core keeps them: what it proposes (since `at`), what the owner trusted, and
+    /// what was put away ("Not now", or removed), which is not asked about again.
+    struct ComputerFolderBook: Equatable {
+        var at: Int64
+        var proposed: [FolderView] = []
+        var confirmed: [FolderView] = []
+        var dismissed: [FolderView] = []
+
+        /// Proposed and not trusted (put away ones too: they can still be trusted on the computer's page).
+        var open: [FolderView] { proposed.filter { !confirmed.contains($0) } }
     }
 
     struct State {
@@ -155,6 +169,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var questions: [AutoQuestion] = []
         /// The requests "Ask me next time" was used on.
         var askedNextTime: [String] = []
+        /// The paired computers' folders, by connection (`-demoFolders`).
+        var folders: [String: ComputerFolderBook] = [:]
         /// The changes previewed (02 §4).
         var previewed: [PolicyChange] = []
     }
@@ -181,7 +197,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
         keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
         quiet: Bool = false, autoSetupDone: Bool = true, questions: Bool = false, overnight: Bool = false, circles: Bool = false, circlesAvailable: Bool = true,
-        holds: Bool = false
+        holds: Bool = false, folders: Bool = false
     ) {
         let now = Self.now()
         self.circles = DemoCircleStore(seeded: circles, available: circlesAvailable, now: now)
@@ -224,6 +240,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.passkeysOffline = passkeysOffline
         s.autoDone = autoSetupDone
         s.questions = questions && !quiet ? Self.demoQuestions(now) : []
+        s.folders = folders && !quiet ? Self.demoFolders(now) : [:]
         // `-demoTemporary` (screenshots): one temporary permission for me@gmail.com, as the Permissions board shows it.
         if ProcessInfo.processInfo.arguments.contains("-demoTemporary") {
             s.delegationRecords = [DelegationView(
@@ -2241,6 +2258,80 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         try locked { s in
             guard s.questions.contains(where: { $0.id == id }) else { throw CoreError.NotFound }
             s.questions.removeAll { $0.id == id }
+        }
+    }
+
+    // ---- the paired computers' folders ------------------------------------------------------------------------------
+
+    /// `-demoFolders`: the Mac (c6) trusts one project folder and proposes its projects and a scratch folder; the Linux
+    /// box (c7) proposes one.
+    static func demoFolders(_ now: Int64) -> [String: ComputerFolderBook] {
+        [
+            "c6": ComputerFolderBook(
+                at: now - 300,
+                proposed: [
+                    FolderView(path: "/Users/dan/Documents/dev/reins", kind: .root),
+                    FolderView(path: "/Users/dan/Documents/dev/*", kind: .root),
+                    FolderView(path: "/Users/dan/Documents/dev/tmp", kind: .scratch),
+                ],
+                confirmed: [FolderView(path: "/Users/dan/Documents/dev/reins", kind: .root)]
+            ),
+            "c7": ComputerFolderBook(at: now - 1_800, proposed: [FolderView(path: "/home/dan/src/*", kind: .root)]),
+        ]
+    }
+
+    /// As the core: each paired computer's open folders that were not put away, newest computer first.
+    func folderQuestions() async throws -> [FolderQuestion] {
+        locked { s in
+            // By computer, newest first; each computer's folders in the order it proposed them.
+            s.connections.filter { $0.keyFingerprint != nil }
+                .compactMap { c in s.folders[c.id].map { (c, $0) } }
+                .sorted { $0.1.at > $1.1.at }
+                .flatMap { c, book in
+                    book.open.filter { !book.dismissed.contains($0) }.map {
+                        FolderQuestion(connectionId: c.id, computer: c.label, path: $0.path, kind: $0.kind, at: book.at)
+                    }
+                }
+        }
+    }
+
+    func computerFolders(connectionId: String) async throws -> ComputerFolders {
+        locked { s in
+            let book = s.folders[connectionId]
+            return ComputerFolders(connectionId: connectionId, confirmed: book?.confirmed ?? [], suggested: book?.open ?? [])
+        }
+    }
+
+    /// Loosens: the owner says so first. Only a folder the computer proposes now.
+    func confirmComputerFolder(connectionId: String, path: String, kind: FolderKindChoice, owner: OwnerCheck) async throws {
+        let folder = FolderView(path: path, kind: kind)
+        func proposed(_ s: State) -> Bool { s.folders[connectionId]?.open.contains(folder) ?? false }
+        guard locked({ proposed($0) }) else { throw CoreError.NotFound }
+        try await Self.confirmOwner(owner, "Trust \(path) as \(kind == .root ? "projects" : "scratch")")
+        try locked { s in
+            guard proposed(s) else { throw CoreError.NotFound }
+            s.folders[connectionId]?.dismissed.removeAll { $0 == folder }
+            s.folders[connectionId]?.confirmed.append(folder)
+        }
+    }
+
+    func dismissComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) async throws {
+        let folder = FolderView(path: path, kind: kind)
+        try locked { s in
+            guard var book = s.folders[connectionId] else { throw CoreError.NotFound }
+            if !book.dismissed.contains(folder) { book.dismissed.append(folder) }
+            s.folders[connectionId] = book
+        }
+    }
+
+    /// Only tightens: at once, no owner check. It is not asked about again as a card.
+    func removeComputerFolder(connectionId: String, path: String, kind: FolderKindChoice) async throws {
+        let folder = FolderView(path: path, kind: kind)
+        try locked { s in
+            guard var book = s.folders[connectionId], book.confirmed.contains(folder) else { throw CoreError.NotFound }
+            book.confirmed.removeAll { $0 == folder }
+            if !book.dismissed.contains(folder) { book.dismissed.append(folder) }
+            s.folders[connectionId] = book
         }
     }
 

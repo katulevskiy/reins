@@ -735,6 +735,7 @@ impl Engine {
         }
         self.put_modes(session).await;
         // Box: kept out of the callers' futures.
+        Box::pin(self.fetch_desktop_folders(session)).await;
         Box::pin(self.publish_desktop_policy(session)).await;
     }
 

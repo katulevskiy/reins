@@ -42,7 +42,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack, get_policy]
+    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack, get_policy, post_folders]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -559,6 +559,41 @@ async fn get_policy(after: Option<u64>, wait: Option<u64>, request: McpRequest, 
         signing_key,
     };
     DesktopResponse::json(Status::Ok, json!(mail))
+}
+
+/// The largest body of `POST /reins/desktop/folders`.
+const MAX_FOLDERS_BODY_BYTES: u64 = 64 * 1024;
+
+/// Decisions v2: this computer's `[workspace]` folders, canonicalized here, proposed for the phone to sign
+/// (`reins_policy::desktop_folders`). Kept until the phone reads them; the latest replaces the one before. Nothing
+/// counts until the owner confirms it on the phone. No push: the phone sees it with its next sync.
+#[post("/reins/desktop/folders", data = "<data>")]
+async fn post_folders(data: Data<'_>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let body = match data.open(MAX_FOLDERS_BODY_BYTES.bytes()).into_bytes().await {
+        Ok(b) if b.is_complete() => b.into_inner(),
+        Ok(_) => return DesktopResponse::error(Status::PayloadTooLarge, "too_large", "The body is too large."),
+        Err(_) => return DesktopResponse::error(Status::BadRequest, "invalid_request", "Unreadable body."),
+    };
+    let Ok(proposal) = serde_json::from_slice::<reins_proto::desktop::FolderProposal>(&body) else {
+        return DesktopResponse::error(Status::BadRequest, "invalid_request", "The body must be {home, folders}.");
+    };
+    if !HUB.folders.post(&connection.user_uuid.to_string(), &connection.uuid, proposal, now_unix()) {
+        return DesktopResponse::error(
+            Status::BadRequest,
+            "invalid_request",
+            &format!(
+                "At most {} folders of at most {} characters.",
+                reins_proto::desktop::MAX_FOLDERS,
+                reins_proto::desktop::MAX_FOLDER_CHARS
+            ),
+        );
+    }
+    DesktopResponse::json(Status::Ok, json!({}))
 }
 
 #[cfg(test)]

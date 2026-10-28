@@ -169,6 +169,9 @@ fun ActivityScreen(
     /** "Auto needs information": an answer (the owner check first unless Outside), or a dismiss. */
     onAnswerQuestion: (dev.reins.core.AutoQuestion, dev.reins.core.ZoneChoice) -> Unit = { _, _ -> },
     onDismissQuestion: (dev.reins.core.AutoQuestion) -> Unit = {},
+    /** A computer's proposed folder: Trust (the owner check first), or Not now. */
+    onTrustFolder: (dev.reins.core.FolderQuestion) -> Unit = {},
+    onNotNowFolder: (dev.reins.core.FolderQuestion) -> Unit = {},
     /** A task proposal approved as narrowed (the owner check first), or denied. */
     onApproveTask: (PendingItem, dev.reins.core.TaskView) -> Unit = { _, _ -> },
     onDenyTask: (PendingItem) -> Unit = {},
@@ -187,6 +190,7 @@ fun ActivityScreen(
     val entries by state.activity.collectAsStateWithLifecycle()
     val pending by state.pending.collectAsStateWithLifecycle()
     val questions by state.autoQuestions.collectAsStateWithLifecycle()
+    val folders by state.folderQuestions.collectAsStateWithLifecycle()
     val tasks by state.tasks.collectAsStateWithLifecycle()
     val circleReviews by state.circleReviews.collectAsStateWithLifecycle()
     val circleNotices by state.circleNotices.collectAsStateWithLifecycle()
@@ -425,8 +429,13 @@ fun ActivityScreen(
                             QuestionCards(questions, onAnswerQuestion, onDismissQuestion)
                             Spacer(Modifier.height(12.dp))
                         }
+                        // Then the folders a computer proposes for its signed policy (never notified either).
+                        if (folders.isNotEmpty()) {
+                            FolderCards(folders, onTrustFolder, onNotNowFolder)
+                            Spacer(Modifier.height(12.dp))
+                        }
                         AnimatedVisibility(
-                            pending.isEmpty() && questions.isEmpty() && loaded && !filtersOpen,
+                            pending.isEmpty() && questions.isEmpty() && folders.isEmpty() && loaded && !filtersOpen,
                             enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
                             exit = fadeOut(Motion.reduced()),
                         ) {
