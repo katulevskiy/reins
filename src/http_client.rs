@@ -36,6 +36,8 @@ pub fn make_http_request(method: reqwest::Method, url: &str) -> Result<reqwest::
 }
 
 pub fn get_reqwest_client_builder(enforce_block: bool) -> ClientBuilder {
+    // The server installs one at start; tests and tools that build a client first need it too.
+    rustls::crypto::ring::default_provider().install_default().ok();
     let mut headers = header::HeaderMap::new();
     headers.insert(header::USER_AGENT, header::HeaderValue::from_static("Vaultwarden"));
 

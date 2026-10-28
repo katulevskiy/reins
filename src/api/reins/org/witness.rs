@@ -147,6 +147,7 @@ pub fn check_response(der: &[u8], imprint: &[u8; 32], nonce: u64) -> Result<Stri
 }
 
 fn client() -> Result<reqwest::Client, String> {
+    rustls::crypto::ring::default_provider().install_default().ok();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
