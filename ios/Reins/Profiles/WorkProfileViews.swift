@@ -1,14 +1,14 @@
 import SwiftUI
 
-/// The work profile's badge on cards and rows (06 §2): the org's name with a briefcase. Nothing in the Personal
-/// profile. `onField`: on an ask's coloured field.
+/// The work profile's badge on cards and rows (06 §2): the org's name with a briefcase (a family's: the family
+/// symbol). Nothing in the Personal profile. `onField`: on an ask's coloured field.
 struct ProfileBadge: View {
     var onField = false
     var active: WorkProfiles.Active = WorkProfiles.active
 
     var body: some View {
         if let label = WorkProfiles.badge(active) {
-            Pill(label, tone: onField ? .onFieldWash : .neutral, glyph: .briefcase)
+            Pill(label, tone: onField ? .onFieldWash : .neutral, glyph: .briefcase, symbol: active.family ? FamilySymbol.name : nil)
                 .accessibilityIdentifier("profileBadge")
         }
     }
@@ -22,6 +22,7 @@ struct ProfilesSection: View {
     @State private var profiles: [AccountProfile] = []
     @State private var offered = false
     @State private var adding = false
+    @State private var addingFamily = false
     /// A work profile's org reviews waiting (nil: not known, or the Personal profile).
     @State private var reviews: Int?
 
@@ -30,6 +31,13 @@ struct ProfilesSection: View {
             if offered || profiles.contains(where: { $0.kind == .managed }) {
                 SectionHeader("Profiles", glyph: .person)
                 RaisedGroup {
+                    if WorkProfiles.active.family {
+                        Button { model.show(.family) } label: {
+                            TileRow("Family") { FamilyTile() } trailing: { EmptyView() }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("familyRow")
+                    }
                     if WorkProfiles.active.managed {
                         Button { model.show(.orgReviews) } label: {
                             TileRow("Reviews", glyph: .shieldCheck, value: reviews.flatMap { $0 > 0 ? String($0) : nil })
@@ -42,8 +50,14 @@ struct ProfilesSection: View {
                         Button {
                             if !current { ProfileSwitch.switchTo(p.id) }
                         } label: {
-                            TileRow(WorkProfiles.label(p), glyph: p.kind == .managed ? .briefcase : .person,
-                                    value: current ? "In use" : untrustedName(p.email ?? "", limit: 64))
+                            if p.family {
+                                TileRow(WorkProfiles.label(p), value: current ? "In use" : untrustedName(p.email ?? "", limit: 64)) {
+                                    FamilyTile()
+                                } trailing: { EmptyView() }
+                            } else {
+                                TileRow(WorkProfiles.label(p), glyph: p.kind == .managed ? .briefcase : .person,
+                                        value: current ? "In use" : untrustedName(p.email ?? "", limit: 64))
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("profile:\(p.id)")
@@ -53,6 +67,11 @@ struct ProfilesSection: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("addWorkAccount")
+                    Button { addingFamily = true } label: {
+                        TileRow("Add family account") { FamilyTile() } trailing: { EmptyView() }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("addFamilyAccount")
                 }
             }
         }
@@ -63,6 +82,11 @@ struct ProfilesSection: View {
                 // Reviews (O2) and web passkeys to confirm (O3).
                 let passkeys = (try? await model.core.orgPasskeys().filter { !$0.confirmed }.count) ?? 0
                 reviews = (try? await model.core.orgReviews().count).map { $0 + passkeys }
+            }
+        }
+        .sheet(isPresented: $addingFamily) {
+            NavigationStack {
+                AddFamilyAccountScreen(flow: AddFamilyAccount(server: server, makeCore: { try CoreFactory.makeWork($0) }))
             }
         }
         .sheet(isPresented: $adding) {
@@ -138,5 +162,17 @@ struct AddWorkAccountScreen: View {
             }
             .padding(16)
         }
+    }
+}
+
+/// A row's tile with the family symbol (the Signal glyphs don't draw one).
+struct FamilyTile: View {
+    var body: some View {
+        Image(systemName: FamilySymbol.name)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(Palette.ink2)
+            .frame(width: 32, height: 32)
+            .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .accessibilityHidden(true)
     }
 }

@@ -41,6 +41,8 @@ pub enum Reason {
     /// (later; never from one sign-in's answer).
     #[allow(dead_code, reason = "the periodic provider sync that confirms twice comes later")]
     ProviderMembershipLost,
+    /// A family member left (P7): after an adult's notice, or with a guardian's consent for a minor.
+    FamilyLeave,
 }
 
 impl Reason {
@@ -52,6 +54,7 @@ impl Reason {
             Self::DirectoryDelete => state::DEPROVISIONED_BY_DIRECTORY,
             Self::AdminRemoval => state::REMOVED_BY_ADMIN,
             Self::ProviderMembershipLost => state::SUSPENDED_BY_PROVIDER,
+            Self::FamilyLeave => state::LEFT_FAMILY,
         }
     }
 
@@ -62,6 +65,7 @@ impl Reason {
             Self::DirectoryDelete => "directory_delete",
             Self::AdminRemoval => "admin_removal",
             Self::ProviderMembershipLost => "provider_membership_lost",
+            Self::FamilyLeave => "family_leave",
         }
     }
 }
@@ -141,6 +145,8 @@ pub fn q_deprovision(
     // review answers go.
     let leases = super::leases::q_revoke_for_deprovision(c, org, user, now)?;
     let requests = super::decisions::on_member_removed(c, org, user, now)?;
+    // P7: what a family's guardian connected for them is revoked upstream by the family's executor.
+    let family_connections = super::family_connect::q_revoke_all(c, org, user, now)?;
     let clear_external = reason == Reason::AdminRemoval;
     reins_org::q_end_membership(c, org, user, &membership, new_state, keep_owner, clear_external, actor, now)?;
     if keep_owner && member.is_active() {
@@ -168,6 +174,7 @@ pub fn q_deprovision(
             "connections": cut.connections,
             "leases": leases,
             "requests_cancelled": requests,
+            "family_connections": family_connections,
             "sso_sessions": cut.sso_sessions.len(),
             "db_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),

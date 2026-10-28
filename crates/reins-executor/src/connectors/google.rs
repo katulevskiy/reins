@@ -11,6 +11,21 @@ use super::{
     parse_rfc3339, required_str,
 };
 
+/// Where an access token for a member comes from: the Workspace service account (domain-wide delegation), or a
+/// family member's own grant held by the executor (`user_oauth`).
+#[async_trait::async_trait]
+pub trait TokenSource: Send + Sync {
+    /// An access token acting as `member`, with `scope` (as narrow as the source allows).
+    async fn token(&self, member: &str, scope: &str) -> Result<Zeroizing<String>, String>;
+}
+
+/// The calls a Google tool makes, with tokens from `tokens`.
+pub(crate) struct Api<'a> {
+    pub http: &'a reqwest::Client,
+    pub api_base: &'a str,
+    pub tokens: &'a dyn TokenSource,
+}
+
 /// The tools the Google Workspace connector runs.
 pub const TOOLS: [&str; 3] = ["gmail_send", "calendar_list_events", "calendar_create_event"];
 
@@ -160,7 +175,16 @@ impl GoogleWorkspace {
             .map(|t| Zeroizing::new(t.to_owned()))
             .ok_or_else(|| "Google's token answer has no access token".to_owned())
     }
+}
 
+#[async_trait::async_trait]
+impl TokenSource for GoogleWorkspace {
+    async fn token(&self, member: &str, scope: &str) -> Result<Zeroizing<String>, String> {
+        GoogleWorkspace::token(self, member, scope).await
+    }
+}
+
+impl Api<'_> {
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value, String> {
         let resp = req.send().await.map_err(|e| format!("Google: {}", e.without_url()))?;
         let status = resp.status();
@@ -173,7 +197,7 @@ impl GoogleWorkspace {
     }
 
     fn calendar_url(&self, calendar: &str) -> Result<reqwest::Url, String> {
-        let mut url = reqwest::Url::parse(&self.api_base).map_err(|_| "the Google API base is not a URL".to_owned())?;
+        let mut url = reqwest::Url::parse(self.api_base).map_err(|_| "the Google API base is not a URL".to_owned())?;
         url.path_segments_mut().map_err(|()| "the Google API base is not a URL".to_owned())?.pop_if_empty().extend([
             "calendar",
             "v3",
@@ -186,7 +210,7 @@ impl GoogleWorkspace {
 
     async fn gmail_send(&self, member: &str, args: &Value) -> Result<Value, String> {
         let raw = rfc822(member, args)?;
-        let token = self.token(member, SCOPE_SEND).await?;
+        let token = self.tokens.token(member, SCOPE_SEND).await?;
         let v = self
             .send(
                 self.http
@@ -221,7 +245,7 @@ impl GoogleWorkspace {
         if let Some(q) = arg_str(args, "query").filter(|q| !q.is_empty()) {
             query.push(("q".to_owned(), q.to_owned()));
         }
-        let token = self.token(member, SCOPE_CALENDAR_READ).await?;
+        let token = self.tokens.token(member, SCOPE_CALENDAR_READ).await?;
         let v = self.send(self.http.get(url).bearer_auth(token.as_str()).query(&query)).await?;
         let events: Vec<Value> = v
             .get("items")
@@ -270,9 +294,22 @@ impl GoogleWorkspace {
         if !attendees.is_empty() {
             event.insert("attendees".into(), attendees.iter().map(|a| json!({"email": a})).collect());
         }
-        let token = self.token(member, SCOPE_CALENDAR_EVENTS).await?;
+        let token = self.tokens.token(member, SCOPE_CALENDAR_EVENTS).await?;
         let v = self.send(self.http.post(url).bearer_auth(token.as_str()).json(&Value::Object(event))).await?;
         Ok(json!({"id": v.get("id"), "html_link": v.get("htmlLink")}))
+    }
+
+    /// Runs `tool` as `member`.
+    pub async fn run(&self, member: &str, tool: &str, args: &Value) -> Result<Value, String> {
+        if !address_ok(member) {
+            return Err("the requester has no usable email in the roster".to_owned());
+        }
+        match tool {
+            "gmail_send" => self.gmail_send(member, args).await,
+            "calendar_list_events" => self.list_events(member, args).await,
+            "calendar_create_event" => self.create_event(member, args).await,
+            other => Err(format!("Google does not run {other}")),
+        }
     }
 }
 
@@ -283,15 +320,13 @@ impl Connector for GoogleWorkspace {
     }
 
     async fn run(&self, member_email: &str, tool: &str, args: &Value) -> Result<Value, String> {
-        if !address_ok(member_email) {
-            return Err("the requester has no usable email in the roster".to_owned());
+        Api {
+            http: &self.http,
+            api_base: &self.api_base,
+            tokens: self,
         }
-        match tool {
-            "gmail_send" => self.gmail_send(member_email, args).await,
-            "calendar_list_events" => self.list_events(member_email, args).await,
-            "calendar_create_event" => self.create_event(member_email, args).await,
-            other => Err(format!("Google Workspace does not run {other}")),
-        }
+        .run(member_email, tool, args)
+        .await
     }
 }
 

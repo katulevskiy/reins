@@ -58,6 +58,10 @@ pub fn sweep_routed(
     if let Err(e) = audit::checkpoint_due(c, now) {
         warn!("Org sweeper: checkpoints: {e:?}");
     }
+    // Families (P7): connect jobs whose time ran out, with any code they still held.
+    if let Err(e) = super::family_connect::sweep(c, now) {
+        warn!("Org sweeper: family connect jobs: {e:?}");
+    }
     swept
 }
 
@@ -116,6 +120,8 @@ pub fn spawn(pool: DbPool) {
                         Ok(_) => {}
                         Err(e) => warn!("Org sweeper: rollouts: {e:?}"),
                     }
+                    // Families: members whose leave took effect go (P7).
+                    super::family::sweep_now(&conn, &pool).await;
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }

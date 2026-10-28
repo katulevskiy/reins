@@ -42,12 +42,17 @@ pub async fn org_of(connection: &ReinsConnection, conn: &DbConn) -> Option<Strin
     conn.run(move |c| managed_org(c, &user)).await.ok().flatten()
 }
 
-fn only_managed(mut body: Value) -> Value {
+/// The tools a listing keeps: the org's; for a family member (P7), only those of the accounts a guardian connected.
+fn only_managed(mut body: Value, family: Option<&[&str]>) -> Value {
     let tools = body.pointer_mut("/result/tools").and_then(Value::as_array_mut);
     if let Some(tools) = tools {
-        tools.retain(|t| t["name"].as_str().is_some_and(|n| MANAGED_TOOLS.contains(&n)));
+        tools.retain(|t| t["name"].as_str().is_some_and(|n| offered(n, family)));
     }
     body
+}
+
+fn offered(name: &str, family: Option<&[&str]>) -> bool {
+    MANAGED_TOOLS.contains(&name) && family.is_none_or(|f| f.contains(&name))
 }
 
 fn tool_error(message: &str) -> Value {
@@ -76,12 +81,20 @@ pub async fn post(
     pool: &DbPool,
 ) -> (u16, Option<Value>) {
     let services = ["github".to_owned(), "gmail".to_owned(), "calendar".to_owned()];
+    let (o, u) = (org.to_owned(), connection.user_uuid.to_string());
+    let family = match conn.run(move |c| super::family_connect::member_tools(c, &o, &u)).await {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("Family tools of {org}: {e:?}");
+            Some(vec!["reins_get_result"])
+        }
+    };
     let action = mcp::handle(headers, body, Some(&services), &[]);
     let (id, name, arguments, modern, reason) = match action {
         Action::Reply {
             status,
             body,
-        } => return (status, body.map(only_managed)),
+        } => return (status, body.map(|b| only_managed(b, family.as_deref()))),
         // Managed calls are decided by the org's service; a deferral hint (P4's tickets) is not theirs.
         Action::CallTool {
             id,
@@ -109,7 +122,7 @@ pub async fn post(
         );
     }
     let reply = |result: Value| (200, Some(mcp::tool_reply(&id, modern, result)));
-    if !MANAGED_TOOLS.contains(&name.as_str()) {
+    if !offered(&name, family.as_deref()) {
         return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {name}"), None)));
     }
     let (org, connection_id, user) = (org.to_owned(), connection.uuid.clone(), connection.user_uuid.to_string());
@@ -237,7 +250,7 @@ mod tests {
     #[test]
     fn tools_list_offers_only_managed_tools() {
         let body = json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools::tool_definitions()}});
-        let names: Vec<String> = only_managed(body)["result"]["tools"]
+        let names: Vec<String> = only_managed(body.clone(), None)["result"]["tools"]
             .as_array()
             .unwrap()
             .iter()
@@ -246,6 +259,17 @@ mod tests {
         assert!(names.iter().all(|n| MANAGED_TOOLS.contains(&n.as_str())), "{names:?}");
         assert!(names.contains(&"github_create_issue".to_owned()) && names.contains(&"gmail_send".to_owned()));
         assert!(!names.iter().any(|n| n.starts_with("vault_") || n.starts_with("telegram_")));
+        // A family member (P7): only the tools of the accounts a guardian connected.
+        let family = ["github_create_issue", "reins_get_result"];
+        let names: Vec<String> = only_managed(body, Some(&family))["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(names.iter().all(|n| family.contains(&n.as_str())), "{names:?}");
+        assert!(!offered("gmail_send", Some(&family)));
+        assert!(offered("gmail_send", None));
     }
 
     #[test]

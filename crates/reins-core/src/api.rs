@@ -196,6 +196,84 @@ impl ReinsCore {
         .await
     }
 
+    /// Joins a family with its invitation link, on a new account (the Family profile's own core).
+    pub async fn family_join(&self, link: String) -> Result<crate::family::FamilyView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_join(&link).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The family of this account; `None` when it isn't a family's member.
+    pub async fn family_view(&self) -> Result<Option<crate::family::FamilyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_view().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Asks to leave: an adult goes after the family's notice, a minor when a guardian allows it.
+    pub async fn family_request_leave(&self) -> Result<crate::family::FamilyLeaveInfo, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_request_leave().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Withdraws a request to leave.
+    pub async fn family_cancel_leave(&self) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_cancel_leave().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// A guardian allows a member's request to leave.
+    pub async fn family_consent_leave(&self, member: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_consent_leave(&member).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Answers a guardian's proposal to mark this account a minor's.
+    pub async fn family_answer_minor(&self, accept: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.family_answer_minor(accept).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// The signed-in account's organization (a work profile's); `None` for a Personal account.
     pub async fn org_membership(&self) -> Result<Option<crate::org::OrgView>, CoreError> {
         let runtime = Arc::clone(&self.runtime);

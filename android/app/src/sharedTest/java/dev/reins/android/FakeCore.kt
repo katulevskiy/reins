@@ -918,6 +918,10 @@ class FakeCore : ReinsCoreInterface {
         sessionThrows = 0
         ssoBegins.clear()
         org = null
+        family = null
+        familyJoins.clear()
+        familyConsents.clear()
+        familyMinorAnswers.clear()
         orgsOffered = false
         pushTag = null
         orgReviews = emptyList()
@@ -971,6 +975,41 @@ class FakeCore : ReinsCoreInterface {
     }
 
     override suspend fun orgMembership(): dev.reins.core.OrgView? = org
+
+    /** The family this account is in (`familyView`); null: none. */
+    @Volatile var family: dev.reins.core.FamilyView? = null
+    val familyJoins = CopyOnWriteArrayList<String>()
+    val familyConsents = CopyOnWriteArrayList<String>()
+    val familyMinorAnswers = CopyOnWriteArrayList<Boolean>()
+
+    override suspend fun familyJoin(link: String): dev.reins.core.FamilyView {
+        familyJoins += link
+        return family ?: throw CoreException.Invalid("Use a new address for your family account.")
+    }
+
+    override suspend fun familyView(): dev.reins.core.FamilyView? = family
+
+    override suspend fun familyRequestLeave(): dev.reins.core.FamilyLeaveInfo {
+        val f = family ?: throw CoreException.NotFound()
+        val now = System.currentTimeMillis() / 1000
+        val leave = dev.reins.core.FamilyLeaveInfo(now, if (f.minor) null else now + f.noticeDays.toLong() * 86_400, f.minor)
+        family = f.copy(leave = leave)
+        return leave
+    }
+
+    override suspend fun familyCancelLeave() {
+        family = family?.copy(leave = null)
+    }
+
+    override suspend fun familyConsentLeave(member: String) {
+        familyConsents += member
+        family = family?.let { f -> f.copy(leaves = f.leaves.filterNot { it.member == member }) }
+    }
+
+    override suspend fun familyAnswerMinor(accept: Boolean) {
+        familyMinorAnswers += accept
+        family = family?.let { it.copy(minor = it.minor || accept, minorProposed = false) }
+    }
 
     /** Whether the server offers organizations ("Add work account"). */
     @Volatile var orgsOffered = false

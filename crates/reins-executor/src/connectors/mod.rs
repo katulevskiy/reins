@@ -10,9 +10,11 @@ use serde_json::Value;
 
 pub mod github;
 pub mod google;
+pub mod user_oauth;
 
 pub use github::GithubApp;
 pub use google::GoogleWorkspace;
+pub use user_oauth::UserOAuth;
 
 /// A service the executor acts on.
 #[async_trait::async_trait]

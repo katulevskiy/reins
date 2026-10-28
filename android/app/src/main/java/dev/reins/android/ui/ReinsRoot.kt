@@ -462,6 +462,8 @@ private fun TabContent(
             onCircles = { app.open(Route.Circles) },
             onAddWorkAccount = { app.open(Route.AddWorkAccount) },
             onOrgReviews = { app.open(Route.OrgReviews) },
+            onAddFamilyAccount = { app.open(Route.AddFamilyAccount) },
+            onFamily = { app.open(Route.Family) },
             onSignalGallery = { app.open(Route.SignalGallery) },
             authenticator = authenticator,
         )
@@ -488,6 +490,14 @@ private fun PageContent(
     when (route) {
         Route.AddWorkAccount -> dev.reins.android.ui.settings.AddWorkAccountScreen(
             viewModel(key = "addWorkAccount") { dev.reins.android.ui.settings.AddWorkAccountViewModel(container) },
+            onBack = { app.back() },
+        )
+        Route.AddFamilyAccount -> dev.reins.android.ui.settings.AddFamilyAccountScreen(
+            viewModel(key = "addFamilyAccount") { dev.reins.android.ui.settings.AddFamilyAccountViewModel(container) },
+            onBack = { app.back() },
+        )
+        Route.Family -> dev.reins.android.ui.settings.FamilyScreen(
+            viewModel(key = "family") { dev.reins.android.ui.settings.FamilyViewModel(container.core) },
             onBack = { app.back() },
         )
         Route.OrgReviews -> dev.reins.android.ui.org.OrgReviewsScreen(

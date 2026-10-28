@@ -25,6 +25,7 @@ pub mod connector;
 pub mod crypto;
 pub mod engine;
 pub mod error;
+pub mod family;
 pub mod gmail;
 pub mod google;
 pub mod handler;

@@ -85,6 +85,9 @@ flowchart TB
 | `GET /reins/api/org/reviews`, `POST /reins/api/org/reviews/<id>`, `PUT /reins/api/org/member-policy` | a work profile's phone | as above; answers and member policies are signed by the enrolled device key, which must pass the org's posture rule |
 | `POST /reins/api/org/leases`, `GET /reins/api/org/leases/<id>` | a work account's desktop daemon | its connection's bearer token; the credential comes back sealed to the daemon's X25519 key |
 | `/reins/org-exec/…` (`claim`, `keys`, `policy/<hash>`, `roster`, `rollouts`, `receipt`, `revocations`, `revoked/<id>`) | an org executor | every call signed with the executor's registered Ed25519 key over (org, executor, method, path, time, body hash), ±120 s; one tenant per executor |
+| `/reins/org-exec/connect/claim`, `/reins/org-exec/connect/done` | a family's executor (P7) | as the rest of `/reins/org-exec/…`; a finishing job carries the provider's one-time code once, and the answer names the account, never a token |
+| `POST /reins/api/org/family/join`, `GET /reins/api/org/family`, `POST`/`DELETE /reins/api/org/family/leave`, `POST /reins/api/org/family/leaves/<member>/consent`, `POST /reins/api/org/family/minor`, `POST /reins/api/org/family/members/<member>/minor`, `POST /reins/api/org/family/invites` | a family profile's phone (P7) | Vaultwarden login token; a join needs a new account and an invitation for its exact email; the rest need an active member of the family (guardians for consent, marks and invites) |
+| `GET /reins/org/family/oauth/callback` | a guardian's browser, back from Google or GitHub | the guardian's console session that began the connection, and the executor's `state` |
 | `POST /reins/org/github/policy-webhook` | the org's GitHub reader App | `X-Hub-Signature-256` (HMAC-SHA256 with the org's sealed webhook secret), the org's installation and bound repo only, each delivery once; a merge only proposes an activation |
 | `/mcp` of a work account | its agents | as for any account; the call goes to the org's decision service instead of the relay |
 | `/reins/org`, `/reins/org/<org>/…` | org admins, in a browser | the admin console: SSO through `/identity/connect/authorize` (`client_id=reins-console`), an in-memory session and a CSRF token per form; every page re-reads the admin's roles |
@@ -112,7 +115,10 @@ retention), `reins_org_approvals` (device-signed answers), `reins_org_executors`
 `reins_org_webhook_deliveries`, and keeps each request's body-free analysis and rollout step on `reins_org_requests`.
 Deferred decisions add `reins_tickets`, `reins_ticket_events`, `reins_device_keys` and
 `reins_callbacks`, and Circles `reins_circle_invites`, `reins_circle_links` and `reins_circle_packets`; guardianship adds
-`reins_circle_changes` (each signed change and when it arrived) and `reins_guardian_notices`. Everything else is in memory with a time limit, so
+`reins_circle_changes` (each signed change and when it arrived) and `reins_guardian_notices`. The Family tenant (P7) adds
+`reins_families` (the notice), `reins_family_invites` (hashed secrets, bound to an email), `reins_family_members`
+(minors, and a guardian's pending proposal), `reins_family_leaves`, `reins_family_connections` (which provider is
+connected for whom) and `reins_family_connect_jobs` (the executor's connect, finish and revoke jobs). Everything else is in memory with a time limit, so
 there is one server process per deployment.
 
 ## Flows

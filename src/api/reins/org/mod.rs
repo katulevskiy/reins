@@ -32,6 +32,7 @@ pub mod attest;
 pub mod audit;
 pub mod channels;
 pub mod console;
+pub mod console_family;
 pub mod console_managed;
 pub mod console_managed_pages;
 pub mod console_pages;
@@ -43,6 +44,8 @@ pub mod decisions;
 pub mod deprovision;
 pub mod dns;
 pub mod executor_api;
+pub mod family;
+pub mod family_connect;
 pub mod gate;
 pub mod github;
 #[allow(
@@ -93,9 +96,12 @@ pub fn routes() -> Vec<Route> {
     }
     let mut routes = api::routes();
     routes.extend(console::routes());
+    routes.extend(console_family::routes());
     routes.extend(console_managed::routes());
     routes.extend(console_policy::routes());
     routes.extend(executor_api::routes());
+    routes.extend(family::routes());
+    routes.extend(family_connect::routes());
     routes.extend(leases::routes());
     routes.extend(routing::sla::routes());
     routes.extend(channels::slack::routes());

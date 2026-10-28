@@ -33,6 +33,12 @@ private final class FakeRegistry: ProfileRegistryProtocol, @unchecked Sendable {
         profiles.append(p)
         return p
     }
+    func confirmFamily(id: String, orgId: String, orgName: String, email: String) throws -> AccountProfile {
+        var p = try confirmManaged(id: id, orgId: orgId, orgName: orgName, email: email)
+        p.family = true
+        profiles = profiles.map { $0.id == p.id ? p : $0 }
+        return p
+    }
     func list() -> [AccountProfile] { profiles }
     func notePersonal(email: String?) throws { personalEmail = email }
     func remove(id: String) throws {
@@ -206,6 +212,7 @@ final class ProfileSwitchInPlaceTests: XCTestCase {
         func active() -> AccountProfile { fatalError("unused") }
         func beginManaged(serverUrl: String) throws -> AccountProfile { fatalError("unused") }
         func confirmManaged(id: String, orgId: String, orgName: String, email: String) throws -> AccountProfile { fatalError("unused") }
+        func confirmFamily(id: String, orgId: String, orgName: String, email: String) throws -> AccountProfile { fatalError("unused") }
         func list() -> [AccountProfile] { [] }
         func notePersonal(email: String?) throws {}
         func remove(id: String) throws {}

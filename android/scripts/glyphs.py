@@ -56,6 +56,7 @@ MAP = {
     "Download": "download",
     "Eye": "visibility",
     "FaceId": "face",
+    "Family": "family_restroom",
     "FileCode": "code_blocks",
     "FileLock": "encrypted",
     "FileText": "description",

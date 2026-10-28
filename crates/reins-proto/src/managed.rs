@@ -600,6 +600,97 @@ pub struct LeaseJob {
     pub expires_at: i64,
 }
 
+/// A provider whose accounts a family's guardian connects for a member (P7): the family's executor holds the tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthProvider {
+    Google,
+    Github,
+}
+
+impl OAuthProvider {
+    pub const ALL: [Self; 2] = [Self::Google, Self::Github];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Google => "google",
+            Self::Github => "github",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::Github => "GitHub",
+        }
+    }
+
+    /// The tools a member's connection to this provider serves.
+    #[must_use]
+    pub fn tools(self) -> &'static [&'static str] {
+        match self {
+            Self::Google => &["gmail_send", "calendar_list_events", "calendar_create_event"],
+            Self::Github => &["github_api_read", "github_api_write", "github_create_issue", "github_comment"],
+        }
+    }
+}
+
+/// What a connect job asks of the executor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum ConnectPhase {
+    /// Make a PKCE verifier and a `state`, keep them, and answer with the authorization URL.
+    Begin,
+    /// The provider sent the guardian back with `code` for `state`: redeem it with the kept verifier and the client
+    /// secret (neither of which the server has), and keep the refresh token.
+    Finish {
+        code: String,
+        state: String,
+    },
+    /// Revoke the member's grant upstream and forget the token.
+    Revoke,
+}
+
+/// `POST /reins/org-exec/connect/claim`: a connection a guardian authorizes for a family member.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectJob {
+    pub id: String,
+    /// The member's account id.
+    pub member_id: String,
+    /// The member's email (what the executor keys the token by, as the signed roster names the requester).
+    pub member: String,
+    pub provider: OAuthProvider,
+    #[serde(flatten)]
+    pub phase: ConnectPhase,
+    /// Where the provider sends the guardian back (the server's callback).
+    pub redirect_uri: String,
+}
+
+/// `POST /reins/org-exec/connect/done`: what the executor did with a [`ConnectJob`]. Never a token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectDone {
+    pub job: String,
+    pub ok: bool,
+    /// A begin's authorization URL.
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    /// A begin's OAuth `state`.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// A finish's connected account (an address or login).
+    #[serde(default)]
+    pub account: Option<String>,
+    #[serde(default)]
+    pub reason: String,
+}
+
 /// A member's own stricter policy, signed by their enrolled device.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedMemberPolicy {
@@ -801,6 +892,29 @@ pub struct ReviewAnswer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connect_jobs_round_trip_and_never_carry_a_token() {
+        use super::{ConnectDone, ConnectJob, ConnectPhase, OAuthProvider};
+        let job = ConnectJob {
+            id: "j1".into(),
+            member_id: "u1".into(),
+            member: "sam@example.com".into(),
+            provider: OAuthProvider::Google,
+            phase: ConnectPhase::Finish {
+                code: "c".into(),
+                state: "s".into(),
+            },
+            redirect_uri: "https://reins.example/reins/org/family/oauth/callback".into(),
+        };
+        let text = serde_json::to_string(&job).unwrap();
+        assert!(text.contains("\"phase\":\"finish\""), "{text}");
+        assert_eq!(serde_json::from_str::<ConnectJob>(&text).unwrap(), job);
+        let done: ConnectDone = serde_json::from_str(r#"{"job":"j1","ok":true,"account":"sam@example.com"}"#).unwrap();
+        assert!(done.ok && done.auth_url.is_none());
+        assert_eq!(OAuthProvider::parse("github"), Some(OAuthProvider::Github));
+        assert!(OAuthProvider::Google.tools().contains(&"gmail_send"));
+    }
+
     use serde_json::json;
 
     use super::*;

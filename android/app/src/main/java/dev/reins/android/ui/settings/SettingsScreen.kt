@@ -119,6 +119,9 @@ fun SettingsScreen(
     /** Profiles > Add work account. */
     onAddWorkAccount: () -> Unit = {},
     onOrgReviews: () -> Unit = {},
+    /** Profiles > Add family account, and a family profile's Family page (P7). */
+    onAddFamilyAccount: () -> Unit = {},
+    onFamily: () -> Unit = {},
     /** Debug builds: the Signal component gallery. */
     onSignalGallery: () -> Unit = {},
     authenticator: Authenticator,
@@ -155,7 +158,7 @@ fun SettingsScreen(
                 }
                 if (signedIn != null) {
                     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as? dev.reins.android.ReinsApp
-                    app?.let { ProfilesGroup(it.container, signedIn.info.serverUrl, onAddWorkAccount, onOrgReviews) }
+                    app?.let { ProfilesGroup(it.container, signedIn.info.serverUrl, onAddWorkAccount, onOrgReviews, onAddFamilyAccount, onFamily) }
                 }
                 ui.message?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp)) }
                 ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp), BannerKind.Error) }

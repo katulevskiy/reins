@@ -365,6 +365,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func pushTag() async throws -> String? { nil }
 
     func orgMembership() async throws -> OrgView? { nil }
+    func familyJoin(link: String) async throws -> FamilyView { throw CoreError.NotFound }
+    func familyView() async throws -> FamilyView? { nil }
+    func familyRequestLeave() async throws -> FamilyLeaveInfo { throw CoreError.NotFound }
+    func familyCancelLeave() async throws {}
+    func familyConsentLeave(member: String) async throws {}
+    func familyAnswerMinor(accept: Bool) async throws {}
 
     func orgChallenge() async throws -> String { throw CoreError.NotFound }
 

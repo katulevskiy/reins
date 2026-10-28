@@ -95,7 +95,7 @@ fn query_pairs(args: &Value) -> Result<Vec<(String, String)>, String> {
 }
 
 /// What one tool call does: the repository and permission its token is narrowed to, and the request.
-struct Call {
+pub(crate) struct Call {
     repo: String,
     permissions: Value,
     method: reqwest::Method,
@@ -104,7 +104,7 @@ struct Call {
     body: Option<Value>,
 }
 
-fn plan(tool: &str, args: &Value) -> Result<Call, String> {
+pub(crate) fn plan(tool: &str, args: &Value) -> Result<Call, String> {
     match tool {
         "github_create_issue" => {
             only_args(args, &["repo", "title", "body", "labels", "assignees", "milestone"])?;
@@ -187,7 +187,7 @@ fn plan(tool: &str, args: &Value) -> Result<Call, String> {
     }
 }
 
-async fn error_of(what: &str, resp: reqwest::Response) -> String {
+pub(crate) async fn error_of(what: &str, resp: reqwest::Response) -> String {
     let status = resp.status();
     let message = resp
         .json::<Value>()
@@ -224,11 +224,7 @@ impl GithubApp {
     }
 
     fn request(&self, method: reqwest::Method, path: &str, bearer: &str) -> reqwest::RequestBuilder {
-        self.http
-            .request(method, format!("{}{path}", self.api_base))
-            .bearer_auth(bearer)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+        request(&self.http, &self.api_base, method, path, bearer)
     }
 
     /// `repo` split, if it is one of the installation account's repositories.
@@ -316,32 +312,51 @@ impl GithubApp {
     }
 
     async fn call(&self, call: &Call, token: &str) -> Result<Value, String> {
-        let mut req = self.request(call.method.clone(), &call.path, token);
-        if !call.query.is_empty() {
-            req = req.query(&call.query);
-        }
-        if let Some(body) = &call.body {
-            req = req.json(body);
-        }
-        let resp = req.send().await.map_err(|e| format!("GitHub: {}", e.without_url()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(error_of("the call", resp).await);
-        }
-        let bytes = resp.bytes().await.map_err(|e| format!("GitHub: {}", e.without_url()))?;
-        if bytes.len() > MAX_ANSWER {
-            return Err("GitHub's answer is too large".to_owned());
-        }
-        Ok(if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-        })
+        call_as(&self.http, &self.api_base, call, token).await
     }
 }
 
+/// A GitHub API request with `bearer`.
+pub(crate) fn request(
+    http: &reqwest::Client,
+    api_base: &str,
+    method: reqwest::Method,
+    path: &str,
+    bearer: &str,
+) -> reqwest::RequestBuilder {
+    http.request(method, format!("{api_base}{path}"))
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+}
+
+/// Makes `call` with `token` and returns GitHub's answer.
+pub(crate) async fn call_as(http: &reqwest::Client, api_base: &str, call: &Call, token: &str) -> Result<Value, String> {
+    let mut req = request(http, api_base, call.method.clone(), &call.path, token);
+    if !call.query.is_empty() {
+        req = req.query(&call.query);
+    }
+    if let Some(body) = &call.body {
+        req = req.json(body);
+    }
+    let resp = req.send().await.map_err(|e| format!("GitHub: {}", e.without_url()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(error_of("the call", resp).await);
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("GitHub: {}", e.without_url()))?;
+    if bytes.len() > MAX_ANSWER {
+        return Err("GitHub's answer is too large".to_owned());
+    }
+    Ok(if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    })
+}
+
 /// The minimal result of a change: its number or id and link.
-fn minimal(tool: &str, answer: &Value) -> Value {
+pub(crate) fn minimal(tool: &str, answer: &Value) -> Value {
     let pick = |keys: &[&str]| {
         let mut out = Map::new();
         for k in keys {

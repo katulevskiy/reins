@@ -60,6 +60,10 @@ class FakeRegistry : ProfileRegistryInterface {
         profiles += p
         return p
     }
+    override fun confirmFamily(id: String, orgId: String, orgName: String, email: String): AccountProfile =
+        confirmManaged(id, orgId, orgName, email).copy(family = true).also { p ->
+            profiles.replaceAll { if (it.id == p.id) p else it }
+        }
     override fun remove(id: String) {
         removed += id
         pending.removeAll { it.id == id }

@@ -904,6 +904,53 @@ What this doesn't do yet:
 - A rollout advanced by hand through its stages with too few decisions reaches "everyone" without a stable baseline:
   there only the time-to-decision guard applies.
 
+### Family: enforceable guardianship (P7)
+
+Guardianship in Personal mode is cooperative (08 R7): the ward's own phone holds the credentials. A **Family** is a
+small org of tier Family, where the guardians are the org, so a child's agents act only through accounts the family
+holds.
+
+- **Joining.** A family has no domain and no identity provider. A member joins only by an **invitation** a guardian
+  made:
+  - it is bound to one exact email and used once;
+  - it expires after 7 days;
+  - the server keeps only the SHA-256 of its secret.
+- **New accounts only (08 R6).** An invitation is taken only by an account nobody used yet: created in the last 30
+  minutes, in no org, and with no phone roles, connections, Circle links, vault items or other devices. Any other
+  account gets the same answer, which names nobody. A family never captures someone's Personal account, and never
+  learns one exists. The family account is a separate profile on the phone, with its own core and keys.
+- **Guardians** hold Org owner, Security admin, Connection admin and Approver. Adding a second guardian is a
+  two-person change (`AddGuardian`) once the family has a guardian to approve it. A single guardian activates the
+  family's policy alone with their device signature; with two or more, another guardian approves.
+- **Minors.** A guardian proposes it, in the invitation or later, and it counts only **once the member accepts on
+  their phone**. A guardian can't make an adult a minor alone, not even by inviting them as one.
+- **Leaving.** An adult leaves after the family's notice, which is 0, 3 or 7 days, never more and never "permanent".
+  A minor's leave waits for a guardian's consent. Either way the member is deprovisioned when it takes effect: their
+  devices and connections go, and what the family connected for them is revoked upstream.
+- **What guardians decide** (the baseline policy):
+  - the child decides their own soft asks;
+  - a guardian (any Approver but the requester, Deferred, a day) must approve money, messages to Outside people,
+    publishing, new permissions and L3;
+  - every hard obligation (the always-ask floor, L3, an unreadable request) needs the child and a guardian
+    (`OrgPolicy.hard_also`), and neither stands in for the other.
+- **What guardians see:** the family's requests and decisions, with the org's usual retention (none by default for
+  a family), and the console's members, invitations and requests to leave. They never see the child's Personal
+  profile, and nothing outside the family's own connections.
+- **Connections the family holds.** A guardian connects a member's Google or GitHub account from the console:
+  - the family's **executor** makes the PKCE verifier and `state` and holds the OAuth client secret;
+  - the provider's one-time code comes back to the server, which can't redeem it. It is kept sealed at rest, bound
+    to the guardian's console session that began it, and deleted when the executor claims it;
+  - the executor keeps the refresh token in its own `user_tokens.json` (AES-256-GCM, key by HKDF from its key file,
+    owner-only), and uses a member's token only for that member's approved requests;
+  - the server learns which provider is connected and the account's name, never a token;
+  - a member's agents see only the tools of their connected providers.
+
+**Known limits:**
+- The family's executor holds the children's tokens; whoever runs it, Reins Cloud or the family, is trusted with them.
+- A child can still use their own Personal account and their own credentials outside Reins. The family's guarantees
+  cover only the accounts it connected.
+- Pushes to guardians name only the kind of ask (`family:leave`, `family:minor`), never a person.
+
 ## Known gaps
 
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone
