@@ -210,3 +210,22 @@ signing key, `TicketStore::see_signing_key`).
   The `reins`/`secrets`/`payments` groups add none. Recall 240/240, known false positives asked 0/75, needs-a-person
   249/249. Developer requests 738: 33 asked (4.5%).
 - **e2e:** Lockdown reached the computer's daemon in 77 ms.
+- **Signed folders (follow-up, the last ask-rate gap).** The computer proposes its canonicalized `[workspace]` roots
+  and scratch folders (`reins_desktop::folders`, `POST /reins/desktop/folders`, in the server's memory). The phone
+  fetches the proposals with its syncs and whenever the cards or a computer's Folders are shown
+  (`GET /reins/api/desktop/folders`). It lists what isn't signed yet as question cards (`folder_questions`, never a
+  notification):
+  - confirming needs the owner check;
+  - removing applies at once, with a tighten first;
+  - the computer's page lists confirmed folders (with remove) and suggested ones (with confirm) under Settings ›
+    Computers › the computer › Folders.
+
+  The snapshot signs the standard roots plus the confirmed ones (`reins_core::autopilot::desktop_folders`).
+  `reins_policy::desktop_folders::refusal` refuses `/`, `~`, `/home/<user>`, `/Users/<user>`, whole disks, keys and
+  Reins's own state, everywhere. On the computer, a local folder counts as written or as it resolves now (`Local::canonical`).
+
+  Replay (`--engine desktop`, `policy/nets.json`), with the corpus computer's folders proposed and confirmed: hook
+  requests 350, **27 asked (7.7%)**, the same as the phone's own engine; `unconfirmed_folders` (before the owner
+  confirms) still gives 33 (9.4%). The e2e test `the_computer_proposes_its_folders_and_uses_the_ones_confirmed` covers
+  propose, the card, confirm, the signed snapshot, a local decision, and remove.
+
