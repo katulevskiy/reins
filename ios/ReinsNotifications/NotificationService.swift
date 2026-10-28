@@ -150,8 +150,9 @@ final class NotificationService: UNNotificationServiceExtension {
 
 extension NotificationService {
     /// A Circle push, once the core fetched what it announced: a review waiting for this phone names its person and
-    /// title ("Sam: purchase $42 waiting"); a guardianship that ended names its person. One already settled (answered on
-    /// another of this account's phones, withdrawn, expired) is a quiet line instead of an alarm for nothing.
+    /// title ("Sam: purchase $42 waiting"); a guardianship's alert says what the guardian was told ("Sam: guardianship
+    /// changed", from the notice the core reported or holds), else what the ward's row says. One already settled
+    /// (answered on another of this account's phones, withdrawn, expired) is a quiet line instead of an alarm for nothing.
     fileprivate static func circleContent(
         _ push: CirclePush, capture: CapturingNotifier, core: ReinsCore, original: UNNotificationContent, settings: FeedbackSettings
     ) async -> UNNotificationContent {
@@ -164,6 +165,14 @@ extension NotificationService {
             guard let review else { return NotificationContent.handled(original) }
             return NotificationContent.circleReview(review, settings: settings)
         case .alert:
+            var notice = capture.guardianNotice(link: push.id)
+            if notice == nil {
+                // One the app's sync took first, if it is this push's (recent); an older one is not what this says.
+                let recent = Int64(Date().timeIntervalSince1970) - 900
+                notice = (try? await core.guardianNotices(refresh: false))
+                    .flatMap { GuardianLogic.notices($0).first { $0.linkId == push.id && $0.at >= recent } }
+            }
+            if let notice { return NotificationContent.guardianNotice(notice, settings: settings) }
             guard let person = (try? await core.circlePeople(refresh: false))?.first(where: { $0.linkId == push.id }) else {
                 return NotificationContent.generic(original, payload: PushPayload(kind: "circle", id: "alert:\(push.id)"), settings: settings)
             }
@@ -180,6 +189,7 @@ private final class CapturingNotifier: Notifier, @unchecked Sendable {
     private var items: [String: PendingItem] = [:]
     private var decisions: [String: AutoDecisionView] = [:]
     private var reviews: [String: CircleReviewView] = [:]
+    private var notices: [GuardianNoticeView] = []
 
     func itemPending(item: PendingItem) { lock.withLock { items[item.id] = item } }
 
@@ -189,12 +199,22 @@ private final class CapturingNotifier: Notifier, @unchecked Sendable {
 
     func autopilotChanged(event: AutopilotEvent) {}
 
-    /// A review of another account that waits for this phone; anything else in Circles changes nothing shown here.
+    /// A review of another account that waits for this phone, or a guardian's notice about a ward; anything else in
+    /// Circles changes nothing shown here.
     func circleChanged(event: CircleEvent) {
-        if case let .reviewWaiting(review) = event { lock.withLock { reviews[review.id] = review } }
+        switch event {
+        case let .reviewWaiting(review): lock.withLock { reviews[review.id] = review }
+        case let .guardianNotice(notice): lock.withLock { notices.append(notice) }
+        case .changed: break
+        }
     }
 
     func review(_ id: String) -> CircleReviewView? { lock.withLock { reviews[id] } }
+
+    /// The newest notice this push brought about a ward's guardianship.
+    func guardianNotice(link: String) -> GuardianNoticeView? {
+        lock.withLock { GuardianLogic.notices(notices).first { $0.linkId == link } }
+    }
 
     func item(_ id: String) -> PendingItem? { lock.withLock { items[id] } }
 

@@ -237,6 +237,21 @@ class MainSafeCore(
 
     override suspend fun circleAnswer(reviewId: String, approve: Boolean, note: String?) = io { circleAnswer(reviewId, approve, note) }
 
+    // ---- Guardianship (Decisions v2 P7, 04 §4) -----------------------------------------------------------------------
+
+    override suspend fun guardianProposeMinor(linkId: String) = io { guardianProposeMinor(linkId) }
+
+    override suspend fun guardianAcceptMinor(linkId: String, signal: dev.reins.core.AgeSignalInput, owner: OwnerCheck) =
+        io { guardianAcceptMinor(linkId, signal, owner) }
+
+    override suspend fun guardianConsentEnd(linkId: String, owner: OwnerCheck) = io { guardianConsentEnd(linkId, owner) }
+
+    override suspend fun guardianSetDigest(linkId: String, on: Boolean) = io { guardianSetDigest(linkId, on) }
+
+    override suspend fun guardianNotices(refresh: Boolean): List<dev.reins.core.GuardianNoticeView> = io { guardianNotices(refresh) }
+
+    override suspend fun guardianWardView(linkId: String): dev.reins.core.WardView = io { guardianWardView(linkId) }
+
     override suspend fun signingKeyFingerprint(): String = io { signingKeyFingerprint() }
 
     override suspend fun gmailStatus(): GmailStatus = io { gmailStatus() }

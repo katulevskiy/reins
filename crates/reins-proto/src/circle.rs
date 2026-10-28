@@ -174,6 +174,10 @@ pub struct Terms {
     pub redaction: Redaction,
     /// The scope in words, shown to both sides ("Money", "Everything ChatGPT does").
     pub scope_line: String,
+    /// A guardian's extra terms (04 §4): the notice the ward chose, a minor mark, the weekly digest. Only on a
+    /// [`CircleKind::Guardian`]; a guardianship signed before P7 has none and reads as [`GuardianTerms::LEGACY`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardian: Option<GuardianTerms>,
 }
 
 /// One side, as pinned by the safety code.
@@ -232,6 +236,8 @@ pub enum CircleError {
     BrokenChain,
     #[error("this is not newer than what was accepted before")]
     Replayed,
+    #[error("{0}")]
+    Guardian(&'static str),
 }
 
 // ---- checks -------------------------------------------------------------------------------------------------------
@@ -358,11 +364,34 @@ impl Terms {
                 CircleKind::Guardian | CircleKind::Watcher => Redaction::Summary,
             },
             scope_line: "Everything".to_owned(),
+            guardian: (kind == CircleKind::Guardian).then(GuardianTerms::default),
         }
+    }
+
+    /// A guardian's terms in force at setup: the signed ones, or [`GuardianTerms::LEGACY`] for a guardianship signed
+    /// before they existed; `None` for any other kind.
+    #[must_use]
+    pub fn guardian_terms(&self) -> Option<GuardianTerms> {
+        (self.kind == CircleKind::Guardian).then(|| self.guardian.clone().unwrap_or(GuardianTerms::LEGACY))
+    }
+
+    /// [`Terms::validate`], and a guardianship must carry its [`GuardianTerms`]: what a phone requires of an
+    /// arrangement it proposes or accepts now (an older one, already signed, still reads).
+    pub fn validate_new(&self) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.kind == CircleKind::Guardian && self.guardian.is_none() {
+            return Err(invalid("terms.guardian", "a guardianship needs its notice period"));
+        }
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
         self.scope.validate()?;
+        match (&self.guardian, self.kind) {
+            (Some(g), CircleKind::Guardian) => g.validate()?,
+            (Some(_), _) => return Err(invalid("terms.guardian", "only a guardianship has guardian terms")),
+            (None, _) => {}
+        }
         clean("terms.scope_line", &self.scope_line, MAX_LABEL_CHARS)?;
         let (lo, hi) = window_bounds(self.class);
         if !(lo..=hi).contains(&self.window_secs) {
@@ -824,6 +853,10 @@ pub struct LinkChange {
     pub state: LinkState,
     pub by: Side,
     pub at: i64,
+    /// A guardianship's own steps (minor mark, digest, ending with notice or consent). With one, `state` stays
+    /// `Active`, except for [`GuardianChange::EndConsented`] (`Ended`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardian: Option<GuardianChange>,
 }
 
 impl LinkChange {
@@ -836,8 +869,21 @@ impl LinkChange {
         if self.seq == 0 {
             return Err(invalid("seq", "starts at 1"));
         }
-        if self.by == Side::Helper && self.state != LinkState::Ended {
-            return Err(invalid("state", "a helper can only end an arrangement"));
+        match &self.guardian {
+            None if self.by == Side::Helper && self.state != LinkState::Ended => {
+                Err(invalid("state", "a helper can only end an arrangement"))
+            }
+            None => Ok(()),
+            Some(g) => g.validate(self),
+        }
+    }
+
+    /// [`LinkChange::validate`] for a link of `kind`: a guardianship step (the only change a helper makes without
+    /// ending) belongs to a Guardian link only, so on any other a helper still only ends.
+    pub fn validate_for(&self, kind: CircleKind) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.guardian.is_some() && kind != CircleKind::Guardian {
+            return Err(invalid("guardian", "only a guardianship takes guardianship steps"));
         }
         Ok(())
     }
@@ -867,16 +913,19 @@ impl SignedChange {
     }
 
     /// The change, if `key` (the changer's pinned owner key) signed it, for this arrangement (`arrangement`: its
-    /// [`arrangement_hash`]), and it is strictly newer than `last_seq` (the last change this phone accepted for the
-    /// link; 0 for none). An older or repeated change is [`CircleError::Replayed`].
+    /// [`arrangement_hash`], of kind `kind`: [`LinkChange::validate_for`]), and it is strictly newer than `last_seq`
+    /// (the last change this phone accepted for the link; 0 for none). An older or repeated change is
+    /// [`CircleError::Replayed`].
     pub fn verify(
         &self,
         key: &str,
         arrangement: &str,
+        kind: CircleKind,
         last_seq: u64,
         verify: impl Fn(&[u8; 32], &[u8], &[u8; 64]) -> bool,
     ) -> Result<LinkChange, CircleError> {
         let c = self.change()?;
+        c.validate_for(kind)?;
         verify_sig(key, &change_message(&self.body), &self.sig, &verify)?;
         if c.arrangement != arrangement {
             return Err(CircleError::Mismatch("arrangement"));
@@ -886,6 +935,333 @@ impl SignedChange {
         }
         Ok(c)
     }
+}
+
+// ---- guardianship (04 §4, 08 R7) -----------------------------------------------------------------------------------
+
+/// The notice periods a ward may choose: there's no longer one, and no "permanent" (04 §4).
+pub const NOTICE_DAYS: [u8; 3] = [0, 3, 7];
+/// A day, in seconds.
+pub const DAY_SECS: i64 = 86_400;
+/// A minor's end request: it waits for the guardian's consent, never for a date.
+pub const UNTIL_CONSENT: i64 = i64::MAX;
+
+/// A guardianship's terms beyond the scope (04 §4), signed into the arrangement at setup.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuardianTerms {
+    /// 0, 3 or 7 ([`NOTICE_DAYS`]): chosen by the ward and shown before the code.
+    pub notice_days: u8,
+    /// The ward's account is a minor's: leaving needs the guardian's consent. Set at setup only with the ward's
+    /// acceptance (the ward signs the arrangement); later through [`GuardianChange::MinorAccepted`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minor: Option<MinorMark>,
+    /// The weekly digest of automatic decisions in scope: opt-in by the ward (04 §1).
+    #[serde(default)]
+    pub digest: bool,
+}
+
+impl Default for GuardianTerms {
+    fn default() -> Self {
+        Self {
+            notice_days: 3,
+            minor: None,
+            digest: false,
+        }
+    }
+}
+
+impl GuardianTerms {
+    /// A guardianship signed before these terms existed: it ends at once, as it did then.
+    pub const LEGACY: Self = Self {
+        notice_days: 0,
+        minor: None,
+        digest: false,
+    };
+
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if !NOTICE_DAYS.contains(&self.notice_days) {
+            return Err(invalid("terms.guardian.notice_days", "must be 0, 3 or 7"));
+        }
+        if let Some(m) = &self.minor {
+            m.validate()?;
+        }
+        Ok(())
+    }
+
+    /// The notice in seconds.
+    #[must_use]
+    pub fn notice_secs(&self) -> i64 {
+        i64::from(self.notice_days) * DAY_SECS
+    }
+}
+
+/// Where a minor mark's age came from (07 §5 Q5). The mark travels in a signed change the server stores in clear, so it
+/// says only whether a platform backed it: never the age range, never which platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgeSource {
+    /// The phone's family features (Apple's Declared Age Range, Google Play Age Signals) said the owner is under 18.
+    Platform,
+    /// No platform signal: the guardian proposed it and the ward accepted it.
+    GuardianAndWard,
+}
+
+/// The ward's account is a minor's: proposed by the guardian, accepted (signed) by the ward.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MinorMark {
+    pub source: AgeSource,
+    pub at: i64,
+}
+
+impl MinorMark {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// A guardianship's own steps, carried in a [`LinkChange`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GuardianChange {
+    /// The guardian asks to mark the ward's account a minor's (nothing changes until the ward accepts).
+    MinorProposed,
+    /// The ward accepts the minor mark.
+    MinorAccepted {
+        mark: MinorMark,
+    },
+    /// The ward turns the weekly digest on or off.
+    Digest {
+        on: bool,
+    },
+    /// The ward ends the guardianship: in force until `effective_at` (`at` + the notice), or [`UNTIL_CONSENT`] for
+    /// a minor.
+    EndRequested {
+        effective_at: i64,
+    },
+    /// The guardian consents to a minor's end request (made at `request_at`): it ends at once.
+    EndConsented {
+        request_at: i64,
+    },
+}
+
+impl GuardianChange {
+    /// Who may make it, and the state it carries.
+    #[must_use]
+    pub const fn shape(&self) -> (Side, LinkState) {
+        match self {
+            Self::MinorProposed => (Side::Helper, LinkState::Active),
+            Self::MinorAccepted {
+                ..
+            }
+            | Self::Digest {
+                ..
+            }
+            | Self::EndRequested {
+                ..
+            } => (Side::Owner, LinkState::Active),
+            Self::EndConsented {
+                ..
+            } => (Side::Helper, LinkState::Ended),
+        }
+    }
+
+    fn validate(&self, c: &LinkChange) -> Result<(), ValidationError> {
+        let (by, state) = self.shape();
+        if c.by != by {
+            return Err(invalid("guardian", "this step belongs to the other side"));
+        }
+        if c.state != state {
+            return Err(invalid("state", "does not match the guardianship step"));
+        }
+        if let Self::MinorAccepted {
+            mark,
+        } = self
+        {
+            mark.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// When a ward's end request made at `requested_at` takes effect: the notice later for an adult; `None` for a minor
+/// (it waits for the guardian's consent).
+#[must_use]
+pub fn guardian_effective(terms: &GuardianTerms, minor_now: bool, requested_at: i64) -> Option<i64> {
+    (!minor_now).then(|| requested_at.saturating_add(terms.notice_secs()))
+}
+
+/// Whether `c` keeps a guardianship's terms (as the ward accepted them, `terms`, and whether the ward is a minor now).
+/// The phones run it on every change of a Guardian link (the server can't: the terms are sealed):
+/// - the ward never pauses a guardianship, and never ends one but by an [`GuardianChange::EndRequested`] that takes the
+///   notice exactly (a minor's waits for consent: [`UNTIL_CONSENT`]);
+/// - a minor mark is proposed by the guardian and accepted by the ward; the digest is the ward's;
+/// - the guardian may leave at once (an end without a step), or consent to an end.
+///
+/// `logged_at` is when the server received the change ([`LoggedChange::at`]; a phone's own change: its `at`). A ward's
+/// change whose own time is more than [`ANSWER_SKEW_SECS`] from it is refused (a backdated end would skip its notice),
+/// and so is one without it (fail closed). The guardian's steps aren't dated against it.
+pub fn check_guardian_change(
+    terms: &GuardianTerms,
+    minor_now: bool,
+    c: &LinkChange,
+    logged_at: Option<i64>,
+) -> Result<(), CircleError> {
+    c.validate_for(CircleKind::Guardian)?;
+    // The ward's steps are dated against when they arrived (a backdated end would skip its notice). The guardian's
+    // leave and consent end it at once, whatever their time, so a guardian's skewed clock never blocks them.
+    if c.by == Side::Owner {
+        let logged_at = logged_at.ok_or(CircleError::Guardian("a change without its arrival time"))?;
+        if c.at.abs_diff(logged_at) > ANSWER_SKEW_SECS.unsigned_abs() {
+            return Err(CircleError::Guardian("a change dated away from when it arrived"));
+        }
+    }
+    match (&c.guardian, c.by, c.state) {
+        (None, Side::Helper, LinkState::Ended) => Ok(()),
+        (None, Side::Owner, LinkState::Paused) => Err(CircleError::Guardian("a ward can't pause a guardianship")),
+        (None, Side::Owner, LinkState::Ended) => {
+            Err(CircleError::Guardian("a ward's end must take the notice it chose"))
+        }
+        (None, ..) => Err(CircleError::Guardian("not a step of a guardianship")),
+        (
+            Some(GuardianChange::EndRequested {
+                effective_at,
+            }),
+            ..,
+        ) => {
+            let due = guardian_effective(terms, minor_now, c.at).unwrap_or(UNTIL_CONSENT);
+            if *effective_at == due {
+                Ok(())
+            } else if minor_now {
+                Err(CircleError::Guardian("a minor's end waits for the guardian's consent"))
+            } else {
+                Err(CircleError::Guardian("an end that does not take its notice"))
+            }
+        }
+        (Some(_), ..) => Ok(()),
+    }
+}
+
+/// A pending end of a guardianship.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ending {
+    pub requested_at: i64,
+    /// [`UNTIL_CONSENT`] for a minor's.
+    pub effective_at: i64,
+}
+
+/// Where a guardianship stands after its accepted changes ([`GuardianStatus::apply`] each, in order).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GuardianStatus {
+    pub minor: Option<MinorMark>,
+    /// The guardian proposed a minor mark the ward hasn't answered.
+    pub minor_proposed: bool,
+    pub digest: bool,
+    pub ending: Option<Ending>,
+    /// Consented (a minor's) or past its notice: no longer in force.
+    pub ended: bool,
+}
+
+impl GuardianStatus {
+    /// At setup.
+    #[must_use]
+    pub fn of(terms: &GuardianTerms) -> Self {
+        Self {
+            minor: terms.minor.clone(),
+            digest: terms.digest,
+            ..Self::default()
+        }
+    }
+
+    /// Applies a change [`check_guardian_change`] accepts (else returns its error and changes nothing). An end takes
+    /// effect no sooner than the notice after it arrived (`logged_at`), whatever time it carries.
+    pub fn apply(&mut self, terms: &GuardianTerms, c: &LinkChange, logged_at: Option<i64>) -> Result<(), CircleError> {
+        check_guardian_change(terms, self.minor.is_some(), c, logged_at)?;
+        let arrived = logged_at.unwrap_or(c.at).max(c.at);
+        match &c.guardian {
+            Some(GuardianChange::MinorProposed) => self.minor_proposed = self.minor.is_none(),
+            Some(GuardianChange::MinorAccepted {
+                mark,
+            }) => {
+                if !self.minor_proposed && self.minor.is_none() {
+                    return Err(CircleError::Guardian("nobody proposed a minor mark"));
+                }
+                self.minor = Some(mark.clone());
+                self.minor_proposed = false;
+            }
+            Some(GuardianChange::Digest {
+                on,
+            }) => self.digest = *on,
+            Some(GuardianChange::EndRequested {
+                effective_at,
+            }) => {
+                let effective_at = if *effective_at == UNTIL_CONSENT {
+                    UNTIL_CONSENT
+                } else {
+                    (*effective_at).max(arrived.saturating_add(terms.notice_secs()))
+                };
+                self.ending = Some(Ending {
+                    requested_at: arrived,
+                    effective_at,
+                });
+            }
+            Some(GuardianChange::EndConsented {
+                ..
+            })
+            | None => self.ended = true,
+        }
+        Ok(())
+    }
+
+    /// Whether the guardian's review still binds at `now`: until a consent, a guardian leaving, or the notice ends.
+    #[must_use]
+    pub fn in_force(&self, now: i64) -> bool {
+        !self.ended && self.ending.is_none_or(|e| now < e.effective_at)
+    }
+
+    /// The ward asked to leave and only the guardian's consent ends it.
+    #[must_use]
+    pub fn needs_consent(&self) -> bool {
+        !self.ended && self.ending.is_some_and(|e| e.effective_at == UNTIL_CONSENT)
+    }
+}
+
+/// A [`SignedChange`] as the server logged it, with the time it arrived (a phone checks a change's `at` against it:
+/// a backdated end is an early end).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoggedChange {
+    pub change: SignedChange,
+    pub at: i64,
+}
+
+/// What the server observed about a ward and tells each of its guardians (08 R7, R8): it routes, so it sees these
+/// even though it reads nothing. Only [`GuardianNoticeKind::LinkChanged`] and [`GuardianNoticeKind::RosterChanged`]
+/// can be checked by the guardian's phone; the rest is "Reported by the server".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GuardianNoticeKind {
+    /// The ward reset the account (its keys are gone).
+    AccountReset,
+    /// The ward deleted the account.
+    AccountDeleted,
+    /// The ward's roster changed (a handover, a recovery, a phone removed).
+    RosterChanged {
+        reason: crate::roster::RosterReason,
+        epoch: u64,
+    },
+    /// A signed change of the guardianship (or the end its notice reached).
+    LinkChanged {
+        change: SignedChange,
+    },
+}
+
+/// `GET /reins/api/guardian/notices`: one notice for the calling guardian.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuardianNotice {
+    pub id: String,
+    pub link: String,
+    pub kind: GuardianNoticeKind,
+    pub at: i64,
 }
 
 /// `GET /reins/api/circles/links`: one arrangement as the caller's side sees its routing.
@@ -902,6 +1278,10 @@ pub struct LinkView {
     pub copy: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change: Option<SignedChange>,
+    /// Every change of the link, oldest first, as the server logged them (a guardianship's steps can't be read from
+    /// the last one alone).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<LoggedChange>,
     pub updated_at: i64,
 }
 
@@ -1039,13 +1419,26 @@ pub struct Notice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
     pub at: i64,
+    /// A guardian's weekly digest: one line per automatic decision in scope ("Mon · Auto · Mine · Undoable"), at most
+    /// [`MAX_NOTICE_LINES`]. Never a body, a recipient or a title.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<String>,
 }
+
+/// The most lines a notice carries.
+pub const MAX_NOTICE_LINES: usize = 50;
 
 impl Notice {
     pub fn validate(&self) -> Result<(), ValidationError> {
         clean("notice.text", &self.text, MAX_CARD_LINE)?;
         if let Some(outcome) = &self.outcome {
             shown("notice.outcome", outcome, MAX_CARD_SHORT, false)?;
+        }
+        if self.lines.len() > MAX_NOTICE_LINES {
+            return Err(invalid("notice.lines", format!("at most {MAX_NOTICE_LINES}")));
+        }
+        for line in &self.lines {
+            shown("notice.lines", line, MAX_CARD_LINE, false)?;
         }
         Ok(())
     }
@@ -1814,6 +2207,7 @@ mod tests {
             text: "Bypass on\u{200b}".to_owned(),
             outcome: None,
             at: 1,
+            lines: Vec::new(),
         });
         assert!(notice.validate().is_err());
     }
@@ -1912,6 +2306,7 @@ mod tests {
             state: LinkState::Paused,
             by: Side::Helper,
             at: 1,
+            guardian: None,
         };
         assert!(c.validate().is_err());
         c.state = LinkState::Ended;
@@ -1921,8 +2316,8 @@ mod tests {
             sig: sign(80, &change_message(&body)),
             body,
         };
-        assert_eq!(s.verify(&key(80), &hash, 2, fake_verify).unwrap(), c);
-        assert_eq!(s.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::BadSignature));
+        assert_eq!(s.verify(&key(80), &hash, CircleKind::Cosign, 2, fake_verify).unwrap(), c);
+        assert_eq!(s.verify(&key(50), &hash, CircleKind::Cosign, 2, fake_verify), Err(CircleError::BadSignature));
     }
 
     #[test]
@@ -1937,6 +2332,7 @@ mod tests {
                 state,
                 by: Side::Owner,
                 at: 1,
+                guardian: None,
             };
             let body = serde_json::to_string(&c).unwrap();
             SignedChange {
@@ -1946,14 +2342,17 @@ mod tests {
         };
         let pause = change(1, LinkState::Paused);
         let resume = change(2, LinkState::Active);
-        assert!(pause.verify(&key(50), &hash, 0, fake_verify).is_ok());
-        assert!(resume.verify(&key(50), &hash, 1, fake_verify).is_ok());
+        assert!(pause.verify(&key(50), &hash, CircleKind::Cosign, 0, fake_verify).is_ok());
+        assert!(resume.verify(&key(50), &hash, CircleKind::Cosign, 1, fake_verify).is_ok());
         // An old pause, played again after the resume, is refused; so is the same change twice.
-        assert_eq!(pause.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::Replayed));
-        assert_eq!(resume.verify(&key(50), &hash, 2, fake_verify), Err(CircleError::Replayed));
+        assert_eq!(pause.verify(&key(50), &hash, CircleKind::Cosign, 2, fake_verify), Err(CircleError::Replayed));
+        assert_eq!(resume.verify(&key(50), &hash, CircleKind::Cosign, 2, fake_verify), Err(CircleError::Replayed));
         // A change of another arrangement (or another revision of it) means nothing here.
         let other = arrangement_hash("{\"a\":2}");
-        assert_eq!(pause.verify(&key(50), &other, 0, fake_verify), Err(CircleError::Mismatch("arrangement")));
+        assert_eq!(
+            pause.verify(&key(50), &other, CircleKind::Cosign, 0, fake_verify),
+            Err(CircleError::Mismatch("arrangement"))
+        );
         // seq 0 is never valid.
         assert!(change(0, LinkState::Paused).change().is_err());
     }
@@ -1963,5 +2362,302 @@ mod tests {
         let p: crate::device::Pending = serde_json::from_str("{}").unwrap();
         assert!(!p.circles);
         assert_eq!(encode_key(&[0; 32]).len(), 43);
+    }
+
+    // ---- guardianship ------------------------------------------------------------------------------------------------
+
+    fn gterms(days: u8) -> GuardianTerms {
+        GuardianTerms {
+            notice_days: days,
+            minor: None,
+            digest: false,
+        }
+    }
+
+    fn gchange(by: Side, state: LinkState, at: i64, guardian: Option<GuardianChange>) -> LinkChange {
+        LinkChange {
+            v: 1,
+            link: "0123456789abcdef0123456789abcdef".to_owned(),
+            arrangement: hex32(&[7; 32]),
+            seq: 1,
+            state,
+            by,
+            at,
+            guardian,
+        }
+    }
+
+    fn end_request(at: i64, effective_at: i64) -> LinkChange {
+        gchange(
+            Side::Owner,
+            LinkState::Active,
+            at,
+            Some(GuardianChange::EndRequested {
+                effective_at,
+            }),
+        )
+    }
+
+    fn ck(t: &GuardianTerms, minor_now: bool, c: &LinkChange) -> Result<(), CircleError> {
+        check_guardian_change(t, minor_now, c, Some(c.at))
+    }
+
+    impl GuardianStatus {
+        /// As a phone that received `c` when it says it was made.
+        fn apply_now(&mut self, t: &GuardianTerms, c: &LinkChange) -> Result<(), CircleError> {
+            self.apply(t, c, Some(c.at))
+        }
+    }
+
+    #[test]
+    fn a_backdated_end_is_refused_and_never_shortens_the_notice() {
+        let t = gterms(7);
+        let arrived = 10_000_000;
+        // Signed a week ago, so that its notice "ran out" on arrival.
+        let backdated = end_request(arrived - 7 * 86_400, arrived);
+        assert!(check_guardian_change(&t, false, &backdated, Some(arrived)).is_err());
+        let mut s = GuardianStatus::of(&t);
+        assert!(s.apply(&t, &backdated, Some(arrived)).is_err());
+        assert!(s.in_force(arrived + 1));
+        // Without its arrival time nothing is accepted (fail closed).
+        let honest = end_request(arrived, arrived + 7 * 86_400);
+        assert!(check_guardian_change(&t, false, &honest, None).is_err());
+        // Within the skew, the notice counts from the later of the two times.
+        let late = arrived + 200;
+        s.apply(&t, &honest, Some(late)).unwrap();
+        assert!(s.in_force(arrived + 7 * 86_400 + 100), "the full notice from its arrival");
+        assert!(!s.in_force(late + 7 * 86_400));
+    }
+
+    #[test]
+    fn a_guardians_skewed_clock_never_blocks_its_leave_or_consent() {
+        let t = gterms(7);
+        let leave = gchange(Side::Helper, LinkState::Ended, 1, None);
+        assert!(check_guardian_change(&t, false, &leave, Some(10_000)).is_ok());
+        assert!(check_guardian_change(&t, false, &leave, None).is_ok());
+        let consent = gchange(
+            Side::Helper,
+            LinkState::Ended,
+            1,
+            Some(GuardianChange::EndConsented {
+                request_at: 1,
+            }),
+        );
+        assert!(check_guardian_change(&t, true, &consent, Some(99_999)).is_ok());
+        // The ward's steps are still dated.
+        assert!(check_guardian_change(&t, false, &end_request(1, 1 + 7 * 86_400), Some(99_999)).is_err());
+    }
+
+    #[test]
+    fn a_helper_still_only_ends_outside_a_guardianship() {
+        // A guardianship step from the helper (state Active) on a Cosign link is not a valid change there.
+        let mut c = gchange(Side::Helper, LinkState::Active, 1, Some(GuardianChange::MinorProposed));
+        assert!(c.validate_for(CircleKind::Guardian).is_ok());
+        for kind in [CircleKind::Cosign, CircleKind::Delegate, CircleKind::Watcher] {
+            assert!(c.validate_for(kind).is_err(), "{kind:?}");
+        }
+        // And the signed path refuses it too.
+        c.arrangement = hex32(&[7; 32]);
+        let body = serde_json::to_string(&c).unwrap();
+        let s = SignedChange {
+            sig: sign(80, &change_message(&body)),
+            body,
+        };
+        assert!(s.verify(&key(80), &hex32(&[7; 32]), CircleKind::Cosign, 0, fake_verify).is_err());
+        assert!(s.verify(&key(80), &hex32(&[7; 32]), CircleKind::Guardian, 0, fake_verify).is_ok());
+    }
+
+    fn minor() -> MinorMark {
+        MinorMark {
+            source: AgeSource::GuardianAndWard,
+            at: 5,
+        }
+    }
+
+    #[test]
+    fn notice_days_are_0_3_or_7() {
+        for days in 0..=30u8 {
+            assert_eq!(gterms(days).validate().is_ok(), NOTICE_DAYS.contains(&days), "{days} days");
+        }
+        // No "permanent": the longest notice is a week.
+        assert_eq!(gterms(7).notice_secs(), 7 * 86_400);
+        let mut t = Terms::default_for(CircleKind::Guardian);
+        t.guardian = Some(gterms(14));
+        assert!(t.validate().is_err());
+        // The mark the server stores in clear names no age range and no platform.
+        let mark = serde_json::to_string(&MinorMark {
+            source: AgeSource::Platform,
+            at: 1,
+        })
+        .unwrap();
+        assert_eq!(mark, r#"{"source":"platform","at":1}"#);
+    }
+
+    #[test]
+    fn guardian_terms_are_required_for_guardians_only() {
+        let mut t = Terms::default_for(CircleKind::Cosign);
+        assert!(t.guardian.is_none());
+        t.guardian = Some(gterms(3));
+        assert!(t.validate().is_err(), "only a guardianship has guardian terms");
+        let mut g = Terms::default_for(CircleKind::Guardian);
+        assert_eq!(g.guardian, Some(gterms(3)));
+        assert!(g.validate_new().is_ok());
+        // A new guardianship needs them; one signed before them still reads, ending at once as it did.
+        g.guardian = None;
+        assert!(g.validate().is_ok());
+        assert!(g.validate_new().is_err());
+        assert_eq!(g.guardian_terms(), Some(GuardianTerms::LEGACY));
+        assert_eq!(Terms::default_for(CircleKind::Delegate).guardian_terms(), None);
+    }
+
+    #[test]
+    fn an_adults_end_takes_the_notice_and_never_more_than_7_days() {
+        for days in NOTICE_DAYS {
+            let t = gterms(days);
+            let at = 1_000;
+            let due = guardian_effective(&t, false, at).unwrap();
+            assert_eq!(due, at + i64::from(days) * 86_400);
+            assert!(due - at <= 7 * 86_400);
+            assert!(ck(&t, false, &end_request(at, due)).is_ok());
+            let mut s = GuardianStatus::of(&t);
+            s.apply_now(&t, &end_request(at, due)).unwrap();
+            assert!(!s.needs_consent());
+            assert!(s.in_force(due - 1), "the obligation stays during the notice");
+            assert!(!s.in_force(due));
+        }
+    }
+
+    #[test]
+    fn a_minors_end_waits_for_consent() {
+        let t = gterms(3);
+        assert_eq!(guardian_effective(&t, true, 10), None);
+        // A minor asking to leave on a date is refused; it asks until consent.
+        assert!(ck(&t, true, &end_request(10, 10 + 3 * 86_400)).is_err());
+        let mut s = GuardianStatus::of(&t);
+        s.minor = Some(minor());
+        s.apply_now(&t, &end_request(10, UNTIL_CONSENT)).unwrap();
+        assert!(s.needs_consent());
+        assert!(s.in_force(i64::MAX - 1), "it stays until the guardian consents");
+        let consent = gchange(
+            Side::Helper,
+            LinkState::Ended,
+            20,
+            Some(GuardianChange::EndConsented {
+                request_at: 10,
+            }),
+        );
+        s.apply_now(&t, &consent).unwrap();
+        assert!(!s.in_force(21));
+        // Only the guardian consents.
+        let forged = gchange(
+            Side::Owner,
+            LinkState::Ended,
+            20,
+            Some(GuardianChange::EndConsented {
+                request_at: 10,
+            }),
+        );
+        assert!(forged.validate().is_err());
+    }
+
+    #[test]
+    fn an_early_end_is_refused_by_the_check() {
+        let t = gterms(7);
+        let at = 1_000;
+        assert!(ck(&t, false, &end_request(at, at + 86_400)).is_err());
+        assert!(ck(&t, false, &end_request(at, at)).is_err());
+        // A plain end by the ward (P6's) is an early end.
+        let plain = gchange(Side::Owner, LinkState::Ended, at, None);
+        assert!(ck(&t, false, &plain).is_err());
+        let mut s = GuardianStatus::of(&t);
+        assert!(s.apply_now(&t, &plain).is_err());
+        assert!(s.in_force(at + 1), "a refused change changes nothing");
+    }
+
+    #[test]
+    fn wards_cannot_pause_guardians() {
+        let t = gterms(3);
+        let pause = gchange(Side::Owner, LinkState::Paused, 1, None);
+        assert!(pause.validate().is_ok(), "a pause is a valid change of other arrangements");
+        assert_eq!(ck(&t, false, &pause), Err(CircleError::Guardian("a ward can't pause a guardianship")));
+        // A minor mark is the guardian's to propose and the ward's to accept; the digest is the ward's.
+        let proposed_by_ward = gchange(Side::Owner, LinkState::Active, 1, Some(GuardianChange::MinorProposed));
+        assert!(proposed_by_ward.validate().is_err());
+        let accepted_by_guardian = gchange(
+            Side::Helper,
+            LinkState::Active,
+            1,
+            Some(GuardianChange::MinorAccepted {
+                mark: minor(),
+            }),
+        );
+        assert!(accepted_by_guardian.validate().is_err());
+        let digest_by_guardian = gchange(
+            Side::Helper,
+            LinkState::Active,
+            1,
+            Some(GuardianChange::Digest {
+                on: true,
+            }),
+        );
+        assert!(digest_by_guardian.validate().is_err());
+        // An unproposed acceptance changes nothing.
+        let mut s = GuardianStatus::of(&t);
+        let accepted = gchange(
+            Side::Owner,
+            LinkState::Active,
+            2,
+            Some(GuardianChange::MinorAccepted {
+                mark: minor(),
+            }),
+        );
+        assert!(s.apply_now(&t, &accepted).is_err());
+        s.apply_now(&t, &gchange(Side::Helper, LinkState::Active, 1, Some(GuardianChange::MinorProposed))).unwrap();
+        assert!(s.minor_proposed);
+        s.apply_now(&t, &accepted).unwrap();
+        assert_eq!(s.minor, Some(minor()));
+    }
+
+    #[test]
+    fn helpers_leave_at_once() {
+        let t = gterms(7);
+        let leave = gchange(Side::Helper, LinkState::Ended, 5, None);
+        assert!(ck(&t, false, &leave).is_ok());
+        let mut s = GuardianStatus::of(&t);
+        s.apply_now(&t, &leave).unwrap();
+        assert!(!s.in_force(5));
+    }
+
+    #[test]
+    fn old_links_and_changes_still_parse() {
+        // A P6 change and link view (no guardian step, no history) read as before.
+        let old = r#"{"v":1,"link":"0123456789abcdef0123456789abcdef","arrangement":"0707070707070707070707070707070707070707070707070707070707070707","seq":1,"state":"paused","by":"owner","at":1}"#;
+        let c: LinkChange = serde_json::from_str(old).unwrap();
+        assert_eq!(c.guardian, None);
+        assert!(c.validate().is_ok());
+        assert_eq!(serde_json::to_string(&c).unwrap(), old, "re-serialized byte for byte");
+        let view = r#"{"id":"x","side":"owner","kind":"guardian","state":"active","peer":"p","peer_account":"a","copy":"c","updated_at":1}"#;
+        let v: LinkView = serde_json::from_str(view).unwrap();
+        assert!(v.changes.is_empty());
+        // Terms of other kinds serialize as before (no `guardian` key), so old signatures still cover them.
+        let t = serde_json::to_string(&Terms::default_for(CircleKind::Cosign)).unwrap();
+        assert!(!t.contains("guardian"));
+        let back: Terms = serde_json::from_str(&t).unwrap();
+        assert_eq!(back, Terms::default_for(CircleKind::Cosign));
+        // A guardianship's steps round-trip.
+        let step = end_request(1, 2);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains(r#""guardian":{"type":"end_requested","effective_at":2}"#), "{json}");
+        assert_eq!(serde_json::from_str::<LinkChange>(&json).unwrap(), step);
+        let n = GuardianNotice {
+            id: "n".to_owned(),
+            link: "l".to_owned(),
+            kind: GuardianNoticeKind::RosterChanged {
+                reason: RosterReason::Recovery,
+                epoch: 4,
+            },
+            at: 9,
+        };
+        assert_eq!(serde_json::from_str::<GuardianNotice>(&serde_json::to_string(&n).unwrap()).unwrap(), n);
     }
 }

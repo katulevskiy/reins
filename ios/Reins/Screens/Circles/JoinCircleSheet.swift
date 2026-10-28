@@ -187,6 +187,10 @@ struct JoinCircleSheet: View {
                 if view.role != .watcher {
                     fact(view.fullCards ? "Full requests" : "A summary", symbol: "eye")
                 }
+                // A guardianship: the notice the ward chose, before Accept.
+                if view.role == .guardian, let days = view.noticeDays {
+                    GuardianNoticeFact(days: days)
+                }
             }
             .accessibilityIdentifier("joinTerms")
             if let code = view.code {

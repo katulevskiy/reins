@@ -3,7 +3,7 @@
 
 use reins_proto::{
     canon::{encode_payload, encode_sig},
-    circle::{self, LinkChange, LinkState, Side, SignedChange},
+    circle::{self, GuardianChange, LinkChange, LinkState, Side, SignedChange},
     desktop::encode_key,
     enroll::encode_nonce,
     roster::{Member, RosterEntry, recovery_wrap_hash},
@@ -86,6 +86,7 @@ impl Person {
             state,
             by,
             at: 1,
+            guardian: None,
         };
         let body = serde_json::to_string(&c).expect("json");
         json!(SignedChange {
@@ -93,6 +94,38 @@ impl Person {
             body,
         })
     }
+
+    /// A guardianship step signed now.
+    fn step(
+        &self,
+        link: &str,
+        seq: u64,
+        state: LinkState,
+        by: Side,
+        at: i64,
+        guardian: Option<GuardianChange>,
+    ) -> Value {
+        let c = LinkChange {
+            v: 1,
+            link: link.to_owned(),
+            arrangement: circle::arrangement_hash("{}"),
+            seq,
+            state,
+            by,
+            at,
+            guardian,
+        };
+        let body = serde_json::to_string(&c).expect("json");
+        json!(SignedChange {
+            sig: sig(&self.owner, &circle::change_message(&body)),
+            body,
+        })
+    }
+}
+
+fn now() -> i64 {
+    i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("time").as_secs())
+        .expect("i64")
 }
 
 /// Dana invites Alex; both steps through; returns the link id.
@@ -320,6 +353,130 @@ async fn a_paused_link_takes_no_packets_and_an_ended_one_nothing() {
     assert_eq!(dana.phone.post("/circles/packets", &packet(p2, &l, 600)).await.0, StatusCode::CONFLICT);
 }
 
+// ---- guardianship (P7) ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_end_request_keeps_the_link_until_effective() {
+    let server = Server::start().await;
+    let sam = Person::new(&server, "sam@example.com", 10).await;
+    let mom = Person::new(&server, "mom@example.com", 20).await;
+    let l = link_as(&sam, &mom, "guardian").await;
+    let path = format!("/circles/links/{l}/change");
+    // The ward neither pauses nor ends a guardianship directly.
+    assert_eq!(sam.phone.post(&path, &sam.change(&l, 1, LinkState::Paused, Side::Owner)).await.0, StatusCode::CONFLICT);
+    assert_eq!(sam.phone.post(&path, &sam.change(&l, 1, LinkState::Ended, Side::Owner)).await.0, StatusCode::CONFLICT);
+    // A backdated request (its notice "over" on arrival) is refused.
+    let t = now();
+    let backdated = sam.step(
+        &l,
+        1,
+        LinkState::Active,
+        Side::Owner,
+        t - 3 * 86_400,
+        Some(GuardianChange::EndRequested {
+            effective_at: t,
+        }),
+    );
+    assert_eq!(sam.phone.post(&path, &backdated).await.0, StatusCode::CONFLICT);
+    // Three days' notice: the link stays active, its packets keep flowing.
+    let request = sam.step(
+        &l,
+        1,
+        LinkState::Active,
+        Side::Owner,
+        t,
+        Some(GuardianChange::EndRequested {
+            effective_at: t + 3 * 86_400,
+        }),
+    );
+    assert_eq!(sam.phone.post(&path, &request).await.0, StatusCode::NO_CONTENT);
+    let (_, links) = mom.phone.get("/circles/links").await;
+    assert_eq!(links[0]["state"], "active");
+    assert_eq!(links[0]["changes"].as_array().map(Vec::len), Some(1), "{links}");
+    assert!(links[0]["changes"][0]["at"].as_i64().unwrap() >= t);
+    let p = "fedcba9876543210fedcba9876543213";
+    assert_eq!(sam.phone.post("/circles/packets", &packet(p, &l, 600)).await.0, StatusCode::NO_CONTENT);
+    // The guardian hears of it.
+    let (status, notices) = mom.phone.get("/guardian/notices").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(notices.as_array().map(Vec::len), Some(1), "{notices}");
+    assert_eq!(notices[0]["kind"]["type"], "link_changed");
+    assert_eq!(notices[0]["link"], l.as_str());
+    // It comes again until the guardian's phone acknowledges it; then never again.
+    let (_, again) = mom.phone.get("/guardian/notices").await;
+    assert_eq!(again.as_array().map(Vec::len), Some(1));
+    let id = notices[0]["id"].as_str().expect("id").to_owned();
+    // Another account's acknowledgement changes nothing.
+    assert_eq!(sam.phone.post("/guardian/notices/seen", &json!({"ids": [id]})).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(mom.phone.get("/guardian/notices").await.1.as_array().map(Vec::len), Some(1));
+    assert_eq!(mom.phone.post("/guardian/notices/seen", &json!({"ids": [id]})).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(mom.phone.get("/guardian/notices").await.1, json!([]));
+}
+
+#[tokio::test]
+async fn consent_ends_at_once() {
+    let server = Server::start().await;
+    let sam = Person::new(&server, "sam@example.com", 10).await;
+    let mom = Person::new(&server, "mom@example.com", 20).await;
+    let l = link_as(&sam, &mom, "guardian").await;
+    let path = format!("/circles/links/{l}/change");
+    let t = now();
+    let request = sam.step(
+        &l,
+        1,
+        LinkState::Active,
+        Side::Owner,
+        t,
+        Some(GuardianChange::EndRequested {
+            effective_at: circle::UNTIL_CONSENT,
+        }),
+    );
+    assert_eq!(sam.phone.post(&path, &request).await.0, StatusCode::NO_CONTENT);
+    // The ward can't consent for the guardian.
+    let forged = sam.step(
+        &l,
+        2,
+        LinkState::Ended,
+        Side::Owner,
+        t,
+        Some(GuardianChange::EndConsented {
+            request_at: t,
+        }),
+    );
+    assert_eq!(sam.phone.post(&path, &forged).await.0, StatusCode::BAD_REQUEST);
+    let consent = mom.step(
+        &l,
+        2,
+        LinkState::Ended,
+        Side::Helper,
+        t,
+        Some(GuardianChange::EndConsented {
+            request_at: t,
+        }),
+    );
+    assert_eq!(mom.phone.post(&path, &consent).await.0, StatusCode::NO_CONTENT);
+    let (_, links) = sam.phone.get("/circles/links").await;
+    assert_eq!(links[0]["state"], "ended");
+    assert_eq!(links[0]["changes"].as_array().map(Vec::len), Some(2), "history keeps every change");
+}
+
+#[tokio::test]
+async fn notices_never_reach_non_guardians() {
+    let server = Server::start().await;
+    let sam = Person::new(&server, "sam@example.com", 10).await;
+    let alex = Person::new(&server, "alex@example.com", 20).await;
+    let l = link(&sam, &alex).await;
+    let path = format!("/circles/links/{l}/change");
+    // A guardianship step on a co-sign link is no change at all.
+    let step = alex.step(&l, 1, LinkState::Active, Side::Helper, now(), Some(GuardianChange::MinorProposed));
+    assert_eq!(alex.phone.post(&path, &step).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        sam.phone.post(&path, &sam.change(&l, 1, LinkState::Paused, Side::Owner)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(alex.phone.get("/guardian/notices").await.1, json!([]), "a co-signer gets no guardian notices");
+}
+
 #[tokio::test]
 async fn a_guardianship_is_ended_never_paused() {
     let server = Server::start().await;
@@ -331,8 +488,9 @@ async fn a_guardianship_is_ended_never_paused() {
         ward.phone.post(&path, &ward.change(&l, 1, LinkState::Paused, Side::Owner)).await.0,
         StatusCode::CONFLICT
     );
+    // P7: a ward doesn't end it outright either; it asks, with the notice it chose (`EndRequested`).
     assert_eq!(
         ward.phone.post(&path, &ward.change(&l, 1, LinkState::Ended, Side::Owner)).await.0,
-        StatusCode::NO_CONTENT
+        StatusCode::CONFLICT
     );
 }

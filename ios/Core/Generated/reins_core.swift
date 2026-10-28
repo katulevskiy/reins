@@ -3404,6 +3404,39 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func grants() async throws  -> [GrantView]
     
     /**
+     * As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
+     * The owner confirms first (`owner`, biometric), in the core.
+     */
+    func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck) async throws 
+    
+    /**
+     * As a guardian: consents to a minor's request to leave (it ends now).
+     * The owner confirms first (`owner`, biometric), in the core.
+     */
+    func guardianConsentEnd(linkId: String, owner: OwnerCheck) async throws 
+    
+    /**
+     * As a guardian: what this account was told about its wards, newest first (checked, or "Reported by the
+     * server"). `refresh`: ask the server first.
+     */
+    func guardianNotices(refresh: Bool) async throws  -> [GuardianNoticeView]
+    
+    /**
+     * As a guardian: asks to mark the ward's account a minor's (the ward accepts or not).
+     */
+    func guardianProposeMinor(linkId: String) async throws 
+    
+    /**
+     * As a ward: turns the guardian's weekly summary of automatic decisions on or off.
+     */
+    func guardianSetDigest(linkId: String, on: Bool) async throws 
+    
+    /**
+     * As a ward: one guardianship, its scope, every decision and note, and how it ends.
+     */
+    func guardianWardView(linkId: String) async throws  -> WardView
+    
+    /**
      * Background entry point from FCM (`kind` is `req`, `pair`, `blob` or `replaced`).
      */
     func handlePush(kind: String, id: String) async throws 
@@ -5684,6 +5717,123 @@ open func grants()async throws  -> [GrantView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeGrantView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a ward: accepts the minor mark the guardian proposed, with the phone's age signal (an adult's refuses).
+     * The owner confirms first (`owner`, biometric), in the core.
+     */
+open func guardianAcceptMinor(linkId: String, signal: AgeSignalInput, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_accept_minor(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterTypeAgeSignalInput_lower(signal),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a guardian: consents to a minor's request to leave (it ends now).
+     * The owner confirms first (`owner`, biometric), in the core.
+     */
+open func guardianConsentEnd(linkId: String, owner: OwnerCheck)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_consent_end(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a guardian: what this account was told about its wards, newest first (checked, or "Reported by the
+     * server"). `refresh`: ask the server first.
+     */
+open func guardianNotices(refresh: Bool)async throws  -> [GuardianNoticeView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_notices(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(refresh)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeGuardianNoticeView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a guardian: asks to mark the ward's account a minor's (the ward accepts or not).
+     */
+open func guardianProposeMinor(linkId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_propose_minor(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a ward: turns the guardian's weekly summary of automatic decisions on or off.
+     */
+open func guardianSetDigest(linkId: String, on: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_set_digest(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId),FfiConverterBool.lower(on)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * As a ward: one guardianship, its scope, every decision and note, and how it ends.
+     */
+open func guardianWardView(linkId: String)async throws  -> WardView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_guardian_ward_view(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(linkId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeWardView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -12435,6 +12585,11 @@ public struct CircleDraft: Equatable, Hashable {
      * The helper sees the card as the owner does (else a summary). Never for a watcher.
      */
     public var fullCards: Bool
+    /**
+     * A guardianship's notice: 0, 3 or 7 days, chosen by the ward (this account) and shown before the code. Required
+     * for a guardian; ignored for the others.
+     */
+    public var noticeDays: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12450,13 +12605,18 @@ public struct CircleDraft: Equatable, Hashable {
          */fallBackToMe: Bool, 
         /**
          * The helper sees the card as the owner does (else a summary). Never for a watcher.
-         */fullCards: Bool) {
+         */fullCards: Bool, 
+        /**
+         * A guardianship's notice: 0, 3 or 7 days, chosen by the ward (this account) and shown before the code. Required
+         * for a guardian; ignored for the others.
+         */noticeDays: UInt8?) {
         self.role = role
         self.preset = preset
         self.deferred = deferred
         self.windowSecs = windowSecs
         self.fallBackToMe = fallBackToMe
         self.fullCards = fullCards
+        self.noticeDays = noticeDays
     }
 
     
@@ -12480,7 +12640,8 @@ public struct FfiConverterTypeCircleDraft: FfiConverterRustBuffer {
                 deferred: FfiConverterBool.read(from: &buf), 
                 windowSecs: FfiConverterOptionUInt64.read(from: &buf), 
                 fallBackToMe: FfiConverterBool.read(from: &buf), 
-                fullCards: FfiConverterBool.read(from: &buf)
+                fullCards: FfiConverterBool.read(from: &buf), 
+                noticeDays: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
@@ -12491,6 +12652,7 @@ public struct FfiConverterTypeCircleDraft: FfiConverterRustBuffer {
         FfiConverterOptionUInt64.write(value.windowSecs, into: &buf)
         FfiConverterBool.write(value.fallBackToMe, into: &buf)
         FfiConverterBool.write(value.fullCards, into: &buf)
+        FfiConverterOptionUInt8.write(value.noticeDays, into: &buf)
     }
 }
 
@@ -12591,6 +12753,10 @@ public struct CircleInviteView: Equatable, Hashable {
     public var deferred: Bool
     public var windowSecs: UInt64
     public var fullCards: Bool
+    /**
+     * A guardianship's notice, as the ward chose it.
+     */
+    public var noticeDays: UInt8?
     public var code: String?
     public var stage: CircleJoinStage
 
@@ -12602,7 +12768,10 @@ public struct CircleInviteView: Equatable, Hashable {
          */inviter: String, role: CircleRole, 
         /**
          * Empty until the inviter's phone sent the terms.
-         */scopeLine: String, deferred: Bool, windowSecs: UInt64, fullCards: Bool, code: String?, stage: CircleJoinStage) {
+         */scopeLine: String, deferred: Bool, windowSecs: UInt64, fullCards: Bool, 
+        /**
+         * A guardianship's notice, as the ward chose it.
+         */noticeDays: UInt8?, code: String?, stage: CircleJoinStage) {
         self.id = id
         self.inviter = inviter
         self.role = role
@@ -12610,6 +12779,7 @@ public struct CircleInviteView: Equatable, Hashable {
         self.deferred = deferred
         self.windowSecs = windowSecs
         self.fullCards = fullCards
+        self.noticeDays = noticeDays
         self.code = code
         self.stage = stage
     }
@@ -12637,6 +12807,7 @@ public struct FfiConverterTypeCircleInviteView: FfiConverterRustBuffer {
                 deferred: FfiConverterBool.read(from: &buf), 
                 windowSecs: FfiConverterUInt64.read(from: &buf), 
                 fullCards: FfiConverterBool.read(from: &buf), 
+                noticeDays: FfiConverterOptionUInt8.read(from: &buf), 
                 code: FfiConverterOptionString.read(from: &buf), 
                 stage: FfiConverterTypeCircleJoinStage.read(from: &buf)
         )
@@ -12650,6 +12821,7 @@ public struct FfiConverterTypeCircleInviteView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.deferred, into: &buf)
         FfiConverterUInt64.write(value.windowSecs, into: &buf)
         FfiConverterBool.write(value.fullCards, into: &buf)
+        FfiConverterOptionUInt8.write(value.noticeDays, into: &buf)
         FfiConverterOptionString.write(value.code, into: &buf)
         FfiConverterTypeCircleJoinStage.write(value.stage, into: &buf)
     }
@@ -12680,15 +12852,23 @@ public struct CircleNoticeView: Equatable, Hashable {
     public var text: String
     public var outcome: String?
     public var at: Int64
+    /**
+     * A guardian's weekly digest: one line per automatic decision ("Mon · Auto · Mine · Undoable").
+     */
+    public var lines: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, person: String, text: String, outcome: String?, at: Int64) {
+    public init(id: String, person: String, text: String, outcome: String?, at: Int64, 
+        /**
+         * A guardian's weekly digest: one line per automatic decision ("Mon · Auto · Mine · Undoable").
+         */lines: [String]) {
         self.id = id
         self.person = person
         self.text = text
         self.outcome = outcome
         self.at = at
+        self.lines = lines
     }
 
     
@@ -12711,7 +12891,8 @@ public struct FfiConverterTypeCircleNoticeView: FfiConverterRustBuffer {
                 person: FfiConverterString.read(from: &buf), 
                 text: FfiConverterString.read(from: &buf), 
                 outcome: FfiConverterOptionString.read(from: &buf), 
-                at: FfiConverterInt64.read(from: &buf)
+                at: FfiConverterInt64.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -12721,6 +12902,7 @@ public struct FfiConverterTypeCircleNoticeView: FfiConverterRustBuffer {
         FfiConverterString.write(value.text, into: &buf)
         FfiConverterOptionString.write(value.outcome, into: &buf)
         FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
     }
 }
 
@@ -12759,6 +12941,15 @@ public struct CirclePerson: Equatable, Hashable {
     public var windowSecs: UInt64
     public var state: CircleLinkState
     public var since: Int64
+    /**
+     * A guardianship the ward asked to end: when it ends (`None` while it waits for the guardian's consent, or isn't
+     * ending).
+     */
+    public var ending: Int64?
+    /**
+     * A minor's end request waits for the guardian.
+     */
+    public var needsConsent: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12768,7 +12959,14 @@ public struct CirclePerson: Equatable, Hashable {
          */peer: String, role: CircleRole, 
         /**
          * This account is the owner (the other person helps it); else this account helps them.
-         */mine: Bool, scopeLine: String, deferred: Bool, windowSecs: UInt64, state: CircleLinkState, since: Int64) {
+         */mine: Bool, scopeLine: String, deferred: Bool, windowSecs: UInt64, state: CircleLinkState, since: Int64, 
+        /**
+         * A guardianship the ward asked to end: when it ends (`None` while it waits for the guardian's consent, or isn't
+         * ending).
+         */ending: Int64?, 
+        /**
+         * A minor's end request waits for the guardian.
+         */needsConsent: Bool) {
         self.linkId = linkId
         self.peer = peer
         self.role = role
@@ -12778,6 +12976,8 @@ public struct CirclePerson: Equatable, Hashable {
         self.windowSecs = windowSecs
         self.state = state
         self.since = since
+        self.ending = ending
+        self.needsConsent = needsConsent
     }
 
     
@@ -12804,7 +13004,9 @@ public struct FfiConverterTypeCirclePerson: FfiConverterRustBuffer {
                 deferred: FfiConverterBool.read(from: &buf), 
                 windowSecs: FfiConverterUInt64.read(from: &buf), 
                 state: FfiConverterTypeCircleLinkState.read(from: &buf), 
-                since: FfiConverterInt64.read(from: &buf)
+                since: FfiConverterInt64.read(from: &buf), 
+                ending: FfiConverterOptionInt64.read(from: &buf), 
+                needsConsent: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -12818,6 +13020,8 @@ public struct FfiConverterTypeCirclePerson: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.windowSecs, into: &buf)
         FfiConverterTypeCircleLinkState.write(value.state, into: &buf)
         FfiConverterInt64.write(value.since, into: &buf)
+        FfiConverterOptionInt64.write(value.ending, into: &buf)
+        FfiConverterBool.write(value.needsConsent, into: &buf)
     }
 }
 
@@ -15981,6 +16185,172 @@ public func FfiConverterTypeGrantView_lift(_ buf: RustBuffer) throws -> GrantVie
 #endif
 public func FfiConverterTypeGrantView_lower(_ value: GrantView) -> RustBuffer {
     return FfiConverterTypeGrantView.lower(value)
+}
+
+
+/**
+ * A decision the guardian made (the ward's view).
+ */
+public struct GuardianDecisionView: Equatable, Hashable {
+    public var at: Int64
+    public var title: String
+    public var approved: Bool
+    public var note: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(at: Int64, title: String, approved: Bool, note: String?) {
+        self.at = at
+        self.title = title
+        self.approved = approved
+        self.note = note
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension GuardianDecisionView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeGuardianDecisionView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GuardianDecisionView {
+        return
+            try GuardianDecisionView(
+                at: FfiConverterInt64.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                approved: FfiConverterBool.read(from: &buf), 
+                note: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: GuardianDecisionView, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterBool.write(value.approved, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGuardianDecisionView_lift(_ buf: RustBuffer) throws -> GuardianDecisionView {
+    return try FfiConverterTypeGuardianDecisionView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGuardianDecisionView_lower(_ value: GuardianDecisionView) -> RustBuffer {
+    return FfiConverterTypeGuardianDecisionView.lower(value)
+}
+
+
+/**
+ * What a guardian is told (Settings › Circles, and the notification).
+ */
+public struct GuardianNoticeView: Equatable, Hashable {
+    public var id: String
+    public var linkId: String
+    /**
+     * The ward's email.
+     */
+    public var ward: String
+    /**
+     * "Asked to leave", "Ended early", "Reset the account".
+     */
+    public var line: String
+    public var at: Int64
+    /**
+     * This phone checked it (a signed change, the roster chain); else "Reported by the server".
+     */
+    public var verified: Bool
+    /**
+     * The ward asked to leave and only the guardian's consent ends it: "Allow?".
+     */
+    public var needsConsent: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, linkId: String, 
+        /**
+         * The ward's email.
+         */ward: String, 
+        /**
+         * "Asked to leave", "Ended early", "Reset the account".
+         */line: String, at: Int64, 
+        /**
+         * This phone checked it (a signed change, the roster chain); else "Reported by the server".
+         */verified: Bool, 
+        /**
+         * The ward asked to leave and only the guardian's consent ends it: "Allow?".
+         */needsConsent: Bool) {
+        self.id = id
+        self.linkId = linkId
+        self.ward = ward
+        self.line = line
+        self.at = at
+        self.verified = verified
+        self.needsConsent = needsConsent
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension GuardianNoticeView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeGuardianNoticeView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GuardianNoticeView {
+        return
+            try GuardianNoticeView(
+                id: FfiConverterString.read(from: &buf), 
+                linkId: FfiConverterString.read(from: &buf), 
+                ward: FfiConverterString.read(from: &buf), 
+                line: FfiConverterString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                verified: FfiConverterBool.read(from: &buf), 
+                needsConsent: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: GuardianNoticeView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.linkId, into: &buf)
+        FfiConverterString.write(value.ward, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterBool.write(value.verified, into: &buf)
+        FfiConverterBool.write(value.needsConsent, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGuardianNoticeView_lift(_ buf: RustBuffer) throws -> GuardianNoticeView {
+    return try FfiConverterTypeGuardianNoticeView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGuardianNoticeView_lower(_ value: GuardianNoticeView) -> RustBuffer {
+    return FfiConverterTypeGuardianNoticeView.lower(value)
 }
 
 
@@ -23441,6 +23811,119 @@ public func FfiConverterTypeVaultUse_lower(_ value: VaultUse) -> RustBuffer {
 
 
 /**
+ * One guardianship as the ward sees it (04 §4: the scope, every decision and note, the way out).
+ */
+public struct WardView: Equatable, Hashable {
+    public var linkId: String
+    /**
+     * The guardian's email.
+     */
+    public var guardian: String
+    public var scopeLine: String
+    public var noticeDays: UInt8
+    public var minor: Bool
+    /**
+     * The guardian asked to mark this account a minor's: accept or ignore.
+     */
+    public var minorProposed: Bool
+    public var decisions: [GuardianDecisionView]
+    /**
+     * When it ends, once asked (`None` while a minor's request waits for consent).
+     */
+    public var ending: Int64?
+    public var needsConsent: Bool
+    /**
+     * The weekly summary of automatic decisions in scope goes to the guardian.
+     */
+    public var digest: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(linkId: String, 
+        /**
+         * The guardian's email.
+         */guardian: String, scopeLine: String, noticeDays: UInt8, minor: Bool, 
+        /**
+         * The guardian asked to mark this account a minor's: accept or ignore.
+         */minorProposed: Bool, decisions: [GuardianDecisionView], 
+        /**
+         * When it ends, once asked (`None` while a minor's request waits for consent).
+         */ending: Int64?, needsConsent: Bool, 
+        /**
+         * The weekly summary of automatic decisions in scope goes to the guardian.
+         */digest: Bool) {
+        self.linkId = linkId
+        self.guardian = guardian
+        self.scopeLine = scopeLine
+        self.noticeDays = noticeDays
+        self.minor = minor
+        self.minorProposed = minorProposed
+        self.decisions = decisions
+        self.ending = ending
+        self.needsConsent = needsConsent
+        self.digest = digest
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension WardView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWardView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WardView {
+        return
+            try WardView(
+                linkId: FfiConverterString.read(from: &buf), 
+                guardian: FfiConverterString.read(from: &buf), 
+                scopeLine: FfiConverterString.read(from: &buf), 
+                noticeDays: FfiConverterUInt8.read(from: &buf), 
+                minor: FfiConverterBool.read(from: &buf), 
+                minorProposed: FfiConverterBool.read(from: &buf), 
+                decisions: FfiConverterSequenceTypeGuardianDecisionView.read(from: &buf), 
+                ending: FfiConverterOptionInt64.read(from: &buf), 
+                needsConsent: FfiConverterBool.read(from: &buf), 
+                digest: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WardView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.linkId, into: &buf)
+        FfiConverterString.write(value.guardian, into: &buf)
+        FfiConverterString.write(value.scopeLine, into: &buf)
+        FfiConverterUInt8.write(value.noticeDays, into: &buf)
+        FfiConverterBool.write(value.minor, into: &buf)
+        FfiConverterBool.write(value.minorProposed, into: &buf)
+        FfiConverterSequenceTypeGuardianDecisionView.write(value.decisions, into: &buf)
+        FfiConverterOptionInt64.write(value.ending, into: &buf)
+        FfiConverterBool.write(value.needsConsent, into: &buf)
+        FfiConverterBool.write(value.digest, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWardView_lift(_ buf: RustBuffer) throws -> WardView {
+    return try FfiConverterTypeWardView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWardView_lower(_ value: WardView) -> RustBuffer {
+    return FfiConverterTypeWardView.lower(value)
+}
+
+
+/**
  * One thing on the "Your world" screen.
  */
 public struct WorldItem: Equatable, Hashable {
@@ -24041,6 +24524,167 @@ public func FfiConverterTypeActivityOutcome_lower(_ value: ActivityOutcome) -> R
 
 
 
+/**
+ * What the phone's family features said about this account's owner (the apps' age seam).
+ */
+
+public enum AgeSignalInput: Equatable, Hashable {
+    
+    case adult
+    /**
+     * Under 18, with the range's upper bound when the platform gave one.
+     */
+    case minor(upper: UInt8?, platform: AgeSignalPlatform
+    )
+    /**
+     * No signal (declined, unsupported, no family features): the ward's own acceptance counts.
+     */
+    case unavailable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AgeSignalInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgeSignalInput: FfiConverterRustBuffer {
+    typealias SwiftType = AgeSignalInput
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgeSignalInput {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .adult
+        
+        case 2: return .minor(upper: try FfiConverterOptionUInt8.read(from: &buf), platform: try FfiConverterTypeAgeSignalPlatform.read(from: &buf)
+        )
+        
+        case 3: return .unavailable
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AgeSignalInput, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .adult:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .minor(upper,platform):
+            writeInt(&buf, Int32(2))
+            FfiConverterOptionUInt8.write(upper, into: &buf)
+            FfiConverterTypeAgeSignalPlatform.write(platform, into: &buf)
+            
+        
+        case .unavailable:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgeSignalInput_lift(_ buf: RustBuffer) throws -> AgeSignalInput {
+    return try FfiConverterTypeAgeSignalInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgeSignalInput_lower(_ value: AgeSignalInput) -> RustBuffer {
+    return FfiConverterTypeAgeSignalInput.lower(value)
+}
+
+
+
+/**
+ * Which family feature gave an age signal.
+ */
+
+public enum AgeSignalPlatform: Equatable, Hashable {
+    
+    /**
+     * Apple's Declared Age Range.
+     */
+    case apple
+    /**
+     * Google Play Age Signals.
+     */
+    case googlePlay
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AgeSignalPlatform: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgeSignalPlatform: FfiConverterRustBuffer {
+    typealias SwiftType = AgeSignalPlatform
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgeSignalPlatform {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .apple
+        
+        case 2: return .googlePlay
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AgeSignalPlatform, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .apple:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .googlePlay:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgeSignalPlatform_lift(_ buf: RustBuffer) throws -> AgeSignalPlatform {
+    return try FfiConverterTypeAgeSignalPlatform.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgeSignalPlatform_lower(_ value: AgeSignalPlatform) -> RustBuffer {
+    return FfiConverterTypeAgeSignalPlatform.lower(value)
+}
+
+
+
 
 public enum ApprovalKind: Equatable, Hashable {
     
@@ -24621,10 +25265,10 @@ public enum CircleEvent: Equatable, Hashable {
     case reviewWaiting(review: CircleReviewView
     )
     /**
-     * A guardian must know at once (08 R7): the ward ended the guardianship, or their account was recovered or reset.
-     * Notifies ("Sam: Ended the guardianship").
+     * Something about a ward this account guards needs a look (an end request, a reset, a recovery, an early end):
+     * "Sam: guardianship changed".
      */
-    case alert(linkId: String, person: String, text: String
+    case guardianNotice(notice: GuardianNoticeView
     )
     /**
      * Anything else changed (a review settled, an invitation moved, a person, the owner's progress): refresh quietly.
@@ -24654,7 +25298,7 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
         case 1: return .reviewWaiting(review: try FfiConverterTypeCircleReviewView.read(from: &buf)
         )
         
-        case 2: return .alert(linkId: try FfiConverterString.read(from: &buf), person: try FfiConverterString.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 2: return .guardianNotice(notice: try FfiConverterTypeGuardianNoticeView.read(from: &buf)
         )
         
         case 3: return .changed
@@ -24672,11 +25316,9 @@ public struct FfiConverterTypeCircleEvent: FfiConverterRustBuffer {
             FfiConverterTypeCircleReviewView.write(review, into: &buf)
             
         
-        case let .alert(linkId,person,text):
+        case let .guardianNotice(notice):
             writeInt(&buf, Int32(2))
-            FfiConverterString.write(linkId, into: &buf)
-            FfiConverterString.write(person, into: &buf)
-            FfiConverterString.write(text, into: &buf)
+            FfiConverterTypeGuardianNoticeView.write(notice, into: &buf)
             
         
         case .changed:
@@ -30492,6 +31134,56 @@ fileprivate struct FfiConverterSequenceTypeGrantView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeGuardianDecisionView: FfiConverterRustBuffer {
+    typealias SwiftType = [GuardianDecisionView]
+
+    public static func write(_ value: [GuardianDecisionView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeGuardianDecisionView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [GuardianDecisionView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [GuardianDecisionView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeGuardianDecisionView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeGuardianNoticeView: FfiConverterRustBuffer {
+    typealias SwiftType = [GuardianNoticeView]
+
+    public static func write(_ value: [GuardianNoticeView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeGuardianNoticeView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [GuardianNoticeView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [GuardianNoticeView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeGuardianNoticeView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHandoverView: FfiConverterRustBuffer {
     typealias SwiftType = [HandoverView]
 
@@ -32045,6 +32737,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_grants() != 31182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_accept_minor() != 27822) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_consent_end() != 60090) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_notices() != 3972) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_propose_minor() != 24143) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_set_digest() != 53020) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_guardian_ward_view() != 4593) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_handle_push() != 31505) {

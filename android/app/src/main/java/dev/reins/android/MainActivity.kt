@@ -184,6 +184,16 @@ class MainActivity : FragmentActivity() {
             }
             return
         }
+        if (intent?.action == AppNotifier.ACTION_OPEN_CIRCLES) {
+            // A guardian notice: Settings › Circles, where the ward's row opens what changed.
+            lifecycleScope.launch {
+                container.state.session.first { it is SessionState.SignedIn }
+                app.home()
+                app.selectTab(dev.reins.android.ui.nav.Tab.Settings)
+                app.open(dev.reins.android.ui.nav.Route.Circles)
+            }
+            return
+        }
         if (intent?.action == AppNotifier.ACTION_OPEN_AUTOPILOT) {
             lifecycleScope.launch {
                 container.state.session.first { it is SessionState.SignedIn }

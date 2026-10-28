@@ -153,7 +153,7 @@ class CirclesFlowTest : FlowHarness() {
     @Test
     fun joiningShowsTheTermsAndTheCodeThenAccepts() {
         core.circleJoinView = CircleInviteView(
-            "j1", "sam@example.com", CircleRole.GUARDIAN, "Purchases", true, 14_400uL, false, "730215", CircleJoinStage.COMPARE,
+            "j1", "sam@example.com", CircleRole.GUARDIAN, "Purchases", true, 14_400uL, false, 3u, "730215", CircleJoinStage.COMPARE,
         )
         openCircles()
         tap("circleJoin")
@@ -175,7 +175,7 @@ class CirclesFlowTest : FlowHarness() {
     @Test
     fun declineAnswersNo() {
         core.circleJoinView = CircleInviteView(
-            "j1", "sam@example.com", CircleRole.DELEGATE, "Everything", false, 120uL, true, "730215", CircleJoinStage.COMPARE,
+            "j1", "sam@example.com", CircleRole.DELEGATE, "Everything", false, 120uL, true, null, "730215", CircleJoinStage.COMPARE,
         )
         openCircles()
         tap("circleJoin")
