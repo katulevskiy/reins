@@ -73,7 +73,8 @@ with it. Use the checkpoint as `--anchor` for exports made after it.
 ## Streaming
 
 Audit, **Streaming**: set up a destination (its secrets are sealed and never shown again), then **Turn on**; two
-Security admins confirm on their phones. Changing a destination turns it off until two admins turn it on again.
+Security admins confirm on their phones. A destination that is on can't be changed: turning it off takes two admins
+as well, so nobody alone can redirect or stop the stream.
 
 | Destination | What is sent |
 |---|---|

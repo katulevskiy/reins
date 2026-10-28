@@ -5,8 +5,8 @@
 //! - **Configured like O3's channels.** A Security admin posts a sink's configuration ([`install`]): validated,
 //!   sealed under the tenant data key, and off. Turning it on is a two-person, device-signed admin change
 //!   (`AdminAction::SetAuditSink`) naming the configuration's digest, so exactly what was shown is what turns on. A
-//!   changed configuration turns the sink off and lapses pending enables: nobody can swap the destination of an
-//!   approved stream.
+//!   changed configuration lapses pending enables, and a sink that is on can't be changed until two people turn it
+//!   off: nobody alone can swap the destination of an approved stream, or stop it.
 //! - **Delivered at least once, in order.** The sweeper ([`push_all`]) sends the events after the sink's `sent_seq`
 //!   and moves it only when the destination accepted them. SIEM records carry `seq` and `hash` (and Elastic's `_id`
 //!   is `<org>-<seq>`), so a resend is a duplicate the destination can drop. Object storage gets only whole segments
@@ -142,14 +142,19 @@ pub fn digest_of(config: &Value) -> String {
     reins_proto::canon::hex32(&reins_proto::canon::sha256(canonical_json(config).as_bytes()))
 }
 
-/// Seals and stores a sink's configuration as a Security admin posted it. It stays off (or, when it was on and changed,
-/// goes off) until a two-person change turns it on; pending enables of an earlier configuration lapse.
+/// Seals and stores a sink's configuration as a Security admin posted it. It stays off until a two-person change turns
+/// it on; pending enables of an earlier configuration lapse. A sink that is on can't be changed: turning it off takes
+/// two people too, so one admin can neither redirect nor silence an audit stream.
 pub fn install(c: &mut DbConnInner, org: &str, kind: SinkKind, config: &Value, now: i64) -> Result<(), OrgError> {
     let parsed = SinkConfig::parse(kind, config)?;
     let digest = digest_of(config);
     c.transaction(|c| {
         let before = reins_org_compliance::q_sink(c, org, kind.as_str())?;
         let changed = before.as_ref().is_none_or(|b| !crate::crypto::ct_eq(&b.digest, &digest));
+        // One admin can't redirect or stop a stream that two turned on: it is turned off (two people) first.
+        if changed && before.as_ref().is_some_and(|b| b.enabled) {
+            return Err(OrgError::Invalid("Turn it off first. That takes two admins."));
+        }
         if changed {
             for ch in reins_org::q_pending_changes(c, org)? {
                 let ours = serde_json::from_str::<AdminAction>(&ch.action)
@@ -183,7 +188,7 @@ pub fn install(c: &mut DbConnInner, org: &str, kind: SinkKind, config: &Value, n
             kinds::INSTALLED,
             None,
             Some(kind.as_str()),
-            &json!({"sink": kind.as_str(), "digest": digest, "turned_off": was_on && changed,
+            &json!({"sink": kind.as_str(), "digest": digest,
                     "destination": parsed.public().into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>()}),
             now,
         )?;
@@ -615,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn reinstalling_turns_a_sink_off() {
+    fn one_admin_can_neither_redirect_nor_stop_a_stream() {
         let mut c = org();
         install(&mut c, "o1", SinkKind::Splunk, &splunk("https://splunk.example.com:8088"), 15).unwrap();
         // A pending enable of the first configuration…
@@ -623,21 +628,30 @@ mod tests {
         let on = AdminAction::SetAuditSink {
             sink: SinkKind::Splunk,
             enabled: true,
-            config: Some(digest.clone()),
+            config: Some(digest),
         };
         let admin::Proposed::Pending(pending) = admin::propose(&mut c, "o1", "u1", &on, None, 16).unwrap().0 else {
             panic!("pending")
         };
-        // …lapses when the destination changes.
+        // …lapses when the destination changes before it is approved.
         install(&mut c, "o1", SinkKind::Splunk, &splunk("https://evil.example.net:8088"), 17).unwrap();
         assert!(admin::approve(&mut c, "o1", &pending, "u2", None, 18).is_err());
         turn_on(&mut c, SinkKind::Splunk);
+        // On, it can't be changed by one admin…
+        let r = install(&mut c, "o1", SinkKind::Splunk, &splunk("https://other.example.net:8088"), 30);
+        assert!(matches!(r, Err(OrgError::Invalid(m)) if m.contains("Turn it off first")));
+        let row = reins_org_compliance::q_sink(&mut c, "o1", "splunk").unwrap().unwrap();
+        assert!(row.enabled && row.sealed.len() > 10);
+        // …while posting the same configuration again changes nothing.
+        install(&mut c, "o1", SinkKind::Splunk, &splunk("https://evil.example.net:8088"), 31).unwrap();
         assert!(reins_org_compliance::q_sink(&mut c, "o1", "splunk").unwrap().unwrap().enabled);
-        install(&mut c, "o1", SinkKind::Splunk, &splunk("https://other.example.net:8088"), 30).unwrap();
-        assert!(!reins_org_compliance::q_sink(&mut c, "o1", "splunk").unwrap().unwrap().enabled, "changed: off");
-        // The same configuration again changes nothing.
-        turn_on(&mut c, SinkKind::Splunk);
-        install(&mut c, "o1", SinkKind::Splunk, &splunk("https://other.example.net:8088"), 40).unwrap();
+        // Turning it off takes two people as well.
+        let off = AdminAction::SetAuditSink {
+            sink: SinkKind::Splunk,
+            enabled: false,
+            config: None,
+        };
+        assert!(matches!(admin::propose(&mut c, "o1", "u1", &off, None, 32).unwrap().0, admin::Proposed::Pending(_)));
         assert!(reins_org_compliance::q_sink(&mut c, "o1", "splunk").unwrap().unwrap().enabled);
     }
 

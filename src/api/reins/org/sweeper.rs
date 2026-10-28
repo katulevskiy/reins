@@ -100,6 +100,7 @@ pub fn spawn(pool: DbPool) {
     if !enabled() {
         return;
     }
+    let compliance = pool.clone();
     tokio::spawn(async move {
         let mut relinked = 0_i64;
         loop {
@@ -123,10 +124,15 @@ pub fn spawn(pool: DbPool) {
                 }
                 Err(e) => warn!("Org sweeper: no database connection: {e:?}"),
             }
-            // O5: checkpoints timestamped by the configured authority (network calls, outside any transaction).
-            witness::stamp_due(&pool).await;
-            // O5: the audit chains streamed to the orgs' SIEMs and object storage.
-            sinks::push_all(&pool, now_unix()).await;
+            tokio::time::sleep(Duration::from_secs(every_secs())).await;
+        }
+    });
+    // O5, in its own loop so a slow authority or SIEM never delays reviews, escalation or leases: checkpoints
+    // timestamped (network calls, outside any transaction) and the audit chains streamed.
+    tokio::spawn(async move {
+        loop {
+            witness::stamp_due(&compliance).await;
+            sinks::push_all(&compliance, now_unix()).await;
             tokio::time::sleep(Duration::from_secs(every_secs())).await;
         }
     });

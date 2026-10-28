@@ -171,12 +171,13 @@ async fn stamp(tsa: &str, cp: &ReinsOrgCheckpoint) -> Result<Vec<u8>, String> {
     if !response.status().is_success() {
         return Err(format!("the authority answered {}", response.status().as_u16()));
     }
-    let body = response.bytes().await.map_err(|_| "the answer broke off")?;
-    if body.len() > MAX_RESPONSE {
+    let (body, more) =
+        crate::api::reins::outbound::read_limited(response, MAX_RESPONSE).await.map_err(|e| e.to_string())?;
+    if more {
         return Err("the answer is too large".to_owned());
     }
     check_response(&body, &digest, nonce)?;
-    Ok(body.to_vec())
+    Ok(body)
 }
 
 /// Timestamps the oldest checkpoints that have none yet (when an authority is configured). Failures are logged and

@@ -803,8 +803,9 @@ org's policy, and an **executor** runs what was decided with the org's own crede
   the newest stored checkpoint signed before the cut-off, which stays as the chain's anchor; a chain that doesn't
   verify as stored is never pruned (the evidence of an edit stays).
 - **Streaming.** A destination's configuration is sealed under the tenant data key and never shown back; turning it on
-  is a two-person change with device signatures that names the configuration's digest, and any change to it turns
-  it off and lapses pending enables, so an admin can't redirect an approved stream. Deliveries go through the outbound
+  is a two-person change with device signatures that names the configuration's digest. A change lapses pending
+  enables, and a destination that is on can't be changed until two people turn it off, so one admin can neither
+  redirect nor silence an approved stream. Deliveries go through the outbound
   guard (HTTPS, public addresses, no redirects) and are not audit events themselves; a destination starting or
   stopping to fail is.
 - **Evidence reports** are built only from an export that verified with the org's decision service key, offline by

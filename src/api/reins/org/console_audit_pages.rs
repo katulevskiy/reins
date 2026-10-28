@@ -130,7 +130,7 @@ action=\"{org}/audit/streaming/{k}\">{csrf}{inputs}<button class=\"quiet\" type=
         .collect();
     let body = format!(
         "<div class=\"row\"><h1>{}Streaming</h1><a href=\"{org}/audit\">Audit</a></div>\
-<p class=\"meta\">Saving turns a destination off. Turning on takes two admins' phones.</p>{sections}",
+<p class=\"meta\">Turning on or off takes two admins' phones. Turn off to change.</p>{sections}",
         svg(icon::LIST)
     );
     page("Streaming", Some(frame), &body, frame.base)
