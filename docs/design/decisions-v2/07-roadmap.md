@@ -41,7 +41,7 @@ Dates are planning placeholders from today; they move with the alpha's prioritie
 | **O2 Decision service** | central evaluation, executors (GitHub App, Google Workspace), hash-chained audit, SIEM export, retention, BYOK | an audit export verifies with `reins-audit verify` |
 | **O3 Routing** | groups, managers, code owners, on-call (PagerDuty), escalation, SLAs, Slack/Teams approvals (L0–L2), templates | median time to decision in the pilot < 30 min (built 2026-10-27, branch `dv2/o3-routing`; the pilot's week on our org and its `reports/sla` median are still to be recorded here) |
 | **O4 Policy as code** | a policy repo, two-person activation, simulation, staged rollout with automatic rollback | a policy change goes from PR to 100% with simulation evidence |
-| **O5 Compliance** | Reins Cloud SOC 2 Type I, then Type II (an observation window of ≥ 3 months); dedicated and self-hosted packages | report available to Enterprise customers |
+| **O5 Compliance** | Reins Cloud SOC 2 Type I, then Type II (an observation window of ≥ 3 months); dedicated and self-hosted packages | report available to Enterprise customers (packaging shipped 2026-10-27, #259: `reins-audit verify` and SOC 2 / ISO 27001 evidence reports, SIEM and S3/GCS streaming, RFC 3161 checkpoint timestamps, pruning by tier, BYOK for the master key, the executor as release binaries and an image; the program's pilot org is provisioned, deprovisioned and its export verified in `org_compliance`. Reins Cloud's own SOC 2 Type I and Type II audits are still to come) |
 
 ## 2. Migration from today
 
