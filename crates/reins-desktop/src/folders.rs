@@ -155,6 +155,8 @@ pub async fn proposer(paths: Paths, start: WorkspaceConfig) {
 mod tests {
     use super::*;
 
+    // Folders are proposed from Linux and macOS only (Windows paths are not in the `/…` form the checks expect).
+    #[cfg(unix)]
     #[test]
     fn folders_are_canonicalized_and_broad_ones_never_proposed() {
         let dir = tempfile::tempdir().unwrap();

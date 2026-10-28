@@ -177,6 +177,8 @@ jobs:
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
+          # Unoptimized async state machines in the core's bigger flows outgrow the default 2 MiB test thread stack.
+          RUST_MIN_STACK: "16777216"
         run: |
           export TMPDIR=/dev/shm/reins-tests
           mkdir -p "$TMPDIR"

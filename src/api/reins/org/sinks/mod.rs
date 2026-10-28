@@ -518,6 +518,7 @@ pub(crate) mod testing {
     impl Transport for Plain {
         fn send<'a>(&'a self, method: Method, url: &'a str, headers: HeaderMap, body: Vec<u8>) -> Sent<'a> {
             Box::pin(async move {
+                rustls::crypto::ring::default_provider().install_default().ok();
                 let r = reqwest::Client::new()
                     .request(method, url)
                     .headers(headers)
