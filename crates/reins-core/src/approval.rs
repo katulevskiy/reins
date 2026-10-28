@@ -317,6 +317,17 @@ impl Engine {
             } => {
                 let _fence = self.permission_execution_fence().await?;
                 self.authorization_execute(request, source)?;
+                // The send hold (08 R10): the email waits out its undo window sealed on the server, and the release
+                // sends it after checking again. A hold that fails leaves an automatic decision to the owner; the
+                // owner's own approval was asked at its own level already, so it sends now, without an Undo.
+                match Box::pin(self.hold_send(&session, request, source)).await {
+                    Ok(Some(held)) => return Box::pin(self.answer_held(&session, request_id, request, &held)).await,
+                    Ok(None) => {}
+                    Err(e) if source == crate::authorization::AuthorizationSource::Automatic => {
+                        return Err(CoreError::invalid(format!("The send hold could not be applied ({e}).")));
+                    }
+                    Err(e) => log::warn!("the send hold could not be applied ({e}); the approved email is sent now"),
+                }
                 let attempt = self.legacy_send_attempt(request)?;
                 if let Err(error) = self.legacy_send_durable().await {
                     self.legacy_send_finished(attempt, false)?;

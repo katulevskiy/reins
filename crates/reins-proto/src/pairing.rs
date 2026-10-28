@@ -84,6 +84,9 @@ pub enum PushKind {
     /// O3: a web passkey this member registered waits for their enrolled phone's confirmation (the id is the
     /// credential's). Fetch `GET /reins/api/org/passkeys`.
     OrgPasskey,
+    /// A held email send is due (the id is the hold's): claim it with `POST /reins/api/holds/<id>/claim`, or, when it
+    /// is gone (undone), drop it. Silent: an automatic hold never notifies (08 R10).
+    Hold,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.

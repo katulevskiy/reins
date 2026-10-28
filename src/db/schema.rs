@@ -620,6 +620,20 @@ table! {
 }
 
 table! {
+    reins_send_holds (id) {
+        id -> Text,
+        user_uuid -> Text,
+        device_uuid -> Text,
+        connection_uuid -> Text,
+        request_id -> Text,
+        sealed -> Text,
+        release_at -> BigInt,
+        created_at -> BigInt,
+        woken -> Bool,
+    }
+}
+
+table! {
     reins_ticket_events (ticket_id, seq) {
         ticket_id -> Text,
         seq -> Integer,

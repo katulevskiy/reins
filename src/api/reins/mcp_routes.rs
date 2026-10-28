@@ -409,7 +409,7 @@ async fn run_tool(
             return ok(wait_ticket(&request_id, &connection, Duration::from_secs(secs), pool).await);
         }
         ToolInvocation::Tickets => return ok(list_tickets(&connection, &conn).await),
-        ToolInvocation::Cancel(request_id) => return ok(cancel(&request_id, &connection, &conn).await),
+        ToolInvocation::Cancel(request_id) => return ok(cancel(&request_id, &connection, &conn, pool.inner()).await),
         ToolInvocation::Reply(request_id, text) => {
             return ok(reply(&request_id, &text, &connection, &conn, pool.inner()).await);
         }
@@ -496,8 +496,14 @@ async fn list_tickets(connection: &ReinsConnection, conn: &DbConn) -> Value {
     tools::success(&json!({"tickets": tickets}))
 }
 
-async fn cancel(id: &RequestId, connection: &ReinsConnection, conn: &DbConn) -> Value {
+async fn cancel(id: &RequestId, connection: &ReinsConnection, conn: &DbConn, pool: &DbPool) -> Value {
     let cancelled = json!({"status": "cancelled", "ticket": ticket_of(id)});
+    // A send waiting out its hold (08 R10): withdrawing it deletes the email before it goes.
+    if super::holds::cancel_request(&id.0, connection, conn, pool).await {
+        return tools::success(
+            &json!({"status": "cancelled", "ticket": ticket_of(id), "note": "The email was not sent."}),
+        );
+    }
     match HUB.relay.cancel(id, &ConnectionId(connection.uuid.clone())) {
         super::relay::Cancel::Cancelled => return tools::success(&cancelled),
         super::relay::Cancel::PhoneHasIt => {

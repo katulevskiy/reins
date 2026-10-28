@@ -3736,6 +3736,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func registerDevice(fcmToken: String?) async throws 
     
     /**
+     * Sends the held emails that are due (the app calls it when a countdown ends and when a hold push arrives); those
+     * that came due too long ago ask "Still send?" instead (`late`: the app may say so, it is an ask).
+     */
+    func releaseHolds() async throws  -> HoldsReleased
+    
+    /**
      * Disconnects an account: its grants are deleted and requests waiting for it are answered with an error.
      */
     func removeAccount(account: String) async throws 
@@ -3842,6 +3848,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32) async throws  -> ActivityPage
     
     /**
+     * The email send hold in seconds (08 R10): 30 until changed, 0 when off.
+     */
+    func sendHoldSecs() async throws  -> UInt32
+    
+    /**
+     * "Still send?" answered Send: a held email that was not sent in time goes now, as the owner's approval.
+     */
+    func sendLate(holdId: String) async throws 
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -3941,6 +3957,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setSecretsAlwaysAsk(project: String, env: String, always: Bool?) async throws 
     
     /**
+     * Sets the email send hold, 0 (off) to 120 seconds.
+     */
+    func setSendHoldSecs(secs: UInt32) async throws 
+    
+    /**
      * Chosen during setup and changed under Grants; applies to connections made from then on.
      */
     func setStartingPolicy(policy: StartingPolicy) async throws 
@@ -4037,6 +4058,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * than the user wanted.
      */
     func thresholdReplay(profileId: String, approveAt: Float, denyAt: Float) async throws  -> ThresholdReplay
+    
+    /**
+     * Undo of a held email (its Activity entry's `hold`): it is not sent. On a "Still send?", it is dropped.
+     */
+    func undoSend(holdId: String) async throws 
     
     /**
      * Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
@@ -6927,6 +6953,26 @@ open func registerDevice(fcmToken: String?)async throws   {
 }
     
     /**
+     * Sends the held emails that are due (the app calls it when a countdown ends and when a hold push arrives); those
+     * that came due too long ago ask "Still send?" instead (`late`: the app may say so, it is an ask).
+     */
+open func releaseHolds()async throws  -> HoldsReleased  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_release_holds(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeHoldsReleased_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Disconnects an account: its grants are deleted and requests waiting for it are answered with an error.
      */
 open func removeAccount(account: String)async throws   {
@@ -7313,6 +7359,44 @@ open func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UI
 }
     
     /**
+     * The email send hold in seconds (08 R10): 30 until changed, 0 when off.
+     */
+open func sendHoldSecs()async throws  -> UInt32  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_send_hold_secs(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_u32,
+            completeFunc: ffi_reins_core_rust_future_complete_u32,
+            freeFunc: ffi_reins_core_rust_future_free_u32,
+            liftFunc: FfiConverterUInt32.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Still send?" answered Send: a held email that was not sent in time goes now, as the owner's approval.
+     */
+open func sendLate(holdId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_send_late(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(holdId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -7651,6 +7735,25 @@ open func setSecretsAlwaysAsk(project: String, env: String, always: Bool?)async 
 }
     
     /**
+     * Sets the email send hold, 0 (off) to 120 seconds.
+     */
+open func setSendHoldSecs(secs: UInt32)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_send_hold_secs(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(secs)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Chosen during setup and changed under Grants; applies to connections made from then on.
      */
 open func setStartingPolicy(policy: StartingPolicy)async throws   {
@@ -7968,6 +8071,25 @@ open func thresholdReplay(profileId: String, approveAt: Float, denyAt: Float)asy
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeThresholdReplay_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Undo of a held email (its Activity entry's `hold`): it is not sent. On a "Still send?", it is dropped.
+     */
+open func undoSend(holdId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_undo_send(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(holdId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -9617,6 +9739,11 @@ public struct ActivityEntry: Equatable, Hashable {
      * What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
      */
     public var request: ActivityRequest?
+    /**
+     * A held email send (08 R10): "Sending in 30 s · Undo" while it waits, "Still send?" when it was not sent in time.
+     * `None` once it went, or was undone.
+     */
+    public var hold: ActivityHold?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9647,7 +9774,11 @@ public struct ActivityEntry: Equatable, Hashable {
          */label: RequestLabel? = nil, 
         /**
          * What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
-         */request: ActivityRequest? = nil) {
+         */request: ActivityRequest? = nil, 
+        /**
+         * A held email send (08 R10): "Sending in 30 s · Undo" while it waits, "Still send?" when it was not sent in time.
+         * `None` once it went, or was undone.
+         */hold: ActivityHold? = nil) {
         self.id = id
         self.at = at
         self.connectionId = connectionId
@@ -9666,6 +9797,7 @@ public struct ActivityEntry: Equatable, Hashable {
         self.autopilot = autopilot
         self.label = label
         self.request = request
+        self.hold = hold
     }
 
     
@@ -9701,7 +9833,8 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
                 decidedBy: FfiConverterString.read(from: &buf), 
                 autopilot: FfiConverterOptionTypeAutopilotNote.read(from: &buf), 
                 label: FfiConverterOptionTypeRequestLabel.read(from: &buf), 
-                request: FfiConverterOptionTypeActivityRequest.read(from: &buf)
+                request: FfiConverterOptionTypeActivityRequest.read(from: &buf), 
+                hold: FfiConverterOptionTypeActivityHold.read(from: &buf)
         )
     }
 
@@ -9724,6 +9857,7 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
         FfiConverterOptionTypeAutopilotNote.write(value.autopilot, into: &buf)
         FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
         FfiConverterOptionTypeActivityRequest.write(value.request, into: &buf)
+        FfiConverterOptionTypeActivityHold.write(value.hold, into: &buf)
     }
 }
 
@@ -9937,6 +10071,73 @@ public func FfiConverterTypeActivityHit_lift(_ buf: RustBuffer) throws -> Activi
 #endif
 public func FfiConverterTypeActivityHit_lower(_ value: ActivityHit) -> RustBuffer {
     return FfiConverterTypeActivityHit.lower(value)
+}
+
+
+/**
+ * A held send, on its Activity entry.
+ */
+public struct ActivityHold: Equatable, Hashable {
+    public var id: String
+    /**
+     * When it goes (this phone's clock, Unix seconds).
+     */
+    public var releaseAt: Int64
+    public var state: HoldState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * When it goes (this phone's clock, Unix seconds).
+         */releaseAt: Int64, state: HoldState) {
+        self.id = id
+        self.releaseAt = releaseAt
+        self.state = state
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityHold: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityHold: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityHold {
+        return
+            try ActivityHold(
+                id: FfiConverterString.read(from: &buf), 
+                releaseAt: FfiConverterInt64.read(from: &buf), 
+                state: FfiConverterTypeHoldState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityHold, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.releaseAt, into: &buf)
+        FfiConverterTypeHoldState.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHold_lift(_ buf: RustBuffer) throws -> ActivityHold {
+    return try FfiConverterTypeActivityHold.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHold_lower(_ value: ActivityHold) -> RustBuffer {
+    return FfiConverterTypeActivityHold.lower(value)
 }
 
 
@@ -16840,6 +17041,69 @@ public func FfiConverterTypeHandoverView_lift(_ buf: RustBuffer) throws -> Hando
 #endif
 public func FfiConverterTypeHandoverView_lower(_ value: HandoverView) -> RustBuffer {
     return FfiConverterTypeHandoverView.lower(value)
+}
+
+
+/**
+ * What a release pass did.
+ */
+public struct HoldsReleased: Equatable, Hashable {
+    public var sent: UInt32
+    /**
+     * Sends that now ask "Still send?" (the app may say so: it is an ask).
+     */
+    public var late: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sent: UInt32, 
+        /**
+         * Sends that now ask "Still send?" (the app may say so: it is an ask).
+         */late: UInt32) {
+        self.sent = sent
+        self.late = late
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HoldsReleased: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHoldsReleased: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HoldsReleased {
+        return
+            try HoldsReleased(
+                sent: FfiConverterUInt32.read(from: &buf), 
+                late: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HoldsReleased, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sent, into: &buf)
+        FfiConverterUInt32.write(value.late, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHoldsReleased_lift(_ buf: RustBuffer) throws -> HoldsReleased {
+    return try FfiConverterTypeHoldsReleased.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHoldsReleased_lower(_ value: HoldsReleased) -> RustBuffer {
+    return FfiConverterTypeHoldsReleased.lower(value)
 }
 
 
@@ -27426,6 +27690,91 @@ public func FfiConverterTypeHandoverProgress_lower(_ value: HandoverProgress) ->
 
 
 
+/**
+ * Where a hold is, as Activity shows it.
+ */
+
+public enum HoldState: Equatable, Hashable {
+    
+    /**
+     * Waiting out its hold: "Sending in 30 s · Undo".
+     */
+    case waiting
+    /**
+     * Released: being sent now.
+     */
+    case sending
+    /**
+     * Not sent, because the phone woke too late or the policy wants the owner now: "Still send?".
+     */
+    case late
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HoldState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHoldState: FfiConverterRustBuffer {
+    typealias SwiftType = HoldState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HoldState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .sending
+        
+        case 3: return .late
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: HoldState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .sending:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .late:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHoldState_lift(_ buf: RustBuffer) throws -> HoldState {
+    return try FfiConverterTypeHoldState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHoldState_lower(_ value: HoldState) -> RustBuffer {
+    return FfiConverterTypeHoldState.lower(value)
+}
+
+
+
 
 public enum JoinProgress: Equatable, Hashable {
     
@@ -29641,6 +29990,30 @@ fileprivate struct FfiConverterOptionTypeActivityEntry: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeActivityEntry.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeActivityHold: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityHold?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityHold.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityHold.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -33416,6 +33789,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_release_holds() != 41636) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_remove_account() != 62770) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33476,6 +33852,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_search_activity() != 51150) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_send_hold_secs() != 40449) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_send_late() != 3113) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33530,6 +33912,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_secrets_always_ask() != 9230) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_send_hold_secs() != 44462) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -33576,6 +33961,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_threshold_replay() != 51589) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_undo_send() != 45943) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_unlock_account() != 55036) {

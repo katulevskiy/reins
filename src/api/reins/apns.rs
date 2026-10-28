@@ -178,7 +178,7 @@ pub fn notification(push: &PushMessage) -> Notification {
         // Only a review waiting for a helper, and a guardianship ending, alert (the extension writes the text from
         // what it fetches); every other Circle push is news the app fetches quietly.
         PushKind::Circle if super::circles::alerts(&push.id) => "circle",
-        PushKind::Replaced | PushKind::Circle => return silent(),
+        PushKind::Replaced | PushKind::Circle | PushKind::Hold => return silent(),
         PushKind::Sync => {
             if push.sync_head().is_none_or(|(_, alert)| !alert) {
                 return silent();

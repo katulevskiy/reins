@@ -462,8 +462,8 @@ pub(crate) fn snippet(fields: &[(ActivityField, String)], terms: &[String]) -> O
 
 fn outcome_of(outcome: &str) -> ActivityOutcome {
     match outcome {
-        "denied" => ActivityOutcome::Denied,
-        "error" => ActivityOutcome::Failed,
+        "denied" | "undone" => ActivityOutcome::Denied,
+        "error" | "not_sent" => ActivityOutcome::Failed,
         _ => ActivityOutcome::Approved,
     }
 }
@@ -493,9 +493,9 @@ fn filters(q: &ActivityQuery, fts: Option<&str>) -> (String, Vec<Sql>) {
         .outcomes
         .iter()
         .flat_map(|o| match o {
-            ActivityOutcome::Approved => &["released", "sent", "granted"][..],
-            ActivityOutcome::Denied => &["denied"][..],
-            ActivityOutcome::Failed => &["error", "started", "unknown", "succeeded_withheld"][..],
+            ActivityOutcome::Approved => &["released", "sent", "granted", "held"][..],
+            ActivityOutcome::Denied => &["denied", "undone"][..],
+            ActivityOutcome::Failed => &["error", "started", "unknown", "succeeded_withheld", "not_sent"][..],
         })
         .map(|s| (*s).to_owned())
         .collect();

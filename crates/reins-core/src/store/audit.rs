@@ -145,6 +145,10 @@ pub struct AuditInfo {
     /// of the account can show them (see [`super::AuditPush`]). Shown only: nothing decides by it.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "super::audit_push::lenient")]
     pub git: Option<Box<super::AuditPush>>,
+    /// The email send hold (08 R10) this entry is about: its id, which ties "Sending in 30 s · Undo", "Still send?"
+    /// and how it ended to one send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
     /// The request as its approval showed it (or would have, when it was decided without asking), so the entry's page
     /// can show the same thing. Kept apart from the rest (see [`Store::audit_snapshot`]), never in this JSON.
     #[serde(skip)]

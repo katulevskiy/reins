@@ -274,6 +274,36 @@ impl<'a> PhoneApi<'a> {
         Self::json(self.request(Method::POST, &format!("/tickets/{id}/events")).json(events)).await
     }
 
+    /// `POST /holds`: holds a send (08 R10); the server picks the release time.
+    pub async fn create_hold(
+        &self,
+        hold: &reins_proto::hold::HoldCreate,
+    ) -> Result<reins_proto::hold::HoldCreated, ApiFailure> {
+        Self::json(self.request(Method::POST, "/holds").json(hold)).await
+    }
+
+    /// `GET /holds`: the account's sends waiting out their hold (ids and times only).
+    pub async fn holds(&self) -> Result<reins_proto::hold::HoldList, ApiFailure> {
+        Self::json(self.request(Method::GET, "/holds")).await
+    }
+
+    /// `DELETE /holds/{id}`: Undo.
+    pub async fn delete_hold(&self, id: &str) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::DELETE, &format!("/holds/{id}"))).await.map(drop)
+    }
+
+    /// `POST /holds/{id}/claim`: the release, once (the server deletes the ciphertext as it hands it over).
+    pub async fn claim_hold(&self, id: &str) -> Result<reins_proto::hold::HoldClaimed, ApiFailure> {
+        check_id(id)?;
+        let claimed: reins_proto::hold::HoldClaimed =
+            Self::json(self.request(Method::POST, &format!("/holds/{id}/claim"))).await?;
+        if claimed.id != id {
+            return Err(CoreError::invalid("the server returned a different hold").into());
+        }
+        Ok(claimed)
+    }
+
     /// A5 `GET /pairings/{id}`.
     pub async fn get_pairing(&self, id: &str) -> Result<PairingRequest, ApiFailure> {
         check_id(id)?;
