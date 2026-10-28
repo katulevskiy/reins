@@ -1831,6 +1831,61 @@ pub struct RevocationAck {
     pub lost: Option<String>,
 }
 
+/// What a phone-signed desktop policy message is (`reins_policy::desktop_policy`, 08 R1): the snapshot a computer
+/// decides with, or a "tighten now" that applies on top of whatever it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyKind {
+    Snapshot,
+    Tighten,
+}
+
+/// One signed policy message sealed to one paired computer's pinned key (`POST /reins/api/desktop/policy`, from the
+/// phone). The server keeps it as an opaque blob; `version` and `kind` are only what it orders and keeps them by (the
+/// computer reads both again from inside, signed).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedPolicy {
+    pub connection_id: String,
+    pub version: u64,
+    pub kind: PolicyKind,
+    /// `reins_policy::desktop_policy::Signed` JSON in a sealed box to the computer's pinned key (base64url).
+    pub sealed: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyPost {
+    pub items: Vec<SealedPolicy>,
+}
+
+/// One policy message waiting for a computer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailedPolicy {
+    pub version: u64,
+    pub kind: PolicyKind,
+    pub sealed: String,
+}
+
+/// What a computer picks up (`GET /reins/desktop/policy?after=<version>&wait=<secs>`): the newest snapshot and the
+/// tightenings newer than it, each only when newer than `after`, oldest first; and the approval device's signing key
+/// as the server names it (the computer pins the first one, P4, and refuses messages signed by any other).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyMail {
+    pub items: Vec<MailedPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing_key: Option<String>,
+}
+
+/// The longest sealed policy message the server keeps.
+pub const MAX_POLICY_CHARS: usize = 384 * 1024;
+/// The most tightenings kept per computer (beyond the newest snapshot).
+pub const MAX_TIGHTENS: usize = 16;
+/// The longest a computer's pick-up waits for news.
+pub const POLICY_WAIT_MAX_SECS: u64 = 25;
+/// How long the server keeps a policy message (they hold for hours at most).
+pub const POLICY_TTL_SECS: i64 = 86_400;
+/// The most computers one post names.
+pub const MAX_POLICY_ITEMS: usize = 100;
+
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
 /// command in order, the pack bytes and the push options.
 #[must_use]
