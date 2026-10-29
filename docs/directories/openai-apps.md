@@ -243,7 +243,24 @@ Generated from the code with
 `cargo test --features sqlite --bin vaultwarden -- tool_profile_table --ignored --nocapture` (Reins's own tools; the
 two unlisted `github_request_*` tools are not counted):
 
-TABLE_PLACEHOLDER
+| Group | Listed by default | Kept | Dropped | Dropped tools |
+|---|---:|---:|---:|---|
+| Reins (requests, results) (`reins`) | 11 | 11 | 0 |  |
+| Telegram (`telegram`) | 4 | 4 | 0 |  |
+| Google Calendar (`gcalendar`) | 4 | 4 | 0 |  |
+| Google Contacts (`gcontacts`) | 1 | 1 | 0 |  |
+| Phone calendar (`device_calendar`) | 2 | 2 | 0 |  |
+| Phone contacts (`device_contacts`) | 1 | 1 | 0 |  |
+| Text messages (`sms`) | 3 | 1 | 2 | `sms_list_threads`, `sms_read` |
+| Gmail (`gmail`) | 14 | 14 | 0 |  |
+| GitHub (`github`) | 208 | 205 | 3 | `github_secret_set`, `github_secret_scanning_alert_list`, `github_secret_scanning_alert_get` |
+| Password vault (`vault`) | 31 | 0 | 31 | all |
+| Payments (`payments`) | 4 | 0 | 4 | all |
+| Tasks (`tasks`) | 2 | 2 | 0 |  |
+| **Total** | 285 | 245 | 40 | |
+
+The `claude` profile lists exactly the same 245 tools and leaves out the same 40 (a test checks that the two lists
+are equal). Counts are at `main` 88b193e.
 
 What stays that may still show a secret: Gmail and Telegram reads can contain a code someone sent the user, and
 `github_variable_*` reads Actions variables (not secrets). The phone shows each read before anything is returned.

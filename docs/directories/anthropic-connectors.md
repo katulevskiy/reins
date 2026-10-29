@@ -286,9 +286,9 @@ first (see the gaps below).
    general public can use them (see the README's status section). Reviewers use the team's demo account, but public
    users can't connect Gmail until it passes.
 5. **Support page.** `https://reins2fa.com/support` answers 404 (pending). A draft is on the local branch `docs/support-page` (`docs/support.md`), not published.
-6. **Tool count.** 279 tools are listed with the full profile (208 for GitHub; the duplicate `github_request_*` are
-   no longer listed but stay callable). Claude loads tools on demand when there are many, but reviewers weigh "token
-   use proportionate to the task". Merging rarely used GitHub tools would help further.
+6. **Tool count.** 285 tools are listed with the full profile, 208 of them for GitHub (the duplicate
+   `github_request_*` are no longer listed but stay callable); the proposed `claude` profile lists 245. Claude
+   loads tools on demand when there are many, but reviewers weigh "token use proportionate to the task". Merging rarely used GitHub tools would help further.
 7. **Icon.** A 512 x 512 PNG and the SVG exist. The portal does not state a size; use the SVG, or the 512 PNG.
 
 ## Questions for Daniel
