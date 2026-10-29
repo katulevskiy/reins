@@ -11,22 +11,11 @@ use crate::store::unix_now;
 use crate::types::{AccountView, GmailStatus, PendingKind, ServiceView};
 use crate::views::{self, ParkedRequest, service_name};
 
-/// Every integration, in the order the screen lists them, and how an account is added to it.
-const CATALOGUE: &[(&str, &str)] = &[
-    ("gmail", "google"),
-    ("gcalendar", "google"),
-    ("gcontacts", "google"),
-    ("telegram", "telegram"),
-    ("github", "token"),
-    ("gitlab", "token"),
-    ("codeberg", "token"),
-    ("bitbucket", "token"),
-    ("device_calendar", "device"),
-    ("device_contacts", "device"),
-    ("sms", "device"),
-    ("vault", "vault"),
-    ("payments", "payments"),
-];
+/// Every integration, in the order the screen lists them, and how an account is added to it: the connectors'
+/// manifests (`reins_proto::connector::manifest`).
+fn catalogue() -> impl Iterator<Item = (&'static str, &'static str)> {
+    reins_proto::connector::manifest::on_screen().into_iter().map(|m| (m.service, m.auth.kind()))
+}
 
 impl Engine {
     fn connector(&self, service: &str) -> Result<Arc<dyn Connector>, CoreError> {
@@ -36,9 +25,8 @@ impl Engine {
     /// The integrations with their accounts, and whether each can be used in this build.
     pub fn services(&self) -> Result<Vec<ServiceView>, CoreError> {
         let accounts = self.accounts()?;
-        Ok(CATALOGUE
-            .iter()
-            .map(|&(service, kind)| {
+        Ok(catalogue()
+            .map(|(service, kind)| {
                 let (available, note) = if service == views::SERVICE_GMAIL {
                     (true, None)
                 } else if let Some(connector) = self.connectors.get(service) {
@@ -73,7 +61,7 @@ impl Engine {
         if let Some(note) = connector.unavailable() {
             return Err(CoreError::invalid(note));
         }
-        let kind = CATALOGUE.iter().find(|(s, _)| *s == service).map(|(_, k)| *k);
+        let kind = catalogue().find(|(s, _)| *s == service).map(|(_, k)| k);
         let account = match kind {
             Some("google") => connector.identify(hint).await?,
             Some("device") => {

@@ -255,8 +255,20 @@ pub(super) fn tools() -> Vec<ToolSpec> {
         .once()
         .desktop(),
     );
-    all.extend(host_tools(GITLAB, "gitlab_git_fetch", "gitlab_git_push", "gitlab_git_tag_push"));
-    all.extend(host_tools(CODEBERG, "codeberg_git_fetch", "codeberg_git_push", "codeberg_git_tag_push"));
-    all.extend(host_tools(BITBUCKET, "bitbucket_git_fetch", "bitbucket_git_push", "bitbucket_git_tag_push"));
     all
+}
+
+/// GitLab's git transport for the desktop app (its connector has no tools of its own).
+pub(super) fn gitlab_tools() -> Vec<ToolSpec> {
+    host_tools(GITLAB, "gitlab_git_fetch", "gitlab_git_push", "gitlab_git_tag_push")
+}
+
+/// Codeberg's git transport for the desktop app.
+pub(super) fn codeberg_tools() -> Vec<ToolSpec> {
+    host_tools(CODEBERG, "codeberg_git_fetch", "codeberg_git_push", "codeberg_git_tag_push")
+}
+
+/// Bitbucket's git transport for the desktop app.
+pub(super) fn bitbucket_tools() -> Vec<ToolSpec> {
+    host_tools(BITBUCKET, "bitbucket_git_fetch", "bitbucket_git_push", "bitbucket_git_tag_push")
 }

@@ -40,6 +40,8 @@ pub use desktop::{
 };
 mod github;
 pub mod gmail;
+pub mod manifest;
+pub use manifest::{ActionManifest, AuthType, ConnectorManifest, RiskLevel};
 mod payments;
 mod vault;
 pub use vault::env_release_args;
@@ -196,6 +198,10 @@ pub struct ToolSpec {
     /// A check of the arguments as a whole, after each was checked on its own (a cart that must add up): run by the
     /// server before relaying and by the phone again.
     pub check: Option<CallCheck>,
+    /// How risky the action is, when its other facts do not say it right; `None` derives it ([`RiskLevel::of`]).
+    pub risk: Option<RiskLevel>,
+    /// The OAuth scopes the action needs, for connectors that name them per action (empty for the others).
+    pub scopes: &'static [&'static str],
 }
 
 /// See [`ToolSpec::check`].
@@ -229,6 +235,20 @@ impl ToolSpec {
         self.check = Some(check);
         self
     }
+
+    /// Names the action's risk instead of deriving it (see [`ToolSpec::risk`]).
+    #[must_use]
+    pub fn risk(mut self, risk: RiskLevel) -> Self {
+        self.risk = Some(risk);
+        self
+    }
+
+    /// The OAuth scopes the action needs (see [`ToolSpec::scopes`]).
+    #[must_use]
+    pub fn scoped(mut self, scopes: &'static [&'static str]) -> Self {
+        self.scopes = scopes;
+        self
+    }
 }
 
 /// One kind of change an integration's writes fall into; a permission can allow some kinds and not others.
@@ -241,13 +261,7 @@ pub struct ClassInfo {
 /// The kinds of change a service has (empty when it has none).
 #[must_use]
 pub fn classes(service: &str) -> &'static [ClassInfo] {
-    match service {
-        GMAIL => gmail::CLASSES,
-        GITHUB => github::CLASSES,
-        VAULT => vault::CLASSES,
-        GITLAB | CODEBERG | BITBUCKET => desktop::HOST_CLASSES,
-        _ => &[],
-    }
+    manifest::manifest(service).map_or(&[], |m| m.classes)
 }
 
 fn control_free(s: &str) -> bool {
@@ -683,6 +697,8 @@ pub(crate) fn tool(
         once_only: false,
         desktop_only: false,
         check: None,
+        risk: None,
+        scopes: &[],
     }
 }
 
@@ -721,31 +737,21 @@ pub const DESTRUCTIVE_OVERRIDES: &[(&str, bool)] = &[
 /// know.
 #[must_use]
 pub fn service_name(service: &str) -> &str {
-    match service {
-        GMAIL => "Gmail",
-        TELEGRAM => "Telegram",
-        GCALENDAR => "Google Calendar",
-        GCONTACTS => "Google Contacts",
-        DEVICE_CALENDAR => "Phone calendar",
-        DEVICE_CONTACTS => "Phone contacts",
-        SMS => "Text messages",
-        GITHUB => "GitHub",
-        GITLAB => "GitLab",
-        CODEBERG => "Codeberg",
-        BITBUCKET => "Bitbucket",
-        DESKTOP => "Desktop app",
-        VAULT => "Password vault",
-        PAYMENTS => "Payments",
-        other => other,
-    }
+    manifest::manifest(service).map_or(service, |m| m.name)
 }
 
 const SENSITIVE: &str = " The user approves on their phone, and sees exactly what is shared.";
 
+/// Every tool, in the order of [`manifest::manifests`]: each connector's own tools, one connector after the other.
 fn build_specs() -> Vec<ToolSpec> {
+    manifest::manifests().iter().flat_map(|m| (m.tools)()).collect()
+}
+
+/// Telegram (the user's own account).
+fn telegram_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
     use Effect::{List, Read, Search, Write};
-    let mut all = vec![
-        // ---- Telegram (the user's own account) ----
+    vec![
         tool(
             "telegram_list_chats",
             TELEGRAM,
@@ -753,7 +759,7 @@ fn build_specs() -> Vec<ToolSpec> {
             List,
             "List Telegram chats",
             "List the user's Telegram chats (name, kind and id), newest activity first. The user chooses which chats \
-             to show you; use the ids with telegram_read, telegram_search and telegram_send.",
+         to show you; use the ids with telegram_read, telegram_search and telegram_send.",
             vec![str_p("query", 100, false, "Only chats whose name contains this text."), LIMIT],
             None,
         ),
@@ -791,7 +797,7 @@ fn build_specs() -> Vec<ToolSpec> {
             Write,
             "Send a Telegram message",
             "Send a text message from the user's Telegram account. The user always sees the chat and the exact text \
-             on their phone and must approve unless they granted a standing permission for that chat.",
+         on their phone and must approve unless they granted a standing permission for that chat.",
             vec![
                 str_p("chat", 100, true, "The chat: an id, an @username or the exact name."),
                 str_p("text", 4_000, true, "The message."),
@@ -799,7 +805,14 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             Some("chat"),
         ),
-        // ---- Google Calendar ----
+    ]
+}
+
+/// Google Calendar.
+fn gcalendar_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
+    use Effect::{List, Read, Search, Write};
+    vec![
         tool(
             "calendar_list_calendars",
             GCALENDAR,
@@ -838,7 +851,7 @@ fn build_specs() -> Vec<ToolSpec> {
             Write,
             "Create a Google Calendar event",
             "Add an event to a calendar. The user sees it and approves on their phone unless they granted a standing \
-             permission for that calendar.",
+         permission for that calendar.",
             vec![
                 str_p("title", 300, true, "The event title."),
                 str_p("start", 40, true, WHEN_HELP),
@@ -863,18 +876,30 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             Some("calendar"),
         ),
-        // ---- Google Contacts ----
-        tool(
-            "contacts_search",
-            GCONTACTS,
-            "search",
-            Search,
-            "Search Google contacts",
-            "Find contacts by name, email or phone number.",
-            vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
-            None,
-        ),
-        // ---- On the phone itself ----
+    ]
+}
+
+/// Google Contacts.
+fn gcontacts_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
+    use Effect::{List, Read, Search, Write};
+    vec![tool(
+        "contacts_search",
+        GCONTACTS,
+        "search",
+        Search,
+        "Search Google contacts",
+        "Find contacts by name, email or phone number.",
+        vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
+        None,
+    )]
+}
+
+/// The calendar on the phone itself.
+fn device_calendar_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
+    use Effect::{List, Read, Search, Write};
+    vec![
         tool(
             "device_calendar_list_events",
             DEVICE_CALENDAR,
@@ -906,16 +931,30 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             None,
         ),
-        tool(
-            "device_contacts_search",
-            DEVICE_CONTACTS,
-            "search",
-            Search,
-            "Search the phone's contacts",
-            "Find contacts stored on the user's phone by name, email or phone number.",
-            vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
-            None,
-        ),
+    ]
+}
+
+/// The contacts on the phone itself.
+fn device_contacts_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
+    use Effect::{List, Read, Search, Write};
+    vec![tool(
+        "device_contacts_search",
+        DEVICE_CONTACTS,
+        "search",
+        Search,
+        "Search the phone's contacts",
+        "Find contacts stored on the user's phone by name, email or phone number.",
+        vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
+        None,
+    )]
+}
+
+/// Text messages on the phone itself.
+fn sms_tools() -> Vec<ToolSpec> {
+    #[allow(unused_imports, reason = "each service uses the effects it has tools for")]
+    use Effect::{List, Read, Search, Write};
+    vec![
         tool(
             "sms_list_threads",
             SMS,
@@ -933,7 +972,7 @@ fn build_specs() -> Vec<ToolSpec> {
             Read,
             "Read text messages",
             "Read the latest text messages of one conversation. Messages that look like login or verification \
-             codes are never shared without the user ticking them one by one.",
+         codes are never shared without the user ticking them one by one.",
             vec![str_p("thread", 100, true, "A conversation id from sms_list_threads."), LIMIT],
             Some("thread"),
         ),
@@ -947,14 +986,7 @@ fn build_specs() -> Vec<ToolSpec> {
             vec![str_p("to", 40, true, "The phone number."), str_p("text", 1_000, true, "The message.")],
             Some("to"),
         ),
-    ];
-    all.extend(gmail::tools());
-    all.extend(github::tools());
-    all.extend(vault::tools());
-    all.extend(desktop::tools());
-    all.extend(payments::tools());
-    all.extend(tasks::tools());
-    all
+    ]
 }
 
 /// What the note under the sensitive tools says; the server appends it to descriptions it renders.
@@ -962,6 +994,9 @@ fn build_specs() -> Vec<ToolSpec> {
 pub fn sensitive_note() -> &'static str {
     SENSITIVE
 }
+
+#[cfg(test)]
+mod snapshot;
 
 #[cfg(test)]
 mod tests {
