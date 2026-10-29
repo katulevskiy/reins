@@ -1,0 +1,30 @@
+name: Sync labels
+
+# Creates or updates the labels in .github/labels.yml (.github/sync-labels.py, via the gh CLI).
+# It does not delete a label the file omits, so GitHub's defaults and labels added by hand stay.
+# Run it from the Actions tab. A push or a merge does not run it, so landing the file does not
+# change labels on its own. The workflow has to be on the default branch before that tab shows it.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync-labels
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync labels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # .github/labels.yml
+      issues: write # create and update labels
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Create or update labels
+        run: python3 -I .github/sync-labels.py
