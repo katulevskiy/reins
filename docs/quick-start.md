@@ -52,8 +52,9 @@ The address is `https://app.reins2fa.com/mcp` for every client; sign-in is OAuth
 - **Claude.ai** (any plan; Free allows one custom connector): **Customize → Connectors → Add custom connector**,
   paste the address, **Add**, then **Connect**. On Team and Enterprise an Owner adds it under **Organization
   settings → Connectors** first.
-- **ChatGPT**: turn on **Developer mode** (Settings → Apps), then add a custom MCP server with the address and OAuth.
-  Plans and menu names change often: see [ChatGPT](directories/openai-apps.md#add-reins-to-chatgpt-today).
+- **ChatGPT** (web): **Plugins → + → Add custom MCP server**, paste the address, choose OAuth, accept the risk
+  warning, then **Create as a plugin**. Write actions may need a Business, Enterprise or Edu plan. Plans and menu
+  names change often: see [ChatGPT](directories/openai-apps.md#add-reins-to-chatgpt-today).
 - **Perplexity and Grok**: see [Perplexity and Grok](directories/perplexity-grok.md).
 
 Every Reins tool is listed from the start. If a service is not connected yet, the AI is told to ask you to add it in
