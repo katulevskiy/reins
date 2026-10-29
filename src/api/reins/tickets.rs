@@ -987,6 +987,7 @@ mod tests {
                     reply_to_message_id: None,
                 }),
             },
+            batch: None,
         }
     }
 

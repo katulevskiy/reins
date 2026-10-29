@@ -109,6 +109,9 @@ pub struct AuditAutopilot {
 /// What the activity screen shows when an entry is opened. Sealed with the data key.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AuditInfo {
+    /// The batch the call was made in (`reins_batch`): every call of it has its own entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<reins_proto::batch::BatchRef>,
     /// The exact narrowing policy decision captured before the effect/disclosure, not a reusable permission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorization: Option<crate::authorization_trace::AuthorizationTrace>,
@@ -442,6 +445,7 @@ mod tests {
                 wait_until: None,
                 account: None,
                 call: reins_proto::gmail::ToolCall::Connector(call),
+                batch: None,
             },
             messages: Vec::new(),
             covered: std::collections::BTreeMap::default(),

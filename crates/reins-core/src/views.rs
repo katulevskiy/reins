@@ -154,6 +154,9 @@ impl ParkedRequest {
             } => service.clone(),
             ToolCall::Connector(call) => call.service.clone(),
             ToolCall::Mcp(call) => format!("mcp:{}", call.server),
+            ToolCall::RequestGrant {
+                grant,
+            } if grant.action == GrantAction::Write => grant.service.clone().unwrap_or_default(),
             _ => SERVICE_GMAIL.to_owned(),
         }
     }
@@ -294,6 +297,7 @@ pub fn request_item(parked: &ParkedRequest) -> PendingItem {
         task_proposal: None,
         circle: None,
         parked: false,
+        batch: crate::batch::pending_batch(parked),
         kind: PendingKind::Request,
         id: parked.request.id.0.clone(),
         title: request_title(parked),
@@ -397,6 +401,7 @@ pub fn pairing_item(p: &PairingRequest) -> PendingItem {
         headline: String::new(),
         quick: false,
         label: None,
+        batch: None,
     }
 }
 
@@ -857,6 +862,10 @@ pub fn grant_request_summary(g: &GrantRequest) -> String {
         GrantAction::Read if g.any => "read any email".to_owned(),
         GrantAction::Read => format!("read emails {}", request_limits(g).join(", ")),
         GrantAction::Send => format!("send emails to {}", g.recipients.join(", ")),
+        GrantAction::Write => match write_resource_text(g) {
+            Some(on) => format!("{} on {on}", write_tool_text(g)),
+            None => write_tool_text(g),
+        },
     };
     text::one_line(&format!("{what} for {}", duration_text(g.duration_secs)))
 }
@@ -870,6 +879,32 @@ fn request_limits(g: &GrantRequest) -> Vec<String> {
         parts.push(format!("with \"{s}\" in the subject"));
     }
     parts
+}
+
+/// "Edit a GitHub comment", or "create_issue (MCP server linear)" for a tool of an added MCP server.
+pub fn write_tool_text(g: &GrantRequest) -> String {
+    let service = g.service.as_deref().unwrap_or_default();
+    let op = g.op.as_deref().unwrap_or_default();
+    match service.strip_prefix(reins_proto::permission::MCP_SERVICE_PREFIX) {
+        // Asked for with the tool's name as the op; stored with it as the resource.
+        Some(server) => {
+            let tool = Some(op).filter(|o| !o.is_empty()).or(g.resource.as_deref()).unwrap_or_default();
+            format!("{tool} (MCP server {server})")
+        }
+        None => match op_title(service, op) {
+            title if title.is_empty() => format!("{service}.{op}"),
+            title => title,
+        },
+    }
+}
+
+/// The one thing a connector write permission covers ("me/app"); `None` for an MCP tool, which is its own thing.
+fn write_resource_text(g: &GrantRequest) -> Option<&str> {
+    let service = g.service.as_deref().unwrap_or_default();
+    if service.starts_with(reins_proto::permission::MCP_SERVICE_PREFIX) {
+        return None;
+    }
+    g.resource.as_deref().filter(|r| !r.is_empty())
 }
 
 pub fn duration_text(secs: u64) -> String {
@@ -898,6 +933,13 @@ pub fn grant_request_view(g: &GrantRequest) -> GrantRequestView {
                 lines.push(format!("Subject contains \"{s}\""));
             }
         }
+        GrantAction::Write => {
+            lines.push(format!("Tool: {}", write_tool_text(g)));
+            if let Some(on) = write_resource_text(g) {
+                lines.push(format!("Only on {on}"));
+            }
+            lines.push("Every other tool and every other thing still asks you".to_owned());
+        }
     }
     if let Some(n) = g.max_uses {
         lines.push(format!("At most {}", plural(n as usize, "use", "uses")));
@@ -914,6 +956,7 @@ pub fn grant_request_view(g: &GrantRequest) -> GrantRequestView {
         action: match g.action {
             GrantAction::Read => "read",
             GrantAction::Send => "send",
+            GrantAction::Write => "write",
         }
         .to_owned(),
         summary: grant_request_summary(g),
@@ -1396,6 +1439,36 @@ pub fn synced_push_approval_view(r: &AuditRecord, git: GitPushView) -> ApprovalV
 mod tests {
     use std::collections::BTreeSet;
 
+    /// A write permission reads as its one tool on its one thing; an MCP tool's as the tool of its server.
+    #[test]
+    fn a_write_permission_names_its_tool_and_its_thing() {
+        use reins_proto::gmail::{GrantAction, GrantRequest};
+        let ask = |service: &str, op: &str, resource: Option<&str>| GrantRequest {
+            action: GrantAction::Write,
+            duration_secs: 86_400,
+            max_uses: None,
+            reason: String::new(),
+            any: false,
+            from: vec![],
+            subject_contains: None,
+            recipients: vec![],
+            service: Some(service.to_owned()),
+            op: Some(op.to_owned()),
+            resource: resource.map(str::to_owned),
+            tool: None,
+        };
+        let github = ask("github", "issue_comment_edit", Some("me/app"));
+        let summary = grant_request_summary(&github);
+        assert!(summary.ends_with(" on me/app for 1 day"), "{summary}");
+        let view = grant_request_view(&github);
+        assert_eq!(view.action, "write");
+        assert!(view.lines.iter().any(|l| l == "Only on me/app"), "{:?}", view.lines);
+        for mcp in [ask("mcp_linear", "label issue", None), ask("mcp_linear", "", Some("label issue"))] {
+            assert_eq!(grant_request_summary(&mcp), "label issue (MCP server linear) for 1 day");
+            assert!(!grant_request_view(&mcp).lines.iter().any(|l| l.starts_with("Only on")));
+        }
+    }
+
     /// GitHub writes that land on the default branch or a protected one, by the call: a merge always, a file committed
     /// unless it names a branch that is clearly not protected.
     #[test]
@@ -1473,6 +1546,7 @@ mod tests {
                 wait_until: Some(54),
                 account: Some("me@gmail.com".to_owned()),
                 call,
+                batch: None,
             },
             messages,
             covered: covered.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect(),

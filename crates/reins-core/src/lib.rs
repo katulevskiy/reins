@@ -18,6 +18,7 @@ pub mod authorization;
 pub mod authorization_trace;
 pub mod autopilot;
 pub mod avatar;
+pub mod batch;
 pub mod blob;
 pub mod circles;
 pub mod command_presentation;

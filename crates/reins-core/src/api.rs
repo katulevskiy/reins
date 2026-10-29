@@ -1578,6 +1578,35 @@ impl ReinsCore {
         .await
     }
 
+    /// "Approve all" of a batch (`PendingItem.batch`): approves each of its waiting calls that may be approved without
+    /// opening it, each with its own audit entry and answer; returns how many were. The rest stay to be opened.
+    pub async fn approve_batch(&self, batch_id: String) -> Result<u32, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.approve_batch(&batch_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Deny all" of a batch: denies each of its waiting calls; returns how many were.
+    pub async fn deny_batch(&self, batch_id: String) -> Result<u32, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.deny_batch(&batch_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
     pub async fn starting_policy(&self) -> Result<Option<StartingPolicy>, CoreError> {
         let runtime = Arc::clone(&self.runtime);

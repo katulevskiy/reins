@@ -250,7 +250,7 @@ sealed interface WaitCard {
 fun waitCards(all: List<PendingItem>): List<WaitCard> {
     // Tickets and what Overnight parked wait under Waiting for you; a task proposal has its own card.
     val pending = all.filter { !it.inInbox() && it.taskProposal == null }
-    val groups = bursts(pending).associateBy { it.connectionId }
+    val groups = bursts(pending).associateBy { it.key }
     val grouped = groups.values.flatMap { it.quick }.toSet()
     val placed = mutableSetOf<String>()
     return buildList {
@@ -259,9 +259,9 @@ fun waitCards(all: List<PendingItem>): List<WaitCard> {
                 add(WaitCard.One(item))
                 continue
             }
-            val burst = groups[item.connectionId] ?: continue
-            if (placed.add(burst.connectionId)) {
-                val items = pending.filter { it.id in burst.quick }
+            val burst = groups[burstKey(item)] ?: continue
+            if (placed.add(burst.key)) {
+                val items = burst.quick.mapNotNull { id -> pending.firstOrNull { it.id == id } }
                 add(WaitCard.Group(burst.copy(all = burst.quick), items))
             }
         }

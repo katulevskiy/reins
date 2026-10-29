@@ -131,9 +131,13 @@ pub async fn post(
             return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {t}"), None)));
         }
         Err(ToolArgError::Invalid(m)) => return reply(tool_error(&m)),
-        // The personal ticket tools (P4) aren't managed tools.
+        // The personal ticket tools (P4) and batches aren't managed tools.
         Ok(
-            ToolInvocation::Wait(..) | ToolInvocation::Cancel(_) | ToolInvocation::Tickets | ToolInvocation::Reply(..),
+            ToolInvocation::Wait(..)
+            | ToolInvocation::Cancel(_)
+            | ToolInvocation::Tickets
+            | ToolInvocation::Reply(..)
+            | ToolInvocation::Batch(_),
         ) => {
             return (400, Some(mcp::rpc_error(&id, -32602, &format!("Unknown tool: {name}"), None)));
         }

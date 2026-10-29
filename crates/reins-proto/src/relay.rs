@@ -21,6 +21,9 @@ pub struct RelayRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     pub call: ToolCall,
+    /// One call of a batch (`reins_batch`): decided and answered on its own, shown with the others of its batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<crate::batch::BatchRef>,
 }
 
 /// One integration the user has connected, as told to the AI (never its accounts).
@@ -128,6 +131,7 @@ mod tests {
             call: ToolCall::GmailRead {
                 message_ids: vec!["m1".into()],
             },
+            batch: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["call"], json!({"tool": "gmail_read", "message_ids": ["m1"]}));

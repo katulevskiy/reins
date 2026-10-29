@@ -89,11 +89,13 @@ object TestData {
         taskProposal: dev.reins.core.TaskView? = null,
         circle: dev.reins.core.CircleProgress? = null,
         parked: Boolean = parkedUntil != null,
+        batch: dev.reins.core.PendingBatch? = null,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
         service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
         ticket = ticket, canDefer = canDefer, parkedUntil = parkedUntil, taskId = taskId, taskTitle = taskTitle,
         batchable = batchable, taskProposal = taskProposal, circle = circle, parked = parked,
+        batch = batch,
     )
 
     /** A task (or a proposal's envelope): one agent's, for [length] seconds from [startedAt]. */

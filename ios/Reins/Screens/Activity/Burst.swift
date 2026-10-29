@@ -1,9 +1,13 @@
 import SwiftUI
 
-/// Several requests from one AI at once (an agent run): `quick` can be approved together without opening each, `all` is
-/// everything of it that waits. Only a burst with at least two routine requests is offered (the Android app's Burst).
-/// On Activity a burst's routine requests are one waiting card; what needs a closer look keeps its own card.
+/// Several requests from one AI at once (an agent run, or one `reins_batch`): `quick` can be approved together without
+/// opening each, `all` is everything of it that waits. Only a burst with at least two routine requests is offered (the
+/// Android app's Burst). On Activity a burst's routine requests are one waiting card; what needs a closer look keeps its
+/// own card. The calls of a batch are their own burst, apart from the rest of that AI's requests; each is still its
+/// own request, approved, denied and recorded on its own.
 struct Burst: Equatable {
+    /// The batch's id for a batch, else the AI's connection.
+    var key: String
     var connectionId: String
     var label: String
     var quick: [String]
@@ -19,18 +23,27 @@ struct Burst: Equatable {
         }
     }
 
+    /// What a request is grouped by: its batch, else the AI that asked.
+    static func key(_ item: PendingItem) -> String {
+        item.batch.map { "batch:\($0.id)" } ?? item.connectionId
+    }
+
     static func of(_ pending: [PendingItem]) -> [Burst] {
         var order: [String] = []
         var groups: [String: [PendingItem]] = [:]
         for item in pending where item.kind == .request {
-            if groups[item.connectionId] == nil { order.append(item.connectionId) }
-            groups[item.connectionId, default: []].append(item)
+            let key = key(item)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(item)
         }
-        return order.compactMap { connection in
-            let items = groups[connection] ?? []
+        return order.compactMap { key in
+            // A batch in the order the AI made it.
+            let items = (groups[key] ?? []).sorted { ($0.batch?.index ?? 0) < ($1.batch?.index ?? 0) }
             let quick = items.filter(\.quick).map(\.id)
             guard quick.count >= 2, let first = items.first else { return nil }
-            return Burst(connectionId: connection, label: first.connectionLabel, quick: quick, all: items.map(\.id))
+            return Burst(
+                key: key, connectionId: first.connectionId, label: first.connectionLabel, quick: quick,
+                all: items.map(\.id))
         }
     }
 
@@ -64,7 +77,7 @@ struct Burst: Equatable {
         }
     }
 
-    /// "Approve all": the routine requests. "Deny all": everything of that AI.
+    /// "Approve all": the routine requests. "Deny all": everything of that AI (of that batch, for a batch).
     @MainActor
     func answer(_ app: AppModel, approve: Bool) async {
         await Self.answer(app, ids: approve ? quick : all, label: label, approve: approve)
@@ -108,7 +121,7 @@ enum WaitAdvice: Equatable {
 struct WaitGroup: Identifiable, Equatable {
     var items: [PendingItem]
 
-    var id: String { items.count > 1 ? "burst:\(items[0].connectionId)" : items[0].id }
+    var id: String { items.count > 1 ? "burst:\(Burst.key(items[0]))" : items[0].id }
     var first: PendingItem { items[0] }
     var isBurst: Bool { items.count > 1 }
 
@@ -125,9 +138,8 @@ struct WaitGroup: Identifiable, Equatable {
                 out.append(WaitGroup(items: [item]))
                 continue
             }
-            guard placed.insert(burst.connectionId).inserted else { continue }
-            let ids = Set(burst.quick)
-            out.append(WaitGroup(items: pending.filter { ids.contains($0.id) }))
+            guard placed.insert(burst.key).inserted else { continue }
+            out.append(WaitGroup(items: burst.quick.compactMap { id in pending.first { $0.id == id } }))
         }
         return out
     }

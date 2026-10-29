@@ -246,6 +246,37 @@ impl RelayHub {
         now_unix: i64,
         waits: Option<std::time::Duration>,
     ) -> Result<RelayRequest, QueueFull> {
+        self.submit_in(user, connection_id, connection_label, call, account, now_unix, waits, None)
+    }
+
+    /// [`RelayHub::submit`] for one call of a `reins_batch`: the phone shows the calls that share `batch.id` as one
+    /// queue. An identical call still waiting is answered as one request, as outside a batch.
+    #[allow(clippy::too_many_arguments, reason = "a request is described by this many independent facts")]
+    pub fn submit_in_batch(
+        &self,
+        user: &str,
+        connection_id: &ConnectionId,
+        connection_label: &str,
+        call: ToolCall,
+        account: Option<String>,
+        now_unix: i64,
+        batch: reins_proto::batch::BatchRef,
+    ) -> Result<RelayRequest, QueueFull> {
+        self.submit_in(user, connection_id, connection_label, call, account, now_unix, None, Some(batch))
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "a request is described by this many independent facts")]
+    fn submit_in(
+        &self,
+        user: &str,
+        connection_id: &ConnectionId,
+        connection_label: &str,
+        call: ToolCall,
+        account: Option<String>,
+        now_unix: i64,
+        waits: Option<std::time::Duration>,
+        batch: Option<reins_proto::batch::BatchRef>,
+    ) -> Result<RelayRequest, QueueFull> {
         let wait = waits.map_or(self.timing.relay_wait, |w| w.clamp(self.timing.relay_wait, ITEM_TTL));
         let request = RelayRequest {
             v: PROTOCOL_VERSION,
@@ -256,6 +287,7 @@ impl RelayHub {
             wait_until: Some(now_unix.saturating_add(i64::try_from(wait.as_secs()).unwrap_or(0))),
             account,
             call,
+            batch,
         };
         let instant = i64::try_from(self.instant_window.max(self.timing.relay_wait).as_secs()).unwrap_or(0);
         let entry = RequestEntry {

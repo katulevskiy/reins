@@ -3,11 +3,13 @@ import XCTest
 
 /// "Approve and allow for a while" and "Approve all" (the Android app's QuickApprovalsFlowTest, the logic half).
 final class QuickApprovalTests: XCTestCase {
-    private func item(_ id: String, conn: String = "c1", label: String = "Claude", quick: Bool) -> PendingItem {
+    private func item(
+        _ id: String, conn: String = "c1", label: String = "Claude", quick: Bool, batch: PendingBatch? = nil
+    ) -> PendingItem {
         PendingItem(
             kind: .request, id: id, title: "", subtitle: "", createdAt: 0, connectionId: conn, connectionLabel: label,
             action: "search", count: 1, service: "gmail", account: nil, waitUntil: nil, op: "", opTitle: "", suggestion: nil,
-            headline: "", quick: quick
+            headline: "", quick: quick, batch: batch
         )
     }
 
@@ -16,7 +18,7 @@ final class QuickApprovalTests: XCTestCase {
             item("r1", quick: true), item("r2", quick: true), item("r3", quick: false),
             item("r4", conn: "c2", label: "Codex", quick: true),
         ])
-        XCTAssertEqual(bursts, [Burst(connectionId: "c1", label: "Claude", quick: ["r1", "r2"], all: ["r1", "r2", "r3"])])
+        XCTAssertEqual(bursts, [Burst(key: "c1", connectionId: "c1", label: "Claude", quick: ["r1", "r2"], all: ["r1", "r2", "r3"])])
         XCTAssertEqual(Burst.of([item("r1", quick: true), item("r2", quick: false)]), [])
         XCTAssertEqual(Burst.names(["A", "B", "C", "D"]), "A, B and 2 more")
     }
@@ -29,6 +31,19 @@ final class QuickApprovalTests: XCTestCase {
         let cards = WaitGroup.of(pending).map { $0.items.map(\.id) }
         XCTAssertEqual(cards, [["r0"], ["r1", "r2"], ["r3", "r4"]])
         XCTAssertEqual(WaitGroup.of([item("r1", quick: true)]).map(\.isBurst), [false])
+    }
+
+    func testABatchIsItsOwnCardInTheOrderTheAiMadeIt() {
+        let b = { (i: UInt32) in PendingBatch(id: "b1", index: i, size: 3) }
+        let pending = [
+            item("r1", quick: true), item("x2", quick: true, batch: b(2)), item("x0", quick: true, batch: b(0)),
+            item("x1", quick: false, batch: b(1)), item("r2", quick: true),
+        ]
+        XCTAssertEqual(Burst.of(pending).map(\.key), ["c1", "batch:b1"])
+        XCTAssertEqual(Burst.of(pending).last?.all, ["x0", "x1", "x2"])
+        let cards = WaitGroup.of(pending).map { $0.items.map(\.id) }
+        XCTAssertEqual(cards, [["r1", "r2"], ["x0", "x2"], ["x1"]])
+        XCTAssertEqual(WaitGroup.of(pending)[1].id, "burst:batch:b1")
     }
 
     private func suggestion(_ verdict: Verdict, p: Float = 0.97, floor: Bool = false, judged: Bool = true) -> SuggestionView {
