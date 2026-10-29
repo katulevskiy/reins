@@ -47,6 +47,8 @@ TARGETS = [
         "embed": ["ReinsWidgets", "ReinsNotifications"],
         "packages": ["onnxruntime"],
         "fix_frameworks": True,
+        # Export compliance goes in the app's Info.plist only: App Store Connect reads the app's, not its extensions'.
+        "export_compliance": True,
         "swift_includes": [ORT_C],
         "settings": {
             "INFOPLIST_FILE": "Reins/Info.plist",
@@ -284,6 +286,25 @@ def main() -> None:
                 "runOnlyForDeploymentPostprocessing": "0",
             }
             phases.append(pid)
+        if t.get("export_compliance"):
+            # ITSEncryptionExportComplianceCode from the build setting REINS_EXPORT_COMPLIANCE_CODE, only when it is set;
+            # scripts/export-compliance.sh says why and when an archive fails without it. Its input is the processed
+            # Info.plist, so it runs after Xcode writes it (and before the app is signed).
+            sh = oid("phase", name, "export-compliance")
+            objects[sh] = {
+                "isa": "PBXShellScriptBuildPhase",
+                "alwaysOutOfDate": "1",
+                "buildActionMask": "2147483647",
+                "files": [],
+                "inputPaths": ["$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"],
+                "name": "Export compliance",
+                "outputPaths": [],
+                "runOnlyForDeploymentPostprocessing": "0",
+                "shellPath": "/bin/sh",
+                "shellScript": 'exec "$SRCROOT/scripts/export-compliance.sh"\n',
+                "showEnvVarsInLog": "0",
+            }
+            phases.append(sh)
         deps = []
         if t.get("embed"):
             files = []

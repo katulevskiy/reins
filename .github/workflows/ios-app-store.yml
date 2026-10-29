@@ -9,7 +9,10 @@ name: App Store submission
 #
 # Credentials: the App Store Connect API key "Reins CI" (App Manager) from the GitHub environment `testflight`
 # (AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID), the same secrets the TestFlight upload uses. No
-# signing certificate or profile: nothing is built or signed here.
+# signing certificate or profile: nothing is built or signed here. Export compliance: the secret
+# ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE, the code of the app's encryption declaration once Apple approves it (the app
+# uses standard non-exempt encryption and is distributed in France); the script refuses to submit, or dry-run, without
+# it, and checks the build declares the encryption and the declaration with that code is approved.
 
 on:
   workflow_dispatch:
@@ -82,6 +85,8 @@ jobs:
           BUILD_NUMBER: ${{ inputs.build_number }}
           RELEASE_TYPE: ${{ inputs.release_type }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # The code of the app's approved encryption declaration: without it the script refuses, dry runs included.
+          EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}
         run: |
           dir="$RUNNER_TEMP/asc"
           set -a

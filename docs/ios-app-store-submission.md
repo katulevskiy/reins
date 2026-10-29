@@ -7,17 +7,20 @@ a push, a schedule or another workflow.
 
 What the workflow does, through the App Store Connect API (`scripts/testflight.py submit`):
 
-1. Finds the build (`version`, `build_number`) of `com.reins2fa.app` and requires it to be processed (`VALID`).
+0. Refuses, before any request (with `dry_run` too), unless the secret `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` is set:
+   see "Export compliance" below.
+1. Finds the build (`version`, `build_number`) of `com.reins2fa.app` and requires it to be processed (`VALID`), to
+   declare non-exempt encryption (`usesNonExemptEncryption` true, from its Info.plist), and the app to have an
+   encryption declaration with that code in the `APPROVED` state.
 2. Stops if the app already has a review submission waiting for review, in review, with unresolved issues, or being
    cancelled.
 3. Finds the iOS App Store version of `version`, or creates it. A version past "Prepare for Submission" (or a
    rejected one) is refused. Sets its release type: **`MANUAL` by default** (you release it by hand after approval),
    or `AFTER_APPROVAL` when chosen.
-4. Sets the build's export compliance from `ITSAppUsesNonExemptEncryption` in `ios/Reins/Info.plist` (as TestFlight
-   does), attaches the build to the version, and submits the version through a review submission (a draft submission
-   of the app is reused).
+4. Attaches the build to the version and submits the version through a review submission (a draft submission of the
+   app is reused). It never sets the build's export compliance answer: the build's Info.plist gives it.
 
-With `dry_run` it does steps 1 to 3 as checks only and changes nothing. Apple refuses the final submit while
+With `dry_run` it does steps 0 to 3 as checks only and changes nothing. Apple refuses the final submit while
 anything in the checklist below is missing, and the run's error names what Apple reported.
 
 ## Running it
@@ -30,9 +33,35 @@ anything in the checklist below is missing, and the run's error names what Apple
 3. After approval, the version waits in "Pending Developer Release". Release it in App Store Connect (Distribution >
    the version > Release This Version) when you are ready.
 
+## Export compliance
+
+Reins uses standard, non-exempt encryption (end-to-end encryption between the phone, the server and the desktop) and
+is distributed in France, so Apple needs an approved encryption declaration, including the French encryption
+declaration, before any build is distributed:
+
+- `ios/Reins/Info.plist` sets `ITSAppUsesNonExemptEncryption` to `true` (always).
+- `ITSEncryptionExportComplianceCode` is **not** in the file. It is the build setting `REINS_EXPORT_COMPLIANCE_CODE`
+  (empty in `ios/Config/Reins.xcconfig`), which the app target's "Export compliance" build phase
+  (`ios/scripts/export-compliance.sh`, added by `ios/scripts/gen-project.py`) writes into the built Info.plist only
+  when it is set. A Release **archive** without it fails (`REINS_EXPORT_COMPLIANCE_REQUIRED`); Debug, simulator, test
+  and other builds just leave the key out. Locally, set it in `ios/Config/Local.xcconfig` (not committed).
+- Only the app's Info.plist carries the keys; the widget and notification extensions do not (App Store Connect reads
+  the app's).
+- The release workflow's TestFlight job passes the code from the `testflight` environment secret
+  `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` and fails before archiving while it is not set (a `verify_only` run archives
+  without it and uploads nothing). `scripts/testflight.py` never sets a build's `usesNonExemptEncryption`.
+- The App Store submission workflow passes the same secret to `scripts/testflight.py submit` as
+  `EXPORT_COMPLIANCE_CODE`; without it the script refuses (exit 2) before any request, dry runs included.
+
+Builds uploaded before this change declared `ITSAppUsesNonExemptEncryption` = `false` (and the TestFlight job set
+`usesNonExemptEncryption` = false through the API when App Store Connect differed). Do not submit or distribute them:
+submit a build archived with the code.
+
 ## Secrets
 
-No new secrets. The job uses the `testflight` environment's App Store Connect API key "Reins CI", the same secrets as
+One new secret, `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` in the `testflight` environment (above): the code App Store
+Connect shows for the approved encryption declaration. It is not a credential (it ends up in every build's Info.plist),
+but it is kept out of the repository so a build cannot claim a declaration that is not approved. The job also uses the `testflight` environment's App Store Connect API key "Reins CI", the same secrets as
 the TestFlight upload: `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID` and `APPLE_TEAM_ID` (optional, defaults
 to `5DRCQV8HY2`). The key's role is App Manager, which can create versions and submit them for review; if Apple answers
 403, check the key's role in App Store Connect > Users and Access > Integrations. No signing certificate or profile is
@@ -58,12 +87,17 @@ Most of this is one-time. Apple keeps it per app or per version as noted.
   privacy policy URL is required. The privacy manifests for required-reason APIs (`PrivacyInfo.xcprivacy`) are a
   separate, pending pull request (#270); the label must match the manifests once merged, and builds uploaded before
   it lack them (Apple may warn or reject: submit a build from a release that includes #270).
-- [ ] **Export compliance.** `ios/Reins/Info.plist` sets `ITSAppUsesNonExemptEncryption` to `false`, and the
-  workflow answers "no non-exempt encryption" for the build from it. **Confirm this is right** before the first
-  submission: the app uses end-to-end encryption between the phone, the server and the desktop. Apple's exemption
-  covers standard algorithms used only for authentication or protecting user data, and France distribution has its own
-  rules. If the answer is "yes", set the key to `true`, upload the documentation in App Store Connect (App
-  Information > App Encryption Documentation), and the workflow then leaves the build's answer to you.
+- [ ] **Export compliance** (before any build is distributed; see "Export compliance" above). The app uses standard
+  non-exempt encryption and is distributed in France:
+  1. In App Store Connect (App Information > App Encryption Documentation), add the encryption documentation, answer
+     that the app uses standard encryption algorithms and is available in France, and upload the French encryption
+     declaration. Wait until Apple **approves** it.
+  2. Copy the export compliance code App Store Connect shows for the approved declaration into the `testflight`
+     environment secret `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` (Settings > Environments > testflight). Never commit
+     it.
+  3. Until then, the TestFlight job fails at "App settings" and this workflow refuses to submit (dry runs too). After
+     it, release (or rerun the TestFlight job with `testflight_tag`) so a build with the code is uploaded, check
+     TestFlight no longer shows "Missing Compliance" for it, and submit that build.
 - [ ] **Age rating.** Answer the age rating questionnaire (App Information > Age Rating). Note any unrestricted web
   access (sign-in browser sessions) and user-generated content answers.
 - [ ] **Screenshots per device size.** Required: iPhone 6.9" (1320 × 2868 or 1290 × 2796) or 6.5"; iPad 13"
