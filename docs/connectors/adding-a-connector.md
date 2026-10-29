@@ -21,7 +21,7 @@ and mocked HTTP tests. It is compiled only for tests and is never registered. Co
 | --- | --- |
 | `service` | The service id (`"gmail"`). Tool calls carry it, and the core's registry is keyed by it. Add a constant next to the others in `connector.rs`. |
 | `name` | The display name (`"Gmail"`). |
-| `auth` | How an account is added: `AuthType::Google`, `PhoneLogin`, `Token`, `Device`, `Vault`, `Payments` or `Builtin`. `AuthType::kind()` is the `kind` the apps' Integrations screen switches on. |
+| `auth` | How an account is added: `AuthType::Google`, `PhoneLogin`, `Token`, `Device`, `Vault`, `Payments`, `OAuth` (a sign-in with PKCE run by the core: `oauth_begin` and `oauth_finish`, as [X](x.md) does) or `Builtin`. `AuthType::kind()` is the `kind` the apps' Integrations screen switches on. |
 | `scopes` | The access the connector asks the service for (OAuth scopes), when it has any. |
 | `classes` | Its kinds of change, so that a standing permission can name the ones it allows. Leave it empty if there are none. |
 | `screen` | The connector's place on the Integrations screen, or `None` if it is not listed there. |
