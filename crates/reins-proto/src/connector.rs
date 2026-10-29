@@ -27,6 +27,8 @@ pub const GITLAB: &str = "gitlab";
 pub const CODEBERG: &str = "codeberg";
 pub const BITBUCKET: &str = "bitbucket";
 pub const PAYMENTS: &str = crate::payments::PAYMENTS;
+/// X (formerly Twitter), through the X API v2; `connector::x`.
+pub const X: &str = "x";
 
 /// Longest text an argument may carry (messages, comments, event descriptions).
 pub const MAX_TEXT_LEN: usize = 8_000;
@@ -45,6 +47,7 @@ pub use manifest::{ActionManifest, AuthType, ConnectorManifest, RiskLevel};
 mod payments;
 mod vault;
 pub use vault::env_release_args;
+pub mod x;
 
 /// What a call does to the integration, which decides how it is approved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,6 +391,7 @@ impl ToolSpec {
     /// closed; a Bitwarden Send is a public link.
     fn is_open_world(&self) -> bool {
         self.service == GITHUB
+            || self.service == X
             || matches!(
                 self.tool,
                 "telegram_send"
