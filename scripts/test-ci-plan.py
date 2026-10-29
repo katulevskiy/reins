@@ -78,12 +78,15 @@ class SelectTest(unittest.TestCase):
         for workflow in ("ios.yml", "ios-core.yml", "ios-job.yml"):
             self.assertEqual(run([f".github/workflows/{workflow}"]), {"ios"}, workflow)
 
-    def test_ios_runs_here_on_pull_requests_and_manual_runs_only(self):
+    def test_ios_runs_here_on_pull_requests_manual_runs_and_main(self):
         self.assertIn("ios", run(["ios/Reins/App/ReinsApp.swift"], "full", "workflow_dispatch"))
-        self.assertNotIn("ios", run(["ios/Reins/App/ReinsApp.swift"], "full", "push"))
-        everything = plan.select(None, "full", "push", INPUTS)
+        # The release waits for ci.yml on its commit (scripts/wait-for-ci.sh): main must run iOS here.
+        self.assertIn("ios", run(["ios/Reins/App/ReinsApp.swift"], "full", "push"))
+        self.assertTrue(all(plan.select(None, "full", "push", INPUTS).values()))
+        everything = plan.select(None, "full", "schedule", INPUTS)
         self.assertFalse(everything["ios"])
         self.assertTrue(all(on for suite, on in everything.items() if suite != "ios"))
+        self.assertTrue(plan.fallback("push", {})["suites"] and json.loads(plan.fallback("push", {})["suites"])["ios"])
 
     def test_scripts(self):
         self.assertEqual(run(["scripts/install.ps1"]), {"packages", "desktop-windows"})
@@ -152,8 +155,8 @@ class RunTest(unittest.TestCase):
         suites = json.loads(out["suites"])
         self.assertFalse(suites["rust"] or suites["clippy"] or suites["packages"])
         self.assertTrue(suites["android"] and suites["desktop-macos"] and suites["replay"])
-        self.assertFalse(suites["ios"])
-        self.assertEqual(out["macos"], "1")
+        self.assertTrue(suites["ios"])
+        self.assertEqual(out["macos"], "2")
         self.assertEqual(out["docker"], "false")
 
     def test_any_failure_runs_everything(self):

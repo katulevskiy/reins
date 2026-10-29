@@ -18,9 +18,9 @@ Pull requests and `main` go through one workflow, [`ci.yml`](../../.github/workf
 4. **CI result** passes when the plan succeeded and no suite failed or was cancelled. A skipped or reused suite counts
    as passed. This is the one check to require.
 
-`ios.yml` runs iOS on `main`, at night and by hand, with the UI tests, in the background (see
-[Admission](#admission)). Releases wait for `ci.yml` on their commit ([`scripts/wait-for-ci.sh`](../../scripts/wait-for-ci.sh)),
-never for `ios.yml`.
+Releases wait for `ci.yml` on their commit ([`scripts/wait-for-ci.sh`](../../scripts/wait-for-ci.sh)), never for
+`ios.yml`. `ci.yml`'s iOS job (the build and ReinsTests) runs on pushes to `main` too, so the release needs it. `ios.yml`
+runs iOS on `main`, at night and by hand, with the UI tests, in the background (see [Admission](#admission)).
 
 ## Measurements (2026-10-16 to 2026-10-27)
 
@@ -185,14 +185,17 @@ apart. On `main`, every suite runs unless `main` recorded a pass on its exact in
 
 ### iOS
 
-- Pull requests and manual runs of `ci.yml` run iOS as one macOS job:
+- Pull requests, manual runs and pushes to `main` of `ci.yml` run iOS as one macOS job:
   1. the prebuilt core (`ios-core.yml` publishes one per content hash), or a fresh build of it;
   2. the check of the committed bindings;
   3. the build for testing;
   4. ReinsTests.
 - That replaces the three-job chain, which queued three times.
-- On `main`, `ios.yml` runs the core, the build, ReinsTests and the five UI shards in the background. They never gate
-  a merge or a release.
+- On `main` that job is part of **CI result**, so the release waits for it: a release publishes only a commit whose
+  iOS build and ReinsTests passed (or passed on the same inputs). It skips admission, like the rest of `main`'s CI,
+  and `main`'s runs are never cancelled.
+- On `main`, `ios.yml` also runs the core, the build, ReinsTests and the five UI shards in the background. The UI
+  shards never gate a merge or a release.
 
 ## Reuse
 
@@ -336,7 +339,8 @@ poll:
   left.
 
 `scripts/wait-for-ci.sh`, the release's wait for CI, waits out a spent rate limit until its reset (three times at
-most) instead of giving up. The publish job allows for that.
+most) instead of giving up, and otherwise polls for up to 90 minutes (CI on `main` includes the iOS job). The
+publish job allows for that.
 
 Pull request runs that need macOS wait `CI_DEBOUNCE_SECONDS` (60) first. A newer push cancels the run, so a quick
 series of pushes only takes a macOS runner for the last one.
@@ -356,7 +360,7 @@ series of pushes only takes a macOS runner for the last one.
 | Strategy | Here |
 |---|---|
 | Measure first | Yes: above |
-| One entry workflow, `plan`, a single `CI result` | Yes. iOS on pull requests moved into `ci.yml`. `ios.yml` stays separate on `main`, because releases wait for `ci.yml` and must not wait for iOS. |
+| One entry workflow, `plan`, a single `CI result` | Yes. iOS on pull requests moved into `ci.yml`. On `main`, `ci.yml` runs the iOS build and ReinsTests too, so releases wait for them; `ios.yml` keeps the UI shards in the background. |
 | Admission: all of a run's runners free, first come, first served, reservation in the job name, fails open | For macOS only: Linux and Windows never queue here. Releases come first, `main`'s CI is never gated, and background work goes last and steps aside. |
 | Fast PR tier | For `desktop-macos` only, the one platform suite on a scarce runner. Windows and Android run as on `main`. |
 | Reuse on unchanged inputs, failing closed | Yes, the same scheme. The inputs also drive selection, and come from the Cargo graph. On `main` the fingerprint, not the diff, decides. |
