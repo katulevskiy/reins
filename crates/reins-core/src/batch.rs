@@ -22,7 +22,7 @@ pub fn pending_batch(parked: &ParkedRequest) -> Option<PendingBatch> {
 /// Whether "Approve all" may approve it untouched: never a standing permission or a purchase (their own screens).
 fn approvable_in_bulk(parked: &ParkedRequest) -> bool {
     !matches!(parked.request.call, ToolCall::RequestGrant { .. })
-        && !parked.connector.as_ref().is_some_and(|h| h.purchase.is_some())
+        && parked.connector.as_ref().is_none_or(|h| h.purchase.is_none())
 }
 
 impl Engine {
