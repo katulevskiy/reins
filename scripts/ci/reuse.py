@@ -74,7 +74,9 @@ SUITE_PACKAGES: dict[str, list[str] | AllBut] = {
 
 # The non-Rust files each suite's jobs use.
 SUITE_INPUTS: dict[str, list[str]] = {
-    "rust": [],
+    # The rust job also runs the onboarding Playwright tests.
+    "rust": ["playwright/onboarding.config.ts", "playwright/tests/onboarding/**", "playwright/package.json",
+             "playwright/package-lock.json"],
     "clippy": [],
     "replay": [],
     # scripts/test-linux-packages.py builds a fake release from these (and pins nfpm against release.yml's).
