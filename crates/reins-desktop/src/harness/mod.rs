@@ -839,9 +839,9 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
             let earlier = records.iter_mut().find_map(|a| match (&mut a.change, &change) {
                 (
                     Change::Json {
-                        path: p,
-                        marker: m,
-                        value: v,
+                        path: old_path,
+                        marker: old_marker,
+                        value: old_value,
                         ..
                     },
                     Change::Json {
@@ -849,17 +849,17 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
                         marker,
                         ..
                     },
-                ) if a.file == file && p == path && m == marker => Some(v),
+                ) if a.file == file && old_path == path && old_marker == marker => Some(old_value),
                 _ => None,
             });
             match (earlier, change) {
                 (
-                    Some(v),
+                    Some(old_value),
                     Change::Json {
                         value,
                         ..
                     },
-                ) => *v = value,
+                ) => *old_value = value,
                 (_, change) => records.push(Applied {
                     file: file.clone(),
                     created_file: false,
