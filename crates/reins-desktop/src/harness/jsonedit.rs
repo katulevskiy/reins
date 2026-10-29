@@ -397,6 +397,18 @@ pub fn insert(text: &str, root: &Node, container: &Node, entry: &Entry<'_>) -> (
     }
 }
 
+/// Puts `value` where `node` (a node of `text`) is, laid out like it: over several lines when it was, else on one.
+#[must_use]
+pub fn replace(text: &str, root: &Node, node: &Node, value: &Value) -> String {
+    let (start, end) = (node.start(), node.end());
+    let rendered = if text[start..end].contains('\n') {
+        pretty(value, &indent_unit(text, root), line_indent(text, start))
+    } else {
+        value.to_string()
+    };
+    format!("{}{rendered}{}", &text[..start], &text[end..])
+}
+
 /// Removes entry `index` of `container`; when it was the only one, the container's inside becomes `interior` (or
 /// nothing). The exact inverse of [`insert`] for the last entry.
 #[must_use]
