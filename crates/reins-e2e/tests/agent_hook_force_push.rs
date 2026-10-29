@@ -72,7 +72,11 @@ fn in_home(command: &mut Command, home: &Path) {
 
 /// `curl -fsSL <site>/install.sh | sh` against a local release list holding the program under test.
 fn install(home: &Path, releases: &Path) -> PathBuf {
-    let os = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let os = if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
     let platform = format!("{os}-{}", std::env::consts::ARCH);
     std::fs::create_dir_all(releases.join("files")).unwrap();
     std::fs::copy(reins_binary(), releases.join("files/reins")).unwrap();
