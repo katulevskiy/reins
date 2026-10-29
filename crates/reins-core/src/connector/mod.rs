@@ -5,6 +5,8 @@
 pub mod calendar;
 pub mod desktop;
 pub mod device;
+#[cfg(test)]
+pub mod example;
 pub mod flow;
 pub(crate) mod git;
 pub mod githost;
@@ -20,7 +22,7 @@ pub mod vault;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use reins_proto::connector::{ConnectorCall, Effect};
+use reins_proto::connector::{ConnectorCall, ConnectorManifest, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -132,6 +134,12 @@ pub struct Party {
 #[async_trait::async_trait]
 pub trait Connector: Send + Sync {
     fn service(&self) -> &'static str;
+
+    /// What this connector is: its name, how an account is added, its actions and their risk
+    /// ([`reins_proto::connector::manifest`]). The tools it runs are the ones listed there for its service.
+    fn manifest(&self) -> Option<&'static ConnectorManifest> {
+        reins_proto::connector::manifest::manifest(self.service())
+    }
 
     /// The party `written` (as a request names it: a Telegram chat, a GitHub login) is, for `account`. `Ok(None)`:
     /// this integration keeps no ids, or there is no such party.
@@ -245,6 +253,16 @@ impl Registry {
 
     pub fn services(&self) -> Vec<&'static str> {
         self.map.keys().copied().collect()
+    }
+
+    /// The manifests of the connectors this phone runs, in the manifests' order.
+    pub fn manifests(&self) -> Vec<&'static ConnectorManifest> {
+        reins_proto::connector::manifest::manifests().iter().filter(|m| self.map.contains_key(m.service)).collect()
+    }
+
+    /// The connectors with a manifest this phone does not run (not in this build, or not set up).
+    pub fn missing(&self) -> Vec<&'static ConnectorManifest> {
+        reins_proto::connector::manifest::manifests().iter().filter(|m| !self.map.contains_key(m.service)).collect()
     }
 }
 
