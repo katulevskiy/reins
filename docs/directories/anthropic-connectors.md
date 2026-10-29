@@ -155,40 +155,37 @@ where adding a connector is in beta.
 
 ## Test and launch
 
-The portal needs credentials for a fully populated account. Reins approvals happen on a phone, so a reviewer needs
-one of these options:
+The portal needs credentials for a fully populated account. Use the existing review account
+**`appreview@reins2fa.com`**: a WorkOS user with email and password sign-in and no MFA (named in
+[android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access) as the App Store reviewers' account).
+Which 1Password item holds its password is not documented; ask before submitting (question 4). The password goes only
+into the portal, never into this repository. ChatGPT uses the other review account, `playreview@reins2fa.com`, so
+the two reviews never share connections or Activity.
 
-- **Option A (main option): a directory reviewer account plus a test phone approver.** The pattern the store reviews
-  already use: [android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access) documents dedicated WorkOS
-  users with email and password sign-in and no MFA, one per store, used only by that store's reviewers, with the
-  password kept in the team's password manager. For Claude: a separate WorkOS user `<CLAUDE_REVIEWER_EMAIL>` in
-  `<TEST_ORG>`, with demo Gmail, GitHub and Calendar accounts connected. The phone signed in to it,
-  `<APPROVER_DEVICE>`, stays online in Autopilot **Bypass** and approves every call. It also has to confirm the
-  two-digit code a new connection shows, which Bypass does not do: either automatically (a connection auto-confirm
-  limited to that account, off by default, time-boxed and logged; new code) or by `<APPROVER_CONTACT>` in a set
-  window. Whether to create the account is Daniel's call. The password goes only into the portal, never into this
-  repository.
-- **Option B:** a review session where the team approves on the phone while the reviewer tests.
+Approvals happen on the phone signed in to `appreview@reins2fa.com` (`<APPROVER_DEVICE>`). Autopilot **Bypass**
+approves every request, but not the two-digit code a new connection shows (see [Autopilot](../autopilot.md)), so
+someone on the team taps that code when the reviewer signs in (question 7).
 
 Confirm before submitting that every listed tool was run once, either through
 [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) or as a custom connector in Claude.
 
 ### Reviewer walkthrough
 
-Written as if the test organization and approval phone exist. The placeholders are listed in question 4.
+The placeholders are listed in question 4.
 
 Before the review, the Reins team:
 
-1. Signs `<CLAUDE_REVIEWER_EMAIL>` in to the Reins account of `<TEST_ORG>` on `<APPROVER_DEVICE>`, a phone that stays on
-   charge and online, with notifications allowed.
-2. Connects `<DEMO_GMAIL>` (Gmail, Google Calendar), `<DEMO_GITHUB_USER>` (GitHub, with the sandbox repository
+1. Keeps `<APPROVER_DEVICE>`, signed in to `appreview@reins2fa.com`, on charge and online, with notifications allowed.
+   Per [android/PLAY_STORE.md](../../android/PLAY_STORE.md#app-access), never sign the account in on a second phone:
+   that phone opens the Unlock screen instead.
+2. Connects `<DEMO_GMAIL>` (Gmail, Google Calendar) and `<DEMO_GITHUB_USER>` (GitHub, with the sandbox repository
    `<DEMO_REPO>`) on `<APPROVER_DEVICE>`, and fills them with the sample data in question 4.
-3. Turns on Autopilot **Bypass** on `<APPROVER_DEVICE>` for the review window `<REVIEW_WINDOW>` (Option A), or puts
-   `<APPROVER_CONTACT>` on call (Option B).
+3. Turns on Autopilot **Bypass** on `<APPROVER_DEVICE>` for the review window `<REVIEW_WINDOW>`.
 4. Checks which tool profile the server runs (`REINS_MCP_TOOL_PROFILE=claude` if Daniel chooses it, gap 1).
 
 Lockdown: `<APPROVER_DEVICE>` must not be in Lockdown during the review: Lockdown denies every request, including
-what already waits, and a global Lockdown overrides every connection's own mode. Where it is turned off, from the repository (the exact in-app labels are **unverified**):
+what already waits, and a global Lockdown overrides every connection's own mode. Where it is turned off, from the
+repository (the exact in-app labels are **unverified**):
 
 - In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md), lines 6 and 18).
 - Android: while Lockdown is on, the Quick Settings tile opens Trust to end it
@@ -196,21 +193,18 @@ what already waits, and a global Lockdown overrides every connection's own mode.
 - iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`, line 8).
 - Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md),
   lines 536 to 541), and Lockdown on one phone wins across the account's phones
-  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md), line 20), so check every phone signed in to the test account.
+  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md), line 20), so check the phone signed in to the review account.
 
 The reviewer:
 
 1. Adds the connector as in "Add and remove Reins as a custom connector" (`https://app.reins2fa.com/mcp`), with
    **Use Claude's published identity**.
-2. On the sign-in page enters `<CLAUDE_REVIEWER_EMAIL>` and the password from the portal. Reins then shows a
-   two-digit code, which `<APPROVER_DEVICE>` confirms (Option A), or the reviewer sends it to `<APPROVER_CONTACT>`
-   (Option B).
+2. On the sign-in page enters `appreview@reins2fa.com` and the password from the portal. Reins then shows a
+   two-digit code, which the team confirms on `<APPROVER_DEVICE>`.
 3. In a new chat, turns Reins on under **+ > Connectors**, and sets the Reins tools to **Always allow** so that the
    phone is the only approval (optional).
-4. Runs the test cases below in order. With Option A each approval answers within a few seconds. With Option B,
-   `<APPROVER_CONTACT>` approves each card and reads what it showed back to the reviewer.
-5. Denies one request (Option B only, test 8) to see Claude report the denial.
-6. Removes the connector (see above) at the end. `<TEST_ORG>` then removes the connection in the Reins app.
+4. Runs the test cases below in order. With Bypass on, each approval answers within a few seconds.
+5. Removes the connector (see above) at the end. The team then removes the connection in the Reins app.
 
 ### Test cases
 
@@ -226,8 +220,7 @@ tab.
 | 5 | "Open an issue in `<DEMO_REPO>` titled 'Fix login timeout', with the steps from this chat." | `github_create_issue` | A card with the repository, title and body. |
 | 6 | "Which of my pull requests in `<DEMO_REPO>` have failing checks?" | `github_pr_list`, then `github_checks_get` | Cards for the reads (or one, if a time-limited permission covers them). |
 | 7 | "For the next hour, let yourself read emails from `<DEMO_SENDER>` without asking." | `reins_request_access` | A card for the permission: sender, read only, one hour. Later reads from that sender need no card. |
-| 8 | "Send `<DEMO_RECIPIENT>` the text 'test'." (Option B: deny it) | `gmail_send` | A card. After **Deny**, Claude says the user denied it on their Reins device. |
-| 9 | "Buy me a phone case" or "Get my GitHub password from the vault" | none | No card: with the `claude` profile, no payments or vault tool is listed, so Claude says it can't. |
+| 8 | "Buy me a phone case" or "Get my GitHub password from the vault" | none | No card: with the `claude` profile, no payments or vault tool is listed, so Claude says it can't. |
 
 ## Example prompts
 
@@ -255,7 +248,7 @@ first (see the gaps below).
 | Privacy policy (collection, use, retention, contact) | Done at `https://reins2fa.com/privacy`. Check that the site's copy matches [privacy-policy.md](../legal/privacy-policy.md) and the retention table above. |
 | Public documentation | Done (`/developers`, GitHub docs). A help-center style "Use Reins with Claude" page would be better. |
 | Support channel | `support@reins2fa.com` (reply within 2 business days). The support page `https://reins2fa.com/support` is **pending** (404). |
-| Test account with sample data | **Missing**: see the reviewer walkthrough |
+| Test account with sample data | Account exists (`appreview@reins2fa.com`); demo data and connections to check (question 4) |
 | No money transfers or financial transactions | **Gap**: `payments_purchase_request` buys things with a virtual card. The optional `claude` tool profile (proposed) removes it. |
 | Tested as a custom connector in Claude | To do before submitting |
 
@@ -272,16 +265,13 @@ first (see the gaps below).
    server-wide, so the listing needs its own deployment or a per-endpoint profile (question 5). Daniel decides
    whether to drop the tools. Without it, expect a rejection with the payments tools listed, or ask
    `mcp-review@anthropic.com` whether an approved, phone-confirmed purchase is acceptable.
-2. **Reviewer access.** Approvals need a phone, and there is no Claude reviewer account yet. Main option (Option A):
-   a dedicated WorkOS reviewer user with email and password and no MFA, as in
-   [android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access), plus a test phone approver in
-   Autopilot Bypass. It needs a dedicated Google Workspace or Gmail account, a GitHub user, a phone or emulator that
-   stays online, and a way to confirm the new-connection code (automatic, new code; or the team). Daniel decides
-   whether to create the account (question 4).
+2. **Reviewer access.** The reviewer signs in as `appreview@reins2fa.com`; approvals and the new-connection code
+   happen on `<APPROVER_DEVICE>` (see "Test and launch", questions 4 and 7).
 3. **No store build.** There is no App Store build yet (iOS is a TestFlight beta), and Android is an APK or
    Google Play closed testing only (no public listing; tracks in
    [android/PLAY_STORE.md](../../android/PLAY_STORE.md)). A reviewer
-   who wants their own phone must join TestFlight, or sideload the APK or be invited to the closed test. Option A avoids this.
+   who wants their own phone must join TestFlight, or sideload the APK or be invited to the closed test. The review
+   account avoids this: the reviewer only signs in on the web.
 4. **Google verification.** Gmail and Google Calendar use scopes that need Google's app verification before the
    general public can use them (see the README's status section). Reviewers use the team's demo account, but public
    users can't connect Gmail until it passes.
@@ -297,23 +287,25 @@ first (see the gaps below).
 2. **Primary contact.** The name and email that get review updates (`support@reins2fa.com`, or a person?).
 3. **OAuth client.** Submit as `oauth_cimd` (recommended) or `oauth_dcr`? Has a Claude connection with
    "Use Claude's published identity" been tested end to end?
-4. **Test organization and placeholders.** Values for `<TEST_ORG>`, `<CLAUDE_REVIEWER_EMAIL>`, `<APPROVER_DEVICE>` (phone or
-   emulator, who keeps it online), `<APPROVER_CONTACT>` (Option B), `<REVIEW_WINDOW>`, `<DEMO_GMAIL>`,
-   `<DEMO_SENDER>`, `<DEMO_RECIPIENT>`, `<DEMO_GITHUB_USER>` and `<DEMO_REPO>`, and the sample data: a few emails from
-   `<DEMO_SENDER>`, two calendar events tomorrow, and a pull request with a failing check in `<DEMO_REPO>`.
+4. **Review account and placeholders.** Which 1Password item holds the `appreview@reins2fa.com` password (not
+   documented), and is that account already connected to demo services? Values for `<APPROVER_DEVICE>`,
+   `<REVIEW_WINDOW>`, `<DEMO_GMAIL>`, `<DEMO_SENDER>`, `<DEMO_RECIPIENT>`, `<DEMO_GITHUB_USER>` and `<DEMO_REPO>`, and
+   the sample data: a few emails from `<DEMO_SENDER>`, two calendar events tomorrow, and a pull request with a
+   failing check in `<DEMO_REPO>`.
 5. **Tool profile.** Drop the tools for the listing (merge `feat/directory-tool-profile` and serve it from a
    deployment that runs `REINS_MCP_TOOL_PROFILE=claude`, a second URL), make the profile per endpoint first, or keep
    the full set? The `claude` profile now matches `chatgpt`, which also leaves out the vault password generators;
    Anthropic's policy alone would allow a looser set (only Reins Pay out).
 6. **Support page.** When will `https://reins2fa.com/support` be live? Submit only after it is.
-7. **Bypass for review.** Is Autopilot Bypass on the demo phone acceptable, given that the review then never sees a
-   real decision? Or Option B with a scheduled session?
+7. **For Chief of Staff: the phone step.** The account is documented for App Store reviewers only, and must stay
+   signed in on one phone. Can a phone signed in to it stay online in Bypass for the Claude review, and who taps the
+   new-connection code? Is Bypass acceptable, given that the review then never sees a real decision?
 
 ## What you must do yourself
 
 1. Sign in to claude.ai with an account on a paid plan in the organization that publishes Reins. Open
    [claude.ai/directory/manage](https://claude.ai/directory/manage).
 2. Decide what to do about payments and secrets (gap 1, question 5).
-3. Set up the demo account and phone (gap 2, question 4) and publish the support page (gap 5).
+3. Prepare the review account's demo data and phone (gap 2, questions 4 and 7) and publish the support page (gap 5).
 4. Add Reins as a custom connector in Claude and run every test case.
 5. Paste the fields above, accept the seven acknowledgments and submit. Escalations: `mcp-review@anthropic.com`.

@@ -46,6 +46,10 @@ What the remote does, for the reviewer of any catalog that reads this entry:
   registration, client ID metadata documents (CIMD), token endpoint auth `none` and `private_key_jwt`, and the device
   flow. Checked live on 2026-10-29.
 
+Review account: none. The registry has no review and stores no credentials. If a catalog that reads the entry asks for
+a test sign-in, use the existing account its directory uses: `appreview@reins2fa.com` as for Claude, or
+`playreview@reins2fa.com` as for ChatGPT (see [android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access)).
+
 ## Namespace verification
 
 The registry checks that the publisher controls the namespace in `name`. It does not check the remote URL. A remote
