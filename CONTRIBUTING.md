@@ -280,6 +280,10 @@ never touches the GitHub release: rerun the failed job. A newer release's upload
 running. To test or redo one release, run the Release workflow from main with `testflight_tag` = `vX.Y.Z`; only this
 job runs.
 
+App Store review is a separate, manual step: the App Store submission workflow (`ios-app-store.yml`) sends a
+processed TestFlight build for review with a manual release, using the same API key. Checklist and steps:
+[docs/ios-app-store-submission.md](docs/ios-app-store-submission.md).
+
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.
 

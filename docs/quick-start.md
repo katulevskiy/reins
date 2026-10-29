@@ -6,8 +6,9 @@ pointing them at it.
 
 You need:
 
-- an Android phone (Android 12 or later), or an iPhone or iPad with iOS 26 or later (no App Store build yet: build the
-  app from [`ios/`](../ios/README.md));
+- an Android phone (Android 12 or later), or an iPhone or iPad with iOS 26 or later (not on the App Store yet: TestFlight,
+  or build the app from [`ios/`](../ios/README.md); submission steps:
+  [ios-app-store-submission.md](ios-app-store-submission.md));
 - for the desktop app, a Linux computer (x86_64 or aarch64), a Mac (Apple silicon or Intel) or a Windows 10 or 11
   computer (x86_64; Arm when the release has a build for it).
 

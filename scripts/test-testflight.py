@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -528,4 +529,121 @@ check("iphonesimulator iphoneos iphoneos-release" in ios_core and "(iphonesimula
       "ios-core.yml publishes the Release core")
 check("--profile host-tool" in build_core and "target/host-tool/uniffi-bindgen" in build_core,
       "uniffi-bindgen is a cheap host build")
+# submit: a processed build goes to App Store review with a manual release, through a review submission.
+class FakeStore:
+    """The App Store endpoints `submit` uses: one build, an optional App Store version, review submissions."""
+
+    def __init__(self, state="VALID", version=None, reviews=(), attached=None, items=(), create_error=None):
+        self.calls = []
+        self.state = state
+        self.version = version
+        self.reviews = list(reviews)
+        self.attached = attached
+        self.items = list(items)
+        self.create_error = create_error
+
+    def request(self, method, url, headers=None, body=None, timeout=60):
+        self.calls.append((method, url.removeprefix(tf.API + "/").split("?")[0], body))
+        path = url.removeprefix(tf.API + "/")
+        if path.startswith("apps?"):
+            return {"data": [{"id": "app1", "attributes": {"bundleId": tf.BUNDLE_ID}}]}
+        if path.startswith("builds?"):
+            return {"data": [{"id": "build-7", "attributes": {"version": "7", "processingState": self.state,
+                                                              "usesNonExemptEncryption": None}}]}
+        if path.startswith("apps/app1/appStoreVersions?"):
+            return {"data": [self.version] if self.version else []}
+        if path.startswith("reviewSubmissions?"):
+            states = urllib.parse.parse_qs(path.split("?", 1)[1])["filter[state]"][0].split(",")
+            return {"data": [r for r in self.reviews if r["attributes"]["state"] in states]}
+        if path.endswith("/build") and method == "GET":
+            return {"data": {"id": self.attached} if self.attached else None}
+        if path.startswith("reviewSubmissions/") and "/items" in path:
+            return {"data": self.items}
+        if path == "appStoreVersions" and method == "POST":
+            if self.create_error:
+                raise tf.AscError(*self.create_error)
+            return {"data": {"id": "ver-new", "attributes": body["data"]["attributes"]}}
+        if path == "reviewSubmissions" and method == "POST":
+            return {"data": {"id": "sub-new"}}
+        return {}
+
+    def writes(self):
+        return [(m, u) for m, u, _ in self.calls if m in ("POST", "PATCH", "DELETE")]
+
+    def body(self, method, path):
+        return [b for m, u, b in self.calls if m == method and u == path]
+
+
+with tempfile.TemporaryDirectory(prefix="reins-app-store-") as directory:
+    key = Path(directory) / "AuthKey.p8"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", str(key)],
+                   check=True, capture_output=True)
+    env = {"AC_API_KEY_ID": "KEY123", "AC_API_ISSUER_ID": "issuer-uuid"}
+    base = ["submit", "--version", "1.0.0", "--build-number", "7", "--key-file", str(key)]
+
+    store = FakeStore()
+    code, out, err = run(base, store, env)
+    check(code == 0 and "result=SUBMITTED" in out, (out, err))
+    check(store.writes() == [("PATCH", "builds/build-7"), ("POST", "appStoreVersions"),
+                             ("PATCH", "appStoreVersions/ver-new/relationships/build"), ("POST", "reviewSubmissions"),
+                             ("POST", "reviewSubmissionItems"), ("PATCH", "reviewSubmissions/sub-new")], store.writes())
+    created = store.body("POST", "appStoreVersions")[0]["data"]
+    check(created["attributes"] == {"platform": "IOS", "versionString": "1.0.0", "releaseType": "MANUAL"}
+          and created["relationships"]["app"]["data"]["id"] == "app1", "a manual release by default")
+    check(store.body("PATCH", "appStoreVersions/ver-new/relationships/build")[0] ==
+          {"data": {"type": "builds", "id": "build-7"}}, "the build attached")
+    item = store.body("POST", "reviewSubmissionItems")[0]["data"]["relationships"]
+    check(item["reviewSubmission"]["data"]["id"] == "sub-new" and item["appStoreVersion"]["data"]["id"] == "ver-new",
+          item)
+    check(store.body("PATCH", "reviewSubmissions/sub-new")[0]["data"]["attributes"] == {"submitted": True}, "submitted")
+    check(store.body("PATCH", "builds/build-7")[0]["data"]["attributes"] == {"usesNonExemptEncryption": False},
+          "export compliance from the Info.plist")
+
+    # --dry-run reads only.
+    store = FakeStore()
+    code, out, err = run(base + ["--dry-run"], store, env)
+    check(code == 0 and "result=DRY_RUN" in out and store.writes() == [], (out, err, store.writes()))
+
+    # An existing version (released at once before) becomes manual; the attached build and a draft are reused.
+    existing = {"id": "ver-1", "attributes": {"versionString": "1.0.0", "appVersionState": "PREPARE_FOR_SUBMISSION",
+                                              "releaseType": "AFTER_APPROVAL"}}
+    draft = {"id": "sub-1", "attributes": {"state": "READY_FOR_REVIEW"}}
+    store = FakeStore(version=existing, reviews=[draft], attached="build-7",
+                      items=[{"relationships": {"appStoreVersion": {"data": {"id": "ver-1"}}}}])
+    code, out, err = run(base, store, env)
+    check(code == 0 and store.writes() == [("PATCH", "builds/build-7"), ("PATCH", "appStoreVersions/ver-1"),
+                                           ("PATCH", "reviewSubmissions/sub-1")], (err, store.writes()))
+    check(store.body("PATCH", "appStoreVersions/ver-1")[0]["data"]["attributes"] == {"releaseType": "MANUAL"}, "manual")
+    store = FakeStore(version=existing)
+    code, out, err = run(base + ["--release-type", "AFTER_APPROVAL"], store, env)
+    check(code == 0 and ("PATCH", "appStoreVersions/ver-1") not in store.writes(), "AFTER_APPROVAL when asked")
+
+    # Refusals: an unprocessed build, a submission in review, a version past submission; nothing is written.
+    for store, why in ((FakeStore(state="PROCESSING"), "not processed"),
+                       (FakeStore(reviews=[{"id": "s", "attributes": {"state": "IN_REVIEW"}}]), "IN_REVIEW"),
+                       (FakeStore(version={"id": "v", "attributes": {"versionString": "1.0.0",
+                                                                     "appVersionState": "READY_FOR_DISTRIBUTION"}}),
+                        "READY_FOR_DISTRIBUTION")):
+        code, out, err = run(base, store, {**env, "GITHUB_ACTIONS": "true"})
+        check(code == 1 and why in err and store.writes() == [], (why, err, store.writes()))
+    store = FakeStore(create_error=(409, "another version", "ENTITY_ERROR"))
+    code, out, err = run(base, store, env)
+    check(code == 1 and "Prepare for Submission" in err, err)
+    code, out, err = run(["submit", "--version", "1.0; x", "--build-number", "7", "--key-file", str(key)], FakeStore(),
+                         env)
+    check(code == 2, "a malformed version")
+
+# The App Store workflow: by hand only, from main, with the testflight environment's API key; manual release first.
+store_workflow = (ROOT / ".github/workflows/ios-app-store.yml").read_text()
+trigger = store_workflow.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+check(trigger.startswith("  workflow_dispatch:\n") and "push" not in trigger and "schedule" not in trigger
+      and "pull_request" not in trigger and "workflow_run" not in trigger, "only workflow_dispatch")
+check("options: [MANUAL, AFTER_APPROVAL]\n        default: MANUAL" in trigger, "manual release by default")
+check("github.ref == 'refs/heads/main'" in store_workflow and "environment: testflight" in store_workflow,
+      "main and the testflight environment")
+check("scripts/testflight.py secrets --need asc" in store_workflow and "scripts/testflight.py submit" in store_workflow,
+      "the API key, then submit")
+runs = re.findall(r"\n        run: (\|\n(?:          [^\n]*\n|\n)*|[^\n]*\n)", store_workflow)
+check(len(runs) == 4 and not any("${{" in r for r in runs), "inputs and secrets reach the scripts through env only")
+
 print(f"{checks} TestFlight checks passed")

@@ -18,6 +18,16 @@
         the app went to review in the last 24 hours (a notice: the next day's first release goes), and Apple's own
         "submission limit reached" is a notice too.
 
+    scripts/testflight.py submit --version 0.6.0 --build-number 29860000 [--release-type MANUAL] [--dry-run]
+        Sends a processed build to App Store review (.github/workflows/ios-app-store.yml, by hand only): finds or
+        creates the App Store version of --version (iOS), sets its release type (MANUAL by default: the maintainer
+        releases it after approval), sets the build's export compliance as `finish` does, attaches the build, and
+        submits the version through a review submission (a draft submission of the app is reused). Fails when the
+        build is not processed, the version is past "Prepare for Submission" (or rejected), or the app has a
+        submission waiting for or in review. --dry-run reads and reports only. The version's metadata, screenshots,
+        privacy answers and review information are App Store Connect's (docs/ios-app-store-submission.md); Apple
+        refuses the submission while any is missing, and the error says which.
+
     scripts/testflight.py profile --plist decoded.plist --bundle-id com.reins2fa.app --team 5DRCQV8HY2
         Checks a provisioning profile (as `security cms -D` decodes it) is an App Store profile of that team for that
         bundle id, still valid, and prints its UUID.
@@ -66,6 +76,12 @@ TOKEN_LIFETIME = 15 * 60  # Apple accepts at most 20 minutes
 REVIEW_SPACING_HOURS = 24
 # A build submitted for review was uploaded within this many days (a build can be submitted days after its upload).
 REVIEW_LOOKBACK_DAYS = 14
+# App Store versions that can still take a build and be submitted.
+EDITABLE_VERSION_STATES = frozenset({"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED",
+                                     "INVALID_BINARY"})
+# Review submissions of the app that block a new one.
+OPEN_REVIEW_STATES = ("WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES", "CANCELING")
+RELEASE_TYPES = ("MANUAL", "AFTER_APPROVAL")
 TRANSIENT = frozenset({0, 408, 429, 500, 502, 503, 504})
 # The beta review states in which a build needs no (new) submission.
 REVIEWED = frozenset({"WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "BETA_APPROVED", "IN_BETA_TESTING"})
@@ -167,6 +183,46 @@ def group_builds_body(build_id):
 def review_submission_body(build_id):
     return {"data": {"type": "betaAppReviewSubmissions",
                      "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}
+
+
+def app_store_version_create_body(app_id, version, release_type):
+    return {"data": {"type": "appStoreVersions",
+                     "attributes": {"platform": "IOS", "versionString": version, "releaseType": release_type},
+                     "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}}
+
+
+def app_store_version_update_body(version_id, release_type):
+    return {"data": {"type": "appStoreVersions", "id": version_id, "attributes": {"releaseType": release_type}}}
+
+
+def version_build_body(build_id):
+    return {"data": {"type": "builds", "id": build_id}}
+
+
+def review_create_body(app_id):
+    return {"data": {"type": "reviewSubmissions", "attributes": {"platform": "IOS"},
+                     "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}}
+
+
+def review_item_body(submission_id, version_id):
+    return {"data": {"type": "reviewSubmissionItems",
+                     "relationships": {"reviewSubmission": {"data": {"type": "reviewSubmissions", "id": submission_id}},
+                                       "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}}}}
+
+
+def review_submit_body(submission_id):
+    return {"data": {"type": "reviewSubmissions", "id": submission_id, "attributes": {"submitted": True}}}
+
+
+def version_state(version):
+    attributes = version.get("attributes") or {}
+    return attributes.get("appVersionState") or attributes.get("appStoreState") or "?"
+
+
+def item_version(item):
+    """The App Store version id a review submission item holds, or None."""
+    related = ((item.get("relationships") or {}).get("appStoreVersion") or {}).get("data") or {}
+    return related.get("id")
 
 
 def what_to_test(markdown, version, release_url=None, limit=WHAT_TO_TEST_LIMIT):
@@ -583,6 +639,77 @@ class Asc:
         return errors
 
 
+    def app_store_version(self, app_id, version):
+        """The app's iOS App Store version `version`, or None."""
+        found = self.pages(f"apps/{app_id}/appStoreVersions?" + urllib.parse.urlencode(
+            {"filter[versionString]": version, "filter[platform]": "IOS", "limit": 10,
+             "fields[appStoreVersions]": "versionString,platform,appVersionState,appStoreState,releaseType"}))
+        found = [v for v in found if (v.get("attributes") or {}).get("versionString") == version]
+        return found[0] if found else None
+
+    def review_submissions(self, app_id, states):
+        return self.pages("reviewSubmissions?" + urllib.parse.urlencode(
+            {"filter[app]": app_id, "filter[platform]": "IOS", "filter[state]": ",".join(states), "limit": 50}))
+
+    def submit(self, bundle_id, version, number, release_type, uses_encryption, dry_run=False):
+        """Sends build `number` of `version` to App Store review. Returns what it did, for the log."""
+        app = self.app_id(bundle_id)
+        found = self.builds(app, version, number)
+        if not found:
+            raise AscError(404, f"no build {version} ({number}) in App Store Connect: upload it to TestFlight first")
+        build = found[0]
+        state = build["attributes"].get("processingState")
+        if state != "VALID":
+            raise AscError(0, f"{version} ({number}) is {state}, not processed (VALID): wait, then run this again")
+        blocking = self.review_submissions(app, OPEN_REVIEW_STATES)
+        if blocking:
+            states = ", ".join(sorted({(r.get("attributes") or {}).get("state", "?") for r in blocking}))
+            raise AscError(409, f"the app has a review submission already ({states}): wait for it, or resolve or "
+                                "cancel it in App Store Connect")
+        record = self.app_store_version(app, version)
+        if record is not None and version_state(record) not in EDITABLE_VERSION_STATES:
+            raise AscError(409, f"App Store version {version} is {version_state(record)}: it takes no new build or "
+                                "submission (a newer release needs a new version)")
+        if dry_run:
+            what = "create" if record is None else f"use ({version_state(record)})"
+            log(f"dry run: would {what} App Store version {version} ({release_type}), attach build {number} and "
+                "submit it for review; nothing changed")
+            return "DRY_RUN"
+        self.set_encryption(build, uses_encryption)
+        if record is None:
+            try:
+                record = self.call("POST", "appStoreVersions",
+                                   app_store_version_create_body(app, version, release_type))["data"]
+            except AscError as error:
+                if not error.refused:
+                    raise
+                raise AscError(error.status, f"App Store Connect did not create version {version} ({error.detail}); "
+                                             "another version in Prepare for Submission is the usual cause: rename "
+                                             "or remove it in App Store Connect", error.code) from None
+            log(f"created App Store version {version} ({release_type})")
+        elif (record.get("attributes") or {}).get("releaseType") != release_type:
+            self.call("PATCH", f"appStoreVersions/{record['id']}",
+                      app_store_version_update_body(record["id"], release_type))
+            log(f"App Store version {version}: release type {release_type}")
+        attached = (self.call("GET", f"appStoreVersions/{record['id']}/build").get("data") or {}).get("id")
+        if attached != build["id"]:
+            self.call("PATCH", f"appStoreVersions/{record['id']}/relationships/build", version_build_body(build["id"]))
+            log(f"App Store version {version}: build {number} attached")
+        drafts = self.review_submissions(app, ("READY_FOR_REVIEW",))
+        if drafts:
+            submission = drafts[0]["id"]
+            items = self.pages(f"reviewSubmissions/{submission}/items?limit=50&include=appStoreVersion")
+            has_version = record["id"] in {item_version(i) for i in items}
+        else:
+            submission = self.call("POST", "reviewSubmissions", review_create_body(app))["data"]["id"]
+            has_version = False
+        if not has_version:
+            self.call("POST", "reviewSubmissionItems", review_item_body(submission, record["id"]))
+        self.call("PATCH", f"reviewSubmissions/{submission}", review_submit_body(submission))
+        log(f"{version} ({number}) submitted for App Store review ({release_type} release)")
+        return "SUBMITTED"
+
+
 def load_key(args, environ):
     key_id = environ.get("AC_API_KEY_ID", "")
     issuer = environ.get("AC_API_ISSUER_ID", "")
@@ -598,7 +725,7 @@ def load_key(args, environ):
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "finish"):
+    for name in ("prepare", "finish", "submit"):
         command = commands.add_parser(name)
         command.add_argument("--bundle-id", default=BUNDLE_ID)
         command.add_argument("--version", required=True, help="the marketing version (CFBundleShortVersionString)")
@@ -613,6 +740,12 @@ def parse_args(argv):
     finish.add_argument("--info-plist", default=str(Path(__file__).resolve().parent.parent / "ios/Reins/Info.plist"))
     finish.add_argument("--timeout", type=int, default=5400, help="seconds to wait for processing")
     finish.add_argument("--interval", type=int, default=30)
+    submit = commands.choices["submit"]
+    submit.add_argument("--build-number", required=True)
+    submit.add_argument("--release-type", choices=RELEASE_TYPES, default="MANUAL",
+                        help="MANUAL: released by hand after approval (default); AFTER_APPROVAL: at once")
+    submit.add_argument("--info-plist", default=str(Path(__file__).resolve().parent.parent / "ios/Reins/Info.plist"))
+    submit.add_argument("--dry-run", action="store_true", help="read and report only")
     profile = commands.add_parser("profile")
     profile.add_argument("--plist", required=True, help="the profile as `security cms -D -i` decodes it")
     profile.add_argument("--bundle-id", required=True)
@@ -652,6 +785,14 @@ def main(argv=None, http=None, environ=os.environ):
             number, uploaded = asc.prepare(args.bundle_id, args.version, args.minimum)
             print(f"build-number={number}")
             print(f"uploaded={str(uploaded).lower()}")
+            return 0
+        if args.command == "submit":
+            if not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}", args.version) or not re.fullmatch(r"[0-9]+(\.[0-9]+)*",
+                                                                                          args.build_number):
+                raise ValueError(f"{args.version!r} ({args.build_number!r}) is not a version and build number")
+            result = asc.submit(args.bundle_id, args.version, args.build_number, args.release_type,
+                                uses_non_exempt_encryption(args.info_plist), args.dry_run)
+            print(f"result={result}")
             return 0
         notes = Path(args.notes_file).read_text() if args.notes_file and Path(args.notes_file).is_file() else ""
         text = what_to_test(notes, args.version, args.release_url)

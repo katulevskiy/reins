@@ -81,6 +81,7 @@ App Store profiles of the three targets, and uploads it, and `scripts/testflight
 groups ("Internal", and the external "Testers" by its id) and the beta review submission. Version: the release's; build
 number: the Android versionCode, kept above any build already in App Store Connect. No Mac is needed per release.
 Secrets, variables and the one-time setup: [CONTRIBUTING.md](../CONTRIBUTING.md#maintainers-testflight).
+App Store review is a manual workflow: [docs/ios-app-store-submission.md](../docs/ios-app-store-submission.md).
 
 ## Sign-in and recovery
 
