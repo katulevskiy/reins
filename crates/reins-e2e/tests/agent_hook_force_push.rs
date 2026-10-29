@@ -345,10 +345,27 @@ async fn a_force_push_from_the_coding_agent_waits_for_the_phone() {
     }
 
     // ---- nobody answers: refused after the guard's wait, or handed back to the agent's prompt ----
+    // The phone's own pending list holds only what a sync brought, so each question is looked for while the hook
+    // still waits (a question nobody answered may be gone from the server once its wait is over).
+    let mut asked: Vec<String> = Vec::new();
     for (on_no_answer, expected) in [("deny", "deny"), ("ask", "ask")] {
         set_guard(home, NO_ANSWER_SECS, on_no_answer);
         let started = std::time::Instant::now();
         let child = fire(home, &hook_command, &bash_call(home, FORCE_PUSH)).await;
+        let item = loop {
+            let fresh = phone.core.sync(1).await.unwrap().into_iter().find(|i| !asked.contains(&i.id));
+            if let Some(item) = fresh {
+                break item;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(NO_ANSWER_SECS),
+                "the unanswered question reached the phone"
+            );
+        };
+        asked.push(item.id.clone());
+        let ask = phone.core.approval_view(item.id).await.unwrap().ask.expect("a question from the hook");
+        let shown = format!("{} {}", ask.question, ask.detail.clone().unwrap_or_default());
+        assert!(shown.contains(FORCE_PUSH), "the phone shows the command: {ask:?}");
         let d = decision(child).await;
         let waited = started.elapsed();
         assert!(
@@ -360,6 +377,4 @@ async fn a_force_push_from_the_coding_agent_waits_for_the_phone() {
             assert!(d.reason.contains("timed out"), "{}", d.stdout);
         }
     }
-    let unanswered = phone.core.pending().await.unwrap();
-    assert!(!unanswered.is_empty(), "the unanswered questions reached the phone");
 }
