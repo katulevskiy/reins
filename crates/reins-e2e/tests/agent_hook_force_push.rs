@@ -28,8 +28,16 @@ const GUARD_SECS: u64 = 120;
 /// The shortest wait the guard accepts (`timeout_secs` is 5 to 3600), for the questions nobody answers.
 const NO_ANSWER_SECS: u64 = 5;
 
+/// The installer under test, named from the repository root so CI's change planner (scripts/ci/reuse.py) follows it.
+const INSTALL_SH: &str = "scripts/install.sh";
+
+fn install_script() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(INSTALL_SH).canonicalize().expect("scripts/install.sh")
+}
+
+/// The repository root, two levels above the installer.
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repo root")
+    install_script().parent().and_then(Path::parent).expect("repo root").to_path_buf()
 }
 
 /// `target/debug/reins` (or `REINS_TEST_DESKTOP_BINARY`), built once per test process.
@@ -83,7 +91,7 @@ fn install(home: &Path, releases: &Path) -> PathBuf {
     let sha = sha256_hex(&releases.join("files/reins"));
     std::fs::write(releases.join(format!("latest-{platform}.txt")), format!("reins {sha} 0.0.0-test e2e\n")).unwrap();
     let mut sh = Command::new("sh");
-    sh.arg(repo_root().join("scripts/install.sh"));
+    sh.arg(install_script());
     in_home(&mut sh, home);
     let out = sh
         .env("REINS_RELEASES", format!("file://{}", releases.display()))
