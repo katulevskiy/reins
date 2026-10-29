@@ -176,8 +176,15 @@ export class Agent {
     /** Submits `email`; returns the number the waiting page shows, which the user taps on the phone. */
     async submitEmail(page: Page, email = EMAIL) {
         await page.getByLabel('Your account email').fill(email);
-        await page.getByRole('button', { name: 'Continue' }).click();
-        await expect(page).toHaveURL(/\/reins\/oauth\/authorize\/wait\?session=/);
+        // Firefox on a loaded CI runner can drop the click before the form submits (the page stays as it was, with no
+        // error). Submit again while the form is still the one the agent opened: a second submit is harmless, because
+        // the server sends a session that already waits to its waiting page.
+        await expect(async () => {
+            if (new URL(page.url()).search) {
+                await page.getByRole('button', { name: 'Continue' }).click({ timeout: 5_000 });
+            }
+            await expect(page).toHaveURL(/\/reins\/oauth\/authorize\/wait\?session=/, { timeout: 5_000 });
+        }).toPass({ timeout: 30_000 });
         await expect(page.getByRole('heading', { name: 'Approve on your phone' })).toBeVisible();
         return Number(await page.getByLabel('code', { exact: true }).textContent());
     }
