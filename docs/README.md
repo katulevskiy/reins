@@ -28,7 +28,8 @@
 - [Deployment notes](deployment.md): the setup of the hosted instance, with the Google Cloud and Firebase steps.
 - [CI](reference/ci.md): which suites run, reuse of passes, macOS admission, labels, and the measurements behind them.
 - AI client directories: submission packages for [Claude](directories/anthropic-connectors.md) and
-  [ChatGPT](directories/openai-apps.md), and how to add Reins to [Perplexity and Grok](directories/perplexity-grok.md).
+  [ChatGPT](directories/openai-apps.md) and the [MCP Registry](directories/mcp-registry.md), and how to add Reins to
+  [Perplexity and Grok](directories/perplexity-grok.md).
 
 **Legal (drafts)**
 

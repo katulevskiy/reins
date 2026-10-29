@@ -3,7 +3,7 @@
 Autopilot decides routine requests for you, on the phone. It uses a small language model (Laya) plus a memory of your
 own decisions. It is optional, it runs entirely on the phone, and it starts out only suggesting.
 
-Open it from **Settings → Autopilot**, or tap the mode pill at the top of the home screen.
+Open it from the **Trust** tab, or tap the mode pill at the top of the home screen.
 
 ## Modes
 
