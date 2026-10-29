@@ -189,7 +189,9 @@ jobs:
       # The onboarding tests (playwright/tests/onboarding): the server binary the tests above built, a phone simulated
       # by the core (crates/reins-e2e/examples/playwright_phone.rs) and Firefox. No docker: the web-vault suite in
       # playwright/tests is separate and does not run here.
+      # They need only the server binary, so they run (and report) even when a test above failed.
       - name: Onboarding tests (Playwright)
+        if: ${{ !cancelled() }}
         working-directory: playwright
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
