@@ -373,6 +373,20 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == requestId }
     }
 
+    /** As the core: each waiting call of the batch that may be approved untouched, one by one. */
+    override suspend fun approveBatch(batchId: String): UInt {
+        val ids = pending.filter { it.batch?.id == batchId && it.quick }.map { it.id }
+        ids.forEach { approveQuick(it) }
+        return ids.size.toUInt()
+    }
+
+    /** As the core: every waiting call of the batch. */
+    override suspend fun denyBatch(batchId: String): UInt {
+        val ids = pending.filter { it.batch?.id == batchId }.map { it.id }
+        ids.forEach { deny(it) }
+        return ids.size.toUInt()
+    }
+
     /** The starting rule; null until chosen. */
     @Volatile var startingPolicy: StartingPolicy? = null
 

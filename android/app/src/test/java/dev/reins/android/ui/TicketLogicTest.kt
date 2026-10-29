@@ -41,6 +41,26 @@ class TicketLogicTest {
     }
 
     @Test
+    fun `a batch is its own card in the order the AI made it`() {
+        fun inBatch(id: String, index: UInt, quick: Boolean = true) =
+            TestData.pending(id, quick = quick, batch = dev.reins.core.PendingBatch("b1", index, 3u))
+        val pending = listOf(
+            TestData.pending("r1", quick = true), inBatch("x2", 2u), inBatch("x0", 0u), inBatch("x1", 1u, quick = false),
+            TestData.pending("r2", quick = true),
+        )
+        val cards = waitCards(pending).map {
+            when (it) {
+                is WaitCard.One -> listOf(it.item.id)
+                is WaitCard.Group -> it.items.map { item -> item.id }
+            }
+        }
+        assertEquals(listOf(listOf("r1", "r2"), listOf("x0", "x2"), listOf("x1")), cards)
+        val batch = waitCards(pending).filterIsInstance<WaitCard.Group>().last().burst
+        assertEquals("batch:b1", batch.key)
+        assertEquals("c1", batch.connectionId)
+    }
+
+    @Test
     fun `the inbox groups by agent in the order of their soonest deadline`() {
         val pending = listOf(
             TestData.pending("c1-late", ticket = TestData.ticket("c1-late", left = 9 * 3_600)),

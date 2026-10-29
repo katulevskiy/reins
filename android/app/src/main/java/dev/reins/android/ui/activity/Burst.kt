@@ -10,11 +10,19 @@ import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 
 /**
- * Several requests from one AI at once (an agent run): [quick] can be approved together without opening each, [all] is
+ * Several requests from one AI at once (an agent run, or one `reins_batch`): [quick] can be approved together without opening each, [all] is
  * everything of it that waits. Only a burst with at least two routine requests is offered. Bursts of several AIs are one
  * ([ais] > 1, [connectionId] empty): their routine requests together, and "Deny" takes back only those.
  */
-data class Burst(val connectionId: String, val label: String, val quick: List<String>, val all: List<String>, val ais: Int = 1) {
+data class Burst(
+    val connectionId: String,
+    val label: String,
+    val quick: List<String>,
+    val all: List<String>,
+    val ais: Int = 1,
+    /** The batch's key ([burstKey]) for a batch, else the AI's connection. */
+    val key: String = connectionId,
+) {
     /** Says who asks: one AI's name, or for several their names ("Claude and Codex", "Claude, Codex and 2 more"). */
     val title: String
         get() = if (ais > 1) "${quick.size} routine · ${untrusted(label)}" else "${untrusted(label)} · ${all.size} waiting"
@@ -28,13 +36,22 @@ data class Burst(val connectionId: String, val label: String, val quick: List<St
         }
 }
 
+/** What a request is grouped by: its batch (`reins_batch`), else the AI that asked. */
+fun burstKey(item: PendingItem): String = item.batch?.let { "batch:${it.id}" } ?: item.connectionId
+
+/**
+ * The calls of a batch are their own burst, in the order the AI made them, apart from the rest of that AI's requests;
+ * each is still its own request, approved, denied and recorded on its own.
+ */
 fun bursts(pending: List<PendingItem>): List<Burst> =
     pending
         .filter { it.kind == PendingKind.REQUEST }
-        .groupBy { it.connectionId }
-        .mapNotNull { (connection, items) ->
+        .groupBy(::burstKey)
+        .mapNotNull { (_, group) ->
+            val items = group.sortedBy { it.batch?.index ?: 0u }
             val quick = items.filter { it.quick }.map { it.id }
-            if (quick.size < 2) null else Burst(connection, items.first().connectionLabel, quick, items.map { it.id })
+            val first = items.first()
+            if (quick.size < 2) null else Burst(first.connectionId, first.connectionLabel, quick, items.map { it.id }, key = burstKey(first))
         }
 
 /** The one bar Activity shows above the requests: one AI's burst, or the bursts of several folded together. */
