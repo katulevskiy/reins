@@ -110,6 +110,32 @@ fn run(program: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
+/// Whether a systemd user manager answers here (`systemctl --user` works). Containers, WSL and minimal systems often
+/// have none, even when `XDG_RUNTIME_DIR` and a session bus are set, so it is asked rather than guessed.
+#[must_use]
+pub fn systemd_user_available() -> bool {
+    user_manager_answers("systemctl")
+}
+
+fn user_manager_answers(systemctl: &str) -> bool {
+    Command::new(systemctl)
+        .args(["--user", "show-environment"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// What `reins setup` says when it installs no service because there is no systemd user session.
+#[must_use]
+pub fn no_systemd_note() -> String {
+    "No background service: this system has no systemd user session (common in containers, WSL and minimal \
+     installs). AI tools still ask through Reins without it. To send git through Reins too, keep `reins daemon` \
+     running (in a terminal, or from your own startup scripts), then run `reins resume`."
+        .to_owned()
+}
+
 /// Writes the service file for `exe`; when `start`, enables and starts it. Returns the file.
 pub fn install(manager: Manager, home: &Path, exe: &Path, start: bool) -> Result<PathBuf, String> {
     let file = manager.file(home);
@@ -198,6 +224,16 @@ mod tests {
         let plist = launchd_plist(Path::new("/Apps/R&D/reins"), Path::new("/Users/me/Library/Logs/reins.log"));
         assert!(plist.contains("<string>/Apps/R&amp;D/reins</string><string>daemon</string>"), "{plist}");
         assert!(plist.contains("<string>dev.reins.daemon</string>"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_or_failing_systemctl_means_no_user_session() {
+        assert!(user_manager_answers("true"));
+        assert!(!user_manager_answers("false"), "systemctl --user fails: no user manager");
+        assert!(!user_manager_answers("/nonexistent/systemctl"), "no systemctl at all");
+        let note = no_systemd_note();
+        assert!(note.contains("`reins daemon`") && note.contains("`reins resume`"), "{note}");
     }
 
     #[test]
