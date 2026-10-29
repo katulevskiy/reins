@@ -1569,9 +1569,9 @@ mod tests {
     fn the_default_profile_lists_exactly_the_tools_it_always_did() {
         let all: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
         assert_eq!(listed(ToolProfile::default()), all);
-        // Pinned: the default lists 279 tools, as before the option existed (and as the directory packets say). A new
-        // tool changes this number on purpose; a profile never does.
-        assert_eq!(all.len(), 279, "the default tool list changed size");
+        // Pinned: the default lists 285 tools, as on main before the option existed. A new tool changes this number on
+        // purpose; a profile never does.
+        assert_eq!(all.len(), 285, "the default tool list changed size");
         assert_eq!(ToolProfile::default(), ToolProfile::Full);
         // The same definitions, byte for byte, then the user's own MCP tools.
         let reports = [linear_report()];
