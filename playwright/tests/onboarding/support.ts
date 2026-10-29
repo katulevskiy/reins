@@ -1,5 +1,6 @@
 import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { createInterface } from 'node:readline';
 import * as path from 'node:path';
 
@@ -21,8 +22,6 @@ const serverBinary = process.env.REINS_TEST_SERVER_BINARY ?? path.join(target, '
 const driverBinary = process.env.REINS_PHONE_DRIVER ?? path.join(target, 'debug/examples/playwright_phone');
 
 export const EMAIL = 'first-run@example.com';
-/** The coding agent's loopback callback, as a CLI agent registers it. The tests intercept it: nothing listens. */
-export const AGENT_REDIRECT = 'http://127.0.0.1:43117/callback';
 export const AGENT_NAME = 'Coding Agent';
 /** RFC 7636 appendix B. */
 export const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
@@ -119,6 +118,7 @@ export const test = base.extend<{ reins: Reins }>({
             await testInfo.attach('server.log', { body: log, contentType: 'text/plain' });
         }
         await phone.close();
+        await Agent.closeAll();
     },
 });
 
@@ -128,13 +128,28 @@ export { expect };
 export class Agent {
     clientId = '';
     access = '';
+    /** The loopback callback the agent registers, as a CLI agent does: a local server on a free port. */
+    redirect = '';
+    private static listening: Server[] = [];
+
+    static async closeAll() {
+        const servers = Agent.listening.splice(0);
+        await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+    }
 
     constructor(private request: APIRequestContext, private base: string, readonly name = AGENT_NAME) {}
 
     async register() {
+        const server = createServer((_request, response) => {
+            response.writeHead(200, { 'content-type': 'text/html' });
+            response.end('<!DOCTYPE html><title>Agent</title><h1>Back in the agent</h1>');
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        Agent.listening.push(server);
+        this.redirect = `http://127.0.0.1:${(server.address() as { port: number }).port}/callback`;
         const r = await this.request.post(`${this.base}/reins/oauth/register`, {
             data: {
-                client_name: this.name, redirect_uris: [AGENT_REDIRECT], token_endpoint_auth_method: 'none',
+                client_name: this.name, redirect_uris: [this.redirect], token_endpoint_auth_method: 'none',
                 grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
             },
         });
@@ -146,7 +161,7 @@ export class Agent {
     authorizeUrl(state = 'state-1') {
         const url = new URL(`${this.base}/reins/oauth/authorize`);
         url.search = new URLSearchParams({
-            client_id: this.clientId, redirect_uri: AGENT_REDIRECT, response_type: 'code', code_challenge: CHALLENGE,
+            client_id: this.clientId, redirect_uri: this.redirect, response_type: 'code', code_challenge: CHALLENGE,
             code_challenge_method: 'S256', state, resource: `${this.base}/mcp`,
         }).toString();
         return url.toString();
@@ -154,10 +169,6 @@ export class Agent {
 
     /** Opens the authorization in the browser: the page asks for the account email. */
     async open(page: Page) {
-        // Nothing listens at the loopback callback: answer for the agent, as its local server would.
-        await page.route(`${AGENT_REDIRECT}**`, (route) => route.fulfill({
-            contentType: 'text/html', body: '<!DOCTYPE html><title>Agent</title><h1>Back in the agent</h1>',
-        }));
         await page.goto(this.authorizeUrl());
         await expect(page.getByRole('heading', { name: `Connect ${this.name} to Reins` })).toBeVisible();
     }
@@ -179,7 +190,7 @@ export class Agent {
 
     /** Waits for the browser to land back at the agent's callback, and returns its query. */
     async callback(page: Page) {
-        await page.waitForURL((url) => url.href.startsWith(AGENT_REDIRECT));
+        await page.waitForURL((url) => url.href.startsWith(this.redirect));
         await expect(page.getByRole('heading', { name: 'Back in the agent' })).toBeVisible();
         return new URL(page.url()).searchParams;
     }
@@ -187,7 +198,7 @@ export class Agent {
     async exchange(code: string) {
         const r = await this.request.post(`${this.base}/reins/oauth/token`, {
             form: {
-                grant_type: 'authorization_code', code, redirect_uri: AGENT_REDIRECT, client_id: this.clientId,
+                grant_type: 'authorization_code', code, redirect_uri: this.redirect, client_id: this.clientId,
                 code_verifier: VERIFIER, resource: `${this.base}/mcp`,
             },
         });

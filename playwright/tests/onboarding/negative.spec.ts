@@ -1,6 +1,6 @@
 import { createServer } from 'node:net';
 
-import { test, expect, Agent, Desktop, EMAIL, AGENT_REDIRECT, connectAgent } from './support';
+import { test, expect, Agent, Desktop, EMAIL, connectAgent } from './support';
 
 /** What goes wrong during onboarding, and what the user sees then. */
 
@@ -24,8 +24,7 @@ test.describe('connecting an agent', () => {
         await expect(page).toHaveURL(/\/reins\/oauth\/authorize\?/);
 
         // A browser that does not check the field: the server answers with the form and an error.
-        await page.locator('form').evaluate((form: HTMLFormElement) => { form.noValidate = true; });
-        await page.getByRole('button', { name: 'Continue' }).click();
+        await page.locator('form').evaluate((form: HTMLFormElement) => form.submit());
         await expect(page.getByRole('alert')).toHaveText('Enter a valid email address.');
         await expect(page.getByRole('heading', { name: `Connect ${agent.name} to Reins` })).toBeVisible();
         await expect(page.getByLabel('Your account email')).toBeVisible();
@@ -88,7 +87,7 @@ test.describe('connecting an agent', () => {
         const view = await reins.phone.pairingView(item.id);
         const wrong = view.choices.find((choice) => choice !== shown)!;
         const failure = await reins.phone.failure({ cmd: 'answer_pairing', id: item.id, approve: true, code: wrong, label: 'Agent' });
-        expect(failure).toMatch(/does not match the browser/);
+        expect(failure).toMatch(/409: wrong_code/);
         const query = await agent.callback(page);
         expect(query.get('error')).toBe('access_denied');
         expect(query.get('code')).toBeNull();
@@ -165,7 +164,7 @@ test.describe('an unreachable server', () => {
         await reins.phone.stopServer();
         await expect(page.reload()).rejects.toThrow(/NS_ERROR_CONNECTION_REFUSED|ERR_CONNECTION_REFUSED/);
         await expect(request.post(`${reins.base}/reins/oauth/register`, { data: {} })).rejects.toThrow(/ECONNREFUSED/);
-        expect(page.url()).not.toContain(AGENT_REDIRECT);
+        expect(page.url()).not.toContain(agent.redirect);
     });
 });
 
