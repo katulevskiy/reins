@@ -964,6 +964,9 @@ pub fn sensitive_note() -> &'static str {
 }
 
 #[cfg(test)]
+mod snapshot;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
