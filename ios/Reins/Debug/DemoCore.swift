@@ -979,6 +979,22 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: each waiting call of the batch that may be approved untouched, one by one.
+    func approveBatch(batchId: String) async throws -> UInt32 {
+        let ids: [String] = locked { s in s.pending.filter { $0.batch?.id == batchId && $0.quick }.map(\.id) }
+        var approved: UInt32 = 0
+        for id in ids where (try? await approveQuick(requestId: id)) != nil { approved += 1 }
+        return approved
+    }
+
+    /// As the core: every waiting call of the batch.
+    func denyBatch(batchId: String) async throws -> UInt32 {
+        let ids: [String] = locked { s in s.pending.filter { $0.batch?.id == batchId }.map(\.id) }
+        var denied: UInt32 = 0
+        for id in ids where (try? await deny(requestId: id)) != nil { denied += 1 }
+        return denied
+    }
+
     /// As the core: the agent's note goes with the denial (the demo has no agent to give it to).
     func denyWithNote(requestId: String, note: String?) async throws {
         try await deny(requestId: requestId)

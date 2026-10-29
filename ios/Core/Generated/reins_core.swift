@@ -3149,6 +3149,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approveAll(connectionId: String, taskId: String?) async throws  -> UInt32
     
     /**
+     * "Approve all" of a batch (`PendingItem.batch`): approves each of its waiting calls that may be approved without
+     * opening it, each with its own audit entry and answer; returns how many were. The rest stay to be opened.
+     */
+    func approveBatch(batchId: String) async throws  -> UInt32
+    
+    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
@@ -3356,6 +3362,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deleteProfile(profileId: String) async throws 
     
     func deny(requestId: String) async throws 
+    
+    /**
+     * "Deny all" of a batch: denies each of its waiting calls; returns how many were.
+     */
+    func denyBatch(batchId: String) async throws  -> UInt32
     
     /**
      * The user refused, with an optional note the agent receives ("Use the staging bucket").
@@ -4763,6 +4774,26 @@ open func approveAll(connectionId: String, taskId: String?)async throws  -> UInt
 }
     
     /**
+     * "Approve all" of a batch (`PendingItem.batch`): approves each of its waiting calls that may be approved without
+     * opening it, each with its own audit entry and answer; returns how many were. The rest stay to be opened.
+     */
+open func approveBatch(batchId: String)async throws  -> UInt32  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_approve_batch(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(batchId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_u32,
+            completeFunc: ffi_reins_core_rust_future_complete_u32,
+            freeFunc: ffi_reins_core_rust_future_free_u32,
+            liftFunc: FfiConverterUInt32.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
@@ -5555,6 +5586,25 @@ open func deny(requestId: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Deny all" of a batch: denies each of its waiting calls; returns how many were.
+     */
+open func denyBatch(batchId: String)async throws  -> UInt32  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_deny_batch(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(batchId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_u32,
+            completeFunc: ffi_reins_core_rust_future_complete_u32,
+            freeFunc: ffi_reins_core_rust_future_free_u32,
+            liftFunc: FfiConverterUInt32.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -19595,6 +19645,79 @@ public func FfiConverterTypePaymentsOverview_lower(_ value: PaymentsOverview) ->
 }
 
 
+/**
+ * The place of a waiting call in its batch.
+ */
+public struct PendingBatch: Equatable, Hashable {
+    /**
+     * Shared by every call of the batch (`approve_batch`, `deny_batch`).
+     */
+    public var id: String
+    /**
+     * 0-based.
+     */
+    public var index: UInt32
+    public var size: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Shared by every call of the batch (`approve_batch`, `deny_batch`).
+         */id: String, 
+        /**
+         * 0-based.
+         */index: UInt32, size: UInt32) {
+        self.id = id
+        self.index = index
+        self.size = size
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PendingBatch: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePendingBatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PendingBatch {
+        return
+            try PendingBatch(
+                id: FfiConverterString.read(from: &buf), 
+                index: FfiConverterUInt32.read(from: &buf), 
+                size: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PendingBatch, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterUInt32.write(value.size, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePendingBatch_lift(_ buf: RustBuffer) throws -> PendingBatch {
+    return try FfiConverterTypePendingBatch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePendingBatch_lower(_ value: PendingBatch) -> RustBuffer {
+    return FfiConverterTypePendingBatch.lower(value)
+}
+
+
 public struct PendingItem: Equatable, Hashable {
     public var kind: PendingKind
     public var id: String
@@ -19684,6 +19807,10 @@ public struct PendingItem: Equatable, Hashable {
      * this, not `parked_until`).
      */
     public var parked: Bool
+    /**
+     * One call of a batch the AI made at once (`reins_batch`): decided on its own, shown with the rest of its batch.
+     */
+    public var batch: PendingBatch?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -19748,7 +19875,10 @@ public struct PendingItem: Equatable, Hashable {
         /**
          * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
          * this, not `parked_until`).
-         */parked: Bool = false) {
+         */parked: Bool = false, 
+        /**
+         * One call of a batch the AI made at once (`reins_batch`): decided on its own, shown with the rest of its batch.
+         */batch: PendingBatch? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -19776,6 +19906,7 @@ public struct PendingItem: Equatable, Hashable {
         self.taskProposal = taskProposal
         self.circle = circle
         self.parked = parked
+        self.batch = batch
     }
 
     
@@ -19820,7 +19951,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 batchable: FfiConverterBool.read(from: &buf), 
                 taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf), 
                 circle: FfiConverterOptionTypeCircleProgress.read(from: &buf), 
-                parked: FfiConverterBool.read(from: &buf)
+                parked: FfiConverterBool.read(from: &buf), 
+                batch: FfiConverterOptionTypePendingBatch.read(from: &buf)
         )
     }
 
@@ -19852,6 +19984,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
         FfiConverterOptionTypeCircleProgress.write(value.circle, into: &buf)
         FfiConverterBool.write(value.parked, into: &buf)
+        FfiConverterOptionTypePendingBatch.write(value.batch, into: &buf)
     }
 }
 
@@ -31011,6 +31144,30 @@ fileprivate struct FfiConverterOptionTypeOvernightDigest: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePendingBatch: FfiConverterRustBuffer {
+    typealias SwiftType = PendingBatch?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePendingBatch.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePendingBatch.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypePurchaseView: FfiConverterRustBuffer {
     typealias SwiftType = PurchaseView?
 
@@ -33904,6 +34061,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_approve_all() != 40812) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_approve_batch() != 7142) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -34028,6 +34188,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_deny_batch() != 12274) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_deny_with_note() != 61995) {
