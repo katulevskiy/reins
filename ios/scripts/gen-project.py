@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Writes ios/Reins.xcodeproj from the description below. Folders are Xcode "synchronized" groups, so new source and
-resource files are picked up without touching the project; only targets, folders per target, build settings and
-packages live here. Re-run after changing this file:
+resource files are picked up without touching the project; only targets, folders per target, build settings,
+packages and privacy manifests live here. Each target's PrivacyInfo.xcprivacy is an explicit resource so it lands at
+that bundle's root (a shared file in a synchronized folder would be copied into every target that compiles the
+folder). ONNX Runtime's embedded framework gets its manifest from scripts/fix-embedded-frameworks.sh. Re-run after
+changing this file:
 
     ios/scripts/gen-project.py
 """
 
 import hashlib
 import os
+import plistlib
+import sys
 from pathlib import Path
 
 IOS = Path(__file__).resolve().parent.parent
@@ -163,6 +168,119 @@ RELEASE = {
     "VALIDATE_PRODUCT": "YES",
 }
 
+# One manifest per bundle, at ios/Privacy/<name>/PrivacyInfo.xcprivacy. The declarations live in those plists.
+# OnnxRuntime is not a target: fix-embedded-frameworks.sh copies it into the embedded onnxruntime.framework, which
+# references stat/fstat and ships no manifest of its own.
+PRIVACY_TARGETS = [t["name"] for t in TARGETS]
+ONNX_PRIVACY = "OnnxRuntime"
+
+# Apple's required-reason categories and the reason codes that are valid for each. Kept here so a typo fails
+# generation instead of App Store validation.
+PRIVACY_API_REASONS = {
+    "NSPrivacyAccessedAPICategoryFileTimestamp": {"DDA9.1", "C617.1", "3B52.1", "0A2A.1"},
+    "NSPrivacyAccessedAPICategorySystemBootTime": {"35F9.1", "8FFB.1", "3D61.1"},
+    "NSPrivacyAccessedAPICategoryDiskSpace": {"85F4.1", "E174.1", "7D9E.1", "B728.1"},
+    "NSPrivacyAccessedAPICategoryActiveKeyboards": {"3EC4.1", "54BD.1"},
+    "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1", "1C8F.1", "C56D.1", "AC6B.1"},
+}
+PRIVACY_DATA_TYPES = {
+    "NSPrivacyCollectedDataTypeName",
+    "NSPrivacyCollectedDataTypeEmailAddress",
+    "NSPrivacyCollectedDataTypePhoneNumber",
+    "NSPrivacyCollectedDataTypePhysicalAddress",
+    "NSPrivacyCollectedDataTypeOtherUserContactInfo",
+    "NSPrivacyCollectedDataTypeHealth",
+    "NSPrivacyCollectedDataTypeFitness",
+    "NSPrivacyCollectedDataTypePaymentInfo",
+    "NSPrivacyCollectedDataTypeCreditInfo",
+    "NSPrivacyCollectedDataTypeOtherFinancialInfo",
+    "NSPrivacyCollectedDataTypePreciseLocation",
+    "NSPrivacyCollectedDataTypeCoarseLocation",
+    "NSPrivacyCollectedDataTypeSensitiveInfo",
+    "NSPrivacyCollectedDataTypeContacts",
+    "NSPrivacyCollectedDataTypeEmailsOrTextMessages",
+    "NSPrivacyCollectedDataTypePhotosorVideos",
+    "NSPrivacyCollectedDataTypeAudioData",
+    "NSPrivacyCollectedDataTypeGameplayContent",
+    "NSPrivacyCollectedDataTypeCustomerSupport",
+    "NSPrivacyCollectedDataTypeOtherUserContent",
+    "NSPrivacyCollectedDataTypeBrowsingHistory",
+    "NSPrivacyCollectedDataTypeSearchHistory",
+    "NSPrivacyCollectedDataTypeUserID",
+    "NSPrivacyCollectedDataTypeDeviceID",
+    "NSPrivacyCollectedDataTypePurchaseHistory",
+    "NSPrivacyCollectedDataTypeProductInteraction",
+    "NSPrivacyCollectedDataTypeAdvertisingData",
+    "NSPrivacyCollectedDataTypeOtherUsageData",
+    "NSPrivacyCollectedDataTypeCrashData",
+    "NSPrivacyCollectedDataTypePerformanceData",
+    "NSPrivacyCollectedDataTypeOtherDiagnosticData",
+    "NSPrivacyCollectedDataTypeOtherDataTypes",
+}
+PRIVACY_PURPOSES = {
+    "NSPrivacyCollectedDataTypePurposeThirdPartyAdvertising",
+    "NSPrivacyCollectedDataTypePurposeDeveloperAdvertising",
+    "NSPrivacyCollectedDataTypePurposeAnalytics",
+    "NSPrivacyCollectedDataTypePurposeProductPersonalization",
+    "NSPrivacyCollectedDataTypePurposeAppFunctionality",
+    "NSPrivacyCollectedDataTypePurposeOther",
+}
+
+
+def privacy_manifest(name: str) -> Path:
+    return IOS / "Privacy" / name / "PrivacyInfo.xcprivacy"
+
+
+def check_privacy_manifests() -> None:
+    """Reject a manifest App Store Connect would reject, before writing the project."""
+    for name in [*PRIVACY_TARGETS, ONNX_PRIVACY]:
+        path = privacy_manifest(name)
+        if not path.is_file():
+            sys.exit(f"error: missing privacy manifest {path.relative_to(IOS)}")
+        try:
+            data = plistlib.loads(path.read_bytes())
+        except (plistlib.InvalidFileException, ValueError) as e:
+            sys.exit(f"error: {path.relative_to(IOS)} is not a plist ({e})")
+        if not isinstance(data, dict):
+            sys.exit(f"error: {path.relative_to(IOS)} is not a dictionary")
+        tracking = data.get("NSPrivacyTracking")
+        if not isinstance(tracking, bool):
+            sys.exit(f"error: {path.relative_to(IOS)} NSPrivacyTracking must be a boolean")
+        domains = data.get("NSPrivacyTrackingDomains")
+        if not isinstance(domains, list) or (tracking is False and domains):
+            sys.exit(f"error: {path.relative_to(IOS)} tracking domains must be a list, empty when not tracking")
+        apis = data.get("NSPrivacyAccessedAPITypes")
+        collected = data.get("NSPrivacyCollectedDataTypes")
+        if not isinstance(apis, list) or not isinstance(collected, list):
+            sys.exit(f"error: {path.relative_to(IOS)} needs NSPrivacyAccessedAPITypes and NSPrivacyCollectedDataTypes")
+        seen = set()
+        for entry in apis:
+            if not isinstance(entry, dict):
+                sys.exit(f"error: {path.relative_to(IOS)} has a non-dictionary accessed-API entry")
+            category = entry.get("NSPrivacyAccessedAPIType")
+            reasons = entry.get("NSPrivacyAccessedAPITypeReasons")
+            if category not in PRIVACY_API_REASONS or not isinstance(reasons, list) or not reasons:
+                sys.exit(f"error: {path.relative_to(IOS)} has an unknown API category {category!r}")
+            if category in seen:
+                sys.exit(f"error: {path.relative_to(IOS)} repeats {category}")
+            seen.add(category)
+            unknown = [r for r in reasons if r not in PRIVACY_API_REASONS[category]]
+            if unknown:
+                sys.exit(f"error: {path.relative_to(IOS)} {category} has unknown reason codes {unknown}")
+        for entry in collected:
+            if not isinstance(entry, dict):
+                sys.exit(f"error: {path.relative_to(IOS)} has a non-dictionary collected-data entry")
+            kind = entry.get("NSPrivacyCollectedDataType")
+            if kind not in PRIVACY_DATA_TYPES:
+                sys.exit(f"error: {path.relative_to(IOS)} has an unknown data type {kind!r}")
+            if not isinstance(entry.get("NSPrivacyCollectedDataTypeLinked"), bool):
+                sys.exit(f"error: {path.relative_to(IOS)} {kind} needs a boolean NSPrivacyCollectedDataTypeLinked")
+            if not isinstance(entry.get("NSPrivacyCollectedDataTypeTracking"), bool):
+                sys.exit(f"error: {path.relative_to(IOS)} {kind} needs a boolean NSPrivacyCollectedDataTypeTracking")
+            purposes = entry.get("NSPrivacyCollectedDataTypePurposes")
+            if not isinstance(purposes, list) or not purposes or any(p not in PRIVACY_PURPOSES for p in purposes):
+                sys.exit(f"error: {path.relative_to(IOS)} {kind} has invalid purposes {purposes!r}")
+
 
 def oid(*parts: str) -> str:
     return hashlib.sha1("/".join(parts).encode()).hexdigest()[:24].upper()
@@ -192,6 +310,7 @@ def fmt(value, indent: int) -> str:
 
 
 def main() -> None:
+    check_privacy_manifests()
     objects: dict[str, dict] = {}
     project_id = oid("project")
     main_group = oid("group", "main")
@@ -223,6 +342,33 @@ def main() -> None:
             entry["exceptions"] = exceptions
         entry.update({"path": f, "sourceTree": "<group>"})
         objects[gid] = entry
+
+    # Privacy manifests sit outside the synchronized folders. The file reference's path is the filename, and its
+    # group carries the directory, so Copy Bundle Resources places PrivacyInfo.xcprivacy at the bundle root.
+    privacy_children = []
+    for name in [*PRIVACY_TARGETS, ONNX_PRIVACY]:
+        fref = oid("file", "privacy", name)
+        objects[fref] = {
+            "isa": "PBXFileReference",
+            "lastKnownFileType": "text.plist.xml",
+            "path": "PrivacyInfo.xcprivacy",
+            "sourceTree": "<group>",
+        }
+        sub = oid("group", "privacy", name)
+        objects[sub] = {
+            "isa": "PBXGroup",
+            "children": [fref],
+            "path": name,
+            "sourceTree": "<group>",
+        }
+        privacy_children.append(sub)
+    privacy_group = oid("group", "privacy")
+    objects[privacy_group] = {
+        "isa": "PBXGroup",
+        "children": privacy_children,
+        "path": "Privacy",
+        "sourceTree": "<group>",
+    }
 
     package_refs = {}
     for name, (url, requirement, _products) in PACKAGES.items():
@@ -277,6 +423,11 @@ def main() -> None:
                     bf = oid("buildfile", name, product)
                     objects[bf] = {"isa": "PBXBuildFile", "productRef": dep}
                     files.append(bf)
+            if kind == "Resources":
+                # The ONNX manifest is not a resource of any target; the embed script copies it into the framework.
+                bf = oid("buildfile", name, "privacy")
+                objects[bf] = {"isa": "PBXBuildFile", "fileRef": oid("file", "privacy", name)}
+                files.append(bf)
             objects[pid] = {
                 "isa": f"PBX{kind}BuildPhase",
                 "buildActionMask": "2147483647",
@@ -392,7 +543,7 @@ def main() -> None:
     }
     objects[main_group] = {
         "isa": "PBXGroup",
-        "children": [xcconfig, *[folder_ids[f] for f in all_folders], products_group],
+        "children": [xcconfig, privacy_group, *[folder_ids[f] for f in all_folders], products_group],
         "sourceTree": "<group>",
     }
     objects[products_group] = {
