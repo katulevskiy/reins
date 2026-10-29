@@ -43,5 +43,20 @@ jobs:
           path-to-document: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CLA.md
           path-to-signatures: signatures/version1/cla.json
           branch: cla-signatures
-          allowlist: dependabot[bot],renovate[bot],github-actions[bot]
+          # These accounts are never asked to sign. For each commit the action takes the author's GitHub login, or the
+          # git author name when the email is not linked to an account (the committer when the author has neither),
+          # and matches it exactly and case-sensitively; `*` matches any text. It never reads Co-authored-by trailers,
+          # so co-authors are never asked to sign. AI coding agents are listed because the person who submits a pull
+          # request is its contributor (CLA.md, section 5). `*[bot]` covers GitHub App accounts; Copilot's coding
+          # agent commits as the login `Copilot`, and agents with an unlinked email appear under the names
+          # `Cursor Agent`, `Claude`, `Codex` or `Devin AI`.
+          allowlist: >-
+            dependabot[bot],renovate[bot],github-actions[bot],
+            cursoragent,cursor[bot],Cursor Agent,
+            claude,claude[bot],Claude,
+            Copilot,copilot-swe-agent[bot],
+            codex,chatgpt-codex-connector[bot],Codex,
+            devin-ai-integration[bot],Devin AI,
+            google-labs-jules[bot],
+            *[bot]
           lock-pullrequest-aftermerge: false

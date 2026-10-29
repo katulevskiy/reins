@@ -22,6 +22,10 @@ The bot records your GitHub account in the signatures branch and the check turns
 `recheck`. Every author of every commit in the pull request must sign, so make sure your commits use an email address
 linked to your GitHub account.
 
+AI coding agents (such as Cursor, Claude, Copilot, Codex, Devin or Jules) never sign, even when they appear as a
+commit author or co-author. Under section 5 of the CLA, you, the person who submits the pull request, are the
+contributor for the whole pull request, including the parts an agent wrote.
+
 We do not use the Developer Certificate of Origin (DCO): no `Signed-off-by:` line is needed.
 
 Code that is plain upstream Vaultwarden (a fix to the vault server that has nothing to do with Reins) is best sent
@@ -212,7 +216,7 @@ The CLA check is `.github/workflows/cla.yml`, using
 5. When the text of CLA.md changes in substance, bump the signature path in the workflow
    (`signatures/version2/cla.json`) so everyone signs the new version.
 
-Bots and maintainers who do not need to sign are listed in the workflow's `allowlist`.
+Bots, AI coding agents and maintainers who do not need to sign are listed in the workflow's `allowlist`.
 
 ## Maintainers: signing the APK in releases
 
