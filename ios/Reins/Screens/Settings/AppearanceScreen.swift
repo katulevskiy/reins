@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings > Appearance (the Settings board, 04), quiet: the theme (the phone's, Paper or Graphite) as three small
+/// Settings > Appearance (`design/next/iphone`, Next-Settings, 04), quiet: the theme (the phone's, Paper or Graphite) as three small
 /// phones, the focal point, and grain on fields. Changes apply at once, widgets too.
 struct AppearanceScreen: View {
     @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue

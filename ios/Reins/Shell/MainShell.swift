@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The signed-in app. A compact width (an iPhone, a folded iPhone Duo, iPad Slide Over) gets Signal's floating tab bar
+/// The signed-in app. A compact width (an iPhone, a folded iPhone Duo, iPad Slide Over) gets the floating tab bar
+/// (`design/next/iphone`, the System board: Activity, Trust, Connections, Settings)
 /// with a navigation stack per tab; a regular width (iPad, an unfolded iPhone Duo) gets a sidebar, the section's
 /// list and a detail column. Both read the same navigation state (`AppModel.section` / `paths`), so folding or
 /// resizing keeps what is open.
@@ -54,7 +55,7 @@ struct MainShell: View {
 
 // MARK: Compact
 
-/// Four navigation stacks, one per place, under Signal's tab bar (an inverse capsule floating over the content, which
+/// Four navigation stacks, one per place, under the floating tab bar (an inverse capsule floating over the content, which
 /// scrolls on beneath it), shown at a place's root and gone on the pages pushed over it, as the boards draw them. A
 /// stack is made the first time its tab is chosen and kept after, so going back to a tab finds it as it was.
 private struct TabShell: View {

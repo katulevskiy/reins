@@ -14,7 +14,7 @@ final class ActivityFlowTests: XCTestCase {
         app.launch()
         // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
         // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows
-        // its Activity tab (Signal's own bar, not a system tab bar), a linked item's sheet over it, or a linked entry's
+        // its Activity tab (the app's floating bar, not a system tab bar), a linked item's sheet over it, or a linked entry's
         // page (pushed, so the tab bar is down).
         let demo = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier IN %@", ["tab:activity", "approvalSheet", "pairingSheet", "uploadSheet", "entryHero", "entryApproval"]

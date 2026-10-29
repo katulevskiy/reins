@@ -1,11 +1,12 @@
 import Foundation
 
-// How a request is written and marked everywhere but the approval itself (design/signal/ASK-TEXT.md): waiting cards,
-// Activity rows, entry pages and notifications, from the core's own label (`RequestLabel`). The approval's field
-// writes from its richer view (AskFormat) with the same rules and the same `AskLine`. Compiled into the app and the
-// notification extension.
+// How a request is written and marked everywhere but the approval itself (design/signal/ASK-TEXT.md), in the app's type
+// (Typography.swift: Sora, the target in semibold, JetBrains Mono for machine values): waiting cards, Activity rows,
+// entry pages and notifications, from the core's own label (`RequestLabel`). The approval's field writes from its
+// richer view (AskFormat) with the same rules and the same `AskLine`. Compiled into the app and the notification
+// extension.
 //
-// What may reach the serif (the security reviews): the verb, counts and target come from the core's label, never from
+// What may reach the display face (the security reviews): the verb, counts and target come from the core's label, never from
 // what an agent, a sender or a server wrote, and nothing is parsed here beyond the core's own fixed words. Commands,
 // paths, hosts, addresses and anything an agent typed go to the mono line. A target that can pass for another leaves
 // the sentence for its stand-in words, its raw form escaped below. What was done reads in the past; what was denied,
@@ -32,7 +33,7 @@ struct AskLine: Equatable {
     var kind: String
     /// Roman, before the target: "Push 8 commits to ".
     var lead: String
-    /// The only italic: "octo/app". Nil when the sentence has none.
+    /// The only target, drawn in semibold: "octo/app". Nil when the sentence has none.
     var target: String?
     /// Roman, after the target: " and 2 more".
     var after = ""
@@ -43,7 +44,7 @@ struct AskLine: Equatable {
     /// The sentence as it reads.
     var text: String { lead + (target ?? "") + after }
 
-    /// The sentence as the serif's runs, the target in italic. A slash never ends a line ("octo/ app").
+    /// The sentence as display-face runs, the target in semibold. A slash never ends a line ("octo/ app").
     var runs: [AskText.Run] {
         [AskText.Run(text: lead), AskText.Run(text: target ?? "", target: true), AskText.Run(text: after)]
             .filter { !$0.text.isEmpty }

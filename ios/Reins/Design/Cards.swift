@@ -381,8 +381,8 @@ extension PageSectionHeader where Trailing == EmptyView {
     }
 }
 
-/// Reins is broken and needs you (iOS-Activity.png, 02): a short amber field that runs into the top of Activity, the
-/// only colour on the screen ("REINS · NOTIFICATIONS  Notifications are *off*  [Turn on]"). Danger-tinted ones are red.
+/// Reins is broken and needs you (`design/next/iphone`, Next-Activity): a short amber field that runs into the top of Activity, the
+/// only colour on the screen ("REINS · NOTIFICATIONS  Notifications are off  [Turn on]", "off" in semibold). Danger-tinted ones are red.
 struct CompactBanner: View {
     var text: String
     var symbol: String
@@ -436,7 +436,7 @@ struct CompactBanner: View {
         }
     }
 
-    /// The sentence with its last word in italic: "Notifications are" *off*.
+    /// The sentence with its last word as the semibold target: "Notifications are" **off**.
     static func runs(_ text: String) -> [AskText.Run] {
         guard let space = text.lastIndex(of: " ") else { return [AskText.Run(text: text, target: true)] }
         return [AskText.Run(text: String(text[...space])), AskText.Run(text: String(text[text.index(after: space)...]), target: true)]
