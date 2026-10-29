@@ -262,8 +262,17 @@ async fn a_force_push_from_the_coding_agent_waits_for_the_phone() {
     assert_eq!(hook["timeout"], GUARD_SECS + 30, "the agent waits longer than Reins does");
     let mcp: Value = serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
     assert_eq!(mcp["mcpServers"]["reins"]["command"].as_str(), installed.to_str());
+    // `reins harness list claude-code`: each part and its file (`set up` is the all-harness list's word).
     let listed = tokio::task::block_in_place(|| reins(home, &["harness", "list", "claude-code"]));
-    assert!(String::from_utf8_lossy(&listed.stdout).contains("set up"), "{listed:?}");
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    for (part, file) in [("MCP server:", "~/.claude.json"), ("hook:", "~/.claude/settings.json")] {
+        let shown = listed.lines().find_map(|l| l.trim_start().strip_prefix(part)).map(str::trim);
+        assert_eq!(
+            shown.and_then(|s| s.strip_prefix("yes (")).and_then(|s| s.strip_suffix(')')),
+            Some(file),
+            "{listed}"
+        );
+    }
 
     // ---- pairing: `reins login`, the phone checks the computer's key fingerprint and pins the key ----
     let server = Server::start(20, 10).await;
