@@ -341,6 +341,7 @@
 				"3C026DB15D01944179E2CFE0",
 				"1A23664401A58596753ED23B",
 				"8F1C8925CF17215F28DD53EB",
+				"98D408FCB7D9F1B0536312EE",
 				DF28D1961EC010042FC5B422,
 				"97C3AE5C49CCBBD8FD351252",
 			);
@@ -491,6 +492,23 @@
 			runOnlyForDeploymentPostprocessing = "0";
 			shellPath = /bin/sh;
 			shellScript = "exec \"$SRCROOT/scripts/fix-embedded-frameworks.sh\"\n";
+			showEnvVarsInLog = "0";
+		};
+		98D408FCB7D9F1B0536312EE = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = "1";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Export compliance";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/export-compliance.sh\"\n";
 			showEnvVarsInLog = "0";
 		};
 		FAFB70DA2F195F25CCA8FDA7 = {

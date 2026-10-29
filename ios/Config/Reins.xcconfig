@@ -28,4 +28,13 @@ REINS_HINGE_CONDITION[sdk=iphoneos27.0*] =
 REINS_HINGE_CONDITION[sdk=iphonesimulator27.0*] =
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(REINS_HINGE_CONDITION)
 
+// Export compliance. Reins uses standard non-exempt encryption and is distributed in France: Info.plist says
+// ITSAppUsesNonExemptEncryption = YES, and REINS_EXPORT_COMPLIANCE_CODE is the code App Store Connect gives once Apple
+// approves the app's encryption declaration. It becomes ITSEncryptionExportComplianceCode, only when set
+// (scripts/export-compliance.sh). Never commit it here: the release workflow passes it from the secret
+// ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE. A Release archive without it fails; Debug and other builds leave the key out.
+REINS_EXPORT_COMPLIANCE_CODE =
+REINS_EXPORT_COMPLIANCE_REQUIRED = NO
+REINS_EXPORT_COMPLIANCE_REQUIRED[config=Release] = YES
+
 #include? "Local.xcconfig"

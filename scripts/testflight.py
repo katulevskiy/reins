@@ -9,14 +9,26 @@
         went through), that build is reused: prints `uploaded=true`. Prints `build-number=N` and `uploaded=...`.
 
     scripts/testflight.py finish --version 0.6.0 --build-number 29860000 --notes-file notes.md \
-            --group Internal --group 228ac7ac-... [--info-plist ios/Reins/Info.plist]
-        Waits until the build has been processed, then sets its export compliance (usesNonExemptEncryption, from
-        ITSAppUsesNonExemptEncryption in --info-plist), its "What to Test" (from the release notes), adds it to each
+            --group Internal --group 228ac7ac-...
+        Waits until the build has been processed, reports its export compliance (never changes it: see below), sets
+        its "What to Test" (from the release notes), adds it to each
         --group (a group id, or a name that must match exactly one group), and submits it for beta app review when
         one of them is external. A refused review submission (a build already in review, missing test information,
         ...) is a warning, not a failure. Apple takes only a few submissions a day, so none is made while a build of
         the app went to review in the last 24 hours (a notice: the next day's first release goes), and Apple's own
         "submission limit reached" is a notice too.
+
+    scripts/testflight.py submit --version 0.6.0 --build-number 29860000 [--release-type MANUAL] [--dry-run]
+        Sends a processed build to App Store review (.github/workflows/ios-app-store.yml, by hand only): finds or
+        creates the App Store version of --version (iOS), sets its release type (MANUAL by default: the maintainer
+        releases it after approval), attaches the build, and submits the version through a review submission (a
+        draft submission of the app is reused). Refuses, before any request and with --dry-run too, unless
+        EXPORT_COMPLIANCE_CODE is set in the environment (see below). Fails when the build is not processed, does not
+        declare non-exempt encryption, the app has no approved encryption declaration with that code, the version is
+        past "Prepare for Submission" (or rejected), or the app has a submission waiting for or in review. --dry-run
+        reads and reports only. The version's metadata, screenshots,
+        privacy answers and review information are App Store Connect's (docs/ios-app-store-submission.md); Apple
+        refuses the submission while any is missing, and the error says which.
 
     scripts/testflight.py profile --plist decoded.plist --bundle-id com.reins2fa.app --team 5DRCQV8HY2
         Checks a provisioning profile (as `security cms -D` decodes it) is an App Store profile of that team for that
@@ -32,7 +44,14 @@
         The Swift packages the archive builds: every pin must name a revision and be checked out at it. Lists each
         package's plugins and binary targets.
 
-Credentials (prepare, finish): an App Store Connect API key, --key-file (the .p8), with AC_API_KEY_ID and
+Export compliance: Reins uses standard non-exempt encryption and is distributed in France, so every build declares
+ITSAppUsesNonExemptEncryption = YES and carries ITSEncryptionExportComplianceCode, the code of the app's encryption
+declaration Apple approved (ios/scripts/export-compliance.sh adds it to the archive from REINS_EXPORT_COMPLIANCE_CODE).
+This script never sets a build's usesNonExemptEncryption: the archive's Info.plist answers it. `submit` needs the same
+code as EXPORT_COMPLIANCE_CODE (the release secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE) and checks App Store Connect
+has that declaration approved and the build declares the encryption before it sends anything.
+
+Credentials (prepare, finish, submit): an App Store Connect API key, --key-file (the .p8), with AC_API_KEY_ID and
 AC_API_ISSUER_ID in the environment (never on the command line). Each request carries a short-lived JWT (ES256,
 signed with `openssl`); neither the key nor the token is printed. Every request is retried on network errors, 429 and
 5xx. Standard library only.
@@ -66,6 +85,14 @@ TOKEN_LIFETIME = 15 * 60  # Apple accepts at most 20 minutes
 REVIEW_SPACING_HOURS = 24
 # A build submitted for review was uploaded within this many days (a build can be submitted days after its upload).
 REVIEW_LOOKBACK_DAYS = 14
+# App Store versions that can still take a build and be submitted.
+EDITABLE_VERSION_STATES = frozenset({"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED",
+                                     "INVALID_BINARY"})
+# Review submissions of the app that block a new one.
+OPEN_REVIEW_STATES = ("WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES", "CANCELING")
+RELEASE_TYPES = ("MANUAL", "AFTER_APPROVAL")
+# App Store Connect's export compliance code, as ios/scripts/export-compliance.sh takes it.
+EXPORT_COMPLIANCE_CODE_PATTERN = r"[A-Za-z0-9][A-Za-z0-9-]*"
 TRANSIENT = frozenset({0, 408, 429, 500, 502, 503, 504})
 # The beta review states in which a build needs no (new) submission.
 REVIEWED = frozenset({"WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "BETA_APPROVED", "IN_BETA_TESTING"})
@@ -147,10 +174,6 @@ def make_jwt(key_pem, key_id, issuer_id, now=None):
 
 # The JSON:API bodies this script sends.
 
-def encryption_body(build_id, uses_non_exempt):
-    return {"data": {"type": "builds", "id": build_id, "attributes": {"usesNonExemptEncryption": uses_non_exempt}}}
-
-
 def localization_create_body(build_id, text, locale=LOCALE):
     return {"data": {"type": "betaBuildLocalizations", "attributes": {"locale": locale, "whatsNew": text},
                      "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}
@@ -167,6 +190,46 @@ def group_builds_body(build_id):
 def review_submission_body(build_id):
     return {"data": {"type": "betaAppReviewSubmissions",
                      "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}
+
+
+def app_store_version_create_body(app_id, version, release_type):
+    return {"data": {"type": "appStoreVersions",
+                     "attributes": {"platform": "IOS", "versionString": version, "releaseType": release_type},
+                     "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}}
+
+
+def app_store_version_update_body(version_id, release_type):
+    return {"data": {"type": "appStoreVersions", "id": version_id, "attributes": {"releaseType": release_type}}}
+
+
+def version_build_body(build_id):
+    return {"data": {"type": "builds", "id": build_id}}
+
+
+def review_create_body(app_id):
+    return {"data": {"type": "reviewSubmissions", "attributes": {"platform": "IOS"},
+                     "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}}
+
+
+def review_item_body(submission_id, version_id):
+    return {"data": {"type": "reviewSubmissionItems",
+                     "relationships": {"reviewSubmission": {"data": {"type": "reviewSubmissions", "id": submission_id}},
+                                       "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}}}}
+
+
+def review_submit_body(submission_id):
+    return {"data": {"type": "reviewSubmissions", "id": submission_id, "attributes": {"submitted": True}}}
+
+
+def version_state(version):
+    attributes = version.get("attributes") or {}
+    return attributes.get("appVersionState") or attributes.get("appStoreState") or "?"
+
+
+def item_version(item):
+    """The App Store version id a review submission item holds, or None."""
+    related = ((item.get("relationships") or {}).get("appStoreVersion") or {}).get("data") or {}
+    return related.get("id")
 
 
 def what_to_test(markdown, version, release_url=None, limit=WHAT_TO_TEST_LIMIT):
@@ -216,11 +279,18 @@ def next_build_number(existing, minimum):
     return max(int(minimum), highest[0] + 1)
 
 
-def uses_non_exempt_encryption(info_plist):
-    """ITSAppUsesNonExemptEncryption from the app's Info.plist (None when the key is absent)."""
-    with open(info_plist, "rb") as handle:
-        value = plistlib.load(handle).get("ITSAppUsesNonExemptEncryption")
-    return None if value is None else bool(value)
+def export_compliance_code(environ):
+    """EXPORT_COMPLIANCE_CODE (the app's approved encryption declaration's code), or ValueError when unset or not one."""
+    code = environ.get("EXPORT_COMPLIANCE_CODE", "").strip()
+    if not code:
+        raise ValueError("refusing to submit: EXPORT_COMPLIANCE_CODE is not set. Reins uses non-exempt encryption and "
+                         "is distributed in France: App Store review needs the code of the app's encryption "
+                         "declaration once Apple approves it (the secret "
+                         "ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE; docs/ios-app-store-submission.md, Export compliance)")
+    if not re.fullmatch(EXPORT_COMPLIANCE_CODE_PATTERN, code):
+        raise ValueError("refusing to submit: EXPORT_COMPLIANCE_CODE is not an App Store Connect export compliance "
+                         "code (letters, digits and hyphens)")
+    return code
 
 
 def check_profile(profile, bundle_id, team, now=None):
@@ -459,22 +529,40 @@ class Asc:
             log(f"{version} ({number}): {state or 'not there yet'}; again in {interval} s")
             time.sleep(interval)
 
-    def set_encryption(self, build, uses):
+    def report_encryption(self, build):
+        """Logs the build's export compliance answer; never changes it (the archive's Info.plist answers it)."""
         current = build["attributes"].get("usesNonExemptEncryption")
-        if uses is None:
-            if current is None:
-                self.warn("Export compliance is unanswered and the Info.plist has no "
-                          "ITSAppUsesNonExemptEncryption: answer it in App Store Connect")
-            return
-        if current == uses:
-            log(f"export compliance: usesNonExemptEncryption={str(uses).lower()} already")
-            return
-        if uses:
-            self.warn("The app declares non-exempt encryption: export compliance documents are needed in "
-                      "App Store Connect before testers get the build")
-            return
-        self.call("PATCH", f"builds/{build['id']}", encryption_body(build["id"], uses))
-        log("export compliance: usesNonExemptEncryption=false")
+        if current is True:
+            log("export compliance: usesNonExemptEncryption=true (from the Info.plist)")
+        elif current is False:
+            self.warn("Export compliance: App Store Connect says this build uses no non-exempt encryption, which is "
+                      "wrong for Reins: do not distribute it. Builds from current sources declare "
+                      "ITSAppUsesNonExemptEncryption = YES with the approved declaration's code.")
+        else:
+            self.warn("Export compliance is unanswered for this build (Missing Compliance): testers cannot get it "
+                      "until it is. Its archive had no ITSEncryptionExportComplianceCode App Store Connect "
+                      "recognised: check ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE against the approved declaration.")
+
+    def check_encryption(self, app_id, build, code):
+        """Refuses (AscError) unless the build declares non-exempt encryption and the app has an approved encryption
+        declaration whose code is `code`. Reads only."""
+        current = build["attributes"].get("usesNonExemptEncryption")
+        if current is not True:
+            answer = "unanswered" if current is None else "usesNonExemptEncryption=false"
+            raise AscError(409, f"refusing to submit: the build's export compliance is {answer}, but Reins uses "
+                                "non-exempt encryption. Upload a build archived with REINS_EXPORT_COMPLIANCE_CODE "
+                                "(ITSAppUsesNonExemptEncryption = YES and the approved code) and submit that one")
+        declarations = self.pages(f"apps/{app_id}/appEncryptionDeclarations?limit=200")
+        same = [d for d in declarations if (d.get("attributes") or {}).get("codeValue") == code]
+        if not same:
+            raise AscError(409, f"refusing to submit: none of the app's {len(declarations)} encryption declarations "
+                                "has the code in EXPORT_COMPLIANCE_CODE")
+        states = {(d.get("attributes") or {}).get("appEncryptionDeclarationState") for d in same}
+        if "APPROVED" not in states:
+            listed = ", ".join(sorted(str(state) for state in states))
+            raise AscError(409, f"refusing to submit: the encryption declaration with that code is {listed}, not "
+                                "APPROVED: wait for Apple's approval (the French declaration included)")
+        log("export compliance: usesNonExemptEncryption=true, encryption declaration APPROVED")
 
     def set_what_to_test(self, build_id, text, locale=LOCALE):
         existing = self.call("GET", f"builds/{build_id}/betaBuildLocalizations?limit=50").get("data") or []
@@ -563,11 +651,11 @@ class Asc:
         log("submitted for beta app review")
         return "SUBMITTED"
 
-    def finish(self, bundle_id, version, number, notes, groups, uses_encryption, timeout=5400, interval=30):
+    def finish(self, bundle_id, version, number, notes, groups, timeout=5400, interval=30):
         app = self.app_id(bundle_id)
         resolved, errors = self.resolve_groups(app, groups)
         build = self.wait_processed(app, version, number, timeout, interval)
-        self.set_encryption(build, uses_encryption)
+        self.report_encryption(build)
         self.set_what_to_test(build["id"], notes)
         for group in resolved:
             self.add_to_group(group, build["id"])
@@ -581,6 +669,77 @@ class Asc:
                             f"takes only a few a day. The first release after {REVIEW_SPACING_HOURS} h goes; "
                             "internal testers have this one now.")
         return errors
+
+
+    def app_store_version(self, app_id, version):
+        """The app's iOS App Store version `version`, or None."""
+        found = self.pages(f"apps/{app_id}/appStoreVersions?" + urllib.parse.urlencode(
+            {"filter[versionString]": version, "filter[platform]": "IOS", "limit": 10,
+             "fields[appStoreVersions]": "versionString,platform,appVersionState,appStoreState,releaseType"}))
+        found = [v for v in found if (v.get("attributes") or {}).get("versionString") == version]
+        return found[0] if found else None
+
+    def review_submissions(self, app_id, states):
+        return self.pages("reviewSubmissions?" + urllib.parse.urlencode(
+            {"filter[app]": app_id, "filter[platform]": "IOS", "filter[state]": ",".join(states), "limit": 50}))
+
+    def submit(self, bundle_id, version, number, release_type, code, dry_run=False):
+        """Sends build `number` of `version` to App Store review. Returns what it did, for the log."""
+        app = self.app_id(bundle_id)
+        found = self.builds(app, version, number)
+        if not found:
+            raise AscError(404, f"no build {version} ({number}) in App Store Connect: upload it to TestFlight first")
+        build = found[0]
+        state = build["attributes"].get("processingState")
+        if state != "VALID":
+            raise AscError(0, f"{version} ({number}) is {state}, not processed (VALID): wait, then run this again")
+        self.check_encryption(app, build, code)
+        blocking = self.review_submissions(app, OPEN_REVIEW_STATES)
+        if blocking:
+            states = ", ".join(sorted({(r.get("attributes") or {}).get("state", "?") for r in blocking}))
+            raise AscError(409, f"the app has a review submission already ({states}): wait for it, or resolve or "
+                                "cancel it in App Store Connect")
+        record = self.app_store_version(app, version)
+        if record is not None and version_state(record) not in EDITABLE_VERSION_STATES:
+            raise AscError(409, f"App Store version {version} is {version_state(record)}: it takes no new build or "
+                                "submission (a newer release needs a new version)")
+        if dry_run:
+            what = "create" if record is None else f"use ({version_state(record)})"
+            log(f"dry run: would {what} App Store version {version} ({release_type}), attach build {number} and "
+                "submit it for review; nothing changed")
+            return "DRY_RUN"
+        if record is None:
+            try:
+                record = self.call("POST", "appStoreVersions",
+                                   app_store_version_create_body(app, version, release_type))["data"]
+            except AscError as error:
+                if not error.refused:
+                    raise
+                raise AscError(error.status, f"App Store Connect did not create version {version} ({error.detail}); "
+                                             "another version in Prepare for Submission is the usual cause: rename "
+                                             "or remove it in App Store Connect", error.code) from None
+            log(f"created App Store version {version} ({release_type})")
+        elif (record.get("attributes") or {}).get("releaseType") != release_type:
+            self.call("PATCH", f"appStoreVersions/{record['id']}",
+                      app_store_version_update_body(record["id"], release_type))
+            log(f"App Store version {version}: release type {release_type}")
+        attached = (self.call("GET", f"appStoreVersions/{record['id']}/build").get("data") or {}).get("id")
+        if attached != build["id"]:
+            self.call("PATCH", f"appStoreVersions/{record['id']}/relationships/build", version_build_body(build["id"]))
+            log(f"App Store version {version}: build {number} attached")
+        drafts = self.review_submissions(app, ("READY_FOR_REVIEW",))
+        if drafts:
+            submission = drafts[0]["id"]
+            items = self.pages(f"reviewSubmissions/{submission}/items?limit=50&include=appStoreVersion")
+            has_version = record["id"] in {item_version(i) for i in items}
+        else:
+            submission = self.call("POST", "reviewSubmissions", review_create_body(app))["data"]["id"]
+            has_version = False
+        if not has_version:
+            self.call("POST", "reviewSubmissionItems", review_item_body(submission, record["id"]))
+        self.call("PATCH", f"reviewSubmissions/{submission}", review_submit_body(submission))
+        log(f"{version} ({number}) submitted for App Store review ({release_type} release)")
+        return "SUBMITTED"
 
 
 def load_key(args, environ):
@@ -598,7 +757,7 @@ def load_key(args, environ):
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "finish"):
+    for name in ("prepare", "finish", "submit"):
         command = commands.add_parser(name)
         command.add_argument("--bundle-id", default=BUNDLE_ID)
         command.add_argument("--version", required=True, help="the marketing version (CFBundleShortVersionString)")
@@ -610,9 +769,13 @@ def parse_args(argv):
     finish.add_argument("--notes-file", help="the release notes (Markdown); empty or missing: the version only")
     finish.add_argument("--release-url", help="named at the end of What to Test")
     finish.add_argument("--group", action="append", default=[], help="a TestFlight group id or name (repeatable)")
-    finish.add_argument("--info-plist", default=str(Path(__file__).resolve().parent.parent / "ios/Reins/Info.plist"))
     finish.add_argument("--timeout", type=int, default=5400, help="seconds to wait for processing")
     finish.add_argument("--interval", type=int, default=30)
+    submit = commands.choices["submit"]
+    submit.add_argument("--build-number", required=True)
+    submit.add_argument("--release-type", choices=RELEASE_TYPES, default="MANUAL",
+                        help="MANUAL: released by hand after approval (default); AFTER_APPROVAL: at once")
+    submit.add_argument("--dry-run", action="store_true", help="read and report only")
     profile = commands.add_parser("profile")
     profile.add_argument("--plist", required=True, help="the profile as `security cms -D -i` decodes it")
     profile.add_argument("--bundle-id", required=True)
@@ -647,17 +810,27 @@ def main(argv=None, http=None, environ=os.environ):
             for line in audit_packages(args.resolved, args.checkouts):
                 log(line)
             return 0
+        if args.command == "submit":
+            # Before the key is read or anything is requested, --dry-run included.
+            code = export_compliance_code(environ)
         asc = Asc(http or Http(), *load_key(args, environ), environ=environ)
         if args.command == "prepare":
             number, uploaded = asc.prepare(args.bundle_id, args.version, args.minimum)
             print(f"build-number={number}")
             print(f"uploaded={str(uploaded).lower()}")
             return 0
+        if args.command == "submit":
+            if not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}", args.version) or not re.fullmatch(r"[0-9]+(\.[0-9]+)*",
+                                                                                          args.build_number):
+                raise ValueError(f"{args.version!r} ({args.build_number!r}) is not a version and build number")
+            result = asc.submit(args.bundle_id, args.version, args.build_number, args.release_type, code,
+                                args.dry_run)
+            print(f"result={result}")
+            return 0
         notes = Path(args.notes_file).read_text() if args.notes_file and Path(args.notes_file).is_file() else ""
         text = what_to_test(notes, args.version, args.release_url)
-        uses = uses_non_exempt_encryption(args.info_plist)
         groups = list(dict.fromkeys(g.strip() for spec in args.group for g in spec.split(",") if g.strip()))
-        errors = asc.finish(args.bundle_id, args.version, args.build_number, text, groups, uses, args.timeout,
+        errors = asc.finish(args.bundle_id, args.version, args.build_number, text, groups, args.timeout,
                             args.interval)
     except (OSError, ValueError, plistlib.InvalidFileException) as error:
         annotate("error", str(error), environ)

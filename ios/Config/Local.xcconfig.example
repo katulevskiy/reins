@@ -4,3 +4,5 @@ REINS_TELEGRAM_API_ID = 123456
 REINS_TELEGRAM_API_HASH = 0123456789abcdef0123456789abcdef
 REINS_GOOGLE_CLIENT_ID = 1234-abcd.apps.googleusercontent.com
 REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.1234-abcd
+// Only to archive for App Store Connect yourself: the code of the app's approved encryption declaration.
+// REINS_EXPORT_COMPLIANCE_CODE = 00000000-0000-0000-0000-000000000000

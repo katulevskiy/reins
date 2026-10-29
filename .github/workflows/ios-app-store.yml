@@ -1,0 +1,106 @@
+name: App Store submission
+# Sends an iOS build that is already on TestFlight (uploaded and processed by release.yml, job ios-testflight) to App
+# Store review: scripts/testflight.py submit finds or creates the App Store version, sets its release type, attaches
+# the build and submits the version. By hand only (Actions > App Store submission > Run workflow, from main); nothing
+# runs it on a push, a schedule or another workflow. The release type is MANUAL unless chosen otherwise: after Apple
+# approves, the maintainer releases the version in App Store Connect. The version's listing, screenshots, privacy
+# answers, age rating and review information are set in App Store Connect first; checklist:
+# docs/ios-app-store-submission.md.
+#
+# Credentials: the App Store Connect API key "Reins CI" (App Manager) from the GitHub environment `testflight`
+# (AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID), the same secrets the TestFlight upload uses. No
+# signing certificate or profile: nothing is built or signed here. Export compliance: the secret
+# ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE, the code of the app's encryption declaration once Apple approves it (the app
+# uses standard non-exempt encryption and is distributed in France); the script refuses to submit, or dry-run, without
+# it, and checks the build declares the encryption and the declaration with that code is approved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The App Store version, the release's marketing version (1.2.3, without the v)
+        type: string
+        required: true
+      build_number:
+        description: The TestFlight build number (CFBundleVersion) of that version, already processed
+        type: string
+        required: true
+      release_type:
+        description: MANUAL releases by hand after approval; AFTER_APPROVAL releases as soon as Apple approves
+        type: choice
+        options: [MANUAL, AFTER_APPROVAL]
+        default: MANUAL
+      dry_run:
+        description: Check the build, the version and open submissions only; change nothing
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One submission at a time; a second run waits rather than racing the first.
+concurrency:
+  group: ios-app-store
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  submit:
+    name: Submit for App Store review
+    # From main only, so the environment's secrets serve only main's workflow and script.
+    if: github.ref == 'refs/heads/main'
+    environment: testflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Inputs
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$VERSION' is not a version like 1.2.3"; exit 1; }
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::'$BUILD_NUMBER' is not a build number"; exit 1; }
+          [[ "$RELEASE_TYPE" == MANUAL || "$RELEASE_TYPE" == AFTER_APPROVAL ]] ||
+            { echo "::error::Unknown release type '$RELEASE_TYPE'"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: App Store Connect key
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          umask 077
+          python3 scripts/testflight.py secrets --need asc --out "$RUNNER_TEMP/asc"
+      - name: Submit for review
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          # The code of the app's approved encryption declaration: without it the script refuses, dry runs included.
+          EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}
+        run: |
+          dir="$RUNNER_TEMP/asc"
+          set -a
+          source "$dir/asc.env"
+          set +a
+          dry=()
+          if [[ "$DRY_RUN" == true ]]; then dry=(--dry-run); fi
+          python3 scripts/testflight.py submit --version "$VERSION" --build-number "$BUILD_NUMBER" \
+            --release-type "$RELEASE_TYPE" --key-file "$dir/AuthKey.p8" "${dry[@]}"
+          if [[ "$DRY_RUN" == true ]]; then
+            echo "::notice::Dry run: Reins $VERSION ($BUILD_NUMBER) could be submitted; nothing changed"
+          else
+            echo "::notice::Reins $VERSION ($BUILD_NUMBER) is submitted for App Store review ($RELEASE_TYPE release)"
+          fi
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

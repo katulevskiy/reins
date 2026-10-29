@@ -8,11 +8,13 @@ import datetime
 import importlib.util
 import io
 import json
+import os
 import plistlib
 import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -48,7 +50,7 @@ def raw_to_der(raw):
 class FakeAsc:
     """The endpoints the script uses. `builds` is the app's builds; a build becomes VALID after `processing` polls."""
 
-    def __init__(self, builds=(), groups=(), review_error=None, processing=1, encryption=None, reviews=()):
+    def __init__(self, builds=(), groups=(), review_error=None, processing=1, encryption=True, reviews=()):
         self.calls = []
         self.builds = [dict(b) for b in builds]
         self.groups = list(groups)
@@ -166,8 +168,8 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
             check(False, f"{bad!r} is not a signature")
 
     # The bodies.
-    check(tf.encryption_body("b1", False) == {"data": {"type": "builds", "id": "b1",
-                                                      "attributes": {"usesNonExemptEncryption": False}}}, "encryption")
+    check(not hasattr(tf, "encryption_body") and not hasattr(tf, "set_encryption"),
+          "no request body that sets a build's export compliance")
     created = tf.localization_create_body("b1", "text")
     check(created["data"]["attributes"] == {"locale": "en-US", "whatsNew": "text"}
           and created["data"]["relationships"]["build"]["data"] == {"type": "builds", "id": "b1"}, created)
@@ -191,8 +193,41 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     check(tf.next_build_number(["29860005", "3.1"], 29_860_000) == 29_860_006, "after the highest")
     check(tf.next_build_number([], 5) == 5 and tf.next_build_number(["x"], 5) == 5, "empty or odd")
 
-    # Export compliance comes from the Info.plist, which declares standard (exempt) encryption.
-    check(tf.uses_non_exempt_encryption(ROOT / "ios/Reins/Info.plist") is False, "Info.plist")
+    # Export compliance: the app uses standard non-exempt encryption and is distributed in France. The Info.plist says
+    # so; the code of the approved declaration is added at build time from a build setting, never committed.
+    info = plistlib.loads((ROOT / "ios/Reins/Info.plist").read_bytes())
+    check(info.get("ITSAppUsesNonExemptEncryption") is True, "Info.plist declares non-exempt encryption")
+    check("ITSEncryptionExportComplianceCode" not in info, "no compliance code in the source Info.plist")
+    for extension in ("ReinsWidgets", "ReinsNotifications"):
+        ext_info = plistlib.loads((ROOT / f"ios/{extension}/Info.plist").read_bytes())
+        check(not any(k.startswith("ITS") for k in ext_info), f"{extension}: App Store Connect reads the app's keys")
+    xcconfig = (ROOT / "ios/Config/Reins.xcconfig").read_text()
+    check("\nREINS_EXPORT_COMPLIANCE_CODE =\n" in xcconfig and "\nREINS_EXPORT_COMPLIANCE_REQUIRED = NO\n" in xcconfig
+          and "\nREINS_EXPORT_COMPLIANCE_REQUIRED[config=Release] = YES\n" in xcconfig
+          and xcconfig.index("REINS_EXPORT_COMPLIANCE_CODE") < xcconfig.index('#include? "Local.xcconfig"'),
+          "an empty code by default, required for Release archives, Local.xcconfig may set it")
+    compliance = (ROOT / "ios/scripts/export-compliance.sh").read_text()
+    check('[ -n "$code" ]' in compliance and "Add :ITSEncryptionExportComplianceCode string" in compliance
+          and "Delete :ITSEncryptionExportComplianceCode" in compliance
+          and '"${REINS_EXPORT_COMPLIANCE_REQUIRED:-NO}" = YES ] && [ "${ACTION:-}" = install ]' in compliance,
+          "the key only when set; an archive without it fails when required")
+    check(os.access(ROOT / "ios/scripts/export-compliance.sh", os.X_OK), "export-compliance.sh is executable")
+    generator = (ROOT / "ios/scripts/gen-project.py").read_text()
+    check(generator.count('"export_compliance": True') == 1 and "scripts/export-compliance.sh" in generator,
+          "the generator adds the phase to one target")
+    pbxproj = (ROOT / "ios/Reins.xcodeproj/project.pbxproj").read_text()
+    check(pbxproj.count('exec \\"$SRCROOT/scripts/export-compliance.sh\\"') == 1
+          and pbxproj.count('"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"') == 1, "the generated project has the phase")
+    for good in ("1A2B3C4D-0000-4E5F-8A9B-0123456789AB", "abc123"):
+        check(tf.export_compliance_code({"EXPORT_COMPLIANCE_CODE": good}) == good, good)
+    for bad in ({}, {"EXPORT_COMPLIANCE_CODE": ""}, {"EXPORT_COMPLIANCE_CODE": "  "},
+                {"EXPORT_COMPLIANCE_CODE": "a b"}, {"EXPORT_COMPLIANCE_CODE": "x;y"}, {"EXPORT_COMPLIANCE_CODE": "-a"}):
+        try:
+            tf.export_compliance_code(bad)
+        except ValueError as error:
+            check(str(error).startswith("refusing to submit"), error)
+        else:
+            check(False, f"{bad} is no code")
 
     # prepare: hand uploads 0.2.5 (1) and 0.2.6 (2) leave the scheme alone; a rerun reuses its upload.
     env = {"AC_API_KEY_ID": "KEY123", "AC_API_ISSUER_ID": "issuer-uuid"}
@@ -211,7 +246,7 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     code, out, err = run(["prepare", "--version", "0.6.0", "--minimum", "1"], FakeAsc(), env)
     check(code == 2 and "--key-file" in err, err)
 
-    # finish: processing is waited for, compliance set, What to Test written, the build goes to the external group
+    # finish: processing is waited for, compliance reported (never set), What to Test written, the build goes to the external group
     # (by id: two groups share its name), the internal one gets every build by itself, and a refused review
     # submission is only a warning.
     notes = root / "notes.md"
@@ -219,10 +254,13 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     build = {"pre": "0.6.0", "version": "29860000"}
     finish = ["finish", "--version", "0.6.0", "--build-number", "29860000", "--notes-file", str(notes),
               "--group", "Internal,228ac7ac-1", "--interval", "0", "--key-file", str(key)]
-    fake = FakeAsc([build], GROUPS, review_error=(409, "Another build is in review", "STATE_ERROR"), processing=2)
+    fake = FakeAsc([build], GROUPS, review_error=(409, "Another build is in review", "STATE_ERROR"), processing=2,
+                   encryption=None)
     code, out, err = run(finish, fake, env | {"GITHUB_ACTIONS": "true"})
     check(code == 0, (code, err))
-    check(fake.bodies("PATCH", "builds/build-29860000") == [tf.encryption_body("build-29860000", False)], fake.calls)
+    check(not [m for m, u, _, _ in fake.calls if m != "GET" and u.removeprefix(tf.API + "/").startswith("builds")],
+          "finish never changes a build's export compliance")
+    check("::warning::Export compliance is unanswered" in err, err)
     posted = fake.bodies("POST", "betaBuildLocalizations")
     check(len(posted) == 1 and posted[0]["data"]["attributes"]["whatsNew"].startswith("Reins 0.6.0"), posted)
     check(fake.bodies("POST", "betaGroups/228ac7ac-1/relationships/builds") == [tf.group_builds_body("build-29860000")],
@@ -234,12 +272,18 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     check(routes.index(("POST", "betaGroups/228ac7ac-1/relationships/builds"))
           < routes.index(("POST", "betaAppReviewSubmissions")), "the group before the review")
 
-    # Compliance already answered, an existing localization: nothing re-set, the text updated in place.
-    fake = FakeAsc([build], GROUPS, encryption=False, processing=0)
+    # Compliance answered by the Info.plist (true), an existing localization: nothing set, the text updated in place.
+    fake = FakeAsc([build], GROUPS, encryption=True, processing=0)
     fake.localizations = [{"id": "loc-1", "attributes": {"locale": "en-US"}}]
-    code, out, err = run(finish, fake, env)
+    code, out, err = run(finish, fake, env | {"GITHUB_ACTIONS": "true"})
     check(code == 0 and not fake.bodies("PATCH", "builds/build-29860000"), fake.routes())
+    check("usesNonExemptEncryption=true" in err and "::warning::Export" not in err, err)
     check(len(fake.bodies("PATCH", "betaBuildLocalizations/loc-1")) == 1, fake.routes())
+    # A build answered false (as builds before this change were) is never corrected to false again, nor left silent.
+    fake = FakeAsc([build], GROUPS, encryption=False, processing=0)
+    code, out, err = run(finish, fake, env | {"GITHUB_ACTIONS": "true"})
+    check(code == 0 and not fake.bodies("PATCH", "builds/build-29860000"), fake.routes())
+    check("::warning::Export compliance: App Store Connect says this build uses no non-exempt encryption" in err, err)
 
     # A group named by its ambiguous name, or missing, fails clearly (after the rest is done).
     fake = FakeAsc([build], GROUPS, processing=0)
@@ -455,12 +499,13 @@ signing = {
     "Signing identity": {"IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "APPLE_TEAM_ID"},
     "Provisioning profiles": {"IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS", "IOS_PROFILE_NOTIFICATIONS", "APPLE_TEAM_ID"},
 }
-allowed = {"Build number": asc, **signing, "App settings": {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"},
+allowed = {"Build number": asc, **signing, "App settings": {"TELEGRAM_API_ID", "TELEGRAM_API_HASH",
+                                                            "ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE"},
            "App Store Connect key": asc}
 for name, step in steps.items():
     used = set(re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", step))
     check(used <= allowed.get(name, set()), f"{name} maps {sorted(used)}")
-check(set().union(*allowed.values()) - {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"}
+check(set().union(*allowed.values()) - {"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE"}
       == set(re.findall(r"secrets\.((?:AC|IOS|APPLE)_[A-Z0-9_]+)", job)), "all nine, and only those")
 check("--need asc " in steps["App Store Connect key"] and "--need asc " in steps["Build number"]
       and "--need cert " in steps["Signing identity"] and "--need profiles " in steps["Provisioning profiles"],
@@ -528,4 +573,171 @@ check("iphonesimulator iphoneos iphoneos-release" in ios_core and "(iphonesimula
       "ios-core.yml publishes the Release core")
 check("--profile host-tool" in build_core and "target/host-tool/uniffi-bindgen" in build_core,
       "uniffi-bindgen is a cheap host build")
+# submit: a processed build goes to App Store review with a manual release, through a review submission.
+class FakeStore:
+    """The App Store endpoints `submit` uses: one build, an optional App Store version, review submissions."""
+
+    def __init__(self, state="VALID", version=None, reviews=(), attached=None, items=(), create_error=None,
+                 encryption=True, declarations=None):
+        self.calls = []
+        self.encryption = encryption
+        # The app's encryption declarations; by default one approved with CODE.
+        self.declarations = [declaration(CODE, "APPROVED")] if declarations is None else list(declarations)
+        self.state = state
+        self.version = version
+        self.reviews = list(reviews)
+        self.attached = attached
+        self.items = list(items)
+        self.create_error = create_error
+
+    def request(self, method, url, headers=None, body=None, timeout=60):
+        self.calls.append((method, url.removeprefix(tf.API + "/").split("?")[0], body))
+        path = url.removeprefix(tf.API + "/")
+        if path.startswith("apps?"):
+            return {"data": [{"id": "app1", "attributes": {"bundleId": tf.BUNDLE_ID}}]}
+        if path.startswith("builds?"):
+            return {"data": [{"id": "build-7", "attributes": {"version": "7", "processingState": self.state,
+                                                              "usesNonExemptEncryption": self.encryption}}]}
+        if path.startswith("apps/app1/appEncryptionDeclarations?"):
+            return {"data": self.declarations}
+        if path.startswith("apps/app1/appStoreVersions?"):
+            return {"data": [self.version] if self.version else []}
+        if path.startswith("reviewSubmissions?"):
+            states = urllib.parse.parse_qs(path.split("?", 1)[1])["filter[state]"][0].split(",")
+            return {"data": [r for r in self.reviews if r["attributes"]["state"] in states]}
+        if path.endswith("/build") and method == "GET":
+            return {"data": {"id": self.attached} if self.attached else None}
+        if path.startswith("reviewSubmissions/") and "/items" in path:
+            return {"data": self.items}
+        if path == "appStoreVersions" and method == "POST":
+            if self.create_error:
+                raise tf.AscError(*self.create_error)
+            return {"data": {"id": "ver-new", "attributes": body["data"]["attributes"]}}
+        if path == "reviewSubmissions" and method == "POST":
+            return {"data": {"id": "sub-new"}}
+        return {}
+
+    def writes(self):
+        return [(m, u) for m, u, _ in self.calls if m in ("POST", "PATCH", "DELETE")]
+
+    def body(self, method, path):
+        return [b for m, u, b in self.calls if m == method and u == path]
+
+
+CODE = "1A2B3C4D-0000-4E5F-8A9B-0123456789AB"  # made up
+
+
+def declaration(code, state):
+    return {"id": f"decl-{state}", "type": "appEncryptionDeclarations",
+            "attributes": {"codeValue": code, "appEncryptionDeclarationState": state}}
+
+
+with tempfile.TemporaryDirectory(prefix="reins-app-store-") as directory:
+    key = Path(directory) / "AuthKey.p8"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", str(key)],
+                   check=True, capture_output=True)
+    env = {"AC_API_KEY_ID": "KEY123", "AC_API_ISSUER_ID": "issuer-uuid", "EXPORT_COMPLIANCE_CODE": CODE}
+    base = ["submit", "--version", "1.0.0", "--build-number", "7", "--key-file", str(key)]
+
+    store = FakeStore()
+    code, out, err = run(base, store, env)
+    check(code == 0 and "result=SUBMITTED" in out, (out, err))
+    check(store.writes() == [("POST", "appStoreVersions"),
+                             ("PATCH", "appStoreVersions/ver-new/relationships/build"), ("POST", "reviewSubmissions"),
+                             ("POST", "reviewSubmissionItems"), ("PATCH", "reviewSubmissions/sub-new")], store.writes())
+    created = store.body("POST", "appStoreVersions")[0]["data"]
+    check(created["attributes"] == {"platform": "IOS", "versionString": "1.0.0", "releaseType": "MANUAL"}
+          and created["relationships"]["app"]["data"]["id"] == "app1", "a manual release by default")
+    check(store.body("PATCH", "appStoreVersions/ver-new/relationships/build")[0] ==
+          {"data": {"type": "builds", "id": "build-7"}}, "the build attached")
+    item = store.body("POST", "reviewSubmissionItems")[0]["data"]["relationships"]
+    check(item["reviewSubmission"]["data"]["id"] == "sub-new" and item["appStoreVersion"]["data"]["id"] == "ver-new",
+          item)
+    check(store.body("PATCH", "reviewSubmissions/sub-new")[0]["data"]["attributes"] == {"submitted": True}, "submitted")
+    check(not [c for c in store.calls if c[0] != "GET" and c[1].startswith("builds")], "export compliance never set")
+    check(("GET", "apps/app1/appEncryptionDeclarations", None) in store.calls, "the declaration checked")
+
+    # --dry-run reads only.
+    store = FakeStore()
+    code, out, err = run(base + ["--dry-run"], store, env)
+    check(code == 0 and "result=DRY_RUN" in out and store.writes() == [], (out, err, store.writes()))
+    check(("GET", "apps/app1/appEncryptionDeclarations", None) in store.calls, "a dry run checks the declaration too")
+
+    # No export compliance code: refused before the key is read or anything is requested, --dry-run included.
+    for argv in (base, base + ["--dry-run"]):
+        for missing in ({k: v for k, v in env.items() if k != "EXPORT_COMPLIANCE_CODE"},
+                        {**env, "EXPORT_COMPLIANCE_CODE": ""}, {**env, "EXPORT_COMPLIANCE_CODE": "not a code"}):
+            store = FakeStore()
+            code, out, err = run(argv, store, {**missing, "GITHUB_ACTIONS": "true"})
+            check(code == 2 and "::error::refusing to submit" in err and store.calls == [] and "result=" not in out,
+                  (argv[-1], err, store.calls))
+    store = FakeStore()
+    code, out, err = run(["submit", "--version", "1.0.0", "--build-number", "7"], store,
+                         {"GITHUB_ACTIONS": "true"})
+    check(code == 2 and "EXPORT_COMPLIANCE_CODE is not set" in err and store.calls == [], "the code before the key")
+
+    # The build must declare the encryption, and the app must have the code's declaration approved; nothing written.
+    for store, why in ((FakeStore(encryption=False), "usesNonExemptEncryption=false"),
+                       (FakeStore(encryption=None), "unanswered"),
+                       (FakeStore(declarations=[]), "none of the app's 0 encryption declarations"),
+                       (FakeStore(declarations=[declaration("OTHER-CODE", "APPROVED")]), "none of the app's 1"),
+                       (FakeStore(declarations=[declaration(CODE, "IN_REVIEW")]), "IN_REVIEW, not APPROVED"),
+                       (FakeStore(declarations=[declaration(CODE, "REJECTED")]), "REJECTED, not APPROVED")):
+        for argv in (base, base + ["--dry-run"]):
+            code, out, err = run(argv, store, {**env, "GITHUB_ACTIONS": "true"})
+            check(code == 1 and why in err and "refusing to submit" in err and store.writes() == [],
+                  (why, err, store.writes()))
+            check(CODE not in out + err, "the code is not printed")
+
+    # An existing version (released at once before) becomes manual; the attached build and a draft are reused.
+    existing = {"id": "ver-1", "attributes": {"versionString": "1.0.0", "appVersionState": "PREPARE_FOR_SUBMISSION",
+                                              "releaseType": "AFTER_APPROVAL"}}
+    draft = {"id": "sub-1", "attributes": {"state": "READY_FOR_REVIEW"}}
+    store = FakeStore(version=existing, reviews=[draft], attached="build-7",
+                      items=[{"relationships": {"appStoreVersion": {"data": {"id": "ver-1"}}}}])
+    code, out, err = run(base, store, env)
+    check(code == 0 and store.writes() == [("PATCH", "appStoreVersions/ver-1"),
+                                           ("PATCH", "reviewSubmissions/sub-1")], (err, store.writes()))
+    check(store.body("PATCH", "appStoreVersions/ver-1")[0]["data"]["attributes"] == {"releaseType": "MANUAL"}, "manual")
+    store = FakeStore(version=existing)
+    code, out, err = run(base + ["--release-type", "AFTER_APPROVAL"], store, env)
+    check(code == 0 and ("PATCH", "appStoreVersions/ver-1") not in store.writes(), "AFTER_APPROVAL when asked")
+
+    # Refusals: an unprocessed build, a submission in review, a version past submission; nothing is written.
+    for store, why in ((FakeStore(state="PROCESSING"), "not processed"),
+                       (FakeStore(reviews=[{"id": "s", "attributes": {"state": "IN_REVIEW"}}]), "IN_REVIEW"),
+                       (FakeStore(version={"id": "v", "attributes": {"versionString": "1.0.0",
+                                                                     "appVersionState": "READY_FOR_DISTRIBUTION"}}),
+                        "READY_FOR_DISTRIBUTION")):
+        code, out, err = run(base, store, {**env, "GITHUB_ACTIONS": "true"})
+        check(code == 1 and why in err and store.writes() == [], (why, err, store.writes()))
+    store = FakeStore(create_error=(409, "another version", "ENTITY_ERROR"))
+    code, out, err = run(base, store, env)
+    check(code == 1 and "Prepare for Submission" in err, err)
+    code, out, err = run(["submit", "--version", "1.0; x", "--build-number", "7", "--key-file", str(key)], FakeStore(),
+                         env)
+    check(code == 2, "a malformed version")
+
+# The App Store workflow: by hand only, from main, with the testflight environment's API key; manual release first.
+store_workflow = (ROOT / ".github/workflows/ios-app-store.yml").read_text()
+trigger = store_workflow.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+check(trigger.startswith("  workflow_dispatch:\n") and "push" not in trigger and "schedule" not in trigger
+      and "pull_request" not in trigger and "workflow_run" not in trigger, "only workflow_dispatch")
+check("options: [MANUAL, AFTER_APPROVAL]\n        default: MANUAL" in trigger, "manual release by default")
+check("github.ref == 'refs/heads/main'" in store_workflow and "environment: testflight" in store_workflow,
+      "main and the testflight environment")
+check("scripts/testflight.py secrets --need asc" in store_workflow and "scripts/testflight.py submit" in store_workflow,
+      "the API key, then submit")
+runs = re.findall(r"\n        run: (\|\n(?:          [^\n]*\n|\n)*|[^\n]*\n)", store_workflow)
+check(len(runs) == 4 and not any("${{" in r for r in runs), "inputs and secrets reach the scripts through env only")
+submit_step = store_workflow.split("\n      - name: Submit for review\n", 1)[1].split("\n      - ", 1)[0]
+check("EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}" in submit_step
+      and store_workflow.count("secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE") == 1, "the code only in the submit step")
+# The TestFlight archive: the code from the same secret into the release xcconfig, only in the App settings step.
+check(re.findall(r"secrets\.ITS_[A-Z0-9_]+", job) == ["secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE"]
+      and "secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE" in steps["App settings"], "the code only in App settings")
+check("REINS_EXPORT_COMPLIANCE_CODE = $EXPORT_COMPLIANCE_CODE" in steps["App settings"]
+      and "REINS_EXPORT_COMPLIANCE_REQUIRED = NO" in steps["App settings"], steps["App settings"])
+check("--info-plist" not in job and "usesNonExemptEncryption" not in workflow, "the workflow sets no compliance answer")
+
 print(f"{checks} TestFlight checks passed")

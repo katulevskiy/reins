@@ -273,12 +273,18 @@ signs the iOS app, then exports it for the App Store and uploads it to App Store
 `com.reins2fa.app`). It is one job after publication, not a build beside the others: its signing material is the
 `testflight` environment's, which the `macos` job, bound to the main ref's Infisical identity, cannot have, and a
 second macOS job before publication waited in the account's macOS queue on its own. Then
-`scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
-Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
-beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
+`scripts/testflight.py` waits for processing, reports the build's export compliance (it never sets it: the archive's
+Info.plist declares non-exempt encryption and the approved declaration's code, from the environment secret
+`ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE`; without it the job fails before archiving, see
+[docs/ios-app-store-submission.md](docs/ios-app-store-submission.md#export-compliance)), sets "What to Test" from the
+release notes, adds the build to the TestFlight groups and submits it for beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
 never touches the GitHub release: rerun the failed job. A newer release's upload cancels an older one still waiting or
 running. To test or redo one release, run the Release workflow from main with `testflight_tag` = `vX.Y.Z`; only this
 job runs.
+
+App Store review is a separate, manual step: the App Store submission workflow (`ios-app-store.yml`) sends a
+processed TestFlight build for review with a manual release, using the same API key. Checklist and steps:
+[docs/ios-app-store-submission.md](docs/ios-app-store-submission.md).
 
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.
@@ -292,6 +298,7 @@ testflight); the job fails naming any that is missing. They are copies: the mast
 | `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | the Apple Distribution certificate and key (`.p12`, base64) and its password |
 | `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
 | `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
+| `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` | the export compliance code of the app's approved encryption declaration (`ITSEncryptionExportComplianceCode`) |
 
 The job does not use Infisical (its plan allows no second identity, and the release identity `github-release-android`
 keeps only its main-ref subject; an environment's OIDC subject would not match it), and asks for no OIDC token.
