@@ -70,11 +70,13 @@ Most of this is one-time. Apple keeps it per app or per version as noted.
   (2064 × 2752 or 2048 × 2732) because the app runs on iPad. Apple scales smaller sizes from these. The `-demo` launch
   argument shows sample data (`ios/README.md`), e.g. `ios/scripts/sim.sh "iPhone 18 Pro Max" --shot /tmp/reins.png --
   -demo`. Optional: an app preview video.
-- [ ] **App Review information.** Contact name, phone and email, and **a demo account**. Sign-in is WorkOS with a
-  passkey on the hosted server, which a reviewer cannot use with your credentials: decide how review signs in (a
-  review account Apple can create a passkey for, or a review server reachable under "Use another server" with
-  password sign-in) and describe it step by step. The reviewer also needs a paired computer or a way to see a request
-  arrive; say how (for example, a request you send during review hours).
+- [ ] **App Review information.** Contact name, phone and email, and **the demo account**. Apple's reviewers use
+  `appreview@reins2fa.com`, a WorkOS user with email and password sign-in and no MFA (see "App access" in
+  `android/PLAY_STORE.md`). Put its email and password in the sign-in fields; never commit the password. Confirm the
+  account exists and where its password is kept (the Play twin's is in 1Password). Sign-in steps: Continue, enter the
+  email on the WorkOS page, choose password sign-in, confirm the recovery code (any value), allow notifications, Skip
+  setup. Never sign it in on a second phone (that opens Unlock). The reviewer also needs a way to see a request arrive;
+  say how (for example, a request you send during review hours, or the demo video).
 - [ ] **Review notes** explaining the entitlements and keys Apple asks about:
   - Background modes (`UIBackgroundModes`): `fetch`, `processing` and `remote-notification`: what each refreshes or
     processes in the background (approval requests arriving by push, the on-device model download, ...).
