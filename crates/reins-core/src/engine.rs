@@ -59,6 +59,11 @@ pub struct CoreConfig {
     /// Privacy.com's API, and its sandbox (virtual cards for Payments): tests point them at fake servers.
     pub privacy_base: String,
     pub privacy_sandbox_base: String,
+    /// The X API and its sign-in page: tests point them at fake servers.
+    pub x_base: String,
+    pub x_authorize_url: String,
+    /// The OAuth client id of the X developer app (`REINS_X_CLIENT_ID` at build time); `None` leaves X unavailable.
+    pub x_client_id: Option<String>,
 }
 
 impl Default for CoreConfig {
@@ -79,6 +84,9 @@ impl Default for CoreConfig {
             new_connection_secs: crate::autopilot::gates::NEW_CONNECTION_SECS,
             privacy_base: crate::connector::payments::provider::PRIVACY_BASE.to_owned(),
             privacy_sandbox_base: crate::connector::payments::provider::PRIVACY_SANDBOX_BASE.to_owned(),
+            x_base: crate::connector::x::X_BASE.to_owned(),
+            x_authorize_url: crate::connector::x::X_AUTHORIZE_URL.to_owned(),
+            x_client_id: crate::connector::x::X_CLIENT_ID.map(str::to_owned),
         }
     }
 }
@@ -257,6 +265,13 @@ impl Engine {
             &cfg.bitbucket_base,
             Arc::clone(&store),
             cfg.backoff_base,
+        )));
+        connectors.add(Arc::new(crate::connector::x::XApi::new(
+            http.clone(),
+            &cfg.x_base,
+            &cfg.x_authorize_url,
+            cfg.x_client_id.clone(),
+            Arc::clone(&store),
         )));
         for connector in extra {
             connectors.add(connector);
