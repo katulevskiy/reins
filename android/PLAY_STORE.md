@@ -5,6 +5,21 @@ The checklist for publishing the `play` flavor, with the answer to give in each 
 entered; **[owner action]** is something only the account owner can do; **[unsure]** is an answer this document could
 not settle from the code and Google's documentation alone.
 
+## Status (2026-10-29)
+
+- The app exists in the Play Console and releases upload by themselves: v0.29.0 (versionCode 29885975) is released on
+  `internal` and `alpha` (closed testing) by the release workflow
+  ([run 40627531516](https://github.com/katulevskiy/reins/actions/runs/40627531516)). `beta` and `production` are
+  refused with "Precondition check failed" and skipped with a warning: production access is not granted yet.
+- Release signing comes from Infisical in CI, and `GOOGLE_SERVICES_JSON` is set as a repository secret. The upload key
+  is pinned in `android/release-signing.sha256`.
+- The privacy, terms and account-deletion URLs are live (200 on 2026-10-29).
+- Still open, all **[owner action]**: production access (the closed-test requirement below), the Data safety, content
+  rating, app access (review demo account), prominent disclosure and Age Signals answers, the foreground-service
+  video, the `[CONTACT EMAIL]` / `[SUPPORT EMAIL]` / `[VIDEO URL]` placeholders below, registering the Play app
+  signing key with Firebase and a Google OAuth client, and Gmail's CASA assessment. No crash reporting, and the R8
+  mapping file is not uploaded to Play. What the Console already has filled in is unverified as of 2026-10-29.
+
 ## Two builds
 
 | | `full` | `play` |
@@ -189,10 +204,10 @@ Other policy points:
   Check that the service screens' texts meet that, or add a disclosure dialog. **[legal review]**
 - **Privacy policy** (required: the app handles personal and sensitive data): a public, non-PDF URL, linked in the
   listing and reachable from the app. The app links `https://reins2fa.com/privacy` and `https://reins2fa.com/terms`
-  (`ui/common/Links.kt`), which answered 404 on 2026-10-08; the drafts are `docs/legal/`. Publish both before
-  submitting. **[legal review] [owner action]**
-- **Account deletion**: in the app (Settings) and on the web at `https://reins2fa.com/delete-account` (also 404 on
-  2026-10-08: publish it; it must name the app or developer, list what is deleted and what is kept and for how long).
+  (`ui/common/Links.kt`). Both are published (200 on 2026-10-29); the drafts are `docs/legal/`.
+  **[legal review]**
+- **Account deletion**: in the app (Settings) and on the web at `https://reins2fa.com/delete-account` (live, 200
+  on 2026-10-29). It must name the app or developer, list what is deleted and what is kept and for how long.
 - **Android 15 `dataSync` limit**: a `dataSync` foreground service may run 6 hours a day. The model download is far
   shorter; a user-initiated data transfer job would avoid the declaration but is not needed.
 - **Not a generative AI app** in Play's sense: Autopilot classifies requests on the phone and shows its verdict; it does

@@ -6,15 +6,16 @@ pointing them at it.
 
 You need:
 
-- an Android phone (Android 12 or later), or an iPhone or iPad with iOS 26 or later (no App Store build yet: build the
-  app from [`ios/`](../ios/README.md));
+- an Android phone (Android 12 or later), or an iPhone or iPad with iOS 26 or later (no App Store build yet: builds
+  go to TestFlight testers, otherwise build the app from [`ios/`](../ios/README.md));
 - for the desktop app, a Linux computer (x86_64 or aarch64), a Mac (Apple silicon or Intel) or a Windows 10 or 11
   computer (x86_64; Arm when the release has a build for it).
 
 ## 1. Install the phone app and create an account
 
 1. On the phone, open <https://reins2fa.com/app> and install the APK (Android asks you to allow installs from your
-   browser once). The app updates itself from the same place.
+   browser once). The app updates itself from the same place. Google Play has the app on internal and closed testing
+   only (as of 2026-10-29), so the APK is the way in unless you are a Play tester.
 2. Tap **Continue** and sign in, or sign up, with your email address on the sign-in page. There is no password: the
    first time, the phone makes your account and the keys of its vault by itself and keeps them. It then offers to
    protect the vault with a passkey and shows your **recovery code**, the code that opens the vault if you lose the
