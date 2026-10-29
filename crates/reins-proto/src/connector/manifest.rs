@@ -11,8 +11,8 @@
 
 use super::{
     BITBUCKET, CODEBERG, ClassInfo, DESKTOP, DEVICE_CALENDAR, DEVICE_CONTACTS, Effect, GCALENDAR, GCONTACTS, GITHUB,
-    GITLAB, GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, desktop, github, gmail, payments, specs, tasks,
-    vault,
+    GITLAB, GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, X, desktop, github, gmail, payments, specs, tasks,
+    vault, x,
 };
 
 /// How an account of a connector is added on the phone. [`AuthType::kind`] is the string the apps switch on.
@@ -30,6 +30,9 @@ pub enum AuthType {
     Vault,
     /// Payment methods set up on their own screen.
     Payments,
+    /// OAuth 2.0 Authorization Code with PKCE, run by the core: the phone opens the service's sign-in page and hands
+    /// the redirect back; the core keeps the tokens in the phone's secret store.
+    OAuth,
     /// Part of Reins itself (the desktop app, tasks): no account to add, never on the Integrations screen.
     Builtin,
 }
@@ -45,6 +48,7 @@ impl AuthType {
             Self::Device => "device",
             Self::Vault => "vault",
             Self::Payments => "payments",
+            Self::OAuth => "oauth",
             Self::Builtin => "builtin",
         }
     }
@@ -222,6 +226,8 @@ const MANIFESTS: &[ConnectorManifest] = &[
     plain(PAYMENTS, "Payments", AuthType::Payments, Some(12), payments::tools),
     // Tasks never had a display name: the id is what the user has always seen.
     plain(TASKS, TASKS, AuthType::Builtin, None, tasks::tools),
+    // Not on the Integrations screen until the apps have its sign-in; see docs/connectors/x.md.
+    with(plain(X, "X", AuthType::OAuth, None, x::tools), x::SCOPES, &[]),
 ];
 
 /// Every connector, in tool order.
@@ -269,7 +275,11 @@ mod tests {
             for spec in (m.tools)() {
                 assert_eq!(spec.service, m.service, "{} is listed under {}", spec.tool, m.service);
             }
-            assert_eq!(m.screen.is_none(), m.auth == AuthType::Builtin, "{}", m.service);
+            if m.auth == AuthType::Builtin {
+                assert!(m.screen.is_none(), "{}", m.service);
+            } else if m.service != X {
+                assert!(m.screen.is_some(), "{}", m.service);
+            }
         }
         let screens: Vec<_> = MANIFESTS.iter().filter_map(|m| m.screen).collect();
         assert_eq!(screens.iter().collect::<BTreeSet<_>>().len(), screens.len(), "two connectors share a place");
@@ -319,5 +329,22 @@ mod tests {
         let gmail = manifest(GMAIL).unwrap();
         assert!(gmail.actions().all(|a| a.service == GMAIL));
         assert_eq!(gmail.scopes, GOOGLE_GMAIL_SCOPES);
+    }
+
+    #[test]
+    fn every_x_action_names_its_scopes_and_its_risk() {
+        let x = manifest(X).unwrap();
+        assert_eq!(x.auth.kind(), "oauth");
+        assert!(x.screen.is_none());
+        for a in x.actions() {
+            assert!(!a.scopes.is_empty(), "{}", a.tool);
+            assert!(a.scopes.iter().all(|s| x.scopes.contains(s)), "{}", a.tool);
+            assert_eq!(a.writes(), a.risk != RiskLevel::Low, "{}", a.tool);
+        }
+        let risk = |tool| action(tool).unwrap().risk;
+        assert_eq!(risk("x_search"), RiskLevel::Low);
+        assert_eq!(risk("x_like"), RiskLevel::Medium);
+        assert_eq!(risk("x_post"), RiskLevel::High);
+        assert_eq!(risk("x_dm_send"), RiskLevel::High);
     }
 }

@@ -13,6 +13,7 @@ service gitlab | GitLab | code=Commits and branches; releases=Tags
 service codeberg | Codeberg | code=Commits and branches; releases=Tags
 service bitbucket | Bitbucket | code=Commits and branches; releases=Tags
 service payments | Payments | 
+service x | X | 
 tool telegram_list_chats | telegram | list_chats | List | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | 14ef37ed3c96a421
 tool telegram_read | telegram | read | Read | class= | once=false | desktop=false | check=false | resource=chat | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | 34377d0f2d786017
 tool telegram_search | telegram | search | Search | class= | once=false | desktop=false | check=false | resource=chat | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | cdce8d5800d17f47
@@ -318,3 +319,29 @@ tool reins_task_propose | tasks | propose | Write | class= | once=true | desktop
 tool reins_task_end | tasks | end | Write | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 238d2160ee4bcbc7
 tool desktop_task_propose | tasks | desktop_propose | Write | class= | once=true | desktop=true | check=true | resource=- | {"destructiveHint":true,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 0d0c78bba037ebfe
 tool desktop_task_end | tasks | desktop_end | Write | class= | once=false | desktop=true | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 0a22d5713092a805
+tool x_me | x | me | Read | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | 7f1c3f766257c541
+tool x_user | x | user | Read | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | e4df5ca6f8de7355
+tool x_post_get | x | post_get | Read | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | 880f6518cf94cf5c
+tool x_home_timeline | x | home_timeline | List | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | f7be53fa687bcafc
+tool x_mentions | x | mentions | List | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | f1b13eb69ea92b68
+tool x_search | x | search | Search | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | 569efe7743eda1e2
+tool x_bookmarks | x | bookmarks | List | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | 28d530040a283b5d
+tool x_dm_list | x | dm_list | Read | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":true} | 1461b1e5e9460f82
+tool x_media_upload | x | media_upload | Write | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":false,"openWorldHint":true,"readOnlyHint":false} | 19208dc21c56f4d5
+tool x_post | x | post | Write | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | b71531f17ff52dfb
+tool x_reply | x | reply | Write | class= | once=false | desktop=false | check=false | resource=reply_to | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 6fe6ac7f9df2f5d1
+tool x_thread | x | thread | Write | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | eea3328b0031dc35
+tool x_post_delete | x | post_delete | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":true,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 87e612c2f24b55d3
+tool x_like | x | like | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 368f9dadf7dfea0e
+tool x_unlike | x | unlike | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | e9518887153244a1
+tool x_repost | x | repost | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 4193b6dd529052f8
+tool x_unrepost | x | unrepost | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 0f8daf6b9f68624a
+tool x_bookmark_add | x | bookmark_add | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 223e064f160369aa
+tool x_bookmark_remove | x | bookmark_remove | Write | class= | once=false | desktop=false | check=false | resource=post | {"destructiveHint":true,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 04ae61086391a6df
+tool x_follow | x | follow | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 1862e31eda6d1598
+tool x_unfollow | x | unfollow | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 3a756ddcd94dcd59
+tool x_mute | x | mute | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | e350f4bbdfffbe8c
+tool x_unmute | x | unmute | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 60b2689933856eca
+tool x_block | x | block | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | cab0996451979a4c
+tool x_unblock | x | unblock | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":true,"readOnlyHint":false} | 4b41ca93f8cda529
+tool x_dm_send | x | dm_send | Write | class= | once=false | desktop=false | check=false | resource=user | {"destructiveHint":true,"idempotentHint":false,"openWorldHint":true,"readOnlyHint":false} | 3e53668d1d625273

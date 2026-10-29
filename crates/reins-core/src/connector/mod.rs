@@ -18,6 +18,7 @@ pub mod tasks;
 pub mod telegram;
 pub mod telegram_client;
 pub mod vault;
+pub mod x;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -219,6 +220,18 @@ pub trait Connector: Send + Sync {
 
     /// Step 3, when the account has two-step verification: its password. Returns the account.
     async fn login_password(&self, _password: &str) -> Result<String, CoreError> {
+        Err(CoreError::invalid("this integration is not added that way"))
+    }
+
+    /// An OAuth 2.0 sign-in with PKCE run by the core ([`reins_proto::connector::AuthType::OAuth`]), step 1: the
+    /// service's sign-in page for the phone to open.
+    fn oauth_begin(&self) -> Result<String, CoreError> {
+        Err(CoreError::invalid("this integration is not added that way"))
+    }
+
+    /// Step 2: the redirect the sign-in page sent the phone to. Exchanges its code, keeps the tokens and returns the
+    /// account.
+    async fn oauth_finish(&self, _callback: &str) -> Result<String, CoreError> {
         Err(CoreError::invalid("this integration is not added that way"))
     }
 }

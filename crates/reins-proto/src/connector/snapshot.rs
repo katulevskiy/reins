@@ -28,6 +28,7 @@ const SERVICES: &[&str] = &[
     CODEBERG,
     BITBUCKET,
     PAYMENTS,
+    X,
 ];
 
 fn digest(s: &ToolSpec) -> String {

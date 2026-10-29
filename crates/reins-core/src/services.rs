@@ -103,6 +103,21 @@ impl Engine {
         Ok(progress)
     }
 
+    /// Step 1 of an OAuth sign-in run by the core (X): the service's sign-in page, for the phone to open in a browser.
+    pub fn oauth_begin(&self, service: &str) -> Result<String, CoreError> {
+        let connector = self.connector(service)?;
+        if let Some(note) = connector.unavailable() {
+            return Err(CoreError::invalid(note));
+        }
+        connector.oauth_begin()
+    }
+
+    /// Step 2: the redirect the sign-in page ended on. The account is added once its code is exchanged.
+    pub async fn oauth_finish(&self, service: &str, callback: &str) -> Result<AccountView, CoreError> {
+        let account = self.connector(service)?.oauth_finish(callback.trim()).await?;
+        self.register_account(service, &account)
+    }
+
     /// Step 3, for accounts with two-step verification.
     pub async fn login_password(&self, service: &str, password: &str) -> Result<AccountView, CoreError> {
         let account = self.connector(service)?.login_password(password).await?;
