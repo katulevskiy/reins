@@ -1,74 +1,125 @@
-name: Bug Report
-description: Something in Reins does not work as expected
-labels: ["bug"]
+name: Bug report
+description: Something in Reins did not work, including on a beta build
+labels: ["bug", "needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug!
+        Thanks for reporting this. A short, specific note is enough.
 
-        **Security issues:** please do not open a public issue; report them privately as described in `SECURITY.md`.
+        **Security problems** (someone can see another person's data, skip an approval, or take an account): do not file them here. Report them privately, as described in `SECURITY.md`.
 
-        Please search existing issues (open **and** closed) first. Never paste secrets, tokens, master passwords or
-        private message contents into an issue; redact logs before posting them.
-  - id: components
-    type: dropdown
+        Please search existing issues first, including closed ones.
+
+        Do not paste secrets, tokens, master passwords, recovery codes, or private message contents. If you include logs, remove those first.
+  - type: dropdown
+    id: platform
     attributes:
-      label: Component
-      description: Where do you see the problem?
-      multiple: true
+      label: Platform
+      description: |
+        Where you saw the problem. Android includes Google Play closed testing and the Full build (the one installed from a file).
       options:
-        - Server
-        - Android app
-        - Desktop app (reins)
-        - AI harness / MCP integration
-        - Bitwarden-compatible vault client
-        - Other
+        - iPhone or iPad
+        - Android phone
+        - Desktop app (Linux, Mac, or Windows)
+        - Server or relay
+        - Not sure
     validations:
       required: true
-  - id: version
-    type: input
+  - type: dropdown
+    id: beta-build
     attributes:
-      label: Versions
-      description: Server, app and desktop versions (Settings shows the app's build; `reins --version` the desktop's).
-      placeholder: ex. Android 0.1.0-202610010115-a9643bcb, desktop 0.1.0, server built from 3b9e07c1
+      label: Beta or testing build
+      description: |
+        TestFlight, Google Play closed testing, the Android Full build, or another pre-release. Choose Not sure if you do not know.
+      options:
+        - "Yes, TestFlight"
+        - "Yes, Google Play closed testing"
+        - "Yes, the Android Full build (installed from a file)"
+        - "Yes, another pre-release build"
+        - "No, this is a public release"
+        - Not sure
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: App version or build
+      description: |
+        On an iPhone or iPad, open Settings and copy the Version row. It looks like `0.1.0 (7)`.
+        On Android, open Settings and copy the Version row. It looks like `0.1.0 (0.1.0-202610010115-a9643bcb)`.
+        On a computer, run `reins --version`. It looks like `0.1.0 (0.1.0-202609301800-b20e06b5)`.
+        If you cannot, say how you installed Reins and about when.
+        On a server, the version or the day you last updated it is enough.
+      placeholder: "0.1.0 (7)"
     validations:
       required: true
-  - id: environment
-    type: textarea
+  - type: input
+    id: device
     attributes:
-      label: Environment
-      description: How the server is deployed (and behind which reverse proxy), the phone model and Android version, the desktop OS, and which AI harness you use.
-  - id: reproduce
-    type: textarea
+      label: Device and OS version
+      description: |
+        The phone or computer, and its system version. On a computer, say Linux, Mac, or Windows.
+        For a server, say whether it is the hosted service or one you run.
+      placeholder: "iPhone 15, iOS 18.2"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
     attributes:
-      label: Steps To Reproduce
+      label: What happened
+      description: What you saw, in a sentence or two.
+      placeholder: The approval never showed up on the phone.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      description: What you expected instead.
+      placeholder: The phone should have asked me to approve.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order. Fill in the numbered lines.
       value: |
         1.
         2.
         3.
     validations:
       required: true
-  - id: expected
-    type: textarea
+  - type: dropdown
+    id: severity
     attributes:
-      label: Expected Result
+      label: Severity
+      description: How much this gets in the way. A blocker stops a release.
+      options:
+        - "Blocker: Cannot install, sign in, pair, or approve, or this must not ship. Blocks a release."
+        - "Major: A main flow is broken. A workaround may exist. Does not by itself block a release."
+        - "Minor: Something is wrong and there is a workaround. Does not block a release."
+        - "Cosmetic: Look, layout, or wording only. Behavior is right. Does not block a release."
     validations:
       required: true
-  - id: actual
-    type: textarea
+  - type: upload
+    id: screenshots
     attributes:
-      label: Actual Result
+      label: Screenshots or a recording
+      description: |
+        Optional. A picture or a short recording of the problem.
+        Pictures can be png, jpg, gif, or webp. Video can be mp4, mov, or webm.
     validations:
-      required: true
-  - id: logs
-    type: textarea
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm"
+  - type: textarea
+    id: logs
     attributes:
       label: Logs
-      description: Relevant server, desktop or `adb logcat` output, with secrets removed.
+      description: |
+        Optional. Paste server output, the desktop terminal, or a phone log if you have it.
+        Remove secrets, tokens, master passwords, recovery codes, and message contents first.
       render: text
-  - id: additional-context
-    type: textarea
-    attributes:
-      label: Additional Context
-      description: Screenshots, screen recordings or anything else that helps.
+    validations:
+      required: false

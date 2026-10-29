@@ -1,0 +1,62 @@
+# Labels for beta bug triage. Meanings and the release rule are in docs/bug-triage.md.
+# The Sync labels workflow creates or updates these labels. It does not delete a label
+# that is absent from this file, so GitHub's defaults and anything added by hand stay.
+# `bug` already exists and is not listed here. The bug report form applies it.
+#
+# Each label is three lines, in order, with double-quoted values: name, color, description.
+# color is six lowercase hex digits. description is one line, at most 100 characters.
+
+# Queue. Pale salmon, separate from the severity colors.
+- name: "needs-triage"
+  color: "f9d0c4"
+  description: "New bug report, not yet reviewed"
+
+# Channel.
+- name: "beta"
+  color: "c2e0c6"
+  description: "Reported on a beta, TestFlight, Play testing, or Full pre-release build"
+
+# Platform. One color per place the app ships.
+- name: "platform:ios"
+  color: "1d76db"
+  description: "iPhone or iPad app, including TestFlight"
+- name: "platform:android"
+  color: "0e8a16"
+  description: "Android app, Play closed testing or the Full build"
+- name: "platform:desktop"
+  color: "6f42c1"
+  description: "Desktop app on Linux, macOS, or Windows"
+- name: "platform:server"
+  color: "006b75"
+  description: "Hosted or self-hosted server and relay"
+
+# Area. Applied by a maintainer while triaging, not chosen on the form.
+- name: "area:pairing"
+  color: "54aeff"
+  description: "Pairing a phone with a computer or another device"
+- name: "area:crypto"
+  color: "8a63d2"
+  description: "Keys, encryption, signing, or the vault cipher"
+- name: "area:relay"
+  color: "00a3bf"
+  description: "The relay between phones, desktops, and AI clients"
+- name: "area:install-update"
+  color: "e99695"
+  description: "Install, update, TestFlight, Play, or desktop packages"
+- name: "area:notifications"
+  color: "fef2c0"
+  description: "Push or local notifications"
+
+# Severity. Blocker is the one that stops a release.
+- name: "sev:blocker"
+  color: "b60205"
+  description: "Cannot install, sign in, pair, or approve, or this must not ship. Blocks a release."
+- name: "sev:major"
+  color: "d93f0b"
+  description: "A main flow is broken. A workaround may exist. Does not by itself block a release."
+- name: "sev:minor"
+  color: "fbca04"
+  description: "Something is wrong and there is a workaround. Does not block a release."
+- name: "sev:cosmetic"
+  color: "ededed"
+  description: "Look, layout, or wording only. Behavior is right. Does not block a release."
