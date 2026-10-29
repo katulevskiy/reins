@@ -36,7 +36,7 @@ final class AskLabelsTests: XCTestCase {
         XCTAssertEqual(line.target, target, file: file, line: lineNo)
         XCTAssertEqual(line.mono, mono, file: file, line: lineNo)
         if let kind { XCTAssertEqual(line.kind, kind, file: file, line: lineNo) }
-        XCTAssertEqual(line.runs.filter(\.target).count, target == nil ? 0 : 1, "one italic run at most", file: file, line: lineNo)
+        XCTAssertEqual(line.runs.filter(\.target).count, target == nil ? 0 : 1, "one semibold target at most", file: file, line: lineNo)
         XCTAssertFalse(line.text.contains("\n"), "one line", file: file, line: lineNo)
     }
 

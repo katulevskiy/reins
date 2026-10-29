@@ -44,8 +44,8 @@ final class NewGrantModel {
     }
 }
 
-/// Give an AI a permission before it asks (the Trust board, 03; quiet): five numbered steps that read like a sentence:
-/// who, which account, read or send, from whom, for how long. Rare, so it lives behind the + on Grants. It is paper,
+/// Give an AI a permission before it asks (`design/next/iphone`, Next-Trust, 03; quiet): five numbered steps that read like a sentence:
+/// who, which account, read or send, from whom, for how long. Rare, so it lives behind the + on Trust's Grants section. It is paper,
 /// not a field: nothing is asking.
 struct NewGrantScreen: View {
     @Environment(AppModel.self) private var model

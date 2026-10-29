@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 extension AppDelegate {
-    /// A page's large title in the display face, as Next's titles are; the small one in the bar in the sans.
+    /// A page's large title in the display face (Sora, as on the Next Type board); the small one in the bar in Sora semibold.
     static func styleNavigationBars() {
         let bar = UINavigationBar.appearance()
         if let display = UIFont(name: RFont.displayName(false), size: TextRole.title.size) {

@@ -5,6 +5,16 @@ networking, grant evaluation and encrypted storage. Swift does the interface, th
 notifications, widgets, Live Activities, Google sign-in, the phone's calendar and contacts, and ONNX Runtime for
 Autopilot. It runs on iPhone, iPad and the foldable iPhone Duo (iOS 26 or later).
 
+## Design
+
+Screens follow `design/next/iphone/` (the boards in `previews/`, values in `project/`). Type is what
+`Shared/Design/Typography.swift` ships, matching that folder's Type board: Sora for text, Geologica's Cyrillic merged
+into each Sora file (Latin stays Sora), and JetBrains Mono for machine values. Paper, ink, rules, violet, status,
+fields and kind inks are the Signal tokens in `design/signal/tokens/signal.tokens.json`
+(`Shared/Design/Palette.swift`). Service plates, Overnight's navy and night text are the Next boards' values, in that
+same file. Motion (`Shared/Design/Motion.swift`), glyphs, field grain, and the pond and kite drawings also still come
+from `design/signal/`.
+
 ## Build
 
 Needs Xcode 27.1 for the iPhone Duo's fold (`UIHinge`, and its simulator runtime), or Xcode 27.0, which builds the app
@@ -112,7 +122,7 @@ app then forgets the account as signing out does. With `-demo` it only signs out
 ```
 Core/        generated bindings; CoreFactory (one store in the App Group); keychain key wrapper, Google tokens,
              phone bridge (EventKit, Contacts), notification wording, push payloads (shared with the extension)
-Shared/      App Group, palette and Geist type, titles and untrusted text, deep links (reins://), widget snapshot,
+Shared/      App Group, Signal colour tokens and Sora / Geologica / JetBrains Mono, titles and untrusted text, deep links (reins://), widget snapshot,
              Live Activity attributes, feedback settings, App Intents, fonts and brand logos
 Reins/App/   ReinsApp, AppDelegate, AppHost (builds the core and model at launch), AppModel (state, navigation,
              refresh, long poll), navigation types
@@ -122,14 +132,14 @@ Reins/Feedback/ haptics (Core Haptics patterns ported from Android's HapticDesig
              Zeron's sound set, the detent ladder), the feedback store
 Reins/Platform/ notifications and their actions, grant reminders, background refresh and model update, Google sign-in, MCP
              sign-in, Live Activities, Face ID
-Reins/Screens/ activity, approval / pairing / upload sheets, grants, settings, integrations, MCP, Autopilot, sign-in
+Reins/Screens/ activity, approval, trust (grants and Autopilot), connections, settings, integrations, vault, pairing, sign-in
 Reins/Autopilot/ ONNX Runtime model runner and the model download
 Reins/Debug/ DemoCore: an in-memory core with sample data (-demo)
 ```
 
 ## iPhone, iPad, iPhone Duo
 
-The same navigation state drives two shells: a Liquid Glass tab bar (Activity, Grants, Autopilot, Settings) on a
+The same navigation state drives two shells: a floating tab bar (Activity, Trust, Connections, Settings) on a
 compact width, and a three-column split view on a regular one (iPad, Stage Manager windows). Resizing, rotating or
 unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1) reports the fold to SwiftUI
 (`@Environment(\.hinge)`); a bent device keeps decision buttons out of the crease in large sheets.
@@ -172,8 +182,8 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
 | `-noLiveActivities` | Starts no Live Activity, so the widget extension stays asleep (UI tests other than the notification ones); Debug only |
 | `-askNotifications`, `-notifierSamples`, `-logNotifications` | Notification permission, sample notifications in the background, a log of scheduled ones |
 | `-resetNotifications`, `-resetFeedback` | Start clean on a reused simulator: no delivered notifications or leftover Live Activities; the default sounds and haptics |
-| `-widgetGallery <page>`, `-gallery`, `-show sounds\|<tab>` | Widget views, avatars, the Sounds screen or a tab (`grants`, `autopilot`, `settings`) |
-| `-signalGallery <page>[/<section>]` | The Signal components, type, colours, fields and glyphs (also Settings > Developer); pages `type`, `colour`, `buttons`, `controls`, `cards`, `field`, `glyphs` |
+| `-widgetGallery <page>`, `-gallery`, `-show sounds\|<tab>` | Widget views, avatars, the Sounds screen or a tab (`activity`, `trust`, `connections`, `settings`) |
+| `-signalGallery <page>[/<section>]` | The design gallery (also Settings > Developer), compared with `design/next/iphone/previews`: Sora type roles, Signal colours, fields and glyphs. Pages `system`, `type`, `colour`, `buttons`, `controls`, `cards`, `field`, `glyphs` |
 
 ## Tests
 

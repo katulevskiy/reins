@@ -1,8 +1,8 @@
 import Foundation
 
-/// The app's four places, the same on every platform (Map.png): tabs on a compact width, the sidebar on a regular one
-/// (iPad, an unfolded iPhone Duo). Trust holds Autopilot and the grants; Connections holds who can ask (AI apps and
-/// computers) and what they can reach (services and MCP servers).
+/// The app's four places (`design/next/iphone`: Activity, Trust, Connections, Settings): tabs on a compact width, the
+/// sidebar on a regular one (iPad, an unfolded iPhone Duo). Trust holds Autopilot and the grants; Connections holds who
+/// can ask (AI apps and computers) and what they can reach (services and MCP servers).
 enum AppSection: String, CaseIterable, Hashable, Identifiable {
     case activity, trust, connections, settings
 
@@ -36,7 +36,7 @@ enum Route: Hashable {
     case sounds
     /// Settings > Vault passkeys.
     case vaultPasskeys
-    /// Settings > Appearance: the theme, grain on fields, the sans.
+    /// Settings > Appearance: the theme (System, Paper or Graphite) and grain on fields.
     case appearance
     /// Settings > Wallpaper: one for dark, one for light (image, effect and fade).
     case wallpaper

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The phone's tab bar (the System board): a floating `inverse` capsule; the chosen tab is a `paper` pill with its glyph
+/// The phone's tab bar (`design/next/iphone`, the System board): a floating `inverse` capsule; the chosen tab is a `paper` pill with its glyph
 /// and name, the others only their glyph at 70 %. The pill slides to a new tab on a 240 ms spring with a slight
 /// overshoot (a cross-fade under Reduce Motion), with the select haptic. A running Overnight, Lockdown or Bypass puts a
 /// dot in its colour on Trust.

@@ -12,10 +12,10 @@ enum ActivityText {
     /// and "undone" and "not_sent" never went.
     static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
 
-    /// The label line of a waiting card: "Gmail · Send" (set in mono capitals), from the core's provider and action.
+    /// The kind label of a waiting card ("Gmail · Send"), from the core's provider and action. The card shows the icon; VoiceOver reads this.
     static func label(_ item: PendingItem) -> String { AskLabels.pending(item, field: field(item, danger: false)).kind }
 
-    /// The ask on a waiting card (ASK-TEXT): the shared formatter's sentence, one italic target; a burst of several
+    /// The ask on a waiting card (ASK-TEXT): the shared formatter's sentence, one semibold target; a burst of several
     /// asks says how many.
     static func ask(_ group: WaitGroup, line: AskLine? = nil) -> [AskText.Run] {
         if !group.isBurst {

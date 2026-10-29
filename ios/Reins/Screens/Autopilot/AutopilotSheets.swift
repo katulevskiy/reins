@@ -74,8 +74,8 @@ enum TimedMode: Hashable {
     /// "Bypass every AI?", "Overnight for Claude?".
     func title(who: String?) -> String { let t = titleRuns(who: who); return t.lead + t.italic }
 
-    /// The question in the serif: its lead, and what it is for in italic ("Bypass *every AI?*"). An AI's name is one
-    /// short clean line.
+    /// The question in the display face (Sora): its lead, and the target in semibold ("Bypass **every AI?**"). An AI's name is one
+    /// short clean line. `italic` is that target run.
     func titleRuns(who: String?) -> (lead: String, italic: String) {
         let whom = who.map { untrustedName($0, limit: 40) }.flatMap { $0.isEmpty ? nil : $0 } ?? "every AI"
         switch self {

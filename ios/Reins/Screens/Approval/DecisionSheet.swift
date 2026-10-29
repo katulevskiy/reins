@@ -4,7 +4,7 @@ import SwiftUI
 // What the approval, pairing and upload sheets share: the header, the pinned decision buttons, the split layout on a
 // bent iPhone Duo, and the owner check before anything is approved.
 
-/// The details scroll; the decision stays pinned at the bottom on Liquid Glass. On a bent iPhone Duo with a sheet wide
+/// The details scroll; the decision stays pinned at the bottom on paper. On a bent iPhone Duo with a sheet wide
 /// (or tall) enough, the details and the decision take one half each, so the crease runs between them.
 struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
     /// The details start with a `SheetField`, which has its own close button.
@@ -70,8 +70,8 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
     }
 }
 
-/// A sheet's ask as a field (Reins Signal, iOS-Connect): the close button, the label line and Reins' own sentence in
-/// the serif. Reins alone picks the field and the words: a name the other side sent never goes here, only quoted on a
+/// A sheet's ask as a field (`design/next/iphone`, Pair and join): the close button, the label line and Reins' own sentence in
+/// the display face (Sora, the target in semibold). Reins alone picks the field and the words: a name the other side sent never goes here, only quoted on a
 /// row of its own below.
 struct SheetField: View {
     var kind: FieldKind

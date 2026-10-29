@@ -2,7 +2,7 @@ import XCTest
 @testable import Reins
 
 /// How each kind of request is written (design/signal/ASK-TEXT.md): the kind label, a verb-first sentence with exactly
-/// one italic run (the target), machine details only on the mono line, and the icon's mark and action. One test per
+/// one semibold target, machine details only on the mono line, and the icon's mark and action. One test per
 /// kind.
 final class AskFormatTests: XCTestCase {
     private typealias T = ApprovalLogicTests
@@ -17,7 +17,7 @@ final class AskFormatTests: XCTestCase {
         XCTAssertEqual(line.mono, mono, file: file, line: lineNo)
         if let kind { XCTAssertEqual(line.kind, kind, file: file, line: lineNo) }
         if let icon { XCTAssertEqual(line.icon, icon, file: file, line: lineNo) }
-        XCTAssertLessThanOrEqual(line.runs.filter(\.target).count, 1, "one italic run at most", file: file, line: lineNo)
+        XCTAssertLessThanOrEqual(line.runs.filter(\.target).count, 1, "one semibold target at most", file: file, line: lineNo)
         XCTAssertEqual(line.runs.filter(\.target).count, target == nil ? 0 : 1, file: file, line: lineNo)
         XCTAssertFalse(line.text.hasPrefix("Wants"), "verb first: the asker is in the top bar", file: file, line: lineNo)
     }
@@ -47,7 +47,7 @@ final class AskFormatTests: XCTestCase {
         check(line, "Push 8 commits to octo/app", target: "octo/app", mono: "feature/passkeys · new branch", kind: "GitHub · Push",
               icon: AskIcon(mark: .service("github"), action: .gitBranch, kind: .push))
         XCTAssertEqual(line.runs.filter(\.target).map(\.text), ["octo/\u{2060}app"], "a slash never ends a line")
-        XCTAssertFalse(line.text.contains("feature/passkeys"), "a branch never goes into the serif")
+        XCTAssertFalse(line.text.contains("feature/passkeys"), "a branch never goes into the sentence")
         check(AskFormat.waiting(push([ref("main", force: true, commits: 2)])), "Force-push 2 commits to octo/app", target: "octo/app", mono: "main · force")
     }
 
@@ -72,7 +72,7 @@ final class AskFormatTests: XCTestCase {
         let line = AskFormat.waiting(v, core: core("terminal", "delete", "rm -rf jarx"), computer: "laptop")
         check(line, "Run a command on laptop", target: "laptop", mono: "rm -rf jarx", kind: "Computer · Run",
               icon: AskIcon(mark: .glyph(.terminal), action: .trash, kind: .delete))
-        XCTAssertFalse(line.text.contains("rm -rf"), "a command never goes into the serif")
+        XCTAssertFalse(line.text.contains("rm -rf"), "a command never goes into the sentence")
         // No guard match: the core's own reading of the command.
         let plain = ask(question: "q", detail: "Command:\nnpm test")
         check(AskFormat.waiting(plain, core: core("terminal", "run", "npm test", tail: " and 1 more")), "Run a command on your computer",
@@ -242,7 +242,7 @@ final class AskFormatTests: XCTestCase {
         var lookAlike = push([ref("main")])
         lookAlike.git?.repo = "octo/\u{0430}pp"
         let line = AskFormat.waiting(lookAlike)
-        XCTAssertNil(line.target, "a repository that can pass for another leaves the serif")
+        XCTAssertNil(line.target, "a repository that can pass for another leaves the sentence")
         XCTAssertEqual(line.text, "Push 3 commits to a repository")
         XCTAssertEqual(line.mono, "Repository: octo/\\u{430}pp\nmain")
         // A name may mix scripts only where names do: a chat called "Семья" is shown as it is; "Fаmily" is flagged.
