@@ -89,7 +89,8 @@ pub async fn post(
             Some(vec!["reins_get_result"])
         }
     };
-    let action = mcp::handle(headers, body, Some(&services), &[]);
+    // The org decides which tools a managed connection gets ([`only_managed`]); the server's profile is for listings.
+    let action = mcp::handle(headers, body, Some(&services), &[], tools::ToolProfile::Full);
     let (id, name, arguments, modern, reason) = match action {
         Action::Reply {
             status,

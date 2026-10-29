@@ -7,7 +7,7 @@ use data_encoding::BASE64;
 use reins_proto::remote_mcp::McpServerReport;
 use serde_json::{Map, Value, json};
 
-use super::tools;
+use super::tools::{self, ToolProfile};
 
 pub const MODERN_VERSION: &str = "2026-07-28";
 pub const LEGACY_VERSION: &str = "2025-11-25";
@@ -33,8 +33,23 @@ no new chat is needed.
 - If a result says pending_review, the request became a ticket: continue with other work and check it later with \
 reins_get_result or reins_wait. Never say it is done until a result confirms it.";
 
-/// [`INSTRUCTIONS`] and, when the phone has reported them, the services the user has connected right now.
-pub fn instructions(services: Option<&[String]>) -> String {
+/// The words of [`INSTRUCTIONS`] about the vault and secrets, left out under a profile without those tools.
+const VAULT_WORDS: &str = ", the password vault";
+const SECRETS_NOTE: &str = " Secrets (a vault password, card details) are released only when the user approves each \
+one on their phone.";
+
+/// [`INSTRUCTIONS`] and, when the phone has reported them, the services the user has connected right now; both name
+/// only what `profile` offers.
+pub fn instructions(services: Option<&[String]>, profile: ToolProfile) -> String {
+    if profile.offers_service(reins_proto::connector::VAULT) {
+        return instructions_for(services);
+    }
+    let offered: Option<Vec<String>> =
+        services.map(|s| s.iter().filter(|s| profile.offers_service(s)).cloned().collect());
+    instructions_for(offered.as_deref()).replacen(VAULT_WORDS, "", 1).replacen(SECRETS_NOTE, "", 1)
+}
+
+fn instructions_for(services: Option<&[String]>) -> String {
     match services {
         Some([]) => format!(
             "{INSTRUCTIONS}\nNo connected services are reported yet; you can still try a tool, and the user adds \
@@ -214,7 +229,13 @@ fn check_headers(headers: &McpHeaders, method: &str, params: &Value, id: &Value)
 /// `services`: the integrations the user's phone reported (`None`: not reported since the server started), named in
 /// the instructions; every tool is listed either way. `mcp`: the MCP servers the user added on the phone, whose tools
 /// are listed too.
-pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mcp: &[McpServerReport]) -> Action {
+pub fn handle(
+    headers: &McpHeaders,
+    body: &[u8],
+    services: Option<&[String]>,
+    mcp: &[McpServerReport],
+    profile: ToolProfile,
+) -> Action {
     let null = Value::Null;
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
         return error_reply(400, &null, PARSE_ERROR, "Parse error", None);
@@ -282,18 +303,18 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
                 "protocolVersion": negotiated,
                 "capabilities": capabilities(),
                 "serverInfo": server_info(),
-                "instructions": instructions(services)
+                "instructions": instructions(services, profile)
             }))
         }
         "server/discover" => finish(json!({
             "supportedVersions": [MODERN_VERSION, LEGACY_VERSION],
             "capabilities": capabilities(),
             "serverInfo": server_info(),
-            "instructions": instructions(services)
+            "instructions": instructions(services, profile)
         })),
         "ping" => finish(json!({})),
         "tools/list" => {
-            let mut result = json!({"tools": tools::tool_definitions_with(mcp)});
+            let mut result = json!({"tools": tools::tool_definitions_for(profile, mcp)});
             if modern && let Some(obj) = result.as_object_mut() {
                 obj.insert("ttlMs".to_owned(), json!(LIST_TTL_MS));
                 obj.insert("cacheScope".to_owned(), json!("private"));
@@ -304,10 +325,18 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return error_reply(400, &reply_id, INVALID_PARAMS, "tools/call needs a tool name", None);
             };
+            // Not offered is not listed and not callable: the same answer as for a tool that does not exist.
+            if !profile.offers(name) {
+                return error_reply(400, &reply_id, INVALID_PARAMS, &format!("Unknown tool: {name}"), None);
+            }
+            let arguments = params.get("arguments").cloned().unwrap_or_else(|| Value::Object(Map::new()));
+            if let Some(refused) = profile.refuses_call(name, &arguments) {
+                return error_reply(400, &reply_id, INVALID_PARAMS, &refused, None);
+            }
             Action::CallTool {
                 id: reply_id,
                 name: name.to_owned(),
-                arguments: params.get("arguments").cloned().unwrap_or_else(|| Value::Object(Map::new())),
+                arguments,
                 modern,
                 defer: params.get("_meta").and_then(|m| m.get(META_DEFER)).and_then(Value::as_bool).unwrap_or(false),
                 reason: params
@@ -349,7 +378,7 @@ mod tests {
 
     #[expect(clippy::needless_pass_by_value, reason = "test helper; keeps call sites terse")]
     fn call(headers: &McpHeaders, body: Value) -> Action {
-        handle(headers, body.to_string().as_bytes(), None, &[])
+        handle(headers, body.to_string().as_bytes(), None, &[], ToolProfile::Full)
     }
 
     fn reply(action: Action) -> (u16, Value) {
@@ -452,13 +481,13 @@ mod tests {
     fn the_list_is_complete_whatever_is_connected_and_the_instructions_name_what_is() {
         let github = vec!["github".to_owned(), "gcalendar".to_owned()];
         let body = rpc(1, "tools/list", json!({})).to_string();
-        let (_, some) = reply(handle(&McpHeaders::default(), body.as_bytes(), Some(&github), &[]));
+        let (_, some) = reply(handle(&McpHeaders::default(), body.as_bytes(), Some(&github), &[], ToolProfile::Full));
         let (_, all) = reply(call(&McpHeaders::default(), rpc(1, "tools/list", json!({}))));
         assert_eq!(some, all, "what the phone reported never hides a tool");
         assert!(some["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "gmail_send"));
 
         let init = rpc(2, "initialize", json!({"protocolVersion": LEGACY_VERSION})).to_string();
-        let (_, known) = reply(handle(&McpHeaders::default(), init.as_bytes(), Some(&github), &[]));
+        let (_, known) = reply(handle(&McpHeaders::default(), init.as_bytes(), Some(&github), &[], ToolProfile::Full));
         let text = known["result"]["instructions"].as_str().unwrap();
         assert!(text.starts_with(INSTRUCTIONS));
         assert!(text.ends_with(
@@ -466,7 +495,10 @@ mod tests {
         ));
         let (_, unknown) = reply(call(&McpHeaders::default(), rpc(3, "initialize", json!({}))));
         assert_eq!(unknown["result"]["instructions"], INSTRUCTIONS);
-        assert!(instructions(Some(&[])).contains("No connected services are reported yet; you can still try a tool"));
+        assert!(
+            instructions(Some(&[]), ToolProfile::Full)
+                .contains("No connected services are reported yet; you can still try a tool")
+        );
         // The core flow, in the words the model reads.
         for must in [
             "call its tool directly",
@@ -506,9 +538,9 @@ mod tests {
     #[test]
     fn malformed_requests_get_jsonrpc_errors_never_422() {
         let h = McpHeaders::default();
-        let (status, body) = reply(handle(&h, b"not json", None, &[]));
+        let (status, body) = reply(handle(&h, b"not json", None, &[], ToolProfile::Full));
         assert_eq!((status, body["error"]["code"].as_i64()), (400, Some(PARSE_ERROR)));
-        let (status, body) = reply(handle(&h, b"[]", None, &[]));
+        let (status, body) = reply(handle(&h, b"[]", None, &[], ToolProfile::Full));
         assert_eq!((status, body["error"]["code"].as_i64()), (400, Some(INVALID_REQUEST)));
         let (status, body) = reply(call(&h, json!({"jsonrpc": "1.0", "id": 1, "method": "ping"})));
         assert_eq!((status, body["error"]["code"].as_i64()), (400, Some(INVALID_REQUEST)));
@@ -645,5 +677,80 @@ mod tests {
         let modern = tool_reply(&json!(1), true, result);
         assert_eq!(modern["result"]["resultType"], "complete");
         assert_eq!(modern["result"]["isError"], false);
+    }
+
+    #[test]
+    fn the_full_profile_answers_as_before() {
+        // The default: the same list, instructions and calls as before the option existed.
+        let (_, listed) = reply(call(&McpHeaders::default(), rpc(1, "tools/list", json!({}))));
+        assert_eq!(listed["result"]["tools"], json!(tools::tool_definitions()));
+        assert_eq!(instructions(None, ToolProfile::Full), INSTRUCTIONS);
+        let services = vec!["vault".to_owned(), "payments".to_owned()];
+        assert_eq!(instructions(Some(&services), ToolProfile::Full), instructions_for(Some(&services)));
+        for name in ["vault_get", "payments_purchase_request", "sms_read", "github_secret_scanning_alert_list"] {
+            assert!(
+                matches!(
+                    call(&McpHeaders::default(), rpc(2, "tools/call", json!({"name": name, "arguments": {}}))),
+                    Action::CallTool { .. }
+                ),
+                "{name}"
+            );
+        }
+        let secret_path =
+            json!({"name": "github_api_read", "arguments": {"path": "/repos/o/r/secret-scanning/alerts"}});
+        assert!(matches!(call(&McpHeaders::default(), rpc(3, "tools/call", secret_path)), Action::CallTool { .. }));
+    }
+
+    #[test]
+    fn the_chatgpt_and_claude_profiles_neither_list_nor_call_the_left_out_tools() {
+        for profile in [ToolProfile::ChatGpt, ToolProfile::Claude] {
+            let with = |body: Value| handle(&McpHeaders::default(), body.to_string().as_bytes(), None, &[], profile);
+            let (status, listed) = reply(with(rpc(1, "tools/list", json!({}))));
+            assert_eq!(status, 200);
+            let tool_names: Vec<&str> =
+                listed["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+            assert!(tool_names.contains(&"gmail_search") && tool_names.contains(&"sms_send"), "the rest stays listed");
+            for hidden in [
+                "vault_get",
+                "vault_search",
+                "payments_purchase_request",
+                "sms_read",
+                "github_secret_scanning_alert_list",
+            ] {
+                assert!(!tool_names.contains(&hidden), "{hidden} is listed");
+                let (status, body) = reply(with(rpc(
+                    2,
+                    "tools/call",
+                    json!({"name": hidden, "arguments": {"item": "x", "field": "password"}}),
+                )));
+                assert_eq!(status, 400, "{hidden}");
+                assert_eq!(body["error"]["code"], INVALID_PARAMS);
+                assert_eq!(body["error"]["message"], format!("Unknown tool: {hidden}"));
+            }
+            let (status, body) = reply(with(rpc(
+                3,
+                "tools/call",
+                json!({"name": "github_api_read", "arguments": {"path": "/repos/o/r/secret-scanning/alerts"}}),
+            )));
+            assert_eq!((status, &body["error"]["code"]), (400, &json!(INVALID_PARAMS)));
+            assert!(matches!(
+                with(rpc(4, "tools/call", json!({"name": "github_api_read", "arguments": {"path": "/user"}}))),
+                Action::CallTool { .. }
+            ));
+            // Nor do the instructions name the vault or promise secrets.
+            let (_, init) = reply(with(rpc(5, "initialize", json!({"protocolVersion": LEGACY_VERSION}))));
+            let text = init["result"]["instructions"].as_str().unwrap();
+            assert!(INSTRUCTIONS.contains(SECRETS_NOTE) && INSTRUCTIONS.contains(VAULT_WORDS));
+            assert!(
+                !text.contains("vault") && !text.contains("card details") && text.contains("text messages"),
+                "{text}"
+            );
+            let services = vec!["vault".to_owned(), "gmail".to_owned(), "payments".to_owned()];
+            let named = instructions(Some(&services), profile);
+            assert!(
+                named.ends_with("Connected right now: Gmail. Others can be added in the Reins app at any time."),
+                "{named}"
+            );
+        }
     }
 }

@@ -623,6 +623,8 @@ make_config! {
         reins_android_cert_sha256:   String, false,  def,    String::new();
         /// OpenAI domain verification token |> The challenge token the OpenAI Platform shows when submitting the MCP server to the ChatGPT directory, served as plain text at `/.well-known/openai-apps-challenge`. Empty: that path is not found.
         reins_openai_apps_challenge: String, false,  def,    String::new();
+        /// MCP tool profile |> Optional. Which of Reins's own tools the MCP endpoint offers. `full` (default): every tool. `chatgpt` or `claude` (the same set): for a directory listing, without the password vault and Reins Pay tools, GitHub secret scanning alerts and github_secret_set, and reading text messages (where one-time codes arrive); they are neither listed nor callable, and the GitHub API tools refuse secret scanning paths. The tools of MCP servers a user added are always listed.
+        reins_mcp_tool_profile:      String, false,  def,    crate::api::reins::tools::ToolProfile::Full.name().to_owned();
         /// Outbound requests per account (per minute) |> Requests the server makes for one account's phone (file sends and fetches, proxied MCP calls) per minute. 0 disables the limit.
         reins_outbound_requests_per_minute: u32, false, def, 60;
         /// Concurrent outbound requests per account |> Requests the server makes for one account's phone at the same time. 0 disables the limit.
@@ -1430,6 +1432,10 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
 
     if !cfg.reins_blob_purge_schedule.is_empty() && cfg.reins_blob_purge_schedule.parse::<Schedule>().is_err() {
         err!("`REINS_BLOB_PURGE_SCHEDULE` is not a valid cron expression")
+    }
+
+    if crate::api::reins::tools::ToolProfile::parse(&cfg.reins_mcp_tool_profile).is_none() {
+        err!("`REINS_MCP_TOOL_PROFILE` must be `full`, `chatgpt` or `claude`")
     }
 
     if !cfg.disable_admin_token {
