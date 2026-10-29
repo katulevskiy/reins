@@ -100,6 +100,7 @@ pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
         headline: String::new(),
         quick: false,
         label: None,
+        batch: None,
     }
 }
 

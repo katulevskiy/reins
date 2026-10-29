@@ -302,6 +302,7 @@ pub fn mcp_request(id: &str, server: &str, tool: &str, arguments: &Value) -> Rel
             tool: tool.to_owned(),
             arguments: arguments.as_object().cloned().unwrap_or_default(),
         }),
+        batch: None,
     }
 }
 

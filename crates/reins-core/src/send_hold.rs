@@ -357,6 +357,7 @@ impl Engine {
                 service: Some("gmail".to_owned()),
                 ask_for_more: false,
             },
+            batch: None,
         };
         let request = record.request.clone().unwrap_or(request);
         if let Err(e) = self.store.append_audit(&self.hold_audit(&request, &record.id, outcome, detail)) {

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use reins_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope};
+use reins_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope, ServiceScope};
 use reins_proto::PROTOCOL_VERSION;
 use reins_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
 use reins_proto::ids::{ConnectionId, GrantId};
@@ -133,6 +133,28 @@ pub fn grant_from_request(
             subject,
             body: None,
         }),
+        // One tool of another integration on one named thing (normalized: the target was checked).
+        GrantAction::Write => {
+            let target = reins_proto::permission::write_target(
+                request.service.as_deref().unwrap_or_default(),
+                request.op.as_deref().unwrap_or_default(),
+                request.resource.as_deref(),
+            )
+            .map_err(CoreError::invalid)?;
+            Scope::Service(ServiceScope {
+                service: target.service,
+                access: "write".to_owned(),
+                resources: vec![target.resource],
+                labels: Vec::new(),
+                any: false,
+                classes: Vec::new(),
+                ops: if target.op.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![target.op]
+                },
+            })
+        }
     };
     let expires = now.saturating_add(i64::try_from(secs).unwrap_or(i64::MAX));
     Grant::new(
@@ -144,6 +166,11 @@ pub fn grant_from_request(
         request.max_uses,
     )
     .map_err(policy_error)
+}
+
+/// Whether `call` asks for a standing write permission on another integration (never about a Gmail account).
+pub(crate) fn is_write_grant(call: &ToolCall) -> bool {
+    matches!(call, ToolCall::RequestGrant { grant } if grant.action == GrantAction::Write)
 }
 
 impl Engine {
@@ -253,7 +280,10 @@ impl Engine {
             // About an integration as a whole: no single account to settle on.
             return self.approve_accounts(&session, request_id, &parked, &choice, now).await;
         }
-        self.bind_account(&mut parked).await?;
+        // A write permission is about another integration: no Gmail account to settle on.
+        if !is_write_grant(&parked.request.call) {
+            self.bind_account(&mut parked).await?;
+        }
         let request = &parked.request;
         if (choice.standing.is_some() || parked.kind() == ApprovalKind::Grant)
             && self.legacy_mail_grants_unavailable(request)?
@@ -599,6 +629,9 @@ impl Engine {
             &[],
         );
         audit.info.grant_summary = Some(summary.clone());
+        if asked.action == GrantAction::Write {
+            audit.service = parked.service();
+        }
         self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
         self.store.mark_handled(request_id, now)?;
@@ -946,6 +979,79 @@ mod tests {
 
     fn conn() -> ConnectionId {
         "c1".into()
+    }
+
+    fn write_ask(service: &str, op: &str, resource: Option<&str>) -> GrantRequest {
+        GrantRequest {
+            action: GrantAction::Write,
+            duration_secs: 7 * 86_400,
+            max_uses: None,
+            reason: "Fix typos".to_owned(),
+            any: false,
+            from: vec![],
+            subject_contains: None,
+            recipients: vec![],
+            service: Some(service.to_owned()),
+            op: Some(op.to_owned()),
+            resource: resource.map(str::to_owned),
+            tool: None,
+        }
+    }
+
+    /// A write permission covers its one tool on its one thing, for any account, until it expires.
+    #[test]
+    fn a_write_permission_covers_one_tool_on_one_thing_until_it_expires() {
+        let grant =
+            grant_from_request(&write_ask("github", "issue_comment_edit", Some("me/app")), &conn(), 0, None).unwrap();
+        let allows = |op: &str, resource: &str, at: i64| {
+            reins_policy::service_allows(
+                std::slice::from_ref(&grant),
+                &conn(),
+                Some("me@github"),
+                "github",
+                "write",
+                "",
+                op,
+                resource,
+                at,
+            )
+            .is_some()
+        };
+        assert!(allows("issue_comment_edit", "me/app", 60));
+        assert!(!allows("issue_comment_edit", "me/other", 60), "another repository asks");
+        assert!(!allows("issue_comment_delete", "me/app", 60), "another tool asks");
+        assert!(!allows("issue_comment_edit", "me/app", 7 * 86_400 + 1), "it expires");
+        let other = reins_policy::service_allows(
+            std::slice::from_ref(&grant),
+            &"c2".into(),
+            None,
+            "github",
+            "write",
+            "",
+            "issue_comment_edit",
+            "me/app",
+            60,
+        );
+        assert!(other.is_none(), "another AI asks");
+
+        // An MCP tool: the server's integration, the tool's name as the thing.
+        let mcp = grant_from_request(&write_ask("mcp_linear", "", Some("label issue")), &conn(), 0, None).unwrap();
+        let covers = |tool: &str| {
+            reins_policy::service_allows(
+                std::slice::from_ref(&mcp),
+                &conn(),
+                None,
+                "mcp_linear",
+                "write",
+                "",
+                "",
+                tool,
+                60,
+            )
+            .is_some()
+        };
+        assert!(covers("label issue") && !covers("delete issue"));
+        assert!(grant_from_request(&write_ask("github", "repo_delete", Some("me/app")), &conn(), 0, None).is_err());
     }
 
     fn scope() -> GrantScopeChoice {

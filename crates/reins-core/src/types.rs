@@ -155,6 +155,19 @@ pub struct PendingItem {
     /// this, not `parked_until`).
     #[uniffi(default)]
     pub parked: bool,
+    /// One call of a batch the AI made at once (`reins_batch`): decided on its own, shown with the rest of its batch.
+    #[uniffi(default)]
+    pub batch: Option<PendingBatch>,
+}
+
+/// The place of a waiting call in its batch.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct PendingBatch {
+    /// Shared by every call of the batch (`approve_batch`, `deny_batch`).
+    pub id: String,
+    /// 0-based.
+    pub index: u32,
+    pub size: u32,
 }
 
 /// A request that became a ticket (Decisions v2): the agent carries on and collects the outcome later.

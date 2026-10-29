@@ -672,6 +672,7 @@ impl Engine {
             |(_, p)| p,
         );
         let mut info = views::audit_info(&request.call, released);
+        info.batch = request.batch.clone().filter(reins_proto::batch::BatchRef::valid);
         info.label = Some(Box::new(crate::titles::of_parked(&parked)));
         info.request = Some(Box::new(crate::titles::request(&request.call, request.created_at)));
         // A push's refs, commits and files travel with the entry to every device; the snapshot stays on this one.

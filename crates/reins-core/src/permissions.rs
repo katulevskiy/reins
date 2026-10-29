@@ -1084,7 +1084,8 @@ impl Engine {
                 | reins_proto::gmail::ToolCall::GmailRead { .. }
                 | reins_proto::gmail::ToolCall::GmailSend { .. }
                 | reins_proto::gmail::ToolCall::RequestGrant { .. }
-        ) {
+        ) || crate::approval::is_write_grant(&request.call)
+        {
             return Ok(false);
         }
         self.managed_mail_account(request.account.as_deref())

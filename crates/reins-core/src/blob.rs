@@ -444,6 +444,7 @@ pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
         headline: String::new(),
         quick: false,
         label: None,
+        batch: None,
     }
 }
 
@@ -987,6 +988,7 @@ pub(crate) fn blob_request(info: &BlobInfo) -> RelayRequest {
             content_type: Some(info.content_type.clone()),
             reason: String::new(),
         },
+        batch: None,
     }
 }
 
