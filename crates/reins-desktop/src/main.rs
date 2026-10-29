@@ -1054,16 +1054,21 @@ fn pause(config: &Config) -> Result<(), String> {
 }
 
 async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
-    if !daemon_running(paths, config).await {
-        let exe = update::current_executable()?;
-        let installed = install_service(paths, config, &exe).await?;
-        out!("Started the background service ({installed}).");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !daemon_running(paths, config).await {
-            if std::time::Instant::now() > deadline {
-                return Err(format!("{}; git was left as it was", reins_desktop::port::not_started(config.listen)));
+    let running = daemon_running(paths, config).await;
+    match service::start(running, cfg!(target_os = "linux"), service::systemd_user_available) {
+        service::Start::Running => {}
+        service::Start::ByHand => return Err(service::start_by_hand_note()),
+        service::Start::Install => {
+            let exe = update::current_executable()?;
+            let installed = install_service(paths, config, &exe).await?;
+            out!("Started the background service ({installed}).");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !daemon_running(paths, config).await {
+                if std::time::Instant::now() > deadline {
+                    return Err(format!("{}; git was left as it was", reins_desktop::port::not_started(config.listen)));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
     let (routed, direct) = reins_desktop::setup::routable(paths, config).await;

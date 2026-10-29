@@ -136,6 +136,39 @@ pub fn no_systemd_note() -> String {
         .to_owned()
 }
 
+/// How `reins resume` gets a daemon to route git through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// One already runs (the service, or `reins daemon` started by hand).
+    Running,
+    /// Install and start the service.
+    Install,
+    /// No service manager to start it with: the user starts `reins daemon` by hand.
+    ByHand,
+}
+
+/// What `reins resume` does: `running` whether a daemon answers; `user_manager` asked only on Linux, and only when
+/// none runs.
+#[must_use]
+pub fn start(running: bool, linux: bool, user_manager: impl FnOnce() -> bool) -> Start {
+    if running {
+        Start::Running
+    } else if linux && !user_manager() {
+        Start::ByHand
+    } else {
+        Start::Install
+    }
+}
+
+/// Why `reins resume` stopped when there is nothing to start the daemon with.
+#[must_use]
+pub fn start_by_hand_note() -> String {
+    "this system has no systemd user session, so Reins cannot start its background service. Start `reins daemon` \
+     first (in another terminal, or from your own startup scripts), then run `reins resume` again. git was left as \
+     it was."
+        .to_owned()
+}
+
 /// Writes the service file for `exe`; when `start`, enables and starts it. Returns the file.
 pub fn install(manager: Manager, home: &Path, exe: &Path, start: bool) -> Result<PathBuf, String> {
     let file = manager.file(home);
@@ -233,6 +266,18 @@ mod tests {
         assert!(!user_manager_answers("false"), "systemctl --user fails: no user manager");
         assert!(!user_manager_answers("/nonexistent/systemctl"), "no systemctl at all");
         let note = no_systemd_note();
+        assert!(note.contains("`reins daemon`") && note.contains("`reins resume`"), "{note}");
+    }
+
+    #[test]
+    fn resume_starts_the_daemon_by_hand_only_without_a_user_manager() {
+        let never = || -> bool { panic!("asked the service manager needlessly") };
+        assert_eq!(start(true, true, never), Start::Running);
+        assert_eq!(start(true, false, never), Start::Running);
+        assert_eq!(start(false, false, never), Start::Install, "macOS: launchd");
+        assert_eq!(start(false, true, || true), Start::Install, "systemd as before");
+        assert_eq!(start(false, true, || false), Start::ByHand);
+        let note = start_by_hand_note();
         assert!(note.contains("`reins daemon`") && note.contains("`reins resume`"), "{note}");
     }
 
