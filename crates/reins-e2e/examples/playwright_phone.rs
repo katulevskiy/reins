@@ -117,7 +117,8 @@ impl State {
                     "choices": view.choices}))
             }
             "pairing_by_code" => {
-                let view = self.phone()?.core.pairing_by_code(text(command, "code")?).await.map_err(|e| core_error(&e))?;
+                let view =
+                    self.phone()?.core.pairing_by_code(text(command, "code")?).await.map_err(|e| core_error(&e))?;
                 Ok(json!({"id": view.id, "client_name": view.client_name, "client_host": view.client_host,
                     "choices": view.choices}))
             }
@@ -126,7 +127,11 @@ impl State {
                 let code = command["code"].as_u64().and_then(|c| u8::try_from(c).ok());
                 let label = command["label"].as_str().map(str::to_owned);
                 let named = label.is_some();
-                self.phone()?.core.answer_pairing(id()?, approve, code, label, named).await.map_err(|e| core_error(&e))?;
+                self.phone()?
+                    .core
+                    .answer_pairing(id()?, approve, code, label, named)
+                    .await
+                    .map_err(|e| core_error(&e))?;
                 Ok(json!({}))
             }
             "approve" => {
@@ -181,7 +186,9 @@ async fn main() {
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).map(|n| (n, line))
         });
-        let Ok(Ok((read, line))) = read.await else { break };
+        let Ok(Ok((read, line))) = read.await else {
+            break;
+        };
         if read == 0 {
             break;
         }
