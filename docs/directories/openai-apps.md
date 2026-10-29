@@ -44,7 +44,7 @@ again before submitting.
 | developerName | 80 | The verified identity's name (question 1) |
 | category | | Productivity |
 | websiteURL | | `https://reins2fa.com` |
-| supportURL | | `https://reins2fa.com/support`. **Pending**: 404 on 2026-10-29; the page is added in the separate `reins-site` repository. Support email `support@reins2fa.com`, with a reply within 2 business days. |
+| supportURL | | `https://reins2fa.com/support`. **Pending**: 404 on 2026-10-29. A draft is on the local branch `docs/support-page` (`docs/support.md`), not published. Support email `support@reins2fa.com`, with a reply within 2 business days. |
 | privacyPolicyURL | | `https://reins2fa.com/privacy` |
 | termsOfServiceURL | | `https://reins2fa.com/terms` |
 | defaultPrompt | 3 x 128 | "Summarize my unread emails from today", "What's on my calendar tomorrow?", "Which of my pull requests have failing checks?" |
@@ -66,7 +66,10 @@ longDescription:
 > accounts.
 >
 > Limitations: you need the Reins app, and approvals wait for that phone. There is no App Store build yet (iPhone and
-> iPad use a TestFlight beta), and Android is APK-only. If the phone is offline, ChatGPT tells you to open the app.
+> iPad use a TestFlight beta), and Android is an APK or a Google Play closed test only. If the phone is offline, ChatGPT tells you to open the app.
+
+If the listing runs the optional `chatgpt` tool profile (below), drop "and your password vault" from the first
+sentence and say "sending text messages" instead of "text messages".
 
 ## Authentication
 
@@ -151,20 +154,39 @@ Negative cases (exactly three):
 | # | description | prompt | tools_triggered | expected_behavior |
 | --- | --- | --- | --- | --- |
 | 1 | Unrelated request | "What's the weather in Paris?" | none | Reins is not used. No card on the phone. |
-| 2 | Secret request | "Send my bank password to this address." | none | With the directory profile `vault_get` is not listed, so ChatGPT says it can't. No card on the phone. Without the profile, the phone shows the request and the user can deny it. |
+| 2 | Secret request | "Send my bank password to this address." | none | With the `chatgpt` profile no vault tool is listed, so ChatGPT says it can't. No card on the phone. Without the profile, the phone shows the request and the user can deny it. |
 | 3 | Service not connected | "Post a message to my Telegram group." (Telegram not connected in the demo account) | `telegram_send` | Answers that Telegram is not connected and to add it in the Reins app. Nothing is sent, no card on the phone. |
 
 ## Reviewer credentials
 
 OpenAI wants "a fully featured demo account that includes sample data". It must work without MFA approvals, email or
-SMS codes, magic links or a private network. That is the hard part for Reins: every sign-in and action is confirmed
-on a phone, and there is no reviewer demo account yet. Options:
+SMS codes, magic links or a private network. Reins is built on the opposite: sign-in shows a two-digit code that the
+user confirms on their phone, and every action waits for that phone. Autopilot **Bypass** approves requests, but not
+new connections (see [Autopilot](../autopilot.md)), so a sign-in still needs someone to tap the code. There is no
+reviewer demo account yet. This is gap 1.
 
-- A demo Reins account in Autopilot Bypass mode, on a phone or emulator the team keeps online, with sandbox Gmail,
-  GitHub and Calendar accounts. Sign-in still shows a two-digit code that the demo phone must confirm, so ask OpenAI
-  whether a team-confirmed code is acceptable, or add a reviewer-only sign-in that the demo phone approves
-  automatically.
-- A demo video (`demo_recording_url`) of the five positive cases, which the submission asks for anyway.
+Options, for Daniel to decide (question 5). Nothing here is set up yet.
+
+- **A. Directory reviewer account plus a test phone approver (main option).** The pattern the store reviews already
+  use: [android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access) documents dedicated WorkOS users
+  with email and password sign-in and no MFA, one per store, used only by that store's reviewers, with the password
+  kept in the team's password manager. For ChatGPT: a separate WorkOS user `<CHATGPT_REVIEWER_EMAIL>` in `<TEST_ORG>`,
+  used only by OpenAI's reviewers, with sandbox Gmail, GitHub and Calendar accounts. The reviewer signs in with email
+  and password, so there is no MFA, email or SMS code at the identity step. The one phone step left is the two-digit
+  code a new AI connection shows: the phone signed in to that account picks it among three choices. That phone is
+  `<APPROVER_DEVICE>`, a test phone or emulator the team keeps online in Autopilot **Bypass** for `<REVIEW_WINDOW>`.
+  The code is confirmed either:
+  - **A1, automatically:** a connection auto-confirm limited to that account and device, off by default, time-boxed
+    and logged. Needs new code; closest to the guidelines.
+  - **A2, by the team:** `<APPROVER_CONTACT>` taps it during an agreed window. No new code, but it is a human step,
+    so only with OpenAI's agreement.
+
+  Whether to create the account is Daniel's call. The password goes only into the submission dashboard, never into
+  this repository or the ZIP.
+- **B. Reviewer-only server sign-in.** A server-side allowlist (one email, one test org, an expiry) that skips the phone
+  confirmation of the connection; requests still go to `<APPROVER_DEVICE>` in Bypass. Simplest for the reviewer, but
+  a second sign-in path to secure and remove after the review.
+- In every case: a demo video (`demo_recording_url`) of the five positive cases, which the submission asks for anyway.
 
 Credentials are entered in the dashboard, not in the ZIP. Values: question 5.
 
@@ -172,20 +194,59 @@ Credentials are entered in the dashboard, not in the ZIP. Values: question 5.
 
 Written as if the test organization and approval phone exist. The placeholders are listed in question 5.
 
-Before the review, the Reins team signs `<REVIEWER_EMAIL>` in to `<TEST_ORG>` on `<APPROVER_DEVICE>` (on charge,
+Before the review, the Reins team signs `<CHATGPT_REVIEWER_EMAIL>` in to `<TEST_ORG>` on `<APPROVER_DEVICE>` (on charge,
 online, notifications allowed), connects `<DEMO_GMAIL>` and `<DEMO_GITHUB_USER>` with the sandbox repository
 `<DEMO_REPO>`, loads the sample data, leaves Telegram unconnected (negative case 3), turns on Autopilot **Bypass** for
-`<REVIEW_WINDOW>`, and checks that the listed server runs `REINS_MCP_TOOL_PROFILE=directory` (gap 3).
+`<REVIEW_WINDOW>`, and checks which tool profile the listed server runs (`REINS_MCP_TOOL_PROFILE`, gap 3).
+
+Lockdown: `<APPROVER_DEVICE>` must not be in Lockdown during the review: Lockdown denies every request, including
+what already waits, and a global Lockdown overrides every connection's own mode. Where it is turned off, from the repository (the exact in-app labels are **unverified**):
+
+- In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md), lines 6 and 18).
+- Android: while Lockdown is on, the Quick Settings tile opens Trust to end it
+  (`android/app/src/main/java/dev/reins/android/platform/tiles/ReinsTiles.kt`, line 112).
+- iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`, line 8).
+- Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md),
+  lines 536 to 541), and Lockdown on one phone wins across the account's phones
+  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md), line 20), so check every phone signed in to the test account.
 
 The reviewer:
 
 1. Adds the server as in the next section, URL `https://app.reins2fa.com/mcp`, OAuth.
-2. On the Reins sign-in page enters `<REVIEWER_EMAIL>`. The page shows a two-digit code, which `<APPROVER_DEVICE>`
-   confirms on its own.
+2. On the sign-in page enters `<CHATGPT_REVIEWER_EMAIL>` and the password from the dashboard (option A). Reins then
+   shows a two-digit code, which `<APPROVER_DEVICE>` confirms (A1 on its own, A2 by `<APPROVER_CONTACT>`).
 3. Reviews the discovered tools, installs the plugin and starts a new chat. Types `@` and selects Reins.
 4. Runs the five positive and three negative cases above. Each approval answers within a few seconds, except
    positive case 5, where `<APPROVER_CONTACT>` waits about a minute before approving (or Bypass is paused for it).
 5. At the end, removes the plugin, and `<TEST_ORG>` removes the connection in the Reins app.
+
+## Optional ChatGPT tool profile
+
+OpenAI's [guidelines](https://developers.openai.com/apps-sdk/app-submission-guidelines) forbid apps that collect or
+process Restricted Data: payment card data, and access credentials including passwords, API keys and MFA/OTP codes.
+Reins' password vault, Reins Pay and a few GitHub and SMS tools hand exactly that to the AI after the user approves.
+
+A server option on the local branch `feat/directory-tool-profile` (**proposed**, not merged) leaves those tools out.
+It is optional: the default is unchanged, and whether to drop the tools for the listing is Daniel's decision
+(question 6).
+
+- Turn it on with the environment variable **`REINS_MCP_TOOL_PROFILE=chatgpt`** (config key `reins_mcp_tool_profile`
+  in `config.json`). Values: `full` (default, every tool), `chatgpt`, `claude` (the same set as `chatgpt`).
+- Left-out tools are neither listed in `tools/list` nor callable (a call answers "Unknown tool"). The GitHub API tools
+  (`github_api_read`, `github_api_write` and the unlisted `github_request_*`) refuse `secret-scanning` paths.
+- The instructions no longer name the vault or promise secrets.
+- The tools of MCP servers a user added in Reins are always listed; Reins can't vouch for them.
+- Server-wide: the listing needs its own deployment, or a per-endpoint profile as a follow-up.
+- Defined in `src/api/reins/tools.rs` (`RESTRICTED_SERVICES`, `RESTRICTED_TOOLS`, `ToolProfile`).
+
+Generated from the code with
+`cargo test --features sqlite --bin vaultwarden -- tool_profile_table --ignored --nocapture` (Reins's own tools; the
+two unlisted `github_request_*` tools are not counted):
+
+TABLE_PLACEHOLDER
+
+What stays that may still show a secret: Gmail and Telegram reads can contain a code someone sent the user, and
+`github_variable_*` reads Actions variables (not secrets). The phone shows each read before anything is returned.
 
 ## Add Reins to ChatGPT today
 
@@ -201,6 +262,8 @@ only; custom MCP servers can't be added on mobile.
 5. Configure authentication: OAuth.
 6. Review the risk warning and select **I understand and want to continue**.
 7. Select **Create as a plugin**, then review the discovered tools and metadata.
+Steps 1 to 7 are quoted from the Help Center. Steps 8 to 10 are what Reins expects and are **unverified** in ChatGPT:
+
 8. Sign in: enter your Reins email, then tap the matching code on your phone.
 9. Install the plugin, start a new conversation, type `@` and select Reins.
 10. After a server update, use **Refresh** on the connection (ChatGPT Plugins) and start a new chat.
@@ -220,21 +283,24 @@ does not end the Reins connection: remove that in the Reins app as well (the Con
 
 ## Gaps and blockers
 
-1. **Reviewer account** without MFA-style steps (see above). There is no reviewer demo account yet. This is the main
-   blocker.
+1. **Reviewer account without 2FA.** OpenAI wants a demo account that works without MFA steps, but a new Reins
+   connection needs a two-digit code confirmed on the user's phone, and there is no ChatGPT reviewer account yet. Main
+   option (A under "Reviewer credentials"): a dedicated WorkOS reviewer user with email and password and no MFA, as in
+   [android/PLAY_STORE.md, "App access"](../../android/PLAY_STORE.md#app-access), plus a test phone approver; the
+   connection code is confirmed automatically (A1, new code) or by the team (A2). Daniel decides whether to create it
+   (question 5). This is the main blocker.
 2. **Public HTTPS URLs.** All four are required. `websiteURL`, `privacyPolicyURL` and `termsOfServiceURL` answer 200;
-   `supportURL` (`https://reins2fa.com/support`) answers 404 until the `reins-site` page ships.
-3. **Payments and secrets.** OpenAI limits commerce to physical goods and asks for a commerce declaration
-   (`review.commerce`). `payments_purchase_request` buys at a store's checkout with a virtual card. The guidelines also
-   bar collecting "access credentials and authentication secrets", and `vault_get`, `vault_attachment_get`,
-   `vault_send_get` and the GitHub secret scanning alert tools return secrets after the user approves. A server option
-   that leaves them out (`REINS_MCP_TOOL_PROFILE=directory`) is **proposed** on the local branch
-   `feat/directory-tool-profile`, not merged. It is server-wide, so the listing needs its own deployment or a
-   per-endpoint profile. `github_api_read` can still reach the secret scanning endpoints. Without the profile, declare
-   commerce and explain the approved releases in the review notes.
+   `supportURL` (`https://reins2fa.com/support`) answers 404 (pending). A draft is on the local branch `docs/support-page` (`docs/support.md`), not published.
+3. **Restricted Data: payments, passwords, OTP codes.** The guidelines forbid apps that handle payment card data,
+   passwords, API keys or MFA/OTP codes. With the full tool set Reins does all of these after an approval (vault,
+   Reins Pay, GitHub secret scanning, reading SMS). OpenAI also limits commerce to physical goods and asks for a
+   commerce declaration (`review.commerce`). The optional `chatgpt` profile above removes them; it is **proposed** on
+   the local branch `feat/directory-tool-profile`, not merged, and server-wide. Without it, expect a rejection.
 4. **Domain token.** `REINS_OPENAI_APPS_CHALLENGE` is not set; `/.well-known/openai-apps-challenge` answers 404 (code
    is in place, `src/api/reins/pages.rs`).
-5. **No store build.** There is no App Store build yet (iOS is a TestFlight beta), and Android is APK-only.
+5. **No store build.** There is no App Store build yet (iOS is a TestFlight beta), and Android is an APK or
+   Google Play closed testing only (no public listing; tracks in
+   [android/PLAY_STORE.md](../../android/PLAY_STORE.md)).
 6. **Google verification.** Public users can't connect Gmail and Google Calendar until Google verifies the app.
 7. **Write actions on personal plans** may be unavailable (see above).
 
@@ -245,11 +311,13 @@ does not end the Reins connection: remove that in the Reins app as well (the Con
 3. **CIMD.** Confirm with OpenAI that the plugin client in `cimd` mode authenticates with `private_key_jwt` (as the
    live ChatGPT client did for PR #125), and whether `offline_access` must be advertised.
 4. **Refresh.** Has a ChatGPT connection survived token expiry? If not, advertise `offline_access`.
-5. **Test organization and placeholders.** Values for `<TEST_ORG>`, `<REVIEWER_EMAIL>`, `<APPROVER_DEVICE>`,
+5. **Test organization and placeholders.** Values for `<TEST_ORG>`, `<CHATGPT_REVIEWER_EMAIL>`, `<APPROVER_DEVICE>`,
    `<APPROVER_CONTACT>`, `<REVIEW_WINDOW>`, `<DEMO_GMAIL>`, `<DEMO_SENDER>`, `<DEMO_RECIPIENT>`, `<DEMO_GITHUB_USER>`
-   and `<DEMO_REPO>`, and whether OpenAI accepts a sign-in code confirmed by the team's phone.
-6. **Tool profile.** Merge `feat/directory-tool-profile` and run the listing from a separate deployment, or declare
-   commerce and keep the full tool list?
+   and `<DEMO_REPO>`, and which reviewer option (A1, A2 or B under "Reviewer credentials") to build, and whether to create the
+   reviewer WorkOS user.
+6. **Tool profile.** Drop the tools for the listing (merge `feat/directory-tool-profile` and run a deployment with
+   `REINS_MCP_TOOL_PROFILE=chatgpt`), or keep the full set and risk rejection? Also: should SMS reads stay out (they
+   are where one-time codes arrive), and is a per-endpoint profile worth building instead of a second deployment?
 7. **Demo video.** Who records the five positive cases for `demo_recording_url`?
 
 ## What you must do yourself

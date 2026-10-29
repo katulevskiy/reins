@@ -96,7 +96,7 @@ the first manual publish works.
 4. **Icon.** The `raw.githubusercontent.com` URL works but depends on the default branch. A stable URL on
    `reins2fa.com` is better, if the site serves one.
 5. **Tool profile.** The registry has no tool review, but the clients that read it may list it in their own
-   catalogs. Publish the full server, or a host that runs the proposed directory tool profile
-   (`REINS_MCP_TOOL_PROFILE=directory`, on the `feat/directory-tool-profile` branch, not merged)?
+   catalogs. Publish the full server, or a host that runs one of the optional, proposed tool profiles
+   (`REINS_MCP_TOOL_PROFILE=chatgpt` or `claude`, on the `feat/directory-tool-profile` branch, not merged)?
 6. **Self-hosted servers.** The entry covers only `app.reins2fa.com`. A URL variable entry (`https://{host}/mcp`)
    for self-hosters is possible, but a remote URL can belong to one name only. Is it worth a second entry?
