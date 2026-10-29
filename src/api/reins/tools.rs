@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, SecondsFormat};
 use reins_proto::{
+    batch::MAX_BATCH_CALLS,
     blob::MAX_BLOB_BYTES,
     connector,
     gmail::{
@@ -11,6 +12,7 @@ use reins_proto::{
         MAX_RECIPIENTS, MAX_SEARCH_RESULTS, MIN_GRANT_SECS, MessageSummary, OutgoingEmail, ToolCall, normalize_account,
     },
     ids::RequestId,
+    permission::{self, MAX_RESOURCE_LEN},
     relay::{RelayOutcome, ToolResult},
     remote_mcp::McpServerReport,
 };
@@ -151,24 +153,33 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "reins_request_access",
-            "title": "Ask for a standing Gmail permission",
+            "title": "Ask for a standing permission",
             "description": "Ask the user, on their phone, for a time-limited standing permission so that many similar \
-        gmail_search, gmail_read or gmail_send calls over a while need no approval each (for example reading every \
-        email from one sender this week). Do NOT use it for a single action, and never as a step before one: to send \
-        one email, call gmail_send directly and the user approves that email; to read, call gmail_search. No tool \
-        needs a permission first. When you do need one, ask for the NARROWEST permission: name the exact senders \
-        (`a@b.com`) or domains (`@b.com`) or a subject text for reads, the exact recipients for sends, and the \
-        SHORTEST duration. `any: true` (all mail, at most 7 days) and long durations are shown to the user as broad \
-        requests and are often refused. Always give a short, honest `reason`. Sending to everyone cannot be \
-        requested.",
+        calls over a while need no approval each (for example reading every email from one sender this week, or \
+        commenting on issues of one repository this month). Do NOT use it for a single action, and never as a step \
+        before one: call the tool directly and the user approves that call. No tool needs a permission first. When \
+        you do need one, ask for the NARROWEST permission and the SHORTEST duration. `read` covers gmail_search and \
+        gmail_read (name the exact senders `a@b.com`, domains `@b.com` or a subject text; `any: true` is all mail for \
+        at most 7 days). `send` covers gmail_send to the listed recipients. `write` covers ONE other tool that \
+        changes something (its `_meta` says `standing_grant: write`), only on the one `resource` you name (for \
+        example the repository `owner/name`), for at most 30 days; a tool of an MCP server the user added is named \
+        as listed and needs no `resource`. Tools asked for every time (deleting, purchases) are never covered. The \
+        user sees and can revoke every permission on their phone, and each expires on its own. Always give a short, \
+        honest `reason`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "account": account_property(),
-                    "action": {"type": "string", "enum": ["read", "send"],
-                        "description": "`read` covers gmail_search and gmail_read, `send` covers gmail_send."},
+                    "action": {"type": "string", "enum": ["read", "send", "write"],
+                        "description": "`read` covers gmail_search and gmail_read, `send` covers gmail_send, `write` \
+                        covers the one `tool` on the one `resource`."},
                     "duration_seconds": {"type": "integer", "minimum": MIN_GRANT_SECS, "maximum": MAX_GRANT_SECS,
-                        "description": "How long the permission lasts. Ask for as little as you need."},
+                        "description": "How long the permission lasts (at most 30 days). Ask for as little as you need."},
+                    "tool": {"type": "string",
+                        "description": "write: the tool it covers, exactly as listed (e.g. `github_issue_comment_edit`)."},
+                    "resource": {"type": "string", "maxLength": MAX_RESOURCE_LEN,
+                        "description": "write: the one thing it covers, the value of the tool's `resource_param` \
+                        (e.g. the repository `owner/name`). Not for MCP tools."},
                     "reason": {"type": "string", "maxLength": MAX_REASON_LEN,
                         "description": "Why you need it; shown to the user."},
                     "from": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_GRANT_RULES,
@@ -187,6 +198,39 @@ pub fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false
             },
             "annotations": write_hints(false, false)
+        }),
+        json!({
+            "name": BATCH_TOOL,
+            "title": "Make several calls at once",
+            "description": format!("Make up to {MAX_BATCH_CALLS} tool calls at once, for example labelling five \
+        issues. Each call is exactly what it would be alone: the user sees them together on their phone as one queue, \
+        approves or denies each (or approves them all), each is recorded on its own, and the answer has one result \
+        per call, in order, under `structuredContent.items`. Only tools that act can be batched (not reins_batch, \
+        reins_get_result, reins_wait, reins_tickets, reins_cancel or reins_reply). Use it only for calls that belong \
+        together."),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "calls": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_BATCH_CALLS,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "The tool, as listed."},
+                                "arguments": {"type": "object", "description": "Its arguments."}
+                            },
+                            "required": ["name", "arguments"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["calls"],
+                "additionalProperties": false
+            },
+            // What it does is what its calls do: some may change things.
+            "annotations": write_hints(false, true)
         }),
         json!({
             "name": "reins_list_accounts",
@@ -316,6 +360,12 @@ pub fn tool_definitions() -> Vec<Value> {
             "annotations": s.annotations()
         })
     }));
+    for tool in &mut tools {
+        let meta = tool["name"].as_str().and_then(permission::for_tool).map(|p| p.meta());
+        if let (Some(meta), Some(obj)) = (meta, tool.as_object_mut()) {
+            obj.insert("_meta".to_owned(), json!({ permission::META_KEY: meta }));
+        }
+    }
     tools
 }
 
@@ -337,6 +387,79 @@ pub enum ToolInvocation {
     Tickets,
     /// `reins_reply`: a ticket and the agent's answer.
     Reply(RequestId, String),
+    /// `reins_batch`: each call as it would be relayed alone, or why it cannot be.
+    Batch(Vec<BatchCall>),
+}
+
+/// One call of a `reins_batch`.
+#[derive(Debug, PartialEq)]
+pub struct BatchCall {
+    /// The tool, as the AI named it.
+    pub name: String,
+    /// The call for the phone and its account, or why it is refused (only this call fails).
+    pub call: Result<(ToolCall, Option<String>), String>,
+}
+
+/// Several calls at once, shown together on the phone ([`reins_proto::batch`]).
+pub const BATCH_TOOL: &str = "reins_batch";
+
+/// The tools that cannot be part of a batch: they do not act, they look after other requests.
+const NOT_BATCHABLE: [&str; 6] =
+    [BATCH_TOOL, "reins_get_result", "reins_wait", "reins_tickets", "reins_cancel", "reins_reply"];
+
+fn parse_batch(arguments: &Value, mcp: &[McpServerReport]) -> Result<ToolInvocation, ToolArgError> {
+    let args = object(arguments)?;
+    reject_unknown(args, &["calls"])?;
+    let Some(Value::Array(calls)) = args.get("calls") else {
+        return invalid("`calls` must be an array of {name, arguments}.");
+    };
+    if calls.is_empty() || calls.len() > MAX_BATCH_CALLS {
+        return invalid(format!("`calls` must hold 1 to {MAX_BATCH_CALLS} calls."));
+    }
+    let mut out = Vec::with_capacity(calls.len());
+    for (index, item) in calls.iter().enumerate() {
+        let Some(item) = item.as_object() else {
+            return invalid(format!("`calls[{index}]` must be an object with `name` and `arguments`."));
+        };
+        reject_unknown(item, &["name", "arguments"])?;
+        let name = required_string(item, "name")?;
+        let call = if NOT_BATCHABLE.contains(&name.as_str()) {
+            Err(format!("{name} cannot be part of a batch; call it on its own."))
+        } else {
+            match parse_invocation_with(&name, item.get("arguments").unwrap_or(&Value::Null), mcp) {
+                Ok(ToolInvocation::Relay(call, account)) => Ok((call, account)),
+                Ok(_) => Err(format!("{name} cannot be part of a batch; call it on its own.")),
+                Err(ToolArgError::UnknownTool(_)) => Err(format!("Unknown tool `{name}`.")),
+                Err(ToolArgError::Invalid(why)) => Err(why),
+            }
+        };
+        out.push(BatchCall {
+            name,
+            call,
+        });
+    }
+    Ok(ToolInvocation::Batch(out))
+}
+
+/// What a `reins_request_access` write permission names: the integration and operation of `tool` (a connector tool,
+/// or an added MCP server's tool as listed) and the one thing it covers.
+fn write_grant_target(
+    tool: &str,
+    resource: Option<String>,
+    mcp: &[McpServerReport],
+) -> Result<(String, String, Option<String>), ToolArgError> {
+    if tool == "gmail_send" {
+        return invalid("For gmail_send ask with `action: \"send\"` and the `recipients`.");
+    }
+    if let Some(spec) = connector::spec_for_tool(tool).filter(|s| !s.desktop_only) {
+        return Ok((spec.service.to_owned(), spec.op.to_owned(), resource));
+    }
+    match mcp_tools::grant_target(mcp, tool) {
+        Some(Ok((service, op))) if resource.is_none() => Ok((service, op, None)),
+        Some(Ok(_)) => invalid("An MCP tool's permission covers the tool itself: leave out `resource`."),
+        Some(Err(why)) => invalid(why),
+        None => invalid(format!("Unknown tool `{tool}`: name a tool as listed.")),
+    }
 }
 
 /// Default `reins_wait`: below the 60 s tool timeout some clients have.
@@ -504,13 +627,33 @@ pub fn parse_invocation_with(
                     "recipients",
                     "max_uses",
                     "any",
+                    "tool",
+                    "resource",
                 ],
             )?;
             let action = match required_string(args, "action")?.as_str() {
                 "read" => GrantAction::Read,
                 "send" => GrantAction::Send,
-                _ => return invalid("`action` must be \"read\" or \"send\"."),
+                "write" => GrantAction::Write,
+                _ => return invalid("`action` must be \"read\", \"send\" or \"write\"."),
             };
+            let tool = optional_string(args, "tool")?;
+            let resource = optional_string(args, "resource")?;
+            let (service, op, resource) = match (action, tool.as_deref()) {
+                (GrantAction::Write, Some(name)) => {
+                    let (service, op, resource) = write_grant_target(name, resource, mcp)?;
+                    (Some(service), Some(op), resource)
+                }
+                (GrantAction::Write, None) => return invalid("`tool` is required for a write permission."),
+                (_, None) if resource.is_none() => (None, None, None),
+                _ => return invalid("`tool` and `resource` are only for `action: \"write\"`."),
+            };
+            if action == GrantAction::Write
+                && args.contains_key("account")
+                && service.as_deref().is_some_and(|s| s.starts_with(permission::MCP_SERVICE_PREFIX))
+            {
+                return invalid("An MCP tool's permission takes no `account`.");
+            }
             let duration_secs = match args.get("duration_seconds") {
                 Some(v) => match v.as_u64() {
                     Some(n) => n,
@@ -541,6 +684,10 @@ pub fn parse_invocation_with(
                         from: string_list(args, "from", false)?,
                         subject_contains: optional_string(args, "subject_contains")?,
                         recipients: string_list(args, "recipients", false)?,
+                        service,
+                        op,
+                        resource,
+                        tool,
                     }),
                 },
                 args,
@@ -588,6 +735,7 @@ pub fn parse_invocation_with(
             };
             Ok(ToolInvocation::Wait(ticket_arg(args, "ticket")?, secs))
         }
+        BATCH_TOOL => parse_batch(arguments, mcp),
         "reins_tickets" => {
             reject_unknown(object(arguments)?, &[])?;
             Ok(ToolInvocation::Tickets)
@@ -630,6 +778,32 @@ pub fn success(structured: &Value) -> Value {
         "content": [{"type": "text", "text": structured.to_string()}],
         "structuredContent": structured,
         "isError": false
+    })
+}
+
+/// The answer to a `reins_batch`: one text block per call (`[index] tool: ...`) and, structured, each call's own
+/// result with its request id. An error only when every call failed.
+pub fn render_batch(batch_id: &str, items: Vec<(String, Option<RequestId>, Value)>) -> Value {
+    let all_failed = items.iter().all(|(_, _, r)| r["isError"].as_bool().unwrap_or(false));
+    let mut content = Vec::with_capacity(items.len());
+    let mut structured = Vec::with_capacity(items.len());
+    for (index, (tool, request_id, result)) in items.into_iter().enumerate() {
+        let text = result["content"]
+            .as_array()
+            .map(|blocks| blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+        content.push(json!({"type": "text", "text": format!("[{index}] {tool}: {text}")}));
+        structured.push(json!({
+            "index": index,
+            "tool": tool,
+            "request_id": request_id.map(|id| id.0),
+            "result": result
+        }));
+    }
+    json!({
+        "content": content,
+        "structuredContent": {"batch_id": batch_id, "items": structured},
+        "isError": all_failed
     })
 }
 
@@ -832,7 +1006,7 @@ mod tests {
     fn tool_definitions_are_strict_and_well_formed() {
         let tools = tool_definitions();
         let listed = connector::specs().iter().filter(|s| !s.desktop_only).count() - UNLISTED_TOOLS.len();
-        assert_eq!(tools.len(), 11 + listed);
+        assert_eq!(tools.len(), 12 + listed);
         for tool in &tools {
             assert!(tool["name"].is_string() && tool["description"].is_string(), "{tool}");
             assert_eq!(tool["inputSchema"]["type"], "object");
@@ -1013,6 +1187,170 @@ mod tests {
                 .contains("Unknown property")
         );
         assert!(bad(json!({"action": "read", "reason": "x", "from": ["a@b.com"]})).contains("duration_seconds"));
+    }
+
+    fn github_tool(op: &str) -> &'static str {
+        connector::specs().iter().find(|s| s.service == "github" && s.op == op).unwrap().tool
+    }
+
+    fn mcp_report() -> [McpServerReport; 1] {
+        let tool = |name: &str, read_only: bool, destructive: bool| reins_proto::remote_mcp::McpToolReport {
+            name: name.into(),
+            title: None,
+            description: format!("does {name}"),
+            input_schema: json!({"type": "object"}),
+            read_only,
+            destructive,
+        };
+        [McpServerReport {
+            id: "linear-2".into(),
+            name: "Linear".into(),
+            tools: vec![tool("search", true, false), tool("label issue", false, false), tool("wipe", false, true)],
+        }]
+    }
+
+    #[test]
+    fn write_permissions_name_one_tool_on_one_thing_for_at_most_30_days() {
+        let edit = github_tool("issue_comment_edit");
+        let grant =
+            |args: Value, mcp: &[McpServerReport]| match parse_invocation_with("reins_request_access", &args, mcp) {
+                Ok(ToolInvocation::Relay(
+                    ToolCall::RequestGrant {
+                        grant,
+                    },
+                    _,
+                )) => Ok(*grant),
+                Ok(other) => panic!("{other:?}"),
+                Err(ToolArgError::Invalid(why)) => Err(why),
+                Err(e) => panic!("{e:?}"),
+            };
+        let ok = grant(
+            json!({"action": "write", "tool": edit, "resource": " Me/App ", "duration_seconds": 86_400,
+                "reason": "Fix typos in my comments"}),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(ok.action, GrantAction::Write);
+        assert_eq!(
+            (ok.service.as_deref(), ok.op.as_deref(), ok.tool.as_deref()),
+            (Some("github"), Some("issue_comment_edit"), Some(edit))
+        );
+        assert!(ok.resource.is_some());
+
+        let reports = mcp_report();
+        let mcp = grant(
+            json!({"action": "write", "tool": "linear-2__label_issue", "duration_seconds": 3600, "reason": "Triage"}),
+            &reports,
+        )
+        .unwrap();
+        assert_eq!(
+            (mcp.service.as_deref(), mcp.op.as_deref(), mcp.resource.as_deref()),
+            (Some("mcp_linear_2"), Some(""), Some("label issue"))
+        );
+
+        let base = |extra: Value| {
+            let mut args = json!({"action": "write", "duration_seconds": 3600, "reason": "x"});
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            args
+        };
+        let refused = |extra: Value| grant(base(extra), &reports).unwrap_err();
+        assert!(refused(json!({})).contains("`tool`"));
+        assert!(refused(json!({"tool": edit})).contains("resource"), "a connector write names its resource");
+        assert!(!refused(json!({"tool": github_tool("repo_delete"), "resource": "me/app"})).is_empty());
+        assert!(refused(json!({"tool": "gmail_send"})).contains("send"));
+        assert!(refused(json!({"tool": "linear-2__search"})).contains("only reads"));
+        assert!(refused(json!({"tool": "linear-2__wipe"})).contains("every time"));
+        assert!(refused(json!({"tool": "linear-2__label_issue", "resource": "x"})).contains("resource"));
+        assert!(refused(json!({"tool": "nope"})).contains("Unknown tool"));
+        assert!(!refused(json!({"tool": edit, "resource": "me/app", "duration_seconds": 31 * 86_400})).is_empty());
+        assert!(!refused(json!({"tool": edit, "resource": "me/app", "any": true})).is_empty());
+        let read_with_tool = grant(
+            json!({"action": "read", "duration_seconds": 600, "reason": "x", "from": ["a@b.com"], "tool": edit}),
+            &[],
+        );
+        assert!(read_with_tool.unwrap_err().contains("only for"));
+    }
+
+    #[test]
+    fn a_batch_keeps_each_call_as_it_would_be_alone() {
+        let reports = mcp_report();
+        let calls = json!({"calls": [
+            {"name": "gmail_search", "arguments": {"query": "from:bank"}},
+            {"name": "linear-2__label_issue", "arguments": {"id": 1}},
+            {"name": "reins_wait", "arguments": {"ticket": "x"}},
+            {"name": "nope", "arguments": {}},
+            {"name": "gmail_read", "arguments": {"message_ids": []}}
+        ]});
+        let Ok(ToolInvocation::Batch(items)) = parse_invocation_with(BATCH_TOOL, &calls, &reports) else {
+            panic!("a batch was expected")
+        };
+        assert_eq!(items.len(), 5);
+        assert_eq!(
+            items[0].call,
+            Ok((
+                ToolCall::GmailSearch {
+                    query: "from:bank".into(),
+                    max_results: DEFAULT_MAX_RESULTS
+                },
+                None
+            ))
+        );
+        assert!(matches!(items[1].call, Ok((ToolCall::Mcp(_), None))));
+        assert!(items[2].call.as_ref().unwrap_err().contains("cannot be part of a batch"));
+        assert!(items[3].call.as_ref().unwrap_err().contains("Unknown tool"));
+        assert!(items[4].call.is_err());
+
+        let bad = |args: Value| invalid_msg(BATCH_TOOL, &args);
+        assert!(bad(json!({"calls": []})).contains("1 to 10"));
+        let eleven: Vec<Value> =
+            (0..11).map(|_| json!({"name": "gmail_search", "arguments": {"query": "a"}})).collect();
+        assert!(bad(json!({"calls": eleven})).contains("1 to 10"));
+        assert!(
+            bad(json!({"calls": [{"name": "gmail_search", "arguments": {}, "extra": 1}]})).contains("Unknown property")
+        );
+        assert!(bad(json!({})).contains("calls"));
+    }
+
+    #[test]
+    fn batch_results_have_one_entry_per_call_and_fail_only_when_all_do() {
+        let ok = success(&json!({"done": true}));
+        let out = render_batch(
+            "b1",
+            vec![
+                ("gmail_search".into(), Some(RequestId("r1".into())), ok),
+                ("nope".into(), None, failure("Unknown tool `nope`.")),
+            ],
+        );
+        assert_eq!(out["isError"], false);
+        assert_eq!(out["content"].as_array().unwrap().len(), 2);
+        assert_eq!(out["content"][1]["text"], "[1] nope: Unknown tool `nope`.");
+        assert_eq!(out["structuredContent"]["batch_id"], "b1");
+        assert_eq!(out["structuredContent"]["items"][0]["request_id"], "r1");
+        assert_eq!(out["structuredContent"]["items"][1]["result"]["isError"], true);
+        let all_bad = render_batch("b2", vec![("x".into(), None, failure("no"))]);
+        assert_eq!(all_bad["isError"], true);
+    }
+
+    #[test]
+    fn every_tool_carries_the_same_permission_metadata() {
+        let reports = mcp_report();
+        for tool in tool_definitions_with(&reports) {
+            let name = tool["name"].as_str().unwrap();
+            let meta = &tool["_meta"][permission::META_KEY];
+            for key in ["access", "approval", "every_time", "standing_grant", "resource_param", "max_grant_seconds"] {
+                assert!(meta.get(key).is_some(), "{name} lacks {key}");
+            }
+            if tool["annotations"]["readOnlyHint"] == true {
+                assert_ne!(meta["access"], "write", "{name}");
+            }
+        }
+        let by_name = |n: &str| tool_definitions_with(&reports).into_iter().find(|t| t["name"] == n).unwrap();
+        assert_eq!(
+            by_name(github_tool("issue_comment_edit"))["_meta"][permission::META_KEY]["standing_grant"],
+            "write"
+        );
+        assert_eq!(by_name("linear-2__wipe")["_meta"][permission::META_KEY]["every_time"], true);
+        assert_eq!(by_name("linear-2__label_issue")["_meta"][permission::META_KEY]["standing_grant"], "write");
     }
 
     #[test]

@@ -9,6 +9,7 @@ use std::collections::HashSet;
 
 use reins_proto::{
     gmail::ToolCall,
+    permission,
     remote_mcp::{MAX_SERVERS, McpCall, McpServerReport, McpToolReport, exposed_name},
 };
 use serde_json::{Map, Value, json};
@@ -57,7 +58,10 @@ pub fn tool_definitions(reports: &[McpServerReport]) -> Vec<Value> {
                 "title": format!("{}: {title}", server.name),
                 "description": format!("{}: {}", server.name, tool.description),
                 "inputSchema": tool.input_schema,
-                "annotations": annotations
+                "annotations": annotations,
+                "_meta": {
+                    permission::META_KEY: permission::of_mcp_tool(tool.read_only, tool.destructive).meta()
+                }
             })
         })
         .collect()
@@ -78,6 +82,19 @@ pub fn parse_call(reports: &[McpServerReport], name: &str, arguments: &Value) ->
         arguments,
     });
     Some(call.normalized().map_err(|e| e.to_string()))
+}
+
+/// What a standing write permission for the exposed `name` covers: the server's grant integration and the tool's own
+/// name. `None` when no reported tool has it; an error for a tool no permission can cover (a read needs none, a
+/// destructive one is asked for every time).
+pub fn grant_target(reports: &[McpServerReport], name: &str) -> Option<Result<(String, String), String>> {
+    let (_, server, tool) = exposed(reports).find(|(exposed, _, _)| exposed == name)?;
+    let facts = permission::of_mcp_tool(tool.read_only, tool.destructive);
+    Some(match facts.standing {
+        Some(permission::Standing::Write) => Ok((permission::mcp_grant_service(&server.id), tool.name.clone())),
+        _ if tool.read_only => Err(format!("{name} only reads: it needs no write permission.")),
+        _ => Err(format!("{name} is asked for every time: no permission can cover it.")),
+    })
 }
 
 /// A tool result of an added MCP server as the AI gets it: its `content`, `structuredContent` and `isError`, nothing

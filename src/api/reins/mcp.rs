@@ -21,8 +21,10 @@ where the user approves what you do. Secrets (a vault password, card details) ar
 approves each one on their phone.
 - For a single action, call its tool directly (gmail_send, github_create_issue, calendar_create_event, ...). Reins \
 asks the user on their phone. Do not ask for a standing permission first.
-- reins_request_access is only for doing the same kind of Gmail call many times over a while; it is never a step \
-before a single action.
+- reins_request_access is only for doing the same kind of call many times over a while (Gmail reads or sends, or \
+one tool that changes something on one named thing, for at most 30 days); it is never a step before a single action.
+- To make several related calls at once (at most 10), use reins_batch: the user reviews them together and you get \
+one result per call.
 - If a result says the request is waiting, tell the user to approve it on their phone, then call reins_get_result \
 with the request_id after the user confirms. Do not call the tool again: that would ask twice. Never say an action \
 is done until a result confirms it.
@@ -420,6 +422,7 @@ mod tests {
                 "gmail_search",
                 "gmail_send",
                 "reins_request_access",
+                "reins_batch",
                 "reins_list_accounts",
                 "reins_get_result",
                 "reins_wait",
@@ -478,6 +481,7 @@ mod tests {
             "after the user confirms",
             "Do not call the tool again",
             "reins_list_accounts",
+            "reins_batch",
         ] {
             assert!(INSTRUCTIONS.contains(must), "{must}");
         }
