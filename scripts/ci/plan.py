@@ -27,8 +27,10 @@ desktop crates themselves, the lockfile, toolchain or cargo config, or changed c
 crates with a platform conditional or macOS API (target_os, cfg(unix), objc...). Main runs it for every change to its
 inputs. Linux and Windows suites run on pull requests as on main.
 
-iOS (one macOS job: the core, the build and ReinsTests) runs here for pull requests and manual runs. On main, ios.yml
-runs it with the UI tests, in the background: releases wait for this workflow, and iOS never holds one.
+iOS (one macOS job: the core, the build and ReinsTests) runs here for pull requests, manual runs and pushes to main.
+On main it is part of `CI result`, which the release waits for (scripts/wait-for-ci.sh), so a release publishes only
+a commit whose iOS build and unit tests passed (or passed on the same inputs). ios.yml still runs the UI tests on main,
+in the background, and they never hold a release. The weekly schedule leaves iOS to ios.yml's nightly run.
 
 Reuse. A selected suite whose inputs are unchanged since all its jobs passed, on this pull request or on main, is
 skipped (counted as passed by `CI result`). Main reuses main's passes only; manual runs, the schedule and `ci:full`
@@ -87,8 +89,8 @@ PLATFORM_CODE = {
 }
 COMMENT = re.compile(r"^\s*(?://|/\*|\*)")
 
-# Events that run iOS here: on main, ios.yml does (see the module docstring).
-IOS_EVENTS = ("pull_request", "workflow_dispatch")
+# Events that run iOS here (see the module docstring). Push is main: the release gate needs it.
+IOS_EVENTS = ("pull_request", "workflow_dispatch", "push")
 
 
 def changed_code(patch: str) -> str:
@@ -296,7 +298,7 @@ def plan_run(event: str, payload: dict) -> dict[str, str]:
              "| suite | runs | |", "|---|---|---|"]
     for suite, on in selected.items():
         if suite == "ios" and event not in IOS_EVENTS:
-            lines.append(f"| {suite} | – | ios.yml runs it on main |")
+            lines.append(f"| {suite} | – | ios.yml's nightly run covers it |")
         elif not on:
             note = "not affected"
             if tier == "fast" and suite in FAST_PATHS and select(files, "full", event, inputs).get(suite):

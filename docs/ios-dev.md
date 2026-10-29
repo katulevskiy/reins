@@ -237,8 +237,9 @@ You must be logged in on the Mac, because the simulator runs in your GUI session
   `unit` shard (ReinsTests) and the five UI shards.
 - The UI shards continue on error. A failing UI test shows as a warning on a green job, with its `.xcresult` as an
   artifact. It never holds a merge.
-- Releases wait only for `ci.yml` on `main` (`scripts/wait-for-ci.sh`), which runs no iOS, so iOS never holds a
-  release.
+- A push to main also runs `ci.yml`'s `iOS` job (the build and ReinsTests), as part of **CI result**. Releases wait
+  for that (`scripts/wait-for-ci.sh`), so a release publishes only a commit whose iOS build and unit tests passed. The
+  UI shards in `ios.yml` never hold a release.
 - Every macOS job waits for free runners first (`.github/workflows/macos-gate.yml`; see
   [the CI reference](reference/ci.md#admission)). Releases come first. `ios.yml` on main and at night is background
   work: it waits until nobody else wants a runner, and each UI shard of a push to main skips its tests while anyone

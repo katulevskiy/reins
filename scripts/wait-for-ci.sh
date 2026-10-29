@@ -3,8 +3,9 @@
 set -euo pipefail
 sha="${1:?commit SHA}"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid CI commit SHA' >&2; exit 1; }
-# 30 minutes: a main push whose caches are cold (a new Cargo.lock) runs its slowest lane for about 15.
-attempts="${REINS_CI_POLL_ATTEMPTS:-180}"
+# 90 minutes: CI on main includes the iOS job (75-minute timeout) behind the shared macOS queue. A run that fails or is
+# cancelled ends the wait at once; one that never finishes in time refuses the release.
+attempts="${REINS_CI_POLL_ATTEMPTS:-540}"
 interval="${REINS_CI_POLL_SECONDS:-10}"
 # A spent API quota (CI's macOS admission shares the token's hourly budget) resets within the hour: wait for the reset
 # instead of giving up, up to this many times. Those waits do not count as attempts.
