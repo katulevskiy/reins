@@ -54,6 +54,94 @@ approve after this message), call reins_get_result with request_id={id}."
 /// read and write), and every listed tool counts against the clients that cap how many a connector may have.
 pub const UNLISTED_TOOLS: [&str; 2] = ["github_request_read", "github_request_write"];
 
+/// The tool groups (services) the [`ToolProfile::ChatGpt`] and [`ToolProfile::Claude`] profiles leave out whole: the
+/// password vault (passwords, one-time codes, card and ID numbers, attachments, Sends, generated passwords) and Reins Pay
+/// (purchases with a card, saved cards and addresses).
+pub const RESTRICTED_SERVICES: [&str; 2] = [connector::VAULT, connector::PAYMENTS];
+
+/// The tools of other groups those profiles leave out: GitHub secret scanning alerts (they carry the leaked secret),
+/// setting an Actions secret (the AI hands over the secret's value), and reading text messages (where one-time sign-in
+/// codes arrive).
+pub const RESTRICTED_TOOLS: [&str; 5] = [
+    "github_secret_scanning_alert_get",
+    "github_secret_scanning_alert_list",
+    "github_secret_set",
+    "sms_list_threads",
+    "sms_read",
+];
+
+/// The tools whose `path` reaches any GitHub endpoint. Under a restricted profile they refuse secret scanning paths.
+const GITHUB_PATH_TOOLS: [&str; 4] =
+    ["github_api_read", "github_api_write", "github_request_read", "github_request_write"];
+
+/// Which of Reins's own tools the server offers over MCP (`REINS_MCP_TOOL_PROFILE`). Optional: the default offers
+/// every tool, and the restricted profiles exist for a listing in a directory whose policy rules some tools out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolProfile {
+    /// Every tool (the default).
+    #[default]
+    Full,
+    /// For the ChatGPT app directory, whose guidelines forbid apps that handle passwords, API keys, MFA/OTP codes or
+    /// payment card data: none of [`RESTRICTED_SERVICES`] and [`RESTRICTED_TOOLS`].
+    ChatGpt,
+    /// For the Claude connectors directory, whose policy excludes financial transactions. The same set as
+    /// [`ToolProfile::ChatGpt`], so one list is reviewed for both.
+    Claude,
+}
+
+impl ToolProfile {
+    /// Every profile, in the order the docs list them.
+    pub const ALL: [Self; 3] = [Self::Full, Self::ChatGpt, Self::Claude];
+
+    /// The value of `REINS_MCP_TOOL_PROFILE`: `full`, `chatgpt` or `claude`, any case, surrounding spaces ignored.
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| value.trim().eq_ignore_ascii_case(p.name()))
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::ChatGpt => "chatgpt",
+            Self::Claude => "claude",
+        }
+    }
+
+    /// The profile this server is configured with (checked at startup, so an unknown value never gets here).
+    pub fn configured() -> Self {
+        Self::parse(&crate::CONFIG.reins_mcp_tool_profile()).unwrap_or_default()
+    }
+
+    const fn restricted(self) -> bool {
+        !matches!(self, Self::Full)
+    }
+
+    /// Whether a tool group is offered (and named in the instructions).
+    pub fn offers_service(self, service: &str) -> bool {
+        !self.restricted() || !RESTRICTED_SERVICES.contains(&service)
+    }
+
+    /// Whether a tool of Reins's own (not one of an MCP server the user added) is offered: listed and callable.
+    /// Leaving a tool out of `tools/list` is not enough for a reviewer, so a call to one is refused as an unknown tool.
+    pub fn offers(self, tool: &str) -> bool {
+        !self.restricted()
+            || (!RESTRICTED_TOOLS.contains(&tool)
+                && connector::spec_for_tool(tool).is_none_or(|s| self.offers_service(s.service)))
+    }
+
+    /// Why a call to an offered tool is refused anyway: under a restricted profile, a GitHub API path to secret
+    /// scanning (the generic API tools would otherwise reach what the secret scanning tools are left out for).
+    pub fn refuses_call(self, tool: &str, arguments: &Value) -> Option<String> {
+        if !self.restricted() || !GITHUB_PATH_TOOLS.contains(&tool) {
+            return None;
+        }
+        let path = arguments.get("path").and_then(Value::as_str)?;
+        let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().to_ascii_lowercase();
+        path.split(['/', '?', '#']).any(|segment| segment.trim() == "secret-scanning").then(|| {
+            format!("{tool} cannot reach GitHub secret scanning on this server (tool profile {})", self.name())
+        })
+    }
+}
+
 fn account_property() -> Value {
     json!({
         "type": "string",
@@ -319,9 +407,11 @@ pub fn tool_definitions() -> Vec<Value> {
     tools
 }
 
-/// [`tool_definitions`] plus the tools of the MCP servers the user added on the phone, after Reins's own.
-pub fn tool_definitions_with(mcp: &[McpServerReport]) -> Vec<Value> {
+/// The tools of Reins's own that `profile` offers, then those of the MCP servers the user added on the phone (theirs,
+/// always listed).
+pub fn tool_definitions_for(profile: ToolProfile, mcp: &[McpServerReport]) -> Vec<Value> {
     let mut tools = tool_definitions();
+    tools.retain(|t| t["name"].as_str().is_some_and(|name| profile.offers(name)));
     tools.extend(mcp_tools::tool_definitions(mcp));
     tools
 }
@@ -1362,7 +1452,7 @@ mod tests {
             }],
         };
         let reports = [report];
-        let tools = tool_definitions_with(&reports);
+        let tools = tool_definitions_for(ToolProfile::Full, &reports);
         let added = tools.last().unwrap();
         assert_eq!(added["title"], "Linear: search issues");
         assert_eq!(
@@ -1454,5 +1544,144 @@ mod tests {
             parse_invocation("payments_purchase_request", &ok),
             Ok(ToolInvocation::Relay(ToolCall::Connector(_), None))
         ));
+    }
+
+    fn listed(profile: ToolProfile) -> Vec<String> {
+        tool_definitions_for(profile, &[]).iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect()
+    }
+
+    fn linear_report() -> McpServerReport {
+        McpServerReport {
+            id: "linear".into(),
+            name: "Linear".into(),
+            tools: vec![reins_proto::remote_mcp::McpToolReport {
+                name: "search".into(),
+                title: None,
+                description: "Find issues".into(),
+                input_schema: json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn the_default_profile_lists_exactly_the_tools_it_always_did() {
+        let all: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(listed(ToolProfile::default()), all);
+        // Pinned: the default lists 279 tools, as before the option existed (and as the directory packets say). A new
+        // tool changes this number on purpose; a profile never does.
+        assert_eq!(all.len(), 279, "the default tool list changed size");
+        assert_eq!(ToolProfile::default(), ToolProfile::Full);
+        // The same definitions, byte for byte, then the user's own MCP tools.
+        let reports = [linear_report()];
+        let mut expected = tool_definitions();
+        expected.extend(mcp_tools::tool_definitions(&reports));
+        assert_eq!(tool_definitions_for(ToolProfile::Full, &reports), expected);
+        for tool in all.iter().map(String::as_str).chain(UNLISTED_TOOLS).chain(RESTRICTED_TOOLS) {
+            assert!(ToolProfile::Full.offers(tool), "{tool}");
+        }
+        let secret_path = json!({"path": "/repos/o/r/secret-scanning/alerts"});
+        assert_eq!(ToolProfile::Full.refuses_call("github_api_read", &secret_path), None);
+        assert!(
+            ToolProfile::Full.offers_service(connector::VAULT) && ToolProfile::Full.offers_service(connector::PAYMENTS)
+        );
+    }
+
+    #[test]
+    fn the_chatgpt_and_claude_profiles_leave_out_the_vault_payments_and_secret_tools_only() {
+        let full = listed(ToolProfile::Full);
+        for name in RESTRICTED_TOOLS {
+            assert!(full.iter().any(|n| n == name), "{name} is not a listed tool: a rename would bring it back");
+        }
+        for service in RESTRICTED_SERVICES {
+            assert!(
+                full.iter().any(|n| connector::spec_for_tool(n).is_some_and(|s| s.service == service)),
+                "{service}"
+            );
+        }
+        for profile in [ToolProfile::ChatGpt, ToolProfile::Claude] {
+            let kept = listed(profile);
+            for name in &full {
+                let service = connector::spec_for_tool(name).map(|s| s.service);
+                let dropped = RESTRICTED_TOOLS.contains(&name.as_str())
+                    || service.is_some_and(|s| RESTRICTED_SERVICES.contains(&s));
+                assert_eq!(kept.contains(name), !dropped, "{profile:?} {name}");
+            }
+            for gone in
+                ["vault_get", "vault_search", "vault_generate_password", "payments_purchase_request", "sms_read"]
+            {
+                assert!(!kept.iter().any(|n| n == gone) && !profile.offers(gone), "{profile:?} {gone}");
+            }
+            for stays in ["gmail_search", "sms_send", "github_api_read", "reins_wait", "reins_get_result"] {
+                assert!(kept.iter().any(|n| n == stays), "{profile:?} {stays}");
+            }
+            // The tools of the user's own MCP servers are theirs, listed whatever the profile.
+            let with_mcp = tool_definitions_for(profile, &[linear_report()]);
+            assert_eq!(with_mcp.len(), kept.len() + 1);
+            assert_eq!(with_mcp.last().unwrap()["name"], "linear__search");
+            for path in [
+                "/repos/o/r/secret-scanning/alerts",
+                "repos/o/r/Secret-Scanning/alerts/1",
+                "/orgs/o/secret%2Dscanning/alerts",
+            ] {
+                assert!(profile.refuses_call("github_api_read", &json!({"path": path})).is_some(), "{path}");
+                assert!(profile.refuses_call("github_request_read", &json!({"path": path})).is_some(), "{path}");
+            }
+            assert_eq!(profile.refuses_call("github_api_read", &json!({"path": "/repos/o/r/issues"})), None);
+            assert_eq!(profile.refuses_call("gmail_search", &json!({"path": "secret-scanning"})), None);
+        }
+        assert_eq!(listed(ToolProfile::ChatGpt), listed(ToolProfile::Claude));
+    }
+
+    #[test]
+    fn tool_profiles_parse_from_the_config_value() {
+        assert_eq!(ToolProfile::parse("full"), Some(ToolProfile::Full));
+        assert_eq!(ToolProfile::parse(" ChatGPT "), Some(ToolProfile::ChatGpt));
+        assert_eq!(ToolProfile::parse("claude"), Some(ToolProfile::Claude));
+        for bad in ["", "directory", "minimal"] {
+            assert_eq!(ToolProfile::parse(bad), None, "{bad}");
+        }
+        for profile in ToolProfile::ALL {
+            assert_eq!(ToolProfile::parse(profile.name()), Some(profile));
+        }
+    }
+
+    /// Prints the table in `docs/directories/openai-apps.md` ("Optional ChatGPT tool profile"):
+    /// `cargo test --features sqlite --bin vaultwarden -- tool_profile_table --ignored --nocapture`.
+    #[test]
+    #[ignore = "prints the docs table"]
+    fn tool_profile_table() {
+        let group = |name: &str| connector::spec_for_tool(name).map_or("reins", |s| s.service);
+        let full = listed(ToolProfile::Full);
+        let mut groups_seen: Vec<&str> = Vec::new();
+        for g in full.iter().map(|n| group(n)) {
+            if !groups_seen.contains(&g) {
+                groups_seen.push(g);
+            }
+        }
+        println!("| Group | Listed by default | Kept | Dropped | Dropped tools |");
+        println!("|---|---:|---:|---:|---|");
+        let (mut total, mut total_kept) = (0, 0);
+        for g in groups_seen {
+            let names: Vec<&String> = full.iter().filter(|n| group(n) == g).collect();
+            let dropped: Vec<String> =
+                names.iter().filter(|n| !ToolProfile::ChatGpt.offers(n)).map(|n| format!("`{n}`")).collect();
+            let kept = names.len() - dropped.len();
+            let label = if g == "reins" {
+                "Reins (requests, results)"
+            } else {
+                connector::service_name(g)
+            };
+            let list = if dropped.len() == names.len() && dropped.len() > 3 {
+                "all".to_owned()
+            } else {
+                dropped.join(", ")
+            };
+            println!("| {label} (`{g}`) | {} | {kept} | {} | {list} |", names.len(), dropped.len());
+            total += names.len();
+            total_kept += kept;
+        }
+        println!("| **Total** | {total} | {total_kept} | {} | |", total - total_kept);
     }
 }
