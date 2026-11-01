@@ -511,11 +511,15 @@ class Asc:
         log(f"{len(existing)} builds in App Store Connect; this one is {version} ({number})")
         return str(number), False
 
+    def declarations(self, app_id):
+        """The app's encryption declarations: the top-level list filtered by app (apps/{id} has no such relationship)."""
+        return self.pages("appEncryptionDeclarations?" + urllib.parse.urlencode({"filter[app]": app_id, "limit": 200}))
+
     def approved_compliance_code(self, bundle_id):
         """The code of the app's newest APPROVED encryption declaration, or "" when it has none. Reads only: the
         archive puts it in ITSEncryptionExportComplianceCode when the secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE is
         not set, since App Store Connect refuses an upload whose code differs from the approved declaration's."""
-        declarations = self.pages(f"apps/{self.app_id(bundle_id)}/appEncryptionDeclarations?limit=200")
+        declarations = self.declarations(self.app_id(bundle_id))
         approved = [
             d["attributes"] for d in declarations
             if (d.get("attributes") or {}).get("appEncryptionDeclarationState") == "APPROVED"
@@ -571,7 +575,7 @@ class Asc:
             raise AscError(409, f"refusing to submit: the build's export compliance is {answer}, but Reins uses "
                                 "non-exempt encryption. Upload a build archived with REINS_EXPORT_COMPLIANCE_CODE "
                                 "(ITSAppUsesNonExemptEncryption = YES and the approved code) and submit that one")
-        declarations = self.pages(f"apps/{app_id}/appEncryptionDeclarations?limit=200")
+        declarations = self.declarations(app_id)
         same = [d for d in declarations if (d.get("attributes") or {}).get("codeValue") == code]
         if not same:
             raise AscError(409, f"refusing to submit: none of the app's {len(declarations)} encryption declarations "
