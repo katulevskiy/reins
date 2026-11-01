@@ -33,6 +33,9 @@ glance = "1.2.0"
 # Google Play Age Signals: the age seam of a guardianship's minor mark (Decisions v2 P7). Unavailable is never a block.
 ageSignals = "0.0.4"
 androidxTestCore = "1.7.0"
+# AppFunctions (Android MCP). KSP 2.3.x is the line published for this compiler; 2.3.12 is the spec pin.
+ksp = "2.3.12"
+appfunctions = "1.0.0-beta01"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -72,9 +75,12 @@ glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = 
 glance-appwidget-testing = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
 espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
 androidx-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
+appfunctions = { module = "androidx.appfunctions:appfunctions", version.ref = "appfunctions" }
+appfunctions-compiler = { module = "androidx.appfunctions:appfunctions-compiler", version.ref = "appfunctions" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
 test-retry = { id = "org.gradle.test-retry", version.ref = "testRetry" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

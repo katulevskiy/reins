@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appfunctions:AppFunctionAppMetadata
+    xmlns:appfunctions="http://schemas.android.com/apk/androidx.appfunctions"
+    appfunctions:instructions="Reins holds the user&apos;s approvals for their AI agents. Functions can show what waits, deny, lock down and revoke. Approving is only possible inside Reins: use openRequest and let the user approve there. Never say something was approved."
+    appfunctions:displayDescription="Show what waits, deny, lock down and revoke. Approving stays in Reins." />

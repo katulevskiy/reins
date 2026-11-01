@@ -5,6 +5,7 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
     alias(libs.plugins.test.retry)
 }
 
@@ -177,6 +178,9 @@ android {
             // Robolectric with Compose fills most of Gradle's default 512 MB test heap. Classes are independent, so
             // they spread over a JVM per core (up to four), and a stuck test fails the task in minutes instead of
             // running into the CI job's limit.
+            // AppFunctionException methods name platform classes the SDK 35 sandbox does not have. With assertions
+            // on, coroutine stack recovery reflects those methods and replaces the thrown error. Recovery is diagnostic.
+            test.systemProperty("kotlinx.coroutines.stacktrace.recovery", "false")
             test.maxHeapSize = "2g"
             test.maxParallelForks = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
             test.timeout.set(Duration.ofMinutes(5))
@@ -210,6 +214,7 @@ kotlin {
         freeCompilerArgs.addAll(
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+            "-opt-in=androidx.appfunctions.ExperimentalAppFunctionsApi",
         )
     }
 }
@@ -379,6 +384,8 @@ dependencies {
     // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
     implementation(libs.onnxruntime.android)
     implementation(libs.glance.appwidget)
+    implementation(libs.appfunctions)
+    ksp(libs.appfunctions.compiler)
     // A guardianship's minor mark asks Google Play for an age signal (platform/AgeSignals.kt). Play answers only for
     // an app it installed, so the `full` APK reads as Unavailable, which never blocks.
     implementation(libs.play.age.signals)

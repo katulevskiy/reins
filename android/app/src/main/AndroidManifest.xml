@@ -41,6 +41,10 @@
         android:theme="@style/Theme.Reins"
         android:usesCleartextTraffic="false">
 
+        <property
+            android:name="android.app.appfunctions.app_metadata"
+            android:resource="@xml/app_metadata" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -176,6 +180,23 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- Gemini on Android 16 and later. The generated service's superclass exists only on API 36. -->
+        <service
+            android:name=".platform.assistant.ReinsAppFunctionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"
+            tools:targetApi="36">
+            <property
+                android:name="android.app.appfunctions.schema"
+                android:value="app_functions_schema.xsd" />
+            <property
+                android:name="android.app.appfunctions.v2"
+                android:value="reins_app_functions.xml" />
+            <intent-filter>
+                <action android:name="android.app.appfunctions.AppFunctionService" />
+            </intent-filter>
+        </service>
+
         <!-- Quick Settings tiles (Next, Outside 04): Lockdown, what waits, Auto, Bypass, Overnight. -->
         <service
             android:name=".platform.tiles.LockdownTileService"
