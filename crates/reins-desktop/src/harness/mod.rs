@@ -81,6 +81,9 @@ impl std::str::FromStr for Harness {
 /// [`crate::tickets::HOOK_REFRESH`]).
 const NEWS_HOOK_TIMEOUT_SECS: u64 = 15;
 
+/// Claude Code's spinner text while the approval hook runs (it shows nothing of a hook's own output meanwhile).
+const CLAUDE_STATUS_MESSAGE: &str = "Reins: waiting for your phone";
+
 /// Where the harnesses keep their settings and what to register.
 #[derive(Clone, Debug)]
 pub struct Setup {
@@ -201,7 +204,7 @@ fn targets(h: Harness, s: &Setup) -> Vec<(Role, Target)> {
                     path: path(&["hooks", "PreToolUse"]),
                     value: json!({
                         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read",
-                        "hooks": [{"type": "command", "command": hook, "timeout": secs}],
+                        "hooks": [{"type": "command", "command": hook, "timeout": secs, "statusMessage": CLAUDE_STATUS_MESSAGE}],
                     }),
                     marker: hook.clone(),
                 },
@@ -508,8 +511,22 @@ struct Spot<'a> {
     marker: Option<&'a str>,
 }
 
-/// Adds the JSON entry to `text`; `None` when it is there already.
-fn add_json(text: &str, shown: &str, spot: &Spot<'_>, keep_existing: bool) -> Result<Option<(String, Change)>, String> {
+/// What `add_json` did to the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    Added,
+    /// An item of this app's (found by its marker) was there with an older value and now has the current one.
+    Updated,
+    Already,
+}
+
+/// Adds the JSON entry to `text`, or brings an item of this app's up to date; `None` when it is there already.
+fn add_json(
+    text: &str,
+    shown: &str,
+    spot: &Spot<'_>,
+    keep_existing: bool,
+) -> Result<Option<(String, Change, Outcome)>, String> {
     let Spot {
         path,
         key,
@@ -571,8 +588,32 @@ fn add_json(text: &str, shown: &str, spot: &Spot<'_>, keep_existing: bool) -> Re
                 },
                 None,
             ) => {
-                if find_entry(text, node, None, value, marker).is_some() {
-                    return Ok(None);
+                if let Some(i) = find_entry(text, node, None, value, marker) {
+                    let Node::Array {
+                        items,
+                        ..
+                    } = node
+                    else {
+                        unreachable!()
+                    };
+                    if items[i].value(text) == *value {
+                        return Ok(None);
+                    }
+                    let new_text = jsonedit::replace(text, &root, &items[i], value);
+                    jsonedit::parse(&new_text)
+                        .map_err(|e| format!("{shown}: the edit would break the file ({e}); nothing changed"))?;
+                    return Ok(Some((
+                        new_text,
+                        Change::Json {
+                            path: path.to_vec(),
+                            key: None,
+                            marker: marker.map(str::to_owned),
+                            value: value.clone(),
+                            at: path.len(),
+                            interior: None,
+                        },
+                        Outcome::Updated,
+                    )));
                 }
                 jsonedit::insert(
                     text,
@@ -618,6 +659,7 @@ fn add_json(text: &str, shown: &str, spot: &Spot<'_>, keep_existing: bool) -> Re
             at,
             interior,
         },
+        Outcome::Added,
     )))
 }
 
@@ -733,7 +775,7 @@ fn tilde(s: &Setup, p: &Path) -> String {
 /// Registers the MCP server and the hook in `h`'s settings; returns what it did, one line each.
 pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> {
     let mut manifest = load_manifest(paths)?;
-    let mut report: Vec<(Role, bool, String)> = Vec::new();
+    let mut report: Vec<(Role, Outcome, String)> = Vec::new();
     for (role, target) in targets(h, s) {
         let file = target.file().to_path_buf();
         let shown = tilde(s, &file);
@@ -783,12 +825,54 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
                 header,
                 body,
                 ..
-            } => add_toml(existing.as_deref().unwrap_or_default(), &shown, header, body)?,
+            } => add_toml(existing.as_deref().unwrap_or_default(), &shown, header, body)?
+                .map(|(text, change)| (text, change, Outcome::Added)),
         };
-        let Some((text, change)) = change else {
-            report.push((role, false, shown));
+        let Some((text, change, outcome)) = change else {
+            report.push((role, Outcome::Already, shown));
             continue;
         };
+        if outcome == Outcome::Updated {
+            write_text(&file, &text)?;
+            // The record of the first `add` keeps how to undo it (files and folders it made); only the value is new.
+            let records = manifest.harnesses.entry(h.id().to_owned()).or_default();
+            let earlier = records.iter_mut().find_map(|a| match (&mut a.change, &change) {
+                (
+                    Change::Json {
+                        path: old_path,
+                        marker: old_marker,
+                        value: old_value,
+                        ..
+                    },
+                    Change::Json {
+                        path,
+                        marker,
+                        ..
+                    },
+                ) if a.file == file && old_path == path && old_marker == marker => Some(old_value),
+                _ => None,
+            });
+            match (earlier, change) {
+                (
+                    Some(old_value),
+                    Change::Json {
+                        value,
+                        ..
+                    },
+                ) => *old_value = value,
+                (_, change) => records.push(Applied {
+                    file: file.clone(),
+                    created_file: false,
+                    blank: None,
+                    created_dirs: Vec::new(),
+                    change,
+                    guessed: false,
+                }),
+            }
+            save_manifest(paths, &manifest)?;
+            report.push((role, Outcome::Updated, shown));
+            continue;
+        }
         let created_dirs = match file.parent() {
             Some(dir) if existing.is_none() => make_dirs(dir)?,
             _ => Vec::new(),
@@ -804,15 +888,15 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
         });
         // Saved after every file, so a failure half way can still be undone.
         save_manifest(paths, &manifest)?;
-        report.push((role, true, shown));
+        report.push((role, Outcome::Added, shown));
     }
     Ok(add_report(&report))
 }
 
 /// What `add` did, one line per file: a harness with several hook entries in one file (Cursor) reads "added 3 hooks
 /// to ~/.cursor/hooks.json", not the same line three times.
-fn add_report(parts: &[(Role, bool, String)]) -> Vec<String> {
-    let mut lines: Vec<((Role, bool, &str), usize)> = Vec::new();
+fn add_report(parts: &[(Role, Outcome, String)]) -> Vec<String> {
+    let mut lines: Vec<((Role, Outcome, &str), usize)> = Vec::new();
     for (role, added, shown) in parts {
         if *role == Role::Support {
             continue;
@@ -826,12 +910,15 @@ fn add_report(parts: &[(Role, bool, String)]) -> Vec<String> {
     lines
         .into_iter()
         .map(|((role, added, shown), n)| match (role, added, n) {
-            (Role::Mcp, true, _) => format!("added the MCP server `{SERVER_NAME}` to {shown}"),
-            (Role::Mcp, false, _) => format!("MCP server already in {shown}"),
-            (_, true, 1) => format!("added the hook to {shown}"),
-            (_, true, n) => format!("added {n} hooks to {shown}"),
-            (_, false, 1) => format!("hook already in {shown}"),
-            (_, false, n) => format!("{n} hooks already in {shown}"),
+            (Role::Mcp, Outcome::Added, _) => format!("added the MCP server `{SERVER_NAME}` to {shown}"),
+            (Role::Mcp, Outcome::Updated, _) => format!("updated the MCP server `{SERVER_NAME}` in {shown}"),
+            (Role::Mcp, Outcome::Already, _) => format!("MCP server already in {shown}"),
+            (_, Outcome::Added, 1) => format!("added the hook to {shown}"),
+            (_, Outcome::Added, n) => format!("added {n} hooks to {shown}"),
+            (_, Outcome::Updated, 1) => format!("updated the hook in {shown}"),
+            (_, Outcome::Updated, n) => format!("updated {n} hooks in {shown}"),
+            (_, Outcome::Already, 1) => format!("hook already in {shown}"),
+            (_, Outcome::Already, n) => format!("{n} hooks already in {shown}"),
         })
         .collect()
 }
@@ -1112,18 +1199,20 @@ mod tests {
     fn several_hooks_in_one_file_are_one_line() {
         let f = |role, added, shown: &str| (role, added, shown.to_owned());
         let parts = [
-            f(Role::Mcp, true, "~/.cursor/mcp.json"),
-            f(Role::Support, true, "~/.cursor/hooks.json"),
-            f(Role::Hook, true, "~/.cursor/hooks.json"),
-            f(Role::Hook, true, "~/.cursor/hooks.json"),
-            f(Role::Hook, true, "~/.cursor/hooks.json"),
+            f(Role::Mcp, Outcome::Added, "~/.cursor/mcp.json"),
+            f(Role::Support, Outcome::Added, "~/.cursor/hooks.json"),
+            f(Role::Hook, Outcome::Added, "~/.cursor/hooks.json"),
+            f(Role::Hook, Outcome::Added, "~/.cursor/hooks.json"),
+            f(Role::Hook, Outcome::Added, "~/.cursor/hooks.json"),
         ];
         assert_eq!(
             add_report(&parts),
             ["added the MCP server `reins` to ~/.cursor/mcp.json", "added 3 hooks to ~/.cursor/hooks.json"]
         );
-        let again = [f(Role::Hook, false, "~/.claude/settings.json")];
+        let again = [f(Role::Hook, Outcome::Already, "~/.claude/settings.json")];
         assert_eq!(add_report(&again), ["hook already in ~/.claude/settings.json"]);
+        let newer = [f(Role::Hook, Outcome::Updated, "~/.claude/settings.json")];
+        assert_eq!(add_report(&newer), ["updated the hook in ~/.claude/settings.json"]);
     }
 
     #[test]
@@ -1160,5 +1249,95 @@ mod tests {
         }
         assert!(add_toml("[mcp_servers.reins]\ncommand = \"other\"\n", "f", "mcp_servers.reins", body).is_err());
         assert!(add_toml("mcp_servers = { a = 1 }\n", "f", "mcp_servers.reins", body).is_err());
+    }
+
+    fn claude_pre_tool_use() -> (Vec<String>, Value, String) {
+        let s = Setup {
+            home: PathBuf::from("/home/me"),
+            exe: PathBuf::from("/home/me/.local/bin/reins"),
+            hook_timeout_secs: 120,
+        };
+        let (_, t) = targets(Harness::ClaudeCode, &s)
+            .into_iter()
+            .find(|(_, t)| matches!(t, Target::JsonItem { path, .. } if path.last().is_some_and(|p| p == "PreToolUse")))
+            .unwrap();
+        let Target::JsonItem {
+            path,
+            value,
+            marker,
+            ..
+        } = t
+        else {
+            panic!()
+        };
+        (path, value, marker)
+    }
+
+    #[test]
+    fn claude_code_hook_has_a_status_message() {
+        let (_, value, _) = claude_pre_tool_use();
+        assert_eq!(value["hooks"][0]["statusMessage"], CLAUDE_STATUS_MESSAGE);
+    }
+
+    #[test]
+    fn re_adding_brings_an_older_hook_entry_up_to_date() {
+        let (path, value, marker) = claude_pre_tool_use();
+        let spot = Spot {
+            path: &path,
+            key: None,
+            value: &value,
+            marker: Some(&marker),
+        };
+        // What an earlier version put there (no statusMessage), next to a hook of the user's.
+        let mut old = value.clone();
+        old["hooks"][0].as_object_mut().unwrap().remove("statusMessage");
+        let theirs = json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "mine"}]});
+        let start = jsonedit::pretty(&json!({"model": "x", "hooks": {"PreToolUse": [theirs, old]}}), "  ", "") + "\n";
+
+        let (updated, change, outcome) = add_json(&start, "f", &spot, false).unwrap().unwrap();
+        assert_eq!(outcome, Outcome::Updated);
+        let Change::Json {
+            at,
+            interior,
+            ..
+        } = &change
+        else {
+            panic!()
+        };
+        assert_eq!((*at, interior.as_deref()), (path.len(), None));
+        let root = jsonedit::parse(&updated).unwrap();
+        let items = root.at(&path).unwrap().value(&updated);
+        assert_eq!(items, json!([theirs, value]), "{updated}");
+        assert_eq!(root.member("model").unwrap().value(&updated), json!("x"));
+        // Laid out like the rest of the file, and only the one item changed.
+        assert_eq!(
+            updated,
+            jsonedit::pretty(&json!({"model": "x", "hooks": {"PreToolUse": [theirs, value]}}), "  ", "") + "\n"
+        );
+
+        // Again: nothing to do.
+        assert!(add_json(&updated, "f", &spot, false).unwrap().is_none());
+
+        // Removing takes out only this app's item.
+        let back = undo_json(&updated, "f", &spot, path.len(), None).unwrap();
+        let root = jsonedit::parse(&back).unwrap();
+        assert_eq!(root.at(&path).unwrap().value(&back), json!([theirs]));
+    }
+
+    #[test]
+    fn replace_keeps_a_one_line_item_on_one_line() {
+        let text = "{\"a\": [1, {\"x\": 1}, 3]}\n";
+        let root = jsonedit::parse(text).unwrap();
+        let Node::Array {
+            items,
+            ..
+        } = root.member("a").unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            jsonedit::replace(text, &root, &items[1], &json!({"x": 2, "y": [true]})),
+            "{\"a\": [1, {\"x\":2,\"y\":[true]}, 3]}\n"
+        );
     }
 }
