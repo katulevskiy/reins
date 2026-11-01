@@ -9,6 +9,10 @@ REINS_TEAM =
 REINS_TELEGRAM_API_ID = 0
 REINS_TELEGRAM_API_HASH =
 
+// X (Twitter): the OAuth 2.0 client id of your app at https://developer.x.com, a public client whose callback is
+// com.reins2fa.app://x-oauth. Empty leaves X unavailable.
+REINS_X_CLIENT_ID =
+
 // Google sign-in for Gmail, Calendar and Contacts: an "iOS" OAuth client of your Google Cloud project, e.g.
 // 1234-abcd.apps.googleusercontent.com. Empty: those integrations show "needs setup".
 REINS_GOOGLE_CLIENT_ID =

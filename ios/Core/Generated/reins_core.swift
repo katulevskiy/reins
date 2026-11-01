@@ -3613,6 +3613,17 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func modelUpdatePending() async  -> Bool
     
     /**
+     * An OAuth sign-in run by the core (X, `kind` "oauth"), step 1: the service's sign-in page. Open it in
+     * ASWebAuthenticationSession / a Custom Tab; it comes back to `com.reins2fa.app://x-oauth?…`.
+     */
+    func oauthBegin(service: String) async throws  -> String
+    
+    /**
+     * Step 2: the address the sign-in page came back to. Its code is exchanged and the account added.
+     */
+    func oauthFinish(service: String, callback: String) async throws  -> AccountView
+    
+    /**
      * A fresh challenge for enrolling this device to the work account's org: sign
      * `org_enrollment_message(challenge)` with the device key, then call `org_enroll`.
      */
@@ -4291,7 +4302,7 @@ open class ReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     public func uniffiCloneHandle() -> UInt64 {
         return try! rustCall { uniffi_reins_core_fn_clone_reinscore(self.handle, $0) }
     }
-public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenProvider, notifier: Notifier, device: DeviceBridge?, telegramApiId: Int32, telegramApiHash: String)throws  {
+public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenProvider, notifier: Notifier, device: DeviceBridge?, telegramApiId: Int32, telegramApiHash: String, xClientId: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -4302,7 +4313,8 @@ public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenPr
         FfiConverterTypeNotifier_lower(notifier),
         FfiConverterOptionTypeDeviceBridge.lower(device),
         FfiConverterInt32.lower(telegramApiId),
-        FfiConverterString.lower(telegramApiHash),uniffiCallStatus
+        FfiConverterString.lower(telegramApiHash),
+        FfiConverterString.lower(xClientId),uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -6542,6 +6554,45 @@ open func modelUpdatePending()async  -> Bool  {
             liftFunc: FfiConverterBool.lift,
             errorHandler: nil
             
+        )
+}
+    
+    /**
+     * An OAuth sign-in run by the core (X, `kind` "oauth"), step 1: the service's sign-in page. Open it in
+     * ASWebAuthenticationSession / a Custom Tab; it comes back to `com.reins2fa.app://x-oauth?…`.
+     */
+open func oauthBegin(service: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_oauth_begin(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Step 2: the address the sign-in page came back to. Its code is exchanged and the account added.
+     */
+open func oauthFinish(service: String, callback: String)async throws  -> AccountView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_oauth_finish(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(callback)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAccountView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -34186,6 +34237,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_model_update_pending() != 36444) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_oauth_begin() != 4118) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_oauth_finish() != 63379) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_org_challenge() != 56578) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -34672,7 +34729,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_storelockguard_unlocked() != 15014) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
+    if (uniffi_reins_core_checksum_constructor_reinscore_new() != 14836) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_constructor_profileregistry_new() != 63460) {

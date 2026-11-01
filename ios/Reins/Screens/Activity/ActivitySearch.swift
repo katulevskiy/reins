@@ -384,7 +384,7 @@ enum ActivitySearchText {
         switch service {
         case "gmail": return .mail
         case "github", "gitlab", "codeberg", "bitbucket": return .gitBranch
-        case "telegram", "sms": return .send
+        case "telegram", "sms", "x": return .send
         case "gcalendar", "device_calendar": return .calendar
         case "gcontacts", "device_contacts": return .person
         case "desktop", "terminal": return .laptop
