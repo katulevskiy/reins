@@ -161,11 +161,14 @@ pub fn tool_definitions() -> Vec<Value> {
         you do need one, ask for the NARROWEST permission and the SHORTEST duration. `read` covers gmail_search and \
         gmail_read (name the exact senders `a@b.com`, domains `@b.com` or a subject text; `any: true` is all mail for \
         at most 7 days). `send` covers gmail_send to the listed recipients. `write` covers ONE GitHub tool that \
-        changes something (its `_meta` says `standing_grant: write`), only on the one repository you name exactly in \
-        `resource` (`owner/name`), for at most 30 days; a tool of an MCP server the user added is named as listed and \
-        needs no `resource`. Tools asked for every time (deleting, purchases) are never covered. The \
-        user sees and can revoke every permission on their phone, and each expires on its own. Always give a short, \
-        honest `reason`.",
+        changes something (its `_meta` says `standing_grant: write`) on the one repository you name exactly in \
+        `resource` (`owner/name`), on any of its branches, for one account, for at most 30 days; a change to the \
+        default branch, a protected branch or anything under `.github/` still asks every time. Or ONE tool of an MCP \
+        server the user added, named as listed, with no `resource`. Deleting anything, merging, running or changing \
+        workflows and variables, changing or forking the repository, security alerts, purchases and destructive tools \
+        are never covered. Permissions you asked for do not count while the user has Lockdown on. The user sees and \
+        can revoke every permission on their phone, and each expires on its own. Always give a short, honest \
+        `reason`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

@@ -161,14 +161,37 @@ pub fn for_tool(name: &str) -> Option<ToolPermission> {
 /// to an id, so a value the caller names could match nothing, or every item of a folder.
 pub const WRITE_GRANT_RESOURCES: [(&str, &str); 1] = [("github", "repo")];
 
+/// Writes no standing write permission covers, however it is asked, besides every operation that deletes something:
+/// running a workflow (it runs with the repository's secrets), its variables, enabling or disabling a workflow,
+/// forking or changing the repository itself, merging (it lands on the default branch) and dismissing a security alert.
+pub const NEVER_STANDING_OPS: [&str; 15] = [
+    "workflow_dispatch",
+    "workflow_enable",
+    "workflow_disable",
+    "run_rerun",
+    "run_rerun_failed",
+    "job_rerun",
+    "variable_create",
+    "variable_update",
+    "repo_fork",
+    "repo_update",
+    "pr_merge",
+    "branch_merge",
+    "dependabot_alert_update",
+    "code_scanning_alert_update",
+    "secret_scanning_alert_update",
+];
+
 /// Whether a standing write permission can cover calls of `spec`: a write that is not asked every time, not only for
-/// the desktop app, and names the one thing it changes in a way listed in [`WRITE_GRANT_RESOURCES`] (a write
-/// permission is never for everything).
+/// the desktop app, deletes nothing, is not in [`NEVER_STANDING_OPS`], and names the one thing it changes in a way
+/// listed in [`WRITE_GRANT_RESOURCES`] (a write permission is never for everything).
 #[must_use]
 pub fn write_grantable(spec: &ToolSpec) -> bool {
     spec.effect == Effect::Write
         && !spec.once_only
         && !spec.desktop_only
+        && !spec.op.contains("delete")
+        && !NEVER_STANDING_OPS.contains(&spec.op)
         && spec.resource_param.is_some_and(|param| WRITE_GRANT_RESOURCES.contains(&(spec.service, param)))
 }
 
@@ -328,7 +351,36 @@ mod tests {
         for spec in specs().iter().filter(|s| write_grantable(s)) {
             assert_eq!(spec.service, "github", "{}", spec.tool);
             assert_eq!(spec.resource_param, Some("repo"), "{}", spec.tool);
+            assert!(!spec.op.contains("delete"), "{}", spec.tool);
         }
+        // Deleting, running workflows, variables, the repository itself, merging and security alerts always ask.
+        for op in [
+            "branch_delete",
+            "file_delete",
+            "tag_delete",
+            "release_delete",
+            "release_asset_delete",
+            "label_delete",
+            "milestone_delete",
+            "run_delete",
+            "artifact_delete",
+            "cache_delete",
+            "issue_comment_delete",
+            "pr_review_comment_delete",
+            "workflow_dispatch",
+            "variable_create",
+            "variable_update",
+            "variable_delete",
+            "repo_fork",
+            "repo_update",
+            "pr_merge",
+            "branch_merge",
+            "secret_scanning_alert_update",
+        ] {
+            assert!(specs().iter().any(|s| s.service == "github" && s.op == op), "{op} is a GitHub tool");
+            assert!(write_target("github", op, Some("me/app")).is_err(), "{op}");
+        }
+        assert!(write_target("github", "file_put", Some("me/app")).is_ok());
         let mcp = write_target(&mcp_grant_service("linear-2"), "create.issue", None).unwrap();
         assert_eq!(
             (mcp.service.as_str(), mcp.op.as_str(), mcp.resource.as_str()),
