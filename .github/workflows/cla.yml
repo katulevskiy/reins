@@ -33,6 +33,106 @@ jobs:
         (github.event.comment.body == 'recheck' ||
          github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
     steps:
+      # The action below asks every commit author to sign, except the accounts in its allowlist. This step adds the
+      # other half of the rule (CLA.md, section 5): the person who opened the pull request must have signed, and then
+      # commits made by a known coding agent count as theirs. An unsigned author who names their commits after an
+      # agent still fails here, because they opened the pull request. Co-authored-by trailers are ignored either way.
+      # It reads only the API (never the pull request's code), records the opener's signature when they sign by
+      # comment, and builds the action's allowlist.
+      - name: Pull request opener
+        id: opener
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          SIGNATURES_BRANCH: cla-signatures
+          SIGNATURES_PATH: signatures/version1/cla.json
+        with:
+          script: |
+            // Never asked to sign.
+            const bots = ['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]'];
+            // Coding agents, as the action sees a commit author: the GitHub login, or the git author name when the
+            // email is not linked to an account. Matched exactly; no wildcards.
+            const agents = [
+              'Claude', 'claude[bot]',
+              'Cursor Agent', 'cursoragent', 'cursor[bot]',
+              'Codex', 'chatgpt-codex-connector[bot]',
+              'Copilot', 'copilot-swe-agent[bot]',
+              'Devin AI', 'devin-ai-integration[bot]',
+              'Grok',
+              'Gemini', 'gemini-code-assist[bot]',
+              'Jules', 'google-labs-jules[bot]',
+            ];
+            core.setOutput('allowlist', [...bots, ...agents].join(','));
+
+            const phrase = 'I have read the CLA Document and I hereby sign the CLA';
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request?.number ?? context.payload.issue?.number;
+            const pr = context.payload.pull_request ??
+              (await github.rest.pulls.get({ owner, repo, pull_number: number })).data;
+            const opener = pr.user;
+            const branch = process.env.SIGNATURES_BRANCH;
+            const path = process.env.SIGNATURES_PATH;
+
+            async function readSignatures() {
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path, ref: branch });
+                return { sha: data.sha, file: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')) };
+              } catch (error) {
+                if (error.status === 404) return { sha: undefined, file: { signedContributors: [] } };
+                throw error;
+              }
+            }
+
+            let { sha, file } = await readSignatures();
+            let signed = bots.includes(opener.login) || file.signedContributors.some((s) => s.id === opener.id);
+
+            const comment = context.payload.comment;
+            if (!signed && context.eventName === 'issue_comment' && comment.user.id === opener.id &&
+                comment.body.trim() === phrase) {
+              for (let attempt = 1; ; attempt++) {
+                file.signedContributors.push({
+                  name: opener.login,
+                  id: opener.id,
+                  comment_id: comment.id,
+                  created_at: comment.created_at,
+                  repoId: context.payload.repository.id,
+                  pullRequestNo: number,
+                });
+                try {
+                  await github.rest.repos.createOrUpdateFileContents({
+                    owner, repo, path, branch, sha,
+                    message: `@${opener.login} has signed the CLA in ${owner}/${repo}#${number}`,
+                    content: Buffer.from(JSON.stringify(file, null, 2) + '\n').toString('base64'),
+                  });
+                  break;
+                } catch (error) {
+                  // Another pull request wrote the file first: read it again and retry.
+                  if (attempt >= 3 || (error.status !== 409 && error.status !== 422)) throw error;
+                  ({ sha, file } = await readSignatures());
+                  if (file.signedContributors.some((s) => s.id === opener.id)) break;
+                }
+              }
+              signed = true;
+              core.info(`Recorded the signature of ${opener.login}.`);
+            }
+            core.setOutput('signed', String(signed));
+            if (signed || context.eventName !== 'pull_request_target' || context.payload.action === 'closed') return;
+
+            // The action comments only to commit authors. When the opener is not one, tell them how to sign.
+            const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: number });
+            const authorIds = new Set(commits.flatMap((c) => [c.author?.id, c.committer?.id]).filter(Boolean));
+            if (authorIds.has(opener.id)) return;
+            const marker = '<!-- cla-opener -->';
+            const comments =
+              await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number });
+            if (comments.some((c) => c.body?.includes(marker))) return;
+            const branchName = context.payload.repository.default_branch;
+            const document = `${context.serverUrl}/${owner}/${repo}/blob/${branchName}/CLA.md`;
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: number,
+              body: `${marker}\n@${opener.login}, as the person who opened this pull request you are its contributor ` +
+                `([CLA](${document}), section 5). Please sign by replying with exactly:\n\n    ${phrase}\n`,
+            });
+
       # The action's repository was archived in 2026; v2.6.1 still works (pinned). Replace it with a maintained fork
       # or the hosted CLA Assistant (cla-assistant.io) if it stops working.
       - name: CLA Assistant
@@ -43,20 +143,18 @@ jobs:
           path-to-document: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/CLA.md
           path-to-signatures: signatures/version1/cla.json
           branch: cla-signatures
-          # These accounts are never asked to sign. For each commit the action takes the author's GitHub login, or the
-          # git author name when the email is not linked to an account (the committer when the author has neither),
-          # and matches it exactly and case-sensitively; `*` matches any text. It never reads Co-authored-by trailers,
-          # so co-authors are never asked to sign. AI coding agents are listed because the person who submits a pull
-          # request is its contributor (CLA.md, section 5). `*[bot]` covers GitHub App accounts; Copilot's coding
-          # agent commits as the login `Copilot`, and agents with an unlinked email appear under the names
-          # `Cursor Agent`, `Claude`, `Codex` or `Devin AI`.
-          allowlist: >-
-            dependabot[bot],renovate[bot],github-actions[bot],
-            cursoragent,cursor[bot],Cursor Agent,
-            claude,claude[bot],Claude,
-            Copilot,copilot-swe-agent[bot],
-            codex,chatgpt-codex-connector[bot],Codex,
-            devin-ai-integration[bot],Devin AI,
-            google-labs-jules[bot],
-            *[bot]
+          # Exact matches against the commit author's login, or the git author name when the email is not linked to
+          # an account. The action never reads Co-authored-by trailers.
+          allowlist: ${{ steps.opener.outputs.allowlist }}
           lock-pullrequest-aftermerge: false
+
+      # Comments re-run the last pull request run (the action does this), which then passes once the opener signed.
+      - name: Opener has signed
+        if: >-
+          github.event_name == 'pull_request_target' && github.event.action != 'closed' &&
+          steps.opener.outputs.signed != 'true'
+        env:
+          OPENER: ${{ github.event.pull_request.user.login }}
+        run: |
+          echo "::error::@${OPENER} opened this pull request and has not signed the CLA (CLA.md, section 5)."
+          exit 1

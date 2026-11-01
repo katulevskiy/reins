@@ -19,12 +19,12 @@ How to sign: open your pull request. The CLA bot comments on it; reply with exac
     I have read the CLA Document and I hereby sign the CLA
 
 The bot records your GitHub account in the signatures branch and the check turns green. If it does not, comment
-`recheck`. Every author of every commit in the pull request must sign, so make sure your commits use an email address
-linked to your GitHub account.
+`recheck`. Every person who authored a commit in the pull request must sign too, so make sure your commits use an
+email address linked to your GitHub account.
 
-AI coding agents (such as Cursor, Claude, Copilot, Codex, Devin or Jules) never sign, even when they appear as a
-commit author or co-author. Under section 5 of the CLA, you, the person who submits the pull request, are the
-contributor for the whole pull request, including the parts an agent wrote.
+The person who opens the pull request must always have signed. Commits made by a coding agent (Claude, Cursor,
+Codex, Copilot, Devin, Grok, Gemini or Jules) count as theirs and need no other signature, and `Co-authored-by:` lines
+are ignored. Section 5 of the CLA states this as a clarification, so existing signatures already cover it.
 
 We do not use the Developer Certificate of Origin (DCO): no `Signed-off-by:` line is needed.
 
@@ -216,7 +216,8 @@ The CLA check is `.github/workflows/cla.yml`, using
 5. When the text of CLA.md changes in substance, bump the signature path in the workflow
    (`signatures/version2/cla.json`) so everyone signs the new version.
 
-Bots, AI coding agents and maintainers who do not need to sign are listed in the workflow's `allowlist`.
+The bots and coding-agent identities that never sign are listed in the workflow's first step. It also checks
+that the pull request's opener has signed and records their signature when they sign by comment.
 
 ## Maintainers: signing the APK in releases
 
