@@ -160,10 +160,10 @@ pub fn tool_definitions() -> Vec<Value> {
         before one: call the tool directly and the user approves that call. No tool needs a permission first. When \
         you do need one, ask for the NARROWEST permission and the SHORTEST duration. `read` covers gmail_search and \
         gmail_read (name the exact senders `a@b.com`, domains `@b.com` or a subject text; `any: true` is all mail for \
-        at most 7 days). `send` covers gmail_send to the listed recipients. `write` covers ONE other tool that \
-        changes something (its `_meta` says `standing_grant: write`), only on the one `resource` you name (for \
-        example the repository `owner/name`), for at most 30 days; a tool of an MCP server the user added is named \
-        as listed and needs no `resource`. Tools asked for every time (deleting, purchases) are never covered. The \
+        at most 7 days). `send` covers gmail_send to the listed recipients. `write` covers ONE GitHub tool that \
+        changes something (its `_meta` says `standing_grant: write`), only on the one repository you name exactly in \
+        `resource` (`owner/name`), for at most 30 days; a tool of an MCP server the user added is named as listed and \
+        needs no `resource`. Tools asked for every time (deleting, purchases) are never covered. The \
         user sees and can revoke every permission on their phone, and each expires on its own. Always give a short, \
         honest `reason`.",
             "inputSchema": {
@@ -178,8 +178,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "tool": {"type": "string",
                         "description": "write: the tool it covers, exactly as listed (e.g. `github_issue_comment_edit`)."},
                     "resource": {"type": "string", "maxLength": MAX_RESOURCE_LEN,
-                        "description": "write: the one thing it covers, the value of the tool's `resource_param` \
-                        (e.g. the repository `owner/name`). Not for MCP tools."},
+                        "description": "write: the one repository it covers, exactly `owner/name`. Not for MCP \
+                        tools."},
                     "reason": {"type": "string", "maxLength": MAX_REASON_LEN,
                         "description": "Why you need it; shown to the user."},
                     "from": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_GRANT_RULES,
@@ -673,25 +673,33 @@ pub fn parse_invocation_with(
                 Some(Value::Bool(b)) => *b,
                 Some(_) => return invalid("`any` must be true or false."),
             };
-            normalize(
-                ToolCall::RequestGrant {
-                    grant: Box::new(GrantRequest {
-                        action,
-                        duration_secs,
-                        max_uses,
-                        reason: required_string(args, "reason")?,
-                        any,
-                        from: string_list(args, "from", false)?,
-                        subject_contains: optional_string(args, "subject_contains")?,
-                        recipients: string_list(args, "recipients", false)?,
-                        service,
-                        op,
-                        resource,
-                        tool,
-                    }),
-                },
-                args,
-            )
+            let grant = ToolCall::RequestGrant {
+                grant: Box::new(GrantRequest {
+                    action,
+                    duration_secs,
+                    max_uses,
+                    reason: required_string(args, "reason")?,
+                    any,
+                    from: string_list(args, "from", false)?,
+                    subject_contains: optional_string(args, "subject_contains")?,
+                    recipients: string_list(args, "recipients", false)?,
+                    service,
+                    op,
+                    resource,
+                    tool,
+                }),
+            };
+            if action == GrantAction::Write {
+                // The account of the integration it is about (a GitHub login), not a Gmail address.
+                let account = optional_string(args, "account")?
+                    .map(|a| connector::normalize_account_name(&a).map_err(ToolArgError::Invalid))
+                    .transpose()?;
+                return grant
+                    .normalized()
+                    .map(|c| ToolInvocation::Relay(c, account))
+                    .map_err(|e| ToolArgError::Invalid(e.to_string()));
+            }
+            normalize(grant, args)
         }
         "reins_list_accounts" => {
             let args = object(arguments)?;
@@ -1264,6 +1272,17 @@ mod tests {
         assert!(refused(json!({"tool": "nope"})).contains("Unknown tool"));
         assert!(!refused(json!({"tool": edit, "resource": "me/app", "duration_seconds": 31 * 86_400})).is_empty());
         assert!(!refused(json!({"tool": edit, "resource": "me/app", "any": true})).is_empty());
+        // The account is the integration's own (a GitHub login), never read as a Gmail address.
+        let with_account = json!({"action": "write", "tool": edit, "resource": "me/app", "duration_seconds": 3600,
+            "reason": "x", "account": "octo-work"});
+        match parse_invocation_with("reins_request_access", &with_account, &[]) {
+            Ok(ToolInvocation::Relay(_, account)) => assert_eq!(account.as_deref(), Some("octo-work")),
+            other => panic!("{other:?}"),
+        }
+        // One repository exactly: never an owner (every repository of it) nor a tool whose calls are matched otherwise.
+        assert!(!refused(json!({"tool": edit, "resource": "me"})).is_empty());
+        assert!(!refused(json!({"tool": edit, "resource": "me/app@main"})).is_empty());
+        assert!(!refused(json!({"tool": "vault_item_update", "resource": "item-1"})).is_empty());
         let read_with_tool = grant(
             json!({"action": "read", "duration_seconds": 600, "reason": "x", "from": ["a@b.com"], "tool": edit}),
             &[],
