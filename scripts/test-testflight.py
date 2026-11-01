@@ -599,7 +599,7 @@ class FakeStore:
         if path.startswith("builds?"):
             return {"data": [{"id": "build-7", "attributes": {"version": "7", "processingState": self.state,
                                                               "usesNonExemptEncryption": self.encryption}}]}
-        if path.startswith("apps/app1/appEncryptionDeclarations?"):
+        if path.startswith("appEncryptionDeclarations?") and "filter%5Bapp%5D=app1" in path:
             return {"data": self.declarations}
         if path.startswith("apps/app1/appStoreVersions?"):
             return {"data": [self.version] if self.version else []}
@@ -656,7 +656,7 @@ with tempfile.TemporaryDirectory(prefix="reins-app-store-") as directory:
           item)
     check(store.body("PATCH", "reviewSubmissions/sub-new")[0]["data"]["attributes"] == {"submitted": True}, "submitted")
     check(not [c for c in store.calls if c[0] != "GET" and c[1].startswith("builds")], "export compliance never set")
-    check(("GET", "apps/app1/appEncryptionDeclarations", None) in store.calls, "the declaration checked")
+    check(("GET", "appEncryptionDeclarations", None) in store.calls, "the declaration checked")
 
     # prepare: without EXPORT_COMPLIANCE_CODE, the code of the app's newest approved declaration for the archive.
     prep = ["prepare", "--version", "1.0.0", "--minimum", "8", "--key-file", str(key)]
@@ -675,13 +675,13 @@ with tempfile.TemporaryDirectory(prefix="reins-app-store-") as directory:
     store = FakeStore()
     code, out, err = run(prep, store, env)
     check(code == 0 and "export-compliance-code" not in out
-          and ("GET", "apps/app1/appEncryptionDeclarations", None) not in store.calls, "the secret wins, no lookup")
+          and ("GET", "appEncryptionDeclarations", None) not in store.calls, "the secret wins, no lookup")
 
     # --dry-run reads only.
     store = FakeStore()
     code, out, err = run(base + ["--dry-run"], store, env)
     check(code == 0 and "result=DRY_RUN" in out and store.writes() == [], (out, err, store.writes()))
-    check(("GET", "apps/app1/appEncryptionDeclarations", None) in store.calls, "a dry run checks the declaration too")
+    check(("GET", "appEncryptionDeclarations", None) in store.calls, "a dry run checks the declaration too")
 
     # No export compliance code: refused before the key is read or anything is requested, --dry-run included.
     for argv in (base, base + ["--dry-run"]):
