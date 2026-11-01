@@ -23,9 +23,9 @@ struct Burst: Equatable {
         }
     }
 
-    /// What a request is grouped by: its batch, else the AI that asked.
+    /// What a request is grouped by: its batch of the connection that sent it, else that connection.
     static func key(_ item: PendingItem) -> String {
-        item.batch.map { "batch:\($0.id)" } ?? item.connectionId
+        item.batch.map { "batch:\(item.connectionId):\($0.id)" } ?? item.connectionId
     }
 
     static func of(_ pending: [PendingItem]) -> [Burst] {

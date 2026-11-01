@@ -39,11 +39,21 @@ final class QuickApprovalTests: XCTestCase {
             item("r1", quick: true), item("x2", quick: true, batch: b(2)), item("x0", quick: true, batch: b(0)),
             item("x1", quick: false, batch: b(1)), item("r2", quick: true),
         ]
-        XCTAssertEqual(Burst.of(pending).map(\.key), ["c1", "batch:b1"])
+        XCTAssertEqual(Burst.of(pending).map(\.key), ["c1", "batch:c1:b1"])
         XCTAssertEqual(Burst.of(pending).last?.all, ["x0", "x1", "x2"])
         let cards = WaitGroup.of(pending).map { $0.items.map(\.id) }
         XCTAssertEqual(cards, [["r1", "r2"], ["x0", "x2"], ["x1"]])
-        XCTAssertEqual(WaitGroup.of(pending)[1].id, "burst:batch:b1")
+        XCTAssertEqual(WaitGroup.of(pending)[1].id, "burst:batch:c1:b1")
+    }
+
+    func testTwoConnectionsNeverShareABatchCardEvenWithTheSameBatchId() {
+        let b = { (i: UInt32) in PendingBatch(id: "b1", index: i, size: 2) }
+        let pending = [
+            item("a0", conn: "c1", quick: true, batch: b(0)), item("b0", conn: "c2", quick: true, batch: b(0)),
+            item("a1", conn: "c1", quick: true, batch: b(1)), item("b1", conn: "c2", quick: true, batch: b(1)),
+        ]
+        XCTAssertEqual(Burst.of(pending).map(\.key), ["batch:c1:b1", "batch:c2:b1"])
+        XCTAssertEqual(WaitGroup.of(pending).map { $0.items.map(\.id) }, [["a0", "a1"], ["b0", "b1"]])
     }
 
     private func suggestion(_ verdict: Verdict, p: Float = 0.97, floor: Bool = false, judged: Bool = true) -> SuggestionView {

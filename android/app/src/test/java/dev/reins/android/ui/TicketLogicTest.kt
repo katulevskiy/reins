@@ -56,8 +56,18 @@ class TicketLogicTest {
         }
         assertEquals(listOf(listOf("r1", "r2"), listOf("x0", "x2"), listOf("x1")), cards)
         val batch = waitCards(pending).filterIsInstance<WaitCard.Group>().last().burst
-        assertEquals("batch:b1", batch.key)
+        assertEquals("batch:c1:b1", batch.key)
         assertEquals("c1", batch.connectionId)
+    }
+
+    @Test
+    fun `two connections never share a batch card, even with the same batch id`() {
+        fun inBatch(id: String, conn: String, index: UInt) =
+            TestData.pending(id, conn = conn, quick = true, batch = dev.reins.core.PendingBatch("b1", index, 2u))
+        val pending = listOf(inBatch("a0", "c1", 0u), inBatch("b0", "c2", 0u), inBatch("a1", "c1", 1u), inBatch("b1", "c2", 1u))
+        val groups = waitCards(pending).filterIsInstance<WaitCard.Group>()
+        assertEquals(listOf(listOf("a0", "a1"), listOf("b0", "b1")), groups.map { g -> g.items.map { it.id } })
+        assertEquals(listOf("batch:c1:b1", "batch:c2:b1"), groups.map { it.burst.key })
     }
 
     @Test

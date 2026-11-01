@@ -36,8 +36,8 @@ data class Burst(
         }
 }
 
-/** What a request is grouped by: its batch (`reins_batch`), else the AI that asked. */
-fun burstKey(item: PendingItem): String = item.batch?.let { "batch:${it.id}" } ?: item.connectionId
+/** What a request is grouped by: its batch (`reins_batch`) of the connection that sent it, else that connection. */
+fun burstKey(item: PendingItem): String = item.batch?.let { "batch:${item.connectionId}:${it.id}" } ?: item.connectionId
 
 /**
  * The calls of a batch are their own burst, in the order the AI made them, apart from the rest of that AI's requests;
