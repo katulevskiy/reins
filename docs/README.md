@@ -31,7 +31,8 @@
 - [CI](reference/ci.md): which suites run, reuse of passes, macOS admission, labels, and the measurements behind them.
 - [Bug triage](bug-triage.md): how a beta report becomes an issue, the labels, and which bugs block a release.
 - AI client directories: submission packages for [Claude](directories/anthropic-connectors.md) and
-  [ChatGPT](directories/openai-apps.md), and how to add Reins to [Perplexity and Grok](directories/perplexity-grok.md).
+  [ChatGPT](directories/openai-apps.md) and the [MCP Registry](directories/mcp-registry.md), and how to add Reins to
+  [Perplexity and Grok](directories/perplexity-grok.md).
 
 **Legal (drafts)**
 

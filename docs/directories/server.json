@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.reins2fa/reins",
+  "title": "Reins",
+  "description": "Let AI use your Gmail, GitHub, calendar and more, with every action approved on your phone.",
+  "version": "1.0.0",
+  "websiteUrl": "https://reins2fa.com/developers",
+  "repository": {
+    "url": "https://github.com/katulevskiy/reins",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/katulevskiy/reins/main/docs/assets/logo.png",
+      "mimeType": "image/png",
+      "sizes": ["256x256"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.reins2fa.com/mcp"
+    }
+  ]
+}
