@@ -1,18 +1,18 @@
-service gmail | Gmail | organize=Archive, labels, read, star and spam; trash=Move to Trash and back; labels=Create, rename and delete labels; drafts=Drafts; settings=Filters and vacation reply
 service telegram | Telegram | 
-service gcalendar | Google Calendar | 
-service gcontacts | Google Contacts | 
+service gcalendar | Google Calendar |  | scopes=https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/calendar.readonly
+service gcontacts | Google Contacts |  | scopes=https://www.googleapis.com/auth/contacts.readonly
 service device_calendar | Phone calendar | 
 service device_contacts | Phone contacts | 
 service sms | Text messages | 
+service gmail | Gmail | organize=Archive, labels, read, star and spam; trash=Move to Trash and back; labels=Create, rename and delete labels; drafts=Drafts; settings=Filters and vacation reply | scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/gmail.settings.basic
 service github | GitHub | issues=Issues and comments; pulls=Pull requests and reviews; code=Commits, files and branches; releases=Releases and tags; actions=Workflow runs and variables; settings=Repository settings; account=Stars, gists and notifications
 service vault | Password vault | items=Create and edit items; organize=Folders, favorites, trash and archive; sends=Sends; secrets=Secrets used on the computer; ssh=SSH sign-ins
 service desktop | Desktop app | 
-service tasks | tasks | 
 service gitlab | GitLab | code=Commits and branches; releases=Tags
 service codeberg | Codeberg | code=Commits and branches; releases=Tags
 service bitbucket | Bitbucket | code=Commits and branches; releases=Tags
 service payments | Payments | 
+service tasks | tasks | 
 tool telegram_list_chats | telegram | list_chats | List | class= | once=false | desktop=false | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | 14ef37ed3c96a421
 tool telegram_read | telegram | read | Read | class= | once=false | desktop=false | check=false | resource=chat | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | 34377d0f2d786017
 tool telegram_search | telegram | search | Search | class= | once=false | desktop=false | check=false | resource=chat | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | cdce8d5800d17f47

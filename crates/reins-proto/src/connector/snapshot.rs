@@ -1,5 +1,6 @@
-//! The tool list as it stood before connectors became plugins, pinned: every tool in its order, with what the server
-//! and the phone read from it. A change to a connector's tools shows up here as a diff to review.
+//! The tool list, pinned: every connector's name and classes, and every tool in its order with what the server and
+//! the phone read from it. It was recorded before connectors moved into manifests, so that move changed nothing; a
+//! change to a connector or its tools shows up here as a diff to review.
 //!
 //! `REINS_UPDATE_SNAPSHOTS=1 cargo test -p reins-proto snapshot` rewrites the file after an intended change.
 
@@ -10,25 +11,6 @@ use sha2::{Digest, Sha256};
 use super::*;
 
 const SNAPSHOT: &str = include_str!("testdata/tool_specs.txt");
-
-/// Services whose display name and classes are pinned alongside the tools.
-const SERVICES: &[&str] = &[
-    GMAIL,
-    TELEGRAM,
-    GCALENDAR,
-    GCONTACTS,
-    DEVICE_CALENDAR,
-    DEVICE_CONTACTS,
-    SMS,
-    GITHUB,
-    VAULT,
-    DESKTOP,
-    TASKS,
-    GITLAB,
-    CODEBERG,
-    BITBUCKET,
-    PAYMENTS,
-];
 
 fn digest(s: &ToolSpec) -> String {
     let mut h = Sha256::new();
@@ -46,14 +28,26 @@ fn digest(s: &ToolSpec) -> String {
 
 fn render() -> String {
     let mut out = String::new();
-    for service in SERVICES {
+    // Scopes only where there are some, so that what names none reads as it did before scopes were pinned. A wider
+    // sign-in shows up here.
+    let scopes = |scopes: &[&str]| {
+        if scopes.is_empty() {
+            String::new()
+        } else {
+            format!(" | scopes={}", scopes.join(","))
+        }
+    };
+    for m in manifest::manifests() {
+        let service = m.service;
         let classes: Vec<String> = classes(service).iter().map(|c| format!("{}={}", c.id, c.label)).collect();
-        let _ = writeln!(out, "service {service} | {} | {}", service_name(service), classes.join("; "));
+        let _ =
+            writeln!(out, "service {service} | {} | {}{}", service_name(service), classes.join("; "), scopes(m.scopes));
     }
     for s in specs() {
+        let scopes = scopes(s.scopes);
         let _ = writeln!(
             out,
-            "tool {} | {} | {} | {:?} | class={} | once={} | desktop={} | check={} | resource={} | {} | {}",
+            "tool {} | {} | {} | {:?} | class={} | once={} | desktop={} | check={} | resource={} | {} | {}{scopes}",
             s.tool,
             s.service,
             s.op,

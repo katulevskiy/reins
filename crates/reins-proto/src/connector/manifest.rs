@@ -1,18 +1,19 @@
 //! What each connector is, as data: its service id and name, how an account is added, the access it asks the service
-//! for, its kinds of change, and its actions with how risky each one is.
+//! for, its kinds of change and its tools.
 //!
-//! A connector is a plugin: one [`ConnectorManifest`] in [`manifests`] and its tools. What used to list the connectors
-//! by hand (the tool list, display names, classes, the Integrations screen) reads them from here, in this order.
-//! Nothing here does IO, holds a credential or decides an approval: credentials stay on the phone, and every action
-//! goes through the same approval flow whatever its risk. The risk says what an action is, once, for the approval
-//! screen, the docs and reviews.
+//! A connector is one [`ConnectorManifest`] in [`manifests`] plus its implementation of the core's `Connector` trait.
+//! Everything that used to list the connectors by hand (the tool list, display names, classes, the Integrations
+//! screen) reads them from here, in this order. The server builds `tools/list` from this table without the core, so
+//! this table, not the core's registry, is the one list of connectors.
+//!
+//! Nothing here does IO, holds a credential or decides an approval: credentials stay on the phone, and every tool goes
+//! through the approval flow its [`ToolSpec`] facts (effect, class, [`ToolSpec::once_only`]) already decide.
 //!
 //! `docs/connectors/adding-a-connector.md` walks through adding one.
 
 use super::{
-    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, DEVICE_CALENDAR, DEVICE_CONTACTS, Effect, GCALENDAR, GCONTACTS, GITHUB,
-    GITLAB, GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, desktop, github, gmail, payments, specs, tasks,
-    vault,
+    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, DEVICE_CALENDAR, DEVICE_CONTACTS, GCALENDAR, GCONTACTS, GITHUB, GITLAB,
+    GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, desktop, github, gmail, payments, tasks, vault,
 };
 
 /// How an account of a connector is added on the phone. [`AuthType::kind`] is the string the apps switch on.
@@ -22,7 +23,7 @@ pub enum AuthType {
     Google,
     /// A phone number and the login code sent to it, then a password when the account has one (Telegram).
     PhoneLogin,
-    /// An access token the user pastes; the core keeps it in the phone's secret store.
+    /// An access token the user pastes; the core checks it and keeps it in the phone's secret store.
     Token,
     /// Permission the phone's own operating system gives (its calendar, contacts, messages).
     Device,
@@ -50,118 +51,27 @@ impl AuthType {
     }
 }
 
-/// How much harm an action can do if it should not have happened. Descriptive only: every action, whatever its
-/// level, is approved the way it always was (a read by what the user shares, a write on the phone, a
-/// [`ToolSpec::once_only`] write every time).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RiskLevel {
-    /// Lists, reads and searches: nothing changes, and the user chooses what is shared.
-    Low,
-    /// A change that can be undone or only touches the user's own things.
-    Medium,
-    /// Deletes, overwrites, sends or publishes something for good.
-    High,
-    /// Asked for every time: too far-reaching for a standing permission.
-    Critical,
-}
-
-impl RiskLevel {
-    /// The risk of a tool: the one it names ([`ToolSpec::risk`]), else derived from the facts it already has (its
-    /// effect, [`ToolSpec::once_only`] and its `destructiveHint`), so that no existing tool needed a new field.
-    #[must_use]
-    pub fn of(spec: &ToolSpec) -> Self {
-        if let Some(risk) = spec.risk {
-            return risk;
-        }
-        if spec.effect != Effect::Write {
-            Self::Low
-        } else if spec.once_only {
-            Self::Critical
-        } else if spec.annotations()["destructiveHint"] == true {
-            Self::High
-        } else {
-            Self::Medium
-        }
-    }
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Critical => "critical",
-        }
-    }
-}
-
 /// One connector.
 #[derive(Clone, Copy, Debug)]
 pub struct ConnectorManifest {
-    /// The service id tools, accounts and grants carry (`gmail`, `github`).
+    /// The service id tools, accounts, grants and the core's registry carry (`gmail`, `github`).
     pub service: &'static str,
     /// The name the user knows it by.
     pub name: &'static str,
     pub auth: AuthType,
-    /// The access the sign-in asks the service for (OAuth scopes), when it asks for any. Documentation: the phone's
-    /// own sign-in code is what asks for them.
+    /// The access the sign-in asks the service for (OAuth scopes), when it asks for any. A tool's own
+    /// [`ToolSpec::scopes`] must be among these.
     pub scopes: &'static [&'static str],
     /// The kinds of change its writes fall into, for permissions (see [`ToolSpec::class`]).
     pub classes: &'static [ClassInfo],
     /// Where it sits on the Integrations screen; `None` when it is not on it (part of Reins itself).
     pub screen: Option<u16>,
-    /// Its tools, in order.
+    /// Builds its tools, in order. Every one carries this connector's `service`.
     pub tools: fn() -> Vec<ToolSpec>,
 }
 
-/// One action of a connector: the facts of its tool that say what it may do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ActionManifest {
-    pub tool: &'static str,
-    pub service: &'static str,
-    pub op: &'static str,
-    /// List, read, search or write: whether it changes anything.
-    pub effect: Effect,
-    pub risk: RiskLevel,
-    /// The scopes the action needs, when the connector names them per action; else see the connector's.
-    pub scopes: &'static [&'static str],
-    /// Its kind of change, for permissions; empty when it has none.
-    pub class: &'static str,
-    pub once_only: bool,
-    pub desktop_only: bool,
-}
-
-impl ActionManifest {
-    #[must_use]
-    pub fn of(spec: &'static ToolSpec) -> Self {
-        Self {
-            tool: spec.tool,
-            service: spec.service,
-            op: spec.op,
-            effect: spec.effect,
-            risk: RiskLevel::of(spec),
-            scopes: spec.scopes,
-            class: spec.class,
-            once_only: spec.once_only,
-            desktop_only: spec.desktop_only,
-        }
-    }
-
-    /// Whether it changes or sends anything.
-    #[must_use]
-    pub fn writes(&self) -> bool {
-        self.effect == Effect::Write
-    }
-}
-
-impl ConnectorManifest {
-    /// Its actions, in tool order.
-    pub fn actions(&self) -> impl Iterator<Item = ActionManifest> + '_ {
-        specs().iter().filter(|s| s.service == self.service).map(ActionManifest::of)
-    }
-}
-
-// The same lists as the apps' Google sign-in (`GoogleScopes.of` on iOS, `GoogleAuthorizer.scopesOf` on Android).
+// The same lists as the apps' Google sign-in (`GoogleScopes.of` on iOS, `GoogleAuthorizer.scopesOf` on Android),
+// which is what asks Google for them.
 const GOOGLE_GMAIL_SCOPES: &[&str] =
     &["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"];
 const GOOGLE_CALENDAR_SCOPES: &[&str] =
@@ -196,7 +106,8 @@ const fn with(
     m
 }
 
-/// Every connector, in tool order: `tools/list` is their tools one connector after the other, in this order.
+/// Every connector, in tool order: `tools/list` is their tools one connector after the other, in this order. A new
+/// connector goes at the end, so that clients see the tools they knew in the same places.
 const MANIFESTS: &[ConnectorManifest] = &[
     plain(TELEGRAM, "Telegram", AuthType::PhoneLogin, Some(3), super::telegram_tools),
     with(
@@ -244,22 +155,12 @@ pub fn on_screen() -> Vec<&'static ConnectorManifest> {
     listed
 }
 
-/// Every action of every connector, in tool order.
-pub fn actions() -> impl Iterator<Item = ActionManifest> {
-    specs().iter().map(ActionManifest::of)
-}
-
-/// The action of a tool.
-#[must_use]
-pub fn action(tool: &str) -> Option<ActionManifest> {
-    super::spec_for_tool(tool).map(ActionManifest::of)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::connector::specs;
 
     #[test]
     fn services_are_unique_and_every_tool_belongs_to_its_connector() {
@@ -299,25 +200,26 @@ mod tests {
     }
 
     #[test]
-    fn risk_follows_what_the_tool_already_says() {
-        for spec in specs() {
-            let risk = RiskLevel::of(spec);
-            assert_eq!(risk == RiskLevel::Low, spec.effect != Effect::Write, "{}", spec.tool);
-            assert_eq!(risk == RiskLevel::Critical, spec.once_only, "{}", spec.tool);
-        }
-        let risk = |tool| action(tool).unwrap().risk;
-        assert_eq!(risk("telegram_read"), RiskLevel::Low);
-        assert_eq!(risk("calendar_create_event"), RiskLevel::Medium);
-        assert_eq!(risk("telegram_send"), RiskLevel::High);
+    fn the_tool_list_is_the_connectors_tools_in_order() {
+        let from_manifests: Vec<&str> = MANIFESTS.iter().flat_map(|m| (m.tools)()).map(|s| s.tool).collect();
+        let listed: Vec<&str> = specs().iter().map(|s| s.tool).collect();
+        assert_eq!(from_manifests, listed);
     }
 
     #[test]
-    fn actions_are_the_tools() {
-        assert_eq!(actions().count(), specs().len());
-        let per_connector: usize = MANIFESTS.iter().map(|m| m.actions().count()).sum();
-        assert_eq!(per_connector, specs().len());
-        let gmail = manifest(GMAIL).unwrap();
-        assert!(gmail.actions().all(|a| a.service == GMAIL));
-        assert_eq!(gmail.scopes, GOOGLE_GMAIL_SCOPES);
+    fn a_tool_needs_only_scopes_its_sign_in_asks_for() {
+        for m in MANIFESTS {
+            for spec in (m.tools)() {
+                for scope in spec.scopes {
+                    assert!(
+                        m.scopes.contains(scope),
+                        "{} needs {scope}, which {} never asks for",
+                        spec.tool,
+                        m.service
+                    );
+                }
+            }
+        }
+        assert_eq!(manifest(GMAIL).unwrap().scopes, GOOGLE_GMAIL_SCOPES);
     }
 }
