@@ -55,8 +55,8 @@ test('a new account connects a coding agent and its first request waits for the 
     expect(await reins.phone.sync()).toEqual([]);
 });
 
-test('an account made on the web vault signs in on the phone and connects an agent', async ({ page, request, reins }) => {
-    // Server and account setup elsewhere first (the web vault's registration), then the phone signs in.
+test('an account registered on the server first signs in on the phone and connects an agent', async ({ page, request, reins }) => {
+    // The account exists before the phone (registered through the server's Bitwarden API), then the phone signs in.
     await reins.phone.call({ cmd: 'sign_in', email: EMAIL });
     const agent = await connectAgent(page, request, reins, 'Web agent');
     expect((await reins.phone.connections()).map((c) => c.label)).toEqual(['Web agent']);

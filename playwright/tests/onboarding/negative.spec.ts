@@ -19,7 +19,7 @@ test.describe('connecting an agent', () => {
         await agent.open(page);
         const email = page.getByLabel('Your account email');
         await email.fill('not-an-email');
-        await page.getByRole('button', { name: 'Continue' }).click();
+        await email.press('Enter'); // As in support.ts: a click can miss the button while the fonts swap in.
         await expect(email).toHaveJSProperty('validity.valid', false);
         await expect(page).toHaveURL(/\/reins\/oauth\/authorize\?/);
 
