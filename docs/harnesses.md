@@ -75,8 +75,12 @@ reins harness add claude-code
 |---|---|
 | MCP server `reins` (stdio) | `~/.claude.json`, `mcpServers` |
 | `PreToolUse` hook, matcher `Bash\|Edit\|Write\|MultiEdit\|NotebookEdit\|Read` | `~/.claude/settings.json`, `hooks.PreToolUse` |
+| `UserPromptSubmit` and `Stop` hooks (no matcher, 15 s timeout): tell the session what changed for its pending requests | `~/.claude/settings.json`, `hooks.UserPromptSubmit`, `hooks.Stop` |
 
 Restart Claude Code. `/mcp` and `/hooks` show the new entries.
+
+All three hooks run `<reins> hook claude-code`. The `PreToolUse` timeout is the guard's `timeout_secs` (120 by default)
+plus 30 seconds. On Windows the matcher does not include Claude Code's `PowerShell` tool.
 
 The hook answers with Claude Code's `permissionDecision`: `allow` when you approved on the phone, `deny` when you
 refused, `ask` (Claude Code's own prompt) when the guard is set to `on_no_answer = "ask"` and nobody answered.
@@ -103,6 +107,10 @@ reins harness add codex
 Restart Codex, then **trust the hook once with `/hooks`**. Codex runs only hooks you have reviewed. For `apply_patch`
 the guard checks every file the patch adds, updates or deletes. Codex hooks cannot answer "ask". When the guard would
 ask and nobody answered, the hook stays silent and Codex's own approval policy decides.
+
+Codex stops waiting for an MCP tool call after the server's `tool_timeout_sec`, 60 seconds by default, and Reins does
+not set it in `[mcp_servers.reins]`. A phone approval that takes longer may fail in Codex. Changing the hook's command
+or timeout means trusting it again with `/hooks`.
 
 ## Gemini CLI
 
