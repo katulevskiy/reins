@@ -3,6 +3,9 @@
 
 use std::sync::Arc;
 
+use reins_proto::connector::AuthType;
+use reins_proto::connector::manifest::{manifest, on_screen};
+
 use crate::CoreError;
 use crate::connector::device::PHONE_ACCOUNT;
 use crate::connector::{Connector, LoginProgress};
@@ -11,22 +14,19 @@ use crate::store::unix_now;
 use crate::types::{AccountView, GmailStatus, PendingKind, ServiceView};
 use crate::views::{self, ParkedRequest, service_name};
 
-/// Every integration, in the order the screen lists them, and how an account is added to it: the connectors'
-/// manifests (`reins_proto::connector::manifest`).
-fn catalogue() -> impl Iterator<Item = (&'static str, &'static str)> {
-    reins_proto::connector::manifest::on_screen().into_iter().map(|m| (m.service, m.auth.kind()))
-}
-
 impl Engine {
     fn connector(&self, service: &str) -> Result<Arc<dyn Connector>, CoreError> {
         self.connectors.get(service).ok_or_else(|| CoreError::invalid("that integration is not available here"))
     }
 
-    /// The integrations with their accounts, and whether each can be used in this build.
+    /// The integrations with their accounts, and whether each can be used in this build: every connector on the
+    /// screen ([`on_screen`]), in its order, with how an account is added to it.
     pub fn services(&self) -> Result<Vec<ServiceView>, CoreError> {
         let accounts = self.accounts()?;
-        Ok(catalogue()
-            .map(|(service, kind)| {
+        Ok(on_screen()
+            .into_iter()
+            .map(|m| {
+                let service = m.service;
                 let (available, note) = if service == views::SERVICE_GMAIL {
                     (true, None)
                 } else if let Some(connector) = self.connectors.get(service) {
@@ -38,7 +38,7 @@ impl Engine {
                 ServiceView {
                     service: service.to_owned(),
                     name: service_name(service).to_owned(),
-                    kind: kind.to_owned(),
+                    kind: m.auth.kind().to_owned(),
                     available,
                     note,
                     accounts: accounts.iter().filter(|a| a.service == service).cloned().collect(),
@@ -61,10 +61,9 @@ impl Engine {
         if let Some(note) = connector.unavailable() {
             return Err(CoreError::invalid(note));
         }
-        let kind = catalogue().find(|(s, _)| *s == service).map(|(_, k)| k);
-        let account = match kind {
-            Some("google") => connector.identify(hint).await?,
-            Some("device") => {
+        let account = match manifest(service).map(|m| m.auth) {
+            Some(AuthType::Google) => connector.identify(hint).await?,
+            Some(AuthType::Device) => {
                 if connector.status(PHONE_ACCOUNT).await != GmailStatus::Ready {
                     return Err(CoreError::needs_attention("Allow Reins to use this on the phone first"));
                 }
@@ -172,5 +171,60 @@ impl Engine {
                 message: "Not available in this build.".to_owned(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use reins_proto::connector::AuthType;
+    use reins_proto::connector::manifest::{manifest, manifests};
+
+    use crate::engine::{CoreConfig, Engine};
+    use crate::store::tests::FakeKeys;
+    use crate::{ForeignError, GoogleTokenProvider, Notifier, PendingItem};
+
+    struct Quiet;
+
+    impl Notifier for Quiet {
+        fn item_pending(&self, _: PendingItem) {}
+        fn item_resolved(&self, _: String) {}
+        fn auto_decided(&self, _: crate::autopilot::AutoDecisionView) {}
+        fn autopilot_changed(&self, _: crate::autopilot::AutopilotEvent) {}
+        fn circle_changed(&self, _: crate::circles::CircleEvent) {}
+    }
+
+    struct NoGoogle;
+
+    #[async_trait::async_trait]
+    impl GoogleTokenProvider for NoGoogle {
+        async fn access_token(&self, _: String, _: String) -> Result<String, ForeignError> {
+            Err(ForeignError::Failed {
+                reason: "no Google here".to_owned(),
+            })
+        }
+    }
+
+    /// A connector is its manifest plus its registration: forgetting either half is caught here.
+    #[test]
+    fn every_connector_has_a_manifest_and_every_manifest_a_connector() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine =
+            Engine::new(dir.path(), &FakeKeys::default(), Arc::new(NoGoogle), Arc::new(Quiet), CoreConfig::default())
+                .unwrap();
+        let registered = engine.connectors.services();
+        for service in &registered {
+            assert!(manifest(service).is_some(), "{service} is registered but has no manifest");
+        }
+        for m in manifests() {
+            // The phone's own calendar, contacts and messages come with the phone (`ReinsCore::device_connectors`).
+            if m.auth != AuthType::Device {
+                assert!(registered.contains(&m.service), "{} has a manifest but no connector", m.service);
+            }
+        }
+        let listed: Vec<String> = engine.services().unwrap().into_iter().map(|s| s.service).collect();
+        let on_screen: Vec<&str> = reins_proto::connector::manifest::on_screen().iter().map(|m| m.service).collect();
+        assert_eq!(listed, on_screen);
     }
 }
