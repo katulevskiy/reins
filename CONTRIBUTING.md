@@ -6,6 +6,9 @@ before you write the code.
 
 Security problems: do not open a public issue; see [SECURITY.md](SECURITY.md).
 
+Bugs, including reports from beta testers, use the bug report form.
+[Bug triage](docs/bug-triage.md) describes the labels and which bugs block a release.
+
 ## Contributor License Agreement
 
 Every contributor signs the [Contributor License Agreement](CLA.md) (CLA) once, before their first pull request can be

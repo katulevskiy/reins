@@ -1,5 +1,6 @@
+# The contact link is the private security report described in SECURITY.md.
 blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability
     url: https://github.com/katulevskiy/reins/security/advisories/new
-    about: Please report security issues privately, not as public issues.
+    about: Please report security issues privately, not as public issues. See SECURITY.md in the repository.

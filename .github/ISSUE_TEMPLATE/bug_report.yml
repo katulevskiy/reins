@@ -1,74 +1,99 @@
-name: Bug Report
-description: Something in Reins does not work as expected
-labels: ["bug"]
+name: Bug report
+description: Something in Reins did not work, including on a beta build
+labels: ["bug", "needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug!
-
-        **Security issues:** please do not open a public issue; report them privately as described in `SECURITY.md`.
-
-        Please search existing issues (open **and** closed) first. Never paste secrets, tokens, master passwords or
-        private message contents into an issue; redact logs before posting them.
-  - id: components
-    type: dropdown
+        Security problems: report privately (`SECURITY.md`), not here. Never paste secrets, tokens, passwords or recovery codes.
+  - type: dropdown
+    id: platform
     attributes:
-      label: Component
-      description: Where do you see the problem?
-      multiple: true
+      label: Platform
       options:
+        - iPhone or iPad
+        - Android
+        - Desktop
         - Server
-        - Android app
-        - Desktop app (reins)
-        - AI harness / MCP integration
-        - Bitwarden-compatible vault client
-        - Other
+        - Not sure
     validations:
       required: true
-  - id: version
-    type: input
+  - type: dropdown
+    id: beta-build
     attributes:
-      label: Versions
-      description: Server, app and desktop versions (Settings shows the app's build; `reins --version` the desktop's).
-      placeholder: ex. Android 0.1.0-202610010115-a9643bcb, desktop 0.1.0, server built from 3b9e07c1
+      label: Build
+      options:
+        - TestFlight
+        - Google Play testing
+        - Android Full build
+        - Other pre-release
+        - Public release
+        - Not sure
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Settings → Version, or `reins --version`.
+      placeholder: "0.1.0 (7)"
     validations:
       required: true
-  - id: environment
-    type: textarea
+  - type: input
+    id: device
     attributes:
-      label: Environment
-      description: How the server is deployed (and behind which reverse proxy), the phone model and Android version, the desktop OS, and which AI harness you use.
-  - id: reproduce
-    type: textarea
+      label: Device and OS
+      placeholder: "iPhone 15, iOS 18.2"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
     attributes:
-      label: Steps To Reproduce
+      label: What happened
+      placeholder: The approval never showed up on the phone.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      placeholder: The phone should have asked me to approve.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
       value: |
         1.
         2.
         3.
     validations:
       required: true
-  - id: expected
-    type: textarea
+  - type: dropdown
+    id: severity
     attributes:
-      label: Expected Result
+      label: Severity
+      description: Blocker stops a release.
+      options:
+        - Blocker
+        - Major
+        - Minor
+        - Cosmetic
     validations:
       required: true
-  - id: actual
-    type: textarea
+  - type: upload
+    id: screenshots
     attributes:
-      label: Actual Result
+      label: Screenshots or recording
     validations:
-      required: true
-  - id: logs
-    type: textarea
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm"
+  - type: textarea
+    id: logs
     attributes:
       label: Logs
-      description: Relevant server, desktop or `adb logcat` output, with secrets removed.
+      description: Remove secrets first.
       render: text
-  - id: additional-context
-    type: textarea
-    attributes:
-      label: Additional Context
-      description: Screenshots, screen recordings or anything else that helps.
+    validations:
+      required: false
