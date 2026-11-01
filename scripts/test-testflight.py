@@ -658,6 +658,25 @@ with tempfile.TemporaryDirectory(prefix="reins-app-store-") as directory:
     check(not [c for c in store.calls if c[0] != "GET" and c[1].startswith("builds")], "export compliance never set")
     check(("GET", "apps/app1/appEncryptionDeclarations", None) in store.calls, "the declaration checked")
 
+    # prepare: without EXPORT_COMPLIANCE_CODE, the code of the app's newest approved declaration for the archive.
+    prep = ["prepare", "--version", "1.0.0", "--minimum", "8", "--key-file", str(key)]
+    bare = {k: v for k, v in env.items() if k != "EXPORT_COMPLIANCE_CODE"}
+    store = FakeStore(declarations=[declaration("OLD-1", "APPROVED"), declaration("NOPE-2", "REJECTED"),
+                                    {**declaration(CODE, "APPROVED"), "id": "decl-new"}])
+    store.declarations[0]["attributes"]["uploadedDate"] = "2026-01-01T00:00:00Z"
+    store.declarations[2]["attributes"]["uploadedDate"] = "2026-10-01T00:00:00Z"
+    code, out, err = run(prep, store, bare)
+    check(code == 0 and f"export-compliance-code={CODE}" in out and "uploaded=false" in out, (out, err))
+    check(store.writes() == [], "prepare reads only")
+    store = FakeStore(declarations=[declaration(CODE, "IN_REVIEW")])
+    code, out, err = run(prep, store, bare)
+    check(code == 0 and "export-compliance-code" not in out and "none of the app's 1 encryption declarations" in out + err,
+          (out, err))
+    store = FakeStore()
+    code, out, err = run(prep, store, env)
+    check(code == 0 and "export-compliance-code" not in out
+          and ("GET", "apps/app1/appEncryptionDeclarations", None) not in store.calls, "the secret wins, no lookup")
+
     # --dry-run reads only.
     store = FakeStore()
     code, out, err = run(base + ["--dry-run"], store, env)
@@ -737,11 +756,14 @@ check("EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE
 # The TestFlight archive: the code from the same secret into the release xcconfig, only in the App settings step.
 check(re.findall(r"secrets\.ITS_[A-Z0-9_]+", job) == ["secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE"]
       and "secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE" in steps["App settings"], "the code only in App settings")
+# Without the secret, the code of the app's approved declaration that the Build number step read.
+check("secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE || steps.number.outputs.export-compliance-code"
+      in steps["App settings"], steps["App settings"])
 check("REINS_EXPORT_COMPLIANCE_CODE = $EXPORT_COMPLIANCE_CODE" in steps["App settings"]
       and "REINS_EXPORT_COMPLIANCE_REQUIRED = NO" in steps["App settings"], steps["App settings"])
 # Without the code the upload still goes on: a warning, never an error.
 settings = steps["App settings"]
-check("::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set" in settings
+check("::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set and the app has no approved" in settings
       and "::error::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set" not in settings,
       "a missing compliance code only warns")
 check("--info-plist" not in job and "usesNonExemptEncryption" not in workflow, "the workflow sets no compliance answer")
