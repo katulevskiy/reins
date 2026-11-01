@@ -1764,4 +1764,17 @@ mod tests {
         }
         println!("| **Total** | {total} | {total_kept} | {} | |", total - total_kept);
     }
+
+    /// The tools an AI client sees, by name and in order, pinned: a change to the list (a connector moved, renamed,
+    /// added or dropped) must show up here. `REINS_UPDATE_SNAPSHOTS=1` rewrites the file.
+    #[test]
+    fn the_listed_tools_match_the_snapshot() {
+        let names: String = tool_definitions().iter().map(|t| format!("{}\n", t["name"].as_str().unwrap())).collect();
+        if std::env::var_os("REINS_UPDATE_SNAPSHOTS").is_some() {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/api/reins/testdata/tools_list.txt");
+            std::fs::write(path, &names).unwrap();
+            return;
+        }
+        assert_eq!(names, include_str!("testdata/tools_list.txt"), "the listed tools changed");
+    }
 }

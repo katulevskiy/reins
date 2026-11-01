@@ -5,6 +5,8 @@
 pub mod calendar;
 pub mod desktop;
 pub mod device;
+#[cfg(test)]
+pub mod example;
 pub mod flow;
 pub(crate) mod git;
 pub mod githost;
@@ -129,8 +131,12 @@ pub struct Party {
     pub handle: Option<String>,
 }
 
+/// How the phone runs one service's tools. What the connector is (its name, how an account is added, its tools) is
+/// its [`reins_proto::connector::ConnectorManifest`], found by [`Connector::service`]: every connector the engine
+/// registers has one (`docs/connectors/adding-a-connector.md`).
 #[async_trait::async_trait]
 pub trait Connector: Send + Sync {
+    /// The service id: its manifest's `service`, which its tools' calls carry.
     fn service(&self) -> &'static str;
 
     /// The party `written` (as a request names it: a Telegram chat, a GitHub login) is, for `account`. `Ok(None)`:

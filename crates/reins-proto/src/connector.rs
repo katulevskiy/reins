@@ -40,6 +40,8 @@ pub use desktop::{
 };
 mod github;
 pub mod gmail;
+pub mod manifest;
+pub use manifest::{AuthType, ConnectorManifest};
 mod payments;
 mod vault;
 pub use vault::env_release_args;
@@ -196,6 +198,9 @@ pub struct ToolSpec {
     /// A check of the arguments as a whole, after each was checked on its own (a cart that must add up): run by the
     /// server before relaying and by the phone again.
     pub check: Option<CallCheck>,
+    /// The OAuth scopes the action needs, for connectors that name them per action (empty for the others). Each one
+    /// must be among its connector's [`ConnectorManifest::scopes`], which are what the sign-in asks for.
+    pub scopes: &'static [&'static str],
 }
 
 /// See [`ToolSpec::check`].
@@ -229,6 +234,13 @@ impl ToolSpec {
         self.check = Some(check);
         self
     }
+
+    /// The OAuth scopes the action needs (see [`ToolSpec::scopes`]).
+    #[must_use]
+    pub fn scoped(mut self, scopes: &'static [&'static str]) -> Self {
+        self.scopes = scopes;
+        self
+    }
 }
 
 /// One kind of change an integration's writes fall into; a permission can allow some kinds and not others.
@@ -241,13 +253,7 @@ pub struct ClassInfo {
 /// The kinds of change a service has (empty when it has none).
 #[must_use]
 pub fn classes(service: &str) -> &'static [ClassInfo] {
-    match service {
-        GMAIL => gmail::CLASSES,
-        GITHUB => github::CLASSES,
-        VAULT => vault::CLASSES,
-        GITLAB | CODEBERG | BITBUCKET => desktop::HOST_CLASSES,
-        _ => &[],
-    }
+    manifest::manifest(service).map_or(&[], |m| m.classes)
 }
 
 fn control_free(s: &str) -> bool {
@@ -683,6 +689,7 @@ pub(crate) fn tool(
         once_only: false,
         desktop_only: false,
         check: None,
+        scopes: &[],
     }
 }
 
@@ -721,31 +728,20 @@ pub const DESTRUCTIVE_OVERRIDES: &[(&str, bool)] = &[
 /// know.
 #[must_use]
 pub fn service_name(service: &str) -> &str {
-    match service {
-        GMAIL => "Gmail",
-        TELEGRAM => "Telegram",
-        GCALENDAR => "Google Calendar",
-        GCONTACTS => "Google Contacts",
-        DEVICE_CALENDAR => "Phone calendar",
-        DEVICE_CONTACTS => "Phone contacts",
-        SMS => "Text messages",
-        GITHUB => "GitHub",
-        GITLAB => "GitLab",
-        CODEBERG => "Codeberg",
-        BITBUCKET => "Bitbucket",
-        DESKTOP => "Desktop app",
-        VAULT => "Password vault",
-        PAYMENTS => "Payments",
-        other => other,
-    }
+    manifest::manifest(service).map_or(service, |m| m.name)
 }
 
 const SENSITIVE: &str = " The user approves on their phone, and sees exactly what is shared.";
 
+/// Every tool, in the order of [`manifest::manifests`]: each connector's own tools, one connector after the other.
 fn build_specs() -> Vec<ToolSpec> {
+    manifest::manifests().iter().flat_map(|m| (m.tools)()).collect()
+}
+
+/// Telegram (the user's own account).
+fn telegram_tools() -> Vec<ToolSpec> {
     use Effect::{List, Read, Search, Write};
-    let mut all = vec![
-        // ---- Telegram (the user's own account) ----
+    vec![
         tool(
             "telegram_list_chats",
             TELEGRAM,
@@ -799,7 +795,13 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             Some("chat"),
         ),
-        // ---- Google Calendar ----
+    ]
+}
+
+/// Google Calendar.
+fn gcalendar_tools() -> Vec<ToolSpec> {
+    use Effect::{List, Read, Write};
+    vec![
         tool(
             "calendar_list_calendars",
             GCALENDAR,
@@ -863,18 +865,28 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             Some("calendar"),
         ),
-        // ---- Google Contacts ----
-        tool(
-            "contacts_search",
-            GCONTACTS,
-            "search",
-            Search,
-            "Search Google contacts",
-            "Find contacts by name, email or phone number.",
-            vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
-            None,
-        ),
-        // ---- On the phone itself ----
+    ]
+}
+
+/// Google Contacts.
+fn gcontacts_tools() -> Vec<ToolSpec> {
+    use Effect::Search;
+    vec![tool(
+        "contacts_search",
+        GCONTACTS,
+        "search",
+        Search,
+        "Search Google contacts",
+        "Find contacts by name, email or phone number.",
+        vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
+        None,
+    )]
+}
+
+/// The calendar on the phone itself.
+fn device_calendar_tools() -> Vec<ToolSpec> {
+    use Effect::{Read, Write};
+    vec![
         tool(
             "device_calendar_list_events",
             DEVICE_CALENDAR,
@@ -906,16 +918,28 @@ fn build_specs() -> Vec<ToolSpec> {
             ],
             None,
         ),
-        tool(
-            "device_contacts_search",
-            DEVICE_CONTACTS,
-            "search",
-            Search,
-            "Search the phone's contacts",
-            "Find contacts stored on the user's phone by name, email or phone number.",
-            vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
-            None,
-        ),
+    ]
+}
+
+/// The contacts on the phone itself.
+fn device_contacts_tools() -> Vec<ToolSpec> {
+    use Effect::Search;
+    vec![tool(
+        "device_contacts_search",
+        DEVICE_CONTACTS,
+        "search",
+        Search,
+        "Search the phone's contacts",
+        "Find contacts stored on the user's phone by name, email or phone number.",
+        vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
+        None,
+    )]
+}
+
+/// Text messages on the phone itself.
+fn sms_tools() -> Vec<ToolSpec> {
+    use Effect::{List, Read, Write};
+    vec![
         tool(
             "sms_list_threads",
             SMS,
@@ -947,14 +971,7 @@ fn build_specs() -> Vec<ToolSpec> {
             vec![str_p("to", 40, true, "The phone number."), str_p("text", 1_000, true, "The message.")],
             Some("to"),
         ),
-    ];
-    all.extend(gmail::tools());
-    all.extend(github::tools());
-    all.extend(vault::tools());
-    all.extend(desktop::tools());
-    all.extend(payments::tools());
-    all.extend(tasks::tools());
-    all
+    ]
 }
 
 /// What the note under the sensitive tools says; the server appends it to descriptions it renders.
@@ -962,6 +979,9 @@ fn build_specs() -> Vec<ToolSpec> {
 pub fn sensitive_note() -> &'static str {
     SENSITIVE
 }
+
+#[cfg(test)]
+mod snapshot;
 
 #[cfg(test)]
 mod tests {
