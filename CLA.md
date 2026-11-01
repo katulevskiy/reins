@@ -79,6 +79,11 @@ others). You represent that Your Contribution submissions include complete detai
 restriction (including, but not limited to, related patents and trademarks) of which You are personally aware and which
 are associated with any part of Your Contributions.
 
+For clarity, a Contribution made with the help of an AI tool or coding agent, including one named as an author or
+co-author of a commit, is the Contribution of the person who submits the pull request (or on whose behalf it is
+submitted), and that person is You for it. The grants and representations in this Agreement apply to the whole
+Contribution, as they do to any other. The tool or agent is not a party to this Agreement and does not sign it.
+
 ## 6. No support obligation; disclaimer
 
 You are not expected to provide support for Your Contributions, except to the extent You desire to provide support. You
