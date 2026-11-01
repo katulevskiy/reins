@@ -34,6 +34,8 @@ pub struct McpState {
     pub tokens_seen: Vec<String>,
     /// Every tool call: name and arguments.
     pub calls: Vec<(String, Value)>,
+    /// Tools listed after the usual ones (on the second page), each answering "done".
+    pub extra_tools: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -126,7 +128,15 @@ impl Respond for McpMock {
                 st.initialized += 1;
                 ResponseTemplate::new(202)
             }
-            "tools/list" => reply(st.sse, None, &answer(tool_page(body["params"]["cursor"].as_str()))),
+            "tools/list" => {
+                let mut page = tool_page(body["params"]["cursor"].as_str());
+                if body["params"]["cursor"].is_string()
+                    && let Some(tools) = page["tools"].as_array_mut()
+                {
+                    tools.extend(st.extra_tools.iter().cloned());
+                }
+                reply(st.sse, None, &answer(page))
+            }
             "tools/call" => {
                 let name = body["params"]["name"].as_str().unwrap_or_default().to_owned();
                 let args = body["params"]["arguments"].clone();
@@ -142,6 +152,9 @@ impl Respond for McpMock {
                     }
                     "create_issue" => json!({"content": [{"type": "text", "text": "created ISS-2"}]}),
                     "delete_issue" => json!({"content": [{"type": "text", "text": "deleted"}]}),
+                    extra if st.extra_tools.iter().any(|t| t["name"] == extra) => {
+                        json!({"content": [{"type": "text", "text": "done"}]})
+                    }
                     "export" => {
                         json!({"content": [{"type": "text", "text": "x".repeat(st.big)}, {"type": "text", "text": "done"}]})
                     }
@@ -302,6 +315,7 @@ pub fn mcp_request(id: &str, server: &str, tool: &str, arguments: &Value) -> Rel
             tool: tool.to_owned(),
             arguments: arguments.as_object().cloned().unwrap_or_default(),
         }),
+        batch: None,
     }
 }
 

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use reins_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope};
+use reins_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope, ServiceScope};
 use reins_proto::PROTOCOL_VERSION;
 use reins_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
 use reins_proto::ids::{ConnectionId, GrantId};
@@ -133,6 +133,28 @@ pub fn grant_from_request(
             subject,
             body: None,
         }),
+        // One tool of another integration on one named thing (normalized: the target was checked).
+        GrantAction::Write => {
+            let target = reins_proto::permission::write_target(
+                request.service.as_deref().unwrap_or_default(),
+                request.op.as_deref().unwrap_or_default(),
+                request.resource.as_deref(),
+            )
+            .map_err(CoreError::invalid)?;
+            Scope::Service(ServiceScope {
+                service: target.service,
+                access: "write".to_owned(),
+                resources: vec![target.resource],
+                labels: Vec::new(),
+                any: false,
+                classes: Vec::new(),
+                ops: if target.op.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![target.op]
+                },
+            })
+        }
     };
     let expires = now.saturating_add(i64::try_from(secs).unwrap_or(i64::MAX));
     Grant::new(
@@ -146,7 +168,44 @@ pub fn grant_from_request(
     .map_err(policy_error)
 }
 
+/// Whether `call` asks for a standing write permission on another integration (never about a Gmail account).
+pub(crate) fn is_write_grant(call: &ToolCall) -> bool {
+    matches!(call, ToolCall::RequestGrant { grant } if grant.action == GrantAction::Write)
+}
+
 impl Engine {
+    /// The account a standing write permission is bound to, checked now: the connected account of the integration it
+    /// names (the one the request named, or the only one, as a call to it resolves), or the added MCP server whose tool it
+    /// names while that tool still changes things without being destructive. The error is what the caller is told.
+    pub(crate) fn write_grant_account(&self, grant: &GrantRequest, named: Option<&str>) -> Result<String, String> {
+        let service = grant.service.as_deref().unwrap_or_default();
+        if service.starts_with(reins_proto::permission::MCP_SERVICE_PREFIX) {
+            let tool = grant.resource.as_deref().unwrap_or_default();
+            let servers = self.store.mcp_servers().map_err(|e| e.to_string())?;
+            let Some(server) = servers.into_iter().find(|s| crate::mcp::grant_service(&s.id) == service) else {
+                return Err("That MCP server is not added on the user's phone (any more).".to_owned());
+            };
+            let Some(found) = server.tools.iter().find(|t| t.name == tool) else {
+                return Err(format!(
+                    "{} has no tool named {}. Ask the user to refresh the server in the Reins app if it is new.",
+                    text::one_line(&server.name),
+                    text::truncate_chars(&text::one_line(tool), 128)
+                ));
+            };
+            if found.read_only {
+                return Err("That tool only reads: it needs no write permission.".to_owned());
+            }
+            if found.destructive {
+                return Err("That tool is asked for every time: no permission can cover it.".to_owned());
+            }
+            return Ok(server.id);
+        }
+        let named = named
+            .map(reins_proto::connector::normalize_account_name)
+            .transpose()
+            .map_err(|_| "The account was malformed.".to_owned())?;
+        self.resolve_service_account(service, named.as_deref())
+    }
     pub(crate) fn parked(&self, request_id: &str) -> Result<(PendingRow, ParkedRequest), CoreError> {
         let row = self.store.pending_item(request_id, unix_now())?.ok_or(CoreError::NotFound)?;
         if row.kind != PendingKind::Request {
@@ -253,7 +312,10 @@ impl Engine {
             // About an integration as a whole: no single account to settle on.
             return self.approve_accounts(&session, request_id, &parked, &choice, now).await;
         }
-        self.bind_account(&mut parked).await?;
+        // A write permission is about another integration: no Gmail account to settle on.
+        if !is_write_grant(&parked.request.call) {
+            self.bind_account(&mut parked).await?;
+        }
         let request = &parked.request;
         if (choice.standing.is_some() || parked.kind() == ApprovalKind::Grant)
             && self.legacy_mail_grants_unavailable(request)?
@@ -580,12 +642,26 @@ impl Engine {
             return Err(CoreError::invalid("not a permission request"));
         };
         let shorten_to = choice.standing.as_ref().and_then(|s| s.duration_secs);
-        let grant = grant_from_request(asked, &parked.request.connection_id, now, shorten_to)?
-            .for_account(parked.request.account.clone());
+        // A write permission covers the one account it was asked for, still connected now; never every account.
+        let account = if asked.action == GrantAction::Write {
+            let bound = parked
+                .request
+                .account
+                .as_deref()
+                .ok_or_else(|| CoreError::invalid("no account for this permission"))?;
+            let now_bound = self.write_grant_account(asked, Some(bound)).map_err(CoreError::invalid)?;
+            if now_bound != bound {
+                return Err(CoreError::invalid("the account this permission was asked for is no longer connected"));
+            }
+            Some(now_bound)
+        } else {
+            parked.request.account.clone()
+        };
+        let grant = grant_from_request(asked, &parked.request.connection_id, now, shorten_to)?.for_account(account);
         self.store.insert_grant_from(
             &grant,
             &parked.label(),
-            &crate::autopilot::context::grant_origin("ai_request"),
+            &crate::autopilot::context::grant_origin(crate::autopilot::store::ASKED_ORIGIN),
         )?;
         let summary = views::grant_summary(&grant.scope);
         let expires_at = grant.expires_at.unwrap_or(now);
@@ -599,6 +675,9 @@ impl Engine {
             &[],
         );
         audit.info.grant_summary = Some(summary.clone());
+        if asked.action == GrantAction::Write {
+            audit.service = parked.service();
+        }
         self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
         self.store.mark_handled(request_id, now)?;
@@ -946,6 +1025,79 @@ mod tests {
 
     fn conn() -> ConnectionId {
         "c1".into()
+    }
+
+    fn write_ask(service: &str, op: &str, resource: Option<&str>) -> GrantRequest {
+        GrantRequest {
+            action: GrantAction::Write,
+            duration_secs: 7 * 86_400,
+            max_uses: None,
+            reason: "Fix typos".to_owned(),
+            any: false,
+            from: vec![],
+            subject_contains: None,
+            recipients: vec![],
+            service: Some(service.to_owned()),
+            op: Some(op.to_owned()),
+            resource: resource.map(str::to_owned),
+            tool: None,
+        }
+    }
+
+    /// A write permission covers its one tool on its one thing, for any account, until it expires.
+    #[test]
+    fn a_write_permission_covers_one_tool_on_one_thing_until_it_expires() {
+        let grant =
+            grant_from_request(&write_ask("github", "issue_comment_edit", Some("me/app")), &conn(), 0, None).unwrap();
+        let allows = |op: &str, resource: &str, at: i64| {
+            reins_policy::service_allows(
+                std::slice::from_ref(&grant),
+                &conn(),
+                Some("me@github"),
+                "github",
+                "write",
+                "",
+                op,
+                resource,
+                at,
+            )
+            .is_some()
+        };
+        assert!(allows("issue_comment_edit", "me/app", 60));
+        assert!(!allows("issue_comment_edit", "me/other", 60), "another repository asks");
+        assert!(!allows("issue_comment_delete", "me/app", 60), "another tool asks");
+        assert!(!allows("issue_comment_edit", "me/app", 7 * 86_400 + 1), "it expires");
+        let other = reins_policy::service_allows(
+            std::slice::from_ref(&grant),
+            &"c2".into(),
+            None,
+            "github",
+            "write",
+            "",
+            "issue_comment_edit",
+            "me/app",
+            60,
+        );
+        assert!(other.is_none(), "another AI asks");
+
+        // An MCP tool: the server's integration, the tool's name as the thing.
+        let mcp = grant_from_request(&write_ask("mcp_linear", "", Some("label issue")), &conn(), 0, None).unwrap();
+        let covers = |tool: &str| {
+            reins_policy::service_allows(
+                std::slice::from_ref(&mcp),
+                &conn(),
+                None,
+                "mcp_linear",
+                "write",
+                "",
+                "",
+                tool,
+                60,
+            )
+            .is_some()
+        };
+        assert!(covers("label issue") && !covers("delete issue"));
+        assert!(grant_from_request(&write_ask("github", "repo_delete", Some("me/app")), &conn(), 0, None).is_err());
     }
 
     fn scope() -> GrantScopeChoice {

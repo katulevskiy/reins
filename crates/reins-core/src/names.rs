@@ -269,6 +269,7 @@ mod tests {
             headline: "Claude gets 2 emails.".to_owned(),
             quick: false,
             label: None,
+            batch: None,
         };
         let mut other = item.clone();
         other.connection_id = "c9".to_owned();

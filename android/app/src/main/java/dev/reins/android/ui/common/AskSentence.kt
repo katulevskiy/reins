@@ -7,6 +7,7 @@ import dev.reins.core.ActivityEntry
 import dev.reins.core.ApprovalKind
 import dev.reins.core.ApprovalView
 import dev.reins.core.GitPushView
+import dev.reins.core.GrantRequestView
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import dev.reins.core.RequestLabel
@@ -264,7 +265,7 @@ fun askSentence(
             val action = if (mcp.destructive) "delete" else if (mcp.readOnly) "read" else "write"
             Triple(mcpPhrase(untrusted(mcp.tool), untrusted(mcp.serverName), host = urlHost(mcp.serverUrl)), view.service.ifBlank { "mcp:" }, action)
         }
-        view.kind == ApprovalKind.GRANT -> Triple(Phrase(if (view.grant?.action == "send") "Send emails without asking" else "Read emails without asking"), service, "grant")
+        view.kind == ApprovalKind.GRANT -> Triple(grantPhrase(view.grant), service, "grant")
         view.kind == ApprovalKind.ACCOUNTS -> Triple(Phrase("See your ${serviceName(service)} addresses"), service, "accounts")
         view.kind == ApprovalKind.SEND -> {
             val to = view.email?.let { it.to + it.cc }.orEmpty().map(::untrusted)
@@ -335,6 +336,17 @@ private fun filePhrase(verb: String, path: String, tail: String): Phrase {
  * A tool of an MCP server: "Use a tool on *Linear*", the tool's name (and the server's host) in mono. The verb is never
  * the tool's own title: that is the server's words, not what Reins knows the call does.
  */
+/**
+ * A permission asked for over MCP: "Read emails without asking", or for one tool on one thing "Edit a GitHub comment in
+ * *octo/app* without asking". An MCP tool's name is its server's text: only on the mono line.
+ */
+private fun grantPhrase(grant: GrantRequestView?): Phrase = when {
+    grant?.action == "send" -> Phrase("Send emails without asking")
+    grant == null || grant.action != "write" -> Phrase("Read emails without asking")
+    grant.resource.isBlank() -> Phrase("Use a tool without asking", details = serifLine(untrusted(grant.tool)).ifEmpty { null })
+    else -> Phrase("${grant.tool.ifBlank { "Change something" }} in ", untrusted(grant.resource), " without asking", stand = "a repository")
+}
+
 private fun mcpPhrase(tool: String, server: String, host: String?): Phrase {
     val on = server.trim().ifBlank { null }
     val details = listOfNotNull(serifLine(tool).ifEmpty { null }, host?.let { hostLine(it) }).joinToString(" · ").ifEmpty { null }

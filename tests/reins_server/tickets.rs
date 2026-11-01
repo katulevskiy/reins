@@ -397,6 +397,31 @@ async fn an_identical_call_shares_the_open_ticket_instead_of_asking_twice() {
     assert!(pending.get("requests").and_then(Value::as_array).is_none_or(Vec::is_empty), "no second card: {pending}");
 }
 
+/// The calls of a `reins_batch` go as they would alone: one identical to an open ticket is that ticket (no second
+/// card), and a deferred batch becomes one ticket per call at once.
+#[tokio::test]
+async fn a_batch_shares_open_tickets_and_is_deferred_call_by_call() {
+    let keys = Keys::new();
+    let (server, phone, tokens) = setup(Some(&keys)).await;
+    let first = deferred_call(&server, &tokens.access, "gmail_send", send_args("twice")).await;
+    let calls = json!({"calls": [
+        {"name": "gmail_send", "arguments": send_args("twice")},
+        {"name": "gmail_send", "arguments": send_args("other")},
+    ]});
+    let started = std::time::Instant::now();
+    let batch = deferred_call(&server, &tokens.access, "reins_batch", calls).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "no Instant wait: {batch}");
+    let items = batch["structuredContent"]["items"].as_array().unwrap_or_else(|| panic!("{batch}")).clone();
+    let state = |i: usize| items[i]["result"]["structuredContent"].clone();
+    assert_eq!(state(0)["status"], "pending_review", "{batch}");
+    assert_eq!(state(0)["ticket"], first["structuredContent"]["ticket"], "the open ticket, not a second one");
+    assert_eq!(state(1)["status"], "pending_review", "{batch}");
+    assert_ne!(state(1)["ticket"], first["structuredContent"]["ticket"]);
+    let (_, pending) = phone.get("/pending?wait=1").await;
+    assert!(pending.get("requests").and_then(Value::as_array).is_none_or(Vec::is_empty), "no Instant card: {pending}");
+    assert_eq!(pending["tickets"].as_array().map(Vec::len), Some(2), "{pending}");
+}
+
 #[tokio::test]
 async fn a_request_the_phone_has_cannot_be_withdrawn_or_parked_behind_its_back() {
     let keys = Keys::new();

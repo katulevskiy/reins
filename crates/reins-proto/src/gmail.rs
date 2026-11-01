@@ -64,6 +64,9 @@ pub enum ToolCall {
 pub enum GrantAction {
     Read,
     Send,
+    /// One write tool of another integration (or of an added MCP server), on one named thing: see
+    /// [`crate::permission::write_target`].
+    Write,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +92,18 @@ pub struct GrantRequest {
     /// Send: recipients (`a@b.com` or `@b.com`).
     #[serde(default)]
     pub recipients: Vec<String>,
+    /// Write: the integration ("github"; `mcp_<server>` for an added MCP server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// Write: the operation (a connector op; empty for an MCP tool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op: Option<String>,
+    /// Write: the one thing it covers (a repository, a chat, a calendar; an MCP tool's own name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<String>,
+    /// Write: the tool name the AI used, only to show it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
 }
 
 pub const MIN_GRANT_SECS: u64 = 60;
@@ -294,6 +309,37 @@ impl GrantRequest {
         }
         let from = self.from.iter().map(|r| normalize_rule(r)).collect::<Result<Vec<_>, _>>()?;
         let recipients = self.recipients.iter().map(|r| normalize_rule(r)).collect::<Result<Vec<_>, _>>()?;
+        if self.action == GrantAction::Write {
+            if self.any || !from.is_empty() || !recipients.is_empty() || subject.is_some() {
+                return Err(invalid("action", "a write permission covers one tool on one thing, nothing else"));
+            }
+            let target = crate::permission::write_target(
+                self.service.as_deref().unwrap_or_default(),
+                self.op.as_deref().unwrap_or_default(),
+                self.resource.as_deref(),
+            )
+            .map_err(|why| invalid("tool", why))?;
+            let tool = self
+                .tool
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty() && t.len() <= 160 && !t.chars().any(char::is_control))
+                .map(str::to_owned);
+            return Ok(Self {
+                reason,
+                from,
+                recipients,
+                subject_contains: None,
+                service: Some(target.service),
+                op: Some(target.op),
+                resource: Some(target.resource),
+                tool,
+                ..self
+            });
+        }
+        if self.service.is_some() || self.op.is_some() || self.resource.is_some() || self.tool.is_some() {
+            return Err(invalid("tool", "only for write permissions"));
+        }
         match self.action {
             GrantAction::Read => {
                 if !recipients.is_empty() {
@@ -321,6 +367,7 @@ impl GrantRequest {
                     return Err(invalid("recipients", "list at least one recipient"));
                 }
             }
+            GrantAction::Write => unreachable!("handled above"),
         }
         Ok(Self {
             reason,
@@ -583,7 +630,59 @@ mod tests {
             from: vec!["Alerts@Bank.com".to_owned(), "@Statements.Bank.com".to_owned()],
             subject_contains: Some(" statement ".to_owned()),
             recipients: vec![],
+            service: None,
+            op: None,
+            resource: None,
+            tool: None,
         }
+    }
+
+    fn write_request() -> GrantRequest {
+        GrantRequest {
+            action: GrantAction::Write,
+            duration_secs: 30 * 86_400,
+            max_uses: None,
+            reason: "Triage issues this month".to_owned(),
+            any: false,
+            from: vec![],
+            subject_contains: None,
+            recipients: vec![],
+            service: Some("github".to_owned()),
+            op: Some("issue_comment_edit".to_owned()),
+            resource: Some(" me/app ".to_owned()),
+            tool: Some("github_issue_comment_edit".to_owned()),
+        }
+    }
+
+    #[test]
+    fn write_grants_name_one_tool_on_one_thing_for_at_most_30_days() {
+        let ok = write_request().normalized().unwrap();
+        assert_eq!(ok.resource.as_deref(), Some("me/app"));
+        let bad = |f: &dyn Fn(&mut GrantRequest)| {
+            let mut r = write_request();
+            f(&mut r);
+            r.normalized().is_err()
+        };
+        assert!(bad(&|r| r.duration_secs = 30 * 86_400 + 1), "at most 30 days");
+        assert!(bad(&|r| r.resource = None), "names the repository");
+        assert!(bad(&|r| r.any = true));
+        assert!(bad(&|r| r.recipients = vec!["a@b.com".to_owned()]));
+        assert!(bad(&|r| r.subject_contains = Some("x".to_owned())));
+        assert!(bad(&|r| r.op = Some("repo_delete".to_owned())), "asked every time");
+        assert!(bad(&|r| r.op = Some("repo_languages".to_owned())), "a read");
+        let mut mcp = write_request();
+        mcp.service = Some("mcp_linear".to_owned());
+        mcp.op = Some("create_issue".to_owned());
+        mcp.resource = None;
+        let mcp = mcp.normalized().unwrap();
+        assert_eq!((mcp.op.as_deref(), mcp.resource.as_deref()), (Some(""), Some("create_issue")));
+        // Normalizing twice keeps it (the phone normalizes what the server already did).
+        assert_eq!(mcp.clone().normalized().unwrap(), mcp);
+        let mut read = read_request();
+        read.resource = Some("me/app".to_owned());
+        assert!(read.normalized().is_err(), "write fields only for write");
+        let v = serde_json::to_value(read_request()).unwrap();
+        assert!(v.get("service").is_none(), "read and send requests keep their old shape");
     }
 
     #[test]
@@ -649,6 +748,10 @@ mod tests {
             from: vec![],
             subject_contains: None,
             recipients: vec!["Mira@Studio.example".to_owned()],
+            service: None,
+            op: None,
+            resource: None,
+            tool: None,
         };
         assert_eq!(r.clone().normalized().unwrap().recipients, ["mira@studio.example"]);
         r.any = true;

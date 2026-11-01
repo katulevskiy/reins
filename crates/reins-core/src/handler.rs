@@ -91,6 +91,10 @@ impl Engine {
         {
             return self.handle_list_accounts(session, &request, service.as_deref(), *ask_for_more).await;
         }
+        // A standing write permission is about another integration: its account, never a Gmail address.
+        if crate::approval::is_write_grant(&call) {
+            return self.handle_write_grant(session, request).await;
+        }
         // Defense in depth again: the account is an address the server already checked.
         let Ok(named) = request.account.as_deref().map(normalize_account).transpose() else {
             return self.reject(session, &request, "The account was malformed.").await;
@@ -672,6 +676,7 @@ impl Engine {
             |(_, p)| p,
         );
         let mut info = views::audit_info(&request.call, released);
+        info.batch = request.batch.clone().filter(reins_proto::batch::BatchRef::valid);
         info.label = Some(Box::new(crate::titles::of_parked(&parked)));
         info.request = Some(Box::new(crate::titles::request(&request.call, request.created_at)));
         // A push's refs, commits and files travel with the entry to every device; the snapshot stays on this one.
@@ -875,6 +880,35 @@ impl Engine {
             },
         )
         .await
+    }
+
+    /// A standing write permission asked for (`reins_request_access` with `action: "write"`): bound to the
+    /// account it will cover, resolved now as a call to that integration would be, then left to the user (never
+    /// answered automatically: [`crate::autopilot::gates::request_floor`]).
+    async fn handle_write_grant(&self, session: &Session, mut request: RelayRequest) -> Result<(), CoreError> {
+        let ToolCall::RequestGrant {
+            grant,
+        } = &request.call
+        else {
+            return self.reject(session, &request, "The request was malformed.").await;
+        };
+        request.account = match self.write_grant_account(grant, request.account.as_deref()) {
+            Ok(account) => Some(account),
+            Err(message) => return self.fail_with(session, &request, "grant", &message).await,
+        };
+        // Checked again for the account it is about, before the user is asked.
+        if let Err(error) = self.authorization_preflight(&request) {
+            return self.reject(session, &request, &error.to_string()).await;
+        }
+        self.park_request(&ParkedRequest {
+            request: request.clone(),
+            messages: Vec::new(),
+            covered: BTreeMap::default(),
+            account: request.account.clone(),
+            accounts: Vec::new(),
+            shared_accounts: Vec::new(),
+            connector: None,
+        })
     }
 
     /// Parks a request for the user. The app is told by Autopilot's pass, which runs after every push and sync and

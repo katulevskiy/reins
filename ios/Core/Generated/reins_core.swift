@@ -16777,7 +16777,7 @@ public func FfiConverterTypeGitRefView_lower(_ value: GitRefView) -> RustBuffer 
  */
 public struct GrantRequestView: Equatable, Hashable {
     /**
-     * "read" | "send"
+     * "read" | "send" | "write"
      */
     public var action: String
     public var summary: String
@@ -16792,19 +16792,35 @@ public struct GrantRequestView: Equatable, Hashable {
      * One line per limit, e.g. "From @bank.com".
      */
     public var lines: [String]
+    /**
+     * "write": the one tool it covers, in a few words ("Edit a GitHub comment"; the tool's own name for a tool of an
+     * added MCP server, which is that server's text). Empty otherwise.
+     */
+    public var tool: String
+    /**
+     * "write": the one thing it covers (the repository `owner/name`); empty for an MCP tool, and otherwise.
+     */
+    public var resource: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * "read" | "send"
+         * "read" | "send" | "write"
          */action: String, summary: String, reason: String, durationSecs: UInt64, maxUses: UInt32?, 
         /**
          * "narrow" | "broad" | "everything": how much mail or how many recipients it opens up.
          */breadth: String, 
         /**
          * One line per limit, e.g. "From @bank.com".
-         */lines: [String]) {
+         */lines: [String], 
+        /**
+         * "write": the one tool it covers, in a few words ("Edit a GitHub comment"; the tool's own name for a tool of an
+         * added MCP server, which is that server's text). Empty otherwise.
+         */tool: String = "", 
+        /**
+         * "write": the one thing it covers (the repository `owner/name`); empty for an MCP tool, and otherwise.
+         */resource: String = "") {
         self.action = action
         self.summary = summary
         self.reason = reason
@@ -16812,6 +16828,8 @@ public struct GrantRequestView: Equatable, Hashable {
         self.maxUses = maxUses
         self.breadth = breadth
         self.lines = lines
+        self.tool = tool
+        self.resource = resource
     }
 
     
@@ -16836,7 +16854,9 @@ public struct FfiConverterTypeGrantRequestView: FfiConverterRustBuffer {
                 durationSecs: FfiConverterUInt64.read(from: &buf), 
                 maxUses: FfiConverterOptionUInt32.read(from: &buf), 
                 breadth: FfiConverterString.read(from: &buf), 
-                lines: FfiConverterSequenceString.read(from: &buf)
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                tool: FfiConverterString.read(from: &buf), 
+                resource: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -16848,6 +16868,8 @@ public struct FfiConverterTypeGrantRequestView: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.maxUses, into: &buf)
         FfiConverterString.write(value.breadth, into: &buf)
         FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.tool, into: &buf)
+        FfiConverterString.write(value.resource, into: &buf)
     }
 }
 
@@ -19646,6 +19668,79 @@ public func FfiConverterTypePaymentsOverview_lower(_ value: PaymentsOverview) ->
 }
 
 
+/**
+ * The place of a waiting call in its batch.
+ */
+public struct PendingBatch: Equatable, Hashable {
+    /**
+     * Shared by every call of the batch.
+     */
+    public var id: String
+    /**
+     * 0-based.
+     */
+    public var index: UInt32
+    public var size: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Shared by every call of the batch.
+         */id: String, 
+        /**
+         * 0-based.
+         */index: UInt32, size: UInt32) {
+        self.id = id
+        self.index = index
+        self.size = size
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PendingBatch: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePendingBatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PendingBatch {
+        return
+            try PendingBatch(
+                id: FfiConverterString.read(from: &buf), 
+                index: FfiConverterUInt32.read(from: &buf), 
+                size: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PendingBatch, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterUInt32.write(value.size, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePendingBatch_lift(_ buf: RustBuffer) throws -> PendingBatch {
+    return try FfiConverterTypePendingBatch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePendingBatch_lower(_ value: PendingBatch) -> RustBuffer {
+    return FfiConverterTypePendingBatch.lower(value)
+}
+
+
 public struct PendingItem: Equatable, Hashable {
     public var kind: PendingKind
     public var id: String
@@ -19735,6 +19830,10 @@ public struct PendingItem: Equatable, Hashable {
      * this, not `parked_until`).
      */
     public var parked: Bool
+    /**
+     * One call of a batch the AI made at once (`reins_batch`): decided on its own, shown with the rest of its batch.
+     */
+    public var batch: PendingBatch?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -19799,7 +19898,10 @@ public struct PendingItem: Equatable, Hashable {
         /**
          * Parked by Overnight: never notified on arrival (an Overnight without an end parks until now, so the apps check
          * this, not `parked_until`).
-         */parked: Bool = false) {
+         */parked: Bool = false, 
+        /**
+         * One call of a batch the AI made at once (`reins_batch`): decided on its own, shown with the rest of its batch.
+         */batch: PendingBatch? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -19827,6 +19929,7 @@ public struct PendingItem: Equatable, Hashable {
         self.taskProposal = taskProposal
         self.circle = circle
         self.parked = parked
+        self.batch = batch
     }
 
     
@@ -19871,7 +19974,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 batchable: FfiConverterBool.read(from: &buf), 
                 taskProposal: FfiConverterOptionTypeTaskView.read(from: &buf), 
                 circle: FfiConverterOptionTypeCircleProgress.read(from: &buf), 
-                parked: FfiConverterBool.read(from: &buf)
+                parked: FfiConverterBool.read(from: &buf), 
+                batch: FfiConverterOptionTypePendingBatch.read(from: &buf)
         )
     }
 
@@ -19903,6 +20007,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterOptionTypeTaskView.write(value.taskProposal, into: &buf)
         FfiConverterOptionTypeCircleProgress.write(value.circle, into: &buf)
         FfiConverterBool.write(value.parked, into: &buf)
+        FfiConverterOptionTypePendingBatch.write(value.batch, into: &buf)
     }
 }
 
@@ -31054,6 +31159,30 @@ fileprivate struct FfiConverterOptionTypeOvernightDigest: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeOvernightDigest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypePendingBatch: FfiConverterRustBuffer {
+    typealias SwiftType = PendingBatch?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePendingBatch.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePendingBatch.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

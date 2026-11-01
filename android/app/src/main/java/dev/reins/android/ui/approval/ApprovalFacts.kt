@@ -415,7 +415,13 @@ private fun GrantFacts(view: ApprovalView) {
     FactGroup(
         tag = "grantCard",
         rows = buildList<@Composable () -> Unit> {
-            grant.lines.forEach { line -> add { FactRow("Only", untrusted(line), maxLines = 2) } }
+            if (grant.action == "write") {
+                // One tool on one thing: everything else still asks.
+                add { FactRow("Tool", untrusted(grant.tool), maxLines = 2) }
+                if (grant.resource.isNotBlank()) add { FactRow("Only on", untrusted(grant.resource), mono = true) }
+            } else {
+                grant.lines.forEach { line -> add { FactRow("Only", untrusted(line), maxLines = 2) } }
+            }
             add { FactRow("For", periodWords(grant.durationSecs.toLong()) + (grant.maxUses?.let { " · at most $it uses" } ?: "")) }
             // Reach is a word, never only a colour.
             add { FactRow("Reach", "", trailing = { dev.reins.android.design.Pill(reach, tone) }) }

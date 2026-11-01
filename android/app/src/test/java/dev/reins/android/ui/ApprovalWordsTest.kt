@@ -50,6 +50,12 @@ class ApprovalWordsTest {
         assertEquals("Wants to **create issue**\non **Linear**", sentence(TestData.mcpCallView()))
         assertEquals("Wants to **read Telegram messages**\n**Family**", sentence(TestData.fetchView()))
         assertEquals("Wants to **read emails**\n**without asking**", sentence(TestData.grantView()))
+        // A write permission names its one tool and its one thing, never emails.
+        assertEquals("Wants to **edit a GitHub comment**\nin **octo/app** without asking", sentence(TestData.writeGrantView()))
+        assertEquals(
+            "Wants to use **create_issue**\n**without asking**",
+            sentence(TestData.writeGrantView(tool = "create_issue", resource = "", service = "mcp_linear")),
+        )
         val tag = TestData.gitPushView(TestData.gitPush(TestData.gitRef("v1.2", kind = "tag", change = "create")), tags = true)
         assertEquals("Wants to **push tag v1.2**\nto **octo/app**", sentence(tag))
         val gone = TestData.gitPushView(TestData.gitPush(TestData.gitRef("old", change = "delete", commitCount = 0u, commits = emptyList())))

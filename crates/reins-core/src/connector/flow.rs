@@ -407,6 +407,8 @@ impl Engine {
                     &call.op,
                     std::slice::from_ref(&preview.resource),
                     true,
+                    // Never one asked for over MCP for a change to the default branch, a protected one or `.github/`.
+                    views::asked_grant_may_cover(call, preview.default_branch),
                     now,
                 )?
             };
@@ -519,6 +521,7 @@ impl Engine {
                 &call.op,
                 &resources,
                 !any_sensitive,
+                true,
                 now,
             )?
         } else {

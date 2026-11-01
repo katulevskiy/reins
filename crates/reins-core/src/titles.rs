@@ -164,7 +164,17 @@ pub fn of_call(call: &ToolCall, cx: &Context) -> RequestLabel {
         }
         ToolCall::RequestGrant {
             grant,
-        } => label("gmail", "grant", "Ask for access:", line(&views::grant_request_summary(grant)), false),
+        } => label(
+            grant
+                .service
+                .as_deref()
+                .filter(|_| grant.action == reins_proto::gmail::GrantAction::Write)
+                .unwrap_or("gmail"),
+            "grant",
+            "Ask for access:",
+            line(&views::grant_request_summary(grant)),
+            false,
+        ),
         ToolCall::ListAccounts {
             service,
             ..

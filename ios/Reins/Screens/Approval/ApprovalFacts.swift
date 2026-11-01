@@ -466,7 +466,13 @@ private struct GrantFacts: View {
             default: (Palette.success, "Narrow")
             }
             FactGroup(border: Palette.violet.opacity(0.35)) {
-                ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in FactRow(key: "Only", value: untrusted(line), mono: true) }
+                if grant.action == "write" {
+                    // One tool on one thing: everything else still asks.
+                    FactRow(key: "Tool", value: untrusted(grant.tool))
+                    if !grant.resource.isEmpty { FactRow(key: "Only on", value: untrusted(grant.resource), mono: true) }
+                } else {
+                    ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in FactRow(key: "Only", value: untrusted(line), mono: true) }
+                }
                 FactRow(key: "Reach", value: reach, tint: tone) {
                     HelpDot(id: "grant", text: "Nothing is shared now. Requests that match are answered without asking until it ends. Revoke it any time in Grants.", size: 28)
                 }

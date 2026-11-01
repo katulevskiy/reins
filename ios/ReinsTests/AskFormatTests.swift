@@ -159,6 +159,10 @@ final class AskFormatTests: XCTestCase {
     func testAPermissionAndTheAccounts() {
         check(AskFormat.waiting(T.view(kind: .grant)), "Read email in your Gmail without asking", target: "your Gmail", kind: "Gmail · Permission")
         check(AskFormat.waiting(T.view(kind: .accounts)), "See your Gmail addresses", target: "Gmail", kind: "Gmail · Accounts")
+        // A write permission: its one tool and its one thing, never email. An MCP tool's name only in mono.
+        check(AskFormat.waiting(T.writeGrantView()), "Edit a GitHub comment in octo/app without asking", target: "octo/app")
+        check(AskFormat.waiting(T.writeGrantView(tool: "create_issue", resource: "", service: "mcp_linear")),
+              "Use a tool without asking", target: nil, mono: "create_issue")
     }
 
     func testAPaymentSaysTheAmountAndTheMerchant() {

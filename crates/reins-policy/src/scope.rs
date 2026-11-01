@@ -149,6 +149,9 @@ pub fn resource_covers(granted: &str, thing: &str) -> bool {
     thing == granted || thing.strip_prefix(granted).is_some_and(|rest| rest.starts_with('@') || rest.starts_with('/'))
 }
 
+/// How a permission names an added MCP server: `mcp_<server>` (see `reins_proto::permission::mcp_grant_service`).
+const MCP_SERVICE_PREFIX: &str = reins_proto::permission::MCP_SERVICE_PREFIX;
+
 /// The longest a grant that covers everything of an integration may live.
 pub const MAX_ANY_RESOURCE_SECS: i64 = 7 * 86_400;
 
@@ -208,7 +211,18 @@ impl ServiceScope {
             && (self.access == access || (self.access == "read" && access == "list"))
             && (self.classes.is_empty() || class.is_empty() || self.classes.iter().any(|c| c == class))
             && (self.ops.is_empty() || (!op.is_empty() && self.ops.iter().any(|o| o == op)))
-            && (self.any || self.resources.iter().any(|r| resource_covers(r, resource)))
+            && (self.any || self.resources.iter().any(|r| self.resource_covers(r, resource)))
+    }
+
+    /// Whether `granted` covers `thing` for this integration. A tool of an added MCP server (`mcp_<server>`) is its
+    /// own name, which the server chooses freely: it has no parts, so only the same name is covered
+    /// (`create_issue` never covers `create_issue/admin`).
+    fn resource_covers(&self, granted: &str, thing: &str) -> bool {
+        if self.service.starts_with(MCP_SERVICE_PREFIX) {
+            granted == thing
+        } else {
+            resource_covers(granted, thing)
+        }
     }
 }
 
@@ -391,6 +405,27 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn an_mcp_tool_is_covered_by_its_own_name_only() {
+        let scope = |service: &str, resource: &str| ServiceScope {
+            service: service.to_owned(),
+            access: "write".to_owned(),
+            resources: vec![resource.to_owned()],
+            labels: Vec::new(),
+            any: false,
+            classes: Vec::new(),
+            ops: Vec::new(),
+        };
+        let mcp = scope("mcp_tracker", "create_issue");
+        assert!(mcp.covers("mcp_tracker", "write", "", "", "create_issue"));
+        for other in ["create_issue/admin", "create_issue@x", "create_issues", "create"] {
+            assert!(!mcp.covers("mcp_tracker", "write", "", "", other), "{other}");
+        }
+        // Elsewhere a part of a thing is still covered by the thing (a repository covers its branches).
+        let repo = scope("github", "me/app");
+        assert!(repo.covers("github", "write", "", "", "me/app@main"));
+    }
 
     fn secrets(fields: &[&str], command: reins_proto::desktop::CommandScope) -> SecretsScope {
         SecretsScope {

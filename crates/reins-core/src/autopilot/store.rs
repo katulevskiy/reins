@@ -255,6 +255,26 @@ fn to_json<T: Serialize>(v: &T) -> Result<Vec<u8>, CoreError> {
 /// A row of `autopilot_settings`: its mode and bypass end.
 type SettingRow = (Option<String>, Option<i64>);
 
+/// The origin of a permission asked for with `reins_request_access` and given by the user.
+pub(crate) const ASKED_ORIGIN: &str = "ai_request";
+
+/// Whether Lockdown suspends a permission of `connection` with this origin now: one asked for with
+/// `reins_request_access` is not used while Lockdown holds (the global one, or the connection's own), and counts
+/// again once it ends. Read with `conn`, inside the caller's transaction.
+pub(crate) fn lockdown_suspends(conn: &Connection, origin: &str, connection: &str) -> Result<bool, CoreError> {
+    if origin != ASKED_ORIGIN {
+        return Ok(false);
+    }
+    let mode = |scope: &str| -> Result<Option<String>, CoreError> {
+        Ok(conn
+            .query_row("SELECT mode FROM autopilot_settings WHERE scope = ?1", params![scope], |r| r.get(0))
+            .optional()?
+            .flatten())
+    };
+    let locked = |m: Option<String>| m.as_deref() == Some(AutopilotMode::Lockdown.as_str());
+    Ok(locked(mode("")?) || locked(mode(connection)?))
+}
+
 /// Whether a permission with this origin may be used now: always, unless a bypass or an Overnight granted it; then
 /// only while that bypass or Overnight (the global one, or the connection's own) is in force and no lockdown holds.
 /// Read with `conn`, inside the caller's transaction, so that one stopped a moment ago is seen stopped.

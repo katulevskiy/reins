@@ -212,6 +212,20 @@ class AskSentenceTest {
     }
 
     @Test
+    fun aPermissionSaysWhatItCoversNeverEmailsForAWrite() {
+        assertEquals("Read emails without asking", askSentence(TestData.grantView()).text)
+        val write = askSentence(TestData.writeGrantView())
+        assertEquals("Edit a GitHub comment in octo/app without asking", write.text)
+        assertEquals("octo/app", write.target)
+        assertFalse(write.text.contains("email"))
+        // An MCP tool's name is its server's words: only on the mono line.
+        val mcp = askSentence(TestData.writeGrantView(tool = "create_issue", resource = "", service = "mcp_linear"))
+        assertEquals("Use a tool without asking", mcp.text)
+        assertEquals("create_issue", mcp.details)
+        assertNull(mcp.target)
+    }
+
+    @Test
     fun anSshSignInKeepsTheHostInMono() {
         val s = askSentence(TestData.label("ssh", "secrets", "Sign in to", "build.example.com", code = true))
         assertEquals("Sign in to a server", s.text)

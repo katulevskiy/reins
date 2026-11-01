@@ -6,6 +6,7 @@ import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ApprovalKind
 import dev.reins.core.ApprovalView
 import dev.reins.core.GitRefView
+import dev.reins.core.GrantRequestView
 
 // The approval screen in words and colours, kept apart from the views so every rule is tested (ApprovalWordsTest).
 
@@ -75,7 +76,8 @@ fun badge(view: ApprovalView): Badge = when {
 
 /** The service whose logo the hero shows ("mcp" for any MCP server); empty for none. */
 fun heroService(view: ApprovalView): String = when {
-    view.service.startsWith("mcp:") || view.mcp != null -> "mcp"
+    // `mcp_<server>`: a permission for one tool of an added MCP server.
+    view.service.startsWith("mcp:") || view.service.startsWith("mcp_") || view.mcp != null -> "mcp"
     else -> view.service
 }
 
@@ -90,6 +92,19 @@ fun displayName(from: String): String {
 }
 
 private fun plural(n: Int, one: String, many: String = one + "s") = if (n == 1) "1 $one" else "$n $many"
+
+/**
+ * A permission asked for over MCP: "Wants to **read emails**\n**without asking**", or for one tool on one thing "Wants to
+ * **edit a GitHub comment**\nin **octo/app** without asking". An MCP tool's name is its server's text.
+ */
+private fun grantHero(grant: GrantRequestView?, wants: Span): List<Span> {
+    if (grant == null || grant.action != "write") {
+        return listOf(wants, Span(if (grant?.action == "send") "send emails" else "read emails", true), Span("\n"), Span("without asking", true))
+    }
+    val on = untrusted(grant.resource).ifBlank { null }
+        ?: return listOf(wants, Span("use "), Span(untrusted(grant.tool).ifBlank { "a tool" }, true), Span("\n"), Span("without asking", true))
+    return listOf(wants, Span(lowerFirst(grant.tool.ifBlank { "change something" }), true), Span("\nin "), Span(on, true), Span(" without asking"))
+}
 
 /** The hero's one sentence: "Wants to **push 8 commits**\nto **octo/app**". Everything quoted is untrusted. */
 fun heroSentence(view: ApprovalView): List<Span> {
@@ -135,12 +150,7 @@ fun heroSentence(view: ApprovalView): List<Span> {
             Span("\non "),
             Span(untrusted(mcp.serverName), true),
         )
-        view.kind == ApprovalKind.GRANT -> listOf(
-            wants,
-            Span(if (view.grant?.action == "send") "send emails" else "read emails", true),
-            Span("\n"),
-            Span("without asking", true),
-        )
+        view.kind == ApprovalKind.GRANT -> grantHero(view.grant, wants)
         view.kind == ApprovalKind.ACCOUNTS ->
             listOf(Span("Wants to see your\n"), Span("${serviceName(view.service.ifBlank { "gmail" })} addresses", true))
         view.kind == ApprovalKind.SEND -> {

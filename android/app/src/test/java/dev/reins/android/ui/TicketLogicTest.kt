@@ -41,6 +41,36 @@ class TicketLogicTest {
     }
 
     @Test
+    fun `a batch is its own card in the order the AI made it`() {
+        fun inBatch(id: String, index: UInt, quick: Boolean = true) =
+            TestData.pending(id, quick = quick, batch = dev.reins.core.PendingBatch("b1", index, 3u))
+        val pending = listOf(
+            TestData.pending("r1", quick = true), inBatch("x2", 2u), inBatch("x0", 0u), inBatch("x1", 1u, quick = false),
+            TestData.pending("r2", quick = true),
+        )
+        val cards = waitCards(pending).map {
+            when (it) {
+                is WaitCard.One -> listOf(it.item.id)
+                is WaitCard.Group -> it.items.map { item -> item.id }
+            }
+        }
+        assertEquals(listOf(listOf("r1", "r2"), listOf("x0", "x2"), listOf("x1")), cards)
+        val batch = waitCards(pending).filterIsInstance<WaitCard.Group>().last().burst
+        assertEquals("batch:c1:b1", batch.key)
+        assertEquals("c1", batch.connectionId)
+    }
+
+    @Test
+    fun `two connections never share a batch card, even with the same batch id`() {
+        fun inBatch(id: String, conn: String, index: UInt) =
+            TestData.pending(id, conn = conn, quick = true, batch = dev.reins.core.PendingBatch("b1", index, 2u))
+        val pending = listOf(inBatch("a0", "c1", 0u), inBatch("b0", "c2", 0u), inBatch("a1", "c1", 1u), inBatch("b1", "c2", 1u))
+        val groups = waitCards(pending).filterIsInstance<WaitCard.Group>()
+        assertEquals(listOf(listOf("a0", "a1"), listOf("b0", "b1")), groups.map { g -> g.items.map { it.id } })
+        assertEquals(listOf("batch:c1:b1", "batch:c2:b1"), groups.map { it.burst.key })
+    }
+
+    @Test
     fun `the inbox groups by agent in the order of their soonest deadline`() {
         val pending = listOf(
             TestData.pending("c1-late", ticket = TestData.ticket("c1-late", left = 9 * 3_600)),
