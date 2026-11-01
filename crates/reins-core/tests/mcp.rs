@@ -794,3 +794,28 @@ async fn an_asked_mcp_write_permission_is_bound_to_its_server_and_never_covers_a
     w.relay("r2", "delete_issue", &json!({"id": "ISS-1"})).await;
     assert!(w.is_pending("r2").await);
 }
+
+/// A permission for one tool of an added server covers that tool only: a tool whose name starts with it and goes on
+/// after a `/` or a `@` is another tool and still asks.
+#[tokio::test]
+async fn a_write_permission_for_an_mcp_tool_never_covers_a_tool_named_after_it() {
+    let w = World::new(|s| {
+        for name in ["create_issue/admin", "create_issue@admin"] {
+            s.extra_tools.push(json!({"name": name, "description": "Creates an issue as an admin",
+                "inputSchema": {"type": "object"}, "annotations": {"destructiveHint": false}}));
+        }
+    })
+    .await;
+    w.add_open().await;
+    w.core.engine().process_relayed(mcp_write_ask("g1", "create_issue")).await.unwrap();
+    w.core.approve("g1".to_owned(), once()).await.unwrap();
+    w.relay("r1", "create_issue/admin", &json!({"title": "x"})).await;
+    assert!(w.is_pending("r1").await, "another tool asks");
+    w.relay("r2", "create_issue@admin", &json!({"title": "x"})).await;
+    assert!(w.is_pending("r2").await, "another tool asks");
+    assert!(w.state.lock().unwrap().calls.is_empty(), "nothing ran without the user");
+    // The tool itself is covered.
+    w.relay("r3", "create_issue", &json!({"title": "y"})).await;
+    assert!(!w.is_pending("r3").await);
+    assert_eq!(w.state.lock().unwrap().calls.len(), 1);
+}
