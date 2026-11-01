@@ -35,9 +35,9 @@ anything in the checklist below is missing, and the run's error names what Apple
 
 ## Export compliance
 
-Reins uses standard, non-exempt encryption (end-to-end encryption between the phone, the server and the desktop) and
-is distributed in France, so Apple needs an approved encryption declaration, including the French encryption
-declaration, before any build is distributed:
+Reins uses standard, non-exempt encryption (end-to-end encryption between the phone, the server and the desktop).
+France is excluded (Pricing and Availability), so no French encryption declaration is needed. Apple needs the app's
+encryption documentation approved before App Store review:
 
 - `ios/Reins/Info.plist` sets `ITSAppUsesNonExemptEncryption` to `true` (always).
 - `ITSEncryptionExportComplianceCode` is **not** in the file. It is the build setting `REINS_EXPORT_COMPLIANCE_CODE`
@@ -48,14 +48,21 @@ declaration, before any build is distributed:
 - Only the app's Info.plist carries the keys; the widget and notification extensions do not (App Store Connect reads
   the app's).
 - The release workflow's TestFlight job passes the code from the `testflight` environment secret
-  `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` and fails before archiving while it is not set (a `verify_only` run archives
-  without it and uploads nothing). `scripts/testflight.py` never sets a build's `usesNonExemptEncryption`.
+  `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE`. While it is not set, the job warns, archives without the key and uploads
+  anyway: the build shows as "Missing Compliance" in App Store Connect until its encryption questions are answered
+  there. `scripts/testflight.py` never sets a build's `usesNonExemptEncryption`.
 - The App Store submission workflow passes the same secret to `scripts/testflight.py submit` as
   `EXPORT_COMPLIANCE_CODE`; without it the script refuses (exit 2) before any request, dry runs included.
 
 Builds uploaded before this change declared `ITSAppUsesNonExemptEncryption` = `false` (and the TestFlight job set
 `usesNonExemptEncryption` = false through the API when App Store Connect differed). Do not submit or distribute them:
 submit a build archived with the code.
+
+### Adding France later
+
+File the French encryption declaration with ANSSI, then upload its receipt in App Store Connect (App Information >
+App Encryption Documentation) and wait for Apple's approval. Only then add France in Pricing and Availability, and
+update the `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` secret if App Store Connect gives a new code.
 
 ## Secrets
 
@@ -87,17 +94,17 @@ Most of this is one-time. Apple keeps it per app or per version as noted.
   privacy policy URL is required. The privacy manifests for required-reason APIs (`PrivacyInfo.xcprivacy`) are a
   separate, pending pull request (#270); the label must match the manifests once merged, and builds uploaded before
   it lack them (Apple may warn or reject: submit a build from a release that includes #270).
-- [ ] **Export compliance** (before any build is distributed; see "Export compliance" above). The app uses standard
-  non-exempt encryption and is distributed in France:
-  1. In App Store Connect (App Information > App Encryption Documentation), add the encryption documentation, answer
-     that the app uses standard encryption algorithms and is available in France, and upload the French encryption
-     declaration. Wait until Apple **approves** it.
+- [ ] **Export compliance** (see "Export compliance" above). The app uses standard non-exempt encryption; France
+  excluded (Pricing and Availability):
+  1. In App Store Connect (App Information > App Encryption Documentation), add the encryption documentation and
+     answer that the app uses standard encryption algorithms and is not available in France. Wait until Apple
+     **approves** it.
   2. Copy the export compliance code App Store Connect shows for the approved declaration into the `testflight`
      environment secret `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` (Settings > Environments > testflight). Never commit
      it.
-  3. Until then, the TestFlight job fails at "App settings" and this workflow refuses to submit (dry runs too). After
-     it, release (or rerun the TestFlight job with `testflight_tag`) so a build with the code is uploaded, check
-     TestFlight no longer shows "Missing Compliance" for it, and submit that build.
+  3. Until then, TestFlight builds upload with a warning and show "Missing Compliance", and this workflow refuses to
+     submit (dry runs too). After it, release (or rerun the TestFlight job with `testflight_tag`) so a build with the
+     code is uploaded, check TestFlight no longer shows "Missing Compliance" for it, and submit that build.
 - [ ] **Age rating.** Answer the age rating questionnaire (App Information > Age Rating). Note any unrestricted web
   access (sign-in browser sessions) and user-generated content answers.
 - [ ] **Screenshots per device size.** Required: iPhone 6.9" (1320 × 2868 or 1290 × 2796) or 6.5"; iPad 13"
@@ -120,7 +127,8 @@ Most of this is one-time. Apple keeps it per app or per version as noted.
     Island), a running bypass, the model download, and why they update often.
   - Local network use (`NSLocalNetworkUsageDescription`) and the camera (QR pairing with a computer).
   - Face ID: approving a request needs the user.
-- [ ] **Pricing and availability.** Price (free), the countries and regions, and pre-orders (off).
+- [ ] **Pricing and availability.** Price (free), the countries and regions with France excluded, and pre-orders
+  (off).
 - [ ] **Release choice.** Keep **Manually release this version** (the workflow's default `MANUAL`) for a quiet
   launch: after approval nothing goes live until you release it. Phased release is a separate per-version option
   (Version > Phased Release for Automatic Updates), off by default.

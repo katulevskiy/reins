@@ -11,8 +11,8 @@ name: App Store submission
 # (AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID), the same secrets the TestFlight upload uses. No
 # signing certificate or profile: nothing is built or signed here. Export compliance: the secret
 # ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE, the code of the app's encryption declaration once Apple approves it (the app
-# uses standard non-exempt encryption and is distributed in France); the script refuses to submit, or dry-run, without
-# it, and checks the build declares the encryption and the declaration with that code is approved.
+# uses standard non-exempt encryption; France excluded: Pricing and Availability); the script refuses to submit, or
+# dry-run, without it, and checks the build declares the encryption and the declaration with that code is approved.
 
 on:
   workflow_dispatch:

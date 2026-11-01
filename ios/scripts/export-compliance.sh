@@ -1,14 +1,14 @@
 #!/bin/sh
-# Run by the app target once its Info.plist is processed. Reins uses standard, non-exempt encryption and is available
-# in France, so ios/Reins/Info.plist always says ITSAppUsesNonExemptEncryption = YES, and an App Store build must also
-# carry ITSEncryptionExportComplianceCode: the code App Store Connect gives once Apple approves the app's encryption
-# declaration (the French one included). With both keys App Store Connect asks nothing per build.
+# Run by the app target once its Info.plist is processed. Reins uses standard, non-exempt encryption (France is
+# excluded: Pricing and Availability), so ios/Reins/Info.plist always says ITSAppUsesNonExemptEncryption = YES, and an
+# App Store build should also carry ITSEncryptionExportComplianceCode: the code App Store Connect gives once Apple
+# approves the app's encryption declaration. With both keys App Store Connect asks nothing per build.
 #
 # The code is the build setting REINS_EXPORT_COMPLIANCE_CODE (ios/Config/Reins.xcconfig leaves it empty; the release
 # workflow sets it from the secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE; Local.xcconfig or -xcconfig can too). The key
 # is added only when the code is set, never as an empty string. Without it:
-#   - an archive (ACTION=install) fails while REINS_EXPORT_COMPLIANCE_REQUIRED is YES (Release, in Reins.xcconfig), so
-#     no App Store or TestFlight build goes out without the code;
+#   - an archive (ACTION=install) fails while REINS_EXPORT_COMPLIANCE_REQUIRED is YES (Release, in Reins.xcconfig;
+#     the release workflow sets it to NO, with a warning, while its secret is not set);
 #   - any other build (Debug, simulator, tests, a Release build that is not an archive) just leaves the key out.
 set -eu
 

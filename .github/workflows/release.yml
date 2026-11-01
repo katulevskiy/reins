@@ -1839,7 +1839,8 @@ jobs:
   # signed archive (with a released Xcode), then the archive's export for the App Store with destination upload, which
   # uploads it to App Store Connect, then its What to Test (the release notes), its TestFlight groups and a beta app
   # review submission (scripts/testflight.py). Export compliance is the archive's own: ITSAppUsesNonExemptEncryption =
-  # YES and the approved declaration's code (the secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE; no upload without it).
+  # YES and the approved declaration's code (the secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE; without it the job warns
+  # and uploads anyway, and the build waits as Missing Compliance in App Store Connect).
   # The review needs a processed build, so the job waits for Apple's processing (about three minutes). As the Play
   # upload is: a superseded run never uploads (supersede cancels runs before publication), publication never waits for
   # this job, and a failure leaves the GitHub release as it is (rerun the job; a build already uploaded is not uploaded
@@ -2192,8 +2193,9 @@ jobs:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           GOOGLE_CLIENT_ID: ${{ vars.IOS_GOOGLE_CLIENT_ID }}
-          # The code of the app's encryption declaration Apple approved (it uses standard non-exempt encryption and is
-          # distributed in France): ITSEncryptionExportComplianceCode, through ios/scripts/export-compliance.sh.
+          # The code of the app's encryption declaration Apple approved (it uses standard non-exempt encryption; France
+          # excluded: Pricing and Availability): ITSEncryptionExportComplianceCode, through
+          # ios/scripts/export-compliance.sh. Optional: without it the archive leaves the key out.
           EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}
           VERIFY_ONLY: ${{ inputs.verify_only }}
         run: |
@@ -2214,12 +2216,13 @@ jobs:
               exit 1
             }
             compliance="REINS_EXPORT_COMPLIANCE_CODE = $EXPORT_COMPLIANCE_CODE"
-          elif [[ "$VERIFY_ONLY" == true ]]; then
-            # Nothing is uploaded: the archive is built without the key.
-            compliance="REINS_EXPORT_COMPLIANCE_REQUIRED = NO"
           else
-            echo "::error::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set: the app uses non-exempt encryption, and TestFlight takes no build without the code of its approved encryption declaration (docs/ios-app-store-submission.md, Export compliance)."
-            exit 1
+            # The archive is built without the key. The upload goes on; App Store Connect shows the build as Missing
+            # Compliance until its encryption questions are answered there.
+            if [[ "$VERIFY_ONLY" != true ]]; then
+              echo "::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set: this build uploads without ITSEncryptionExportComplianceCode and shows as Missing Compliance in App Store Connect until answered there (docs/ios-app-store-submission.md, Export compliance)."
+            fi
+            compliance="REINS_EXPORT_COMPLIANCE_REQUIRED = NO"
           fi
           {
             echo "#include \"$dir/signing.xcconfig\""

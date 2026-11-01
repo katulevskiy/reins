@@ -44,9 +44,10 @@
         The Swift packages the archive builds: every pin must name a revision and be checked out at it. Lists each
         package's plugins and binary targets.
 
-Export compliance: Reins uses standard non-exempt encryption and is distributed in France, so every build declares
-ITSAppUsesNonExemptEncryption = YES and carries ITSEncryptionExportComplianceCode, the code of the app's encryption
-declaration Apple approved (ios/scripts/export-compliance.sh adds it to the archive from REINS_EXPORT_COMPLIANCE_CODE).
+Export compliance: Reins uses standard non-exempt encryption; France excluded (Pricing and Availability). Every build
+declares ITSAppUsesNonExemptEncryption = YES and carries ITSEncryptionExportComplianceCode when the release has it, the
+code of the app's encryption declaration Apple approved (ios/scripts/export-compliance.sh adds it to the archive from
+REINS_EXPORT_COMPLIANCE_CODE).
 This script never sets a build's usesNonExemptEncryption: the archive's Info.plist answers it. `submit` needs the same
 code as EXPORT_COMPLIANCE_CODE (the release secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE) and checks App Store Connect
 has that declaration approved and the build declares the encryption before it sends anything.
@@ -283,9 +284,9 @@ def export_compliance_code(environ):
     """EXPORT_COMPLIANCE_CODE (the app's approved encryption declaration's code), or ValueError when unset or not one."""
     code = environ.get("EXPORT_COMPLIANCE_CODE", "").strip()
     if not code:
-        raise ValueError("refusing to submit: EXPORT_COMPLIANCE_CODE is not set. Reins uses non-exempt encryption and "
-                         "is distributed in France: App Store review needs the code of the app's encryption "
-                         "declaration once Apple approves it (the secret "
+        raise ValueError("refusing to submit: EXPORT_COMPLIANCE_CODE is not set. Reins uses non-exempt encryption "
+                         "(France excluded: Pricing and Availability): App Store review needs the code of the app's "
+                         "encryption declaration once Apple approves it (the secret "
                          "ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE; docs/ios-app-store-submission.md, Export compliance)")
     if not re.fullmatch(EXPORT_COMPLIANCE_CODE_PATTERN, code):
         raise ValueError("refusing to submit: EXPORT_COMPLIANCE_CODE is not an App Store Connect export compliance "
@@ -561,7 +562,7 @@ class Asc:
         if "APPROVED" not in states:
             listed = ", ".join(sorted(str(state) for state in states))
             raise AscError(409, f"refusing to submit: the encryption declaration with that code is {listed}, not "
-                                "APPROVED: wait for Apple's approval (the French declaration included)")
+                                "APPROVED: wait for Apple's approval")
         log("export compliance: usesNonExemptEncryption=true, encryption declaration APPROVED")
 
     def set_what_to_test(self, build_id, text, locale=LOCALE):

@@ -193,8 +193,9 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     check(tf.next_build_number(["29860005", "3.1"], 29_860_000) == 29_860_006, "after the highest")
     check(tf.next_build_number([], 5) == 5 and tf.next_build_number(["x"], 5) == 5, "empty or odd")
 
-    # Export compliance: the app uses standard non-exempt encryption and is distributed in France. The Info.plist says
-    # so; the code of the approved declaration is added at build time from a build setting, never committed.
+    # Export compliance: the app uses standard non-exempt encryption; France excluded (Pricing and Availability). The
+    # Info.plist says so; the code of the approved declaration is added at build time from a build setting, never
+    # committed.
     info = plistlib.loads((ROOT / "ios/Reins/Info.plist").read_bytes())
     check(info.get("ITSAppUsesNonExemptEncryption") is True, "Info.plist declares non-exempt encryption")
     check("ITSEncryptionExportComplianceCode" not in info, "no compliance code in the source Info.plist")
@@ -738,6 +739,11 @@ check(re.findall(r"secrets\.ITS_[A-Z0-9_]+", job) == ["secrets.ITS_ENCRYPTION_EX
       and "secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE" in steps["App settings"], "the code only in App settings")
 check("REINS_EXPORT_COMPLIANCE_CODE = $EXPORT_COMPLIANCE_CODE" in steps["App settings"]
       and "REINS_EXPORT_COMPLIANCE_REQUIRED = NO" in steps["App settings"], steps["App settings"])
+# Without the code the upload still goes on: a warning, never an error.
+settings = steps["App settings"]
+check("::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set" in settings
+      and "::error::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set" not in settings,
+      "a missing compliance code only warns")
 check("--info-plist" not in job and "usesNonExemptEncryption" not in workflow, "the workflow sets no compliance answer")
 
 print(f"{checks} TestFlight checks passed")

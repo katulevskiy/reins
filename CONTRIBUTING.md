@@ -275,7 +275,7 @@ signs the iOS app, then exports it for the App Store and uploads it to App Store
 second macOS job before publication waited in the account's macOS queue on its own. Then
 `scripts/testflight.py` waits for processing, reports the build's export compliance (it never sets it: the archive's
 Info.plist declares non-exempt encryption and the approved declaration's code, from the environment secret
-`ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE`; without it the job fails before archiving, see
+`ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE`; without it the job warns and uploads a build that shows as Missing Compliance, see
 [docs/ios-app-store-submission.md](docs/ios-app-store-submission.md#export-compliance)), sets "What to Test" from the
 release notes, adds the build to the TestFlight groups and submits it for beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
 never touches the GitHub release: rerun the failed job. A newer release's upload cancels an older one still waiting or
