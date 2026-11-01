@@ -154,11 +154,36 @@ pub fn for_tool(name: &str) -> Option<ToolPermission> {
     Some(builtin)
 }
 
+/// The tools a standing write permission (`reins_request_access`) can cover, as (integration, `resource_param`): those
+/// whose `resource_param` value is exactly what a permission is matched against. A GitHub call on a repository has
+/// `owner/name` as its resource (and `owner/name@branch` for one branch of it). Elsewhere it is not: a new repository's
+/// name is not yet a repository, a vault item is `{folder}/{type}/{id}`, a chat or a calendar is resolved from a name
+/// to an id, so a value the caller names could match nothing, or every item of a folder.
+pub const WRITE_GRANT_RESOURCES: [(&str, &str); 1] = [("github", "repo")];
+
 /// Whether a standing write permission can cover calls of `spec`: a write that is not asked every time, not only for
-/// the desktop app, and names the one thing it changes (a write permission is never for everything).
+/// the desktop app, and names the one thing it changes in a way listed in [`WRITE_GRANT_RESOURCES`] (a write
+/// permission is never for everything).
 #[must_use]
 pub fn write_grantable(spec: &ToolSpec) -> bool {
-    spec.effect == Effect::Write && !spec.once_only && !spec.desktop_only && spec.resource_param.is_some()
+    spec.effect == Effect::Write
+        && !spec.once_only
+        && !spec.desktop_only
+        && spec.resource_param.is_some_and(|param| WRITE_GRANT_RESOURCES.contains(&(spec.service, param)))
+}
+
+/// A GitHub repository named exactly: `owner/name` with only the characters GitHub allows. Never a lone owner (a
+/// permission for `acme` would cover every repository of acme) and never one branch (`owner/name@branch`).
+#[must_use]
+pub fn exact_repo(repo: &str) -> bool {
+    let mut parts = repo.split('/');
+    let valid = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    matches!((parts.next(), parts.next(), parts.next()), (Some(o), Some(n), None) if valid(o) && valid(n))
+        && !repo.contains("..")
 }
 
 /// The grant integration of an added MCP server (`linear-2` → `mcp_linear_2`).
@@ -215,11 +240,18 @@ pub fn write_target(service: &str, op: &str, resource: Option<&str>) -> Result<W
     let Some(param) = spec.resource_param else {
         return Err(format!("{} names no single thing, so no permission can cover it", spec.tool));
     };
+    if !write_grantable(spec) {
+        return Err(format!("{}: a standing permission covers only GitHub tools on one repository", spec.tool));
+    }
     let Some(resource) = resource else {
         return Err(format!("name the `{param}` the permission covers in `resource`"));
     };
     if resource.len() > MAX_RESOURCE_LEN || resource.chars().any(char::is_control) {
         return Err(format!("`resource` must be at most {MAX_RESOURCE_LEN} characters on one line"));
+    }
+    // Matched as it is named, and a permission for `acme` would cover every repository of acme: only one exactly.
+    if service == "github" && !exact_repo(resource) {
+        return Err("`resource` must name one repository exactly: `owner/name`".to_owned());
     }
     Ok(WriteTarget {
         service: service.to_owned(),
@@ -279,6 +311,24 @@ mod tests {
         assert!(write_target("github", "repo_delete", Some("me/app")).is_err(), "asked every time");
         assert!(write_target("github", "repo_languages", Some("me/app")).is_err(), "a read");
         assert!(write_target("github", "nope", Some("me/app")).is_err());
+        // One repository exactly: a permission for an owner would cover every repository of it, one for a branch is
+        // not what the phone shows.
+        for wider in ["me", "me/", "/app", "me/app/x", "me/app@main", "me/*", "*", "me/..", "me /app"] {
+            assert!(write_target("github", "issue_comment_edit", Some(wider)).is_err(), "{wider}");
+        }
+        // Integrations whose calls are not matched by the value named take no write permission.
+        assert!(
+            write_target("vault", "item_update", Some("abc")).is_err(),
+            "a vault item is {{folder}}/{{type}}/{{id}}"
+        );
+        assert!(write_target("vault", "item_create", Some("none")).is_err(), "every item outside a folder");
+        assert!(write_target("gcalendar", "create_event", Some("me")).is_err(), "would cover me@gmail.com");
+        assert!(write_target("telegram", "send", Some("@friend")).is_err(), "a chat is resolved to its id");
+        assert!(write_target("sms", "send", Some("+1555")).is_err());
+        for spec in specs().iter().filter(|s| write_grantable(s)) {
+            assert_eq!(spec.service, "github", "{}", spec.tool);
+            assert_eq!(spec.resource_param, Some("repo"), "{}", spec.tool);
+        }
         let mcp = write_target(&mcp_grant_service("linear-2"), "create.issue", None).unwrap();
         assert_eq!(
             (mcp.service.as_str(), mcp.op.as_str(), mcp.resource.as_str()),

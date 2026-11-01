@@ -884,17 +884,23 @@ fn request_limits(g: &GrantRequest) -> Vec<String> {
 /// "Edit a GitHub comment", or "create_issue (MCP server linear)" for a tool of an added MCP server.
 pub fn write_tool_text(g: &GrantRequest) -> String {
     let service = g.service.as_deref().unwrap_or_default();
-    let op = g.op.as_deref().unwrap_or_default();
     match service.strip_prefix(reins_proto::permission::MCP_SERVICE_PREFIX) {
+        Some(server) => format!("{} (MCP server {server})", write_tool_name(g)),
+        None => write_tool_name(g),
+    }
+}
+
+/// The tool alone: "Edit a GitHub comment", or an MCP tool's own name ("create_issue").
+fn write_tool_name(g: &GrantRequest) -> String {
+    let service = g.service.as_deref().unwrap_or_default();
+    let op = g.op.as_deref().unwrap_or_default();
+    if service.starts_with(reins_proto::permission::MCP_SERVICE_PREFIX) {
         // Asked for with the tool's name as the op; stored with it as the resource.
-        Some(server) => {
-            let tool = Some(op).filter(|o| !o.is_empty()).or(g.resource.as_deref()).unwrap_or_default();
-            format!("{tool} (MCP server {server})")
-        }
-        None => match op_title(service, op) {
-            title if title.is_empty() => format!("{service}.{op}"),
-            title => title,
-        },
+        return Some(op).filter(|o| !o.is_empty()).or(g.resource.as_deref()).unwrap_or_default().to_owned();
+    }
+    match op_title(service, op) {
+        title if title.is_empty() => format!("{service}.{op}"),
+        title => title,
     }
 }
 
@@ -965,6 +971,16 @@ pub fn grant_request_view(g: &GrantRequest) -> GrantRequestView {
         max_uses: g.max_uses,
         breadth: breadth.to_owned(),
         lines: lines.into_iter().map(|l| text::one_line(&l)).collect(),
+        tool: match g.action {
+            GrantAction::Write => text::one_line(&text::neutralize(&write_tool_name(g))),
+            _ => String::new(),
+        },
+        resource: match g.action {
+            GrantAction::Write => {
+                write_resource_text(g).map(|r| text::one_line(&text::neutralize(r))).unwrap_or_default()
+            }
+            _ => String::new(),
+        },
     }
 }
 
@@ -1462,9 +1478,21 @@ mod tests {
         assert!(summary.ends_with(" on me/app for 1 day"), "{summary}");
         let view = grant_request_view(&github);
         assert_eq!(view.action, "write");
+        assert_eq!((view.tool.as_str(), view.resource.as_str()), ("Edit a GitHub comment", "me/app"));
+        let read = grant_request_view(&GrantRequest {
+            action: GrantAction::Read,
+            service: None,
+            op: None,
+            resource: None,
+            from: vec!["a@b.com".to_owned()],
+            ..github
+        });
+        assert!(read.tool.is_empty() && read.resource.is_empty(), "only a write names a tool and a thing");
         assert!(view.lines.iter().any(|l| l == "Only on me/app"), "{:?}", view.lines);
         for mcp in [ask("mcp_linear", "label issue", None), ask("mcp_linear", "", Some("label issue"))] {
             assert_eq!(grant_request_summary(&mcp), "label issue (MCP server linear) for 1 day");
+            let view = grant_request_view(&mcp);
+            assert_eq!((view.tool.as_str(), view.resource.as_str()), ("label issue", ""));
             assert!(!grant_request_view(&mcp).lines.iter().any(|l| l.starts_with("Only on")));
         }
     }

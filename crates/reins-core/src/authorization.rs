@@ -475,6 +475,12 @@ fn operation(call: &ToolCall) -> (String, String, String) {
         ToolCall::GmailSend {
             ..
         } => ("gmail".to_owned(), "write".to_owned(), "send".to_owned()),
+        // A standing write permission is about the integration it names, not Gmail.
+        ToolCall::RequestGrant {
+            grant,
+        } if grant.action == reins_proto::gmail::GrantAction::Write => {
+            (grant.service.clone().unwrap_or_default(), "permission".to_owned(), "create_grant".to_owned())
+        }
         ToolCall::RequestGrant {
             ..
         } => ("gmail".to_owned(), "permission".to_owned(), "create_grant".to_owned()),

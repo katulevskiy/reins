@@ -163,7 +163,7 @@ pub struct PendingItem {
 /// The place of a waiting call in its batch.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct PendingBatch {
-    /// Shared by every call of the batch (`approve_batch`, `deny_batch`).
+    /// Shared by every call of the batch.
     pub id: String,
     /// 0-based.
     pub index: u32,
@@ -850,7 +850,7 @@ pub struct ClassOption {
 /// A permission an AI asks for, spelled out for the user.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct GrantRequestView {
-    /// "read" | "send"
+    /// "read" | "send" | "write"
     pub action: String,
     pub summary: String,
     pub reason: String,
@@ -860,6 +860,13 @@ pub struct GrantRequestView {
     pub breadth: String,
     /// One line per limit, e.g. "From @bank.com".
     pub lines: Vec<String>,
+    /// "write": the one tool it covers, in a few words ("Edit a GitHub comment"; the tool's own name for a tool of an
+    /// added MCP server, which is that server's text). Empty otherwise.
+    #[uniffi(default)]
+    pub tool: String,
+    /// "write": the one thing it covers (the repository `owner/name`); empty for an MCP tool, and otherwise.
+    #[uniffi(default)]
+    pub resource: String,
 }
 
 /// What the user approved. For Search/Read: `selected_message_ids` ⊆ the view's

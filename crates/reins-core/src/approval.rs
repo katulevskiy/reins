@@ -174,6 +174,38 @@ pub(crate) fn is_write_grant(call: &ToolCall) -> bool {
 }
 
 impl Engine {
+    /// The account a standing write permission is bound to, checked now: the connected account of the integration it
+    /// names (the one the request named, or the only one, as a call to it resolves), or the added MCP server whose tool it
+    /// names while that tool still changes things without being destructive. The error is what the caller is told.
+    pub(crate) fn write_grant_account(&self, grant: &GrantRequest, named: Option<&str>) -> Result<String, String> {
+        let service = grant.service.as_deref().unwrap_or_default();
+        if service.starts_with(reins_proto::permission::MCP_SERVICE_PREFIX) {
+            let tool = grant.resource.as_deref().unwrap_or_default();
+            let servers = self.store.mcp_servers().map_err(|e| e.to_string())?;
+            let Some(server) = servers.into_iter().find(|s| crate::mcp::grant_service(&s.id) == service) else {
+                return Err("That MCP server is not added on the user's phone (any more).".to_owned());
+            };
+            let Some(found) = server.tools.iter().find(|t| t.name == tool) else {
+                return Err(format!(
+                    "{} has no tool named {}. Ask the user to refresh the server in the Reins app if it is new.",
+                    text::one_line(&server.name),
+                    text::truncate_chars(&text::one_line(tool), 128)
+                ));
+            };
+            if found.read_only {
+                return Err("That tool only reads: it needs no write permission.".to_owned());
+            }
+            if found.destructive {
+                return Err("That tool is asked for every time: no permission can cover it.".to_owned());
+            }
+            return Ok(server.id);
+        }
+        let named = named
+            .map(reins_proto::connector::normalize_account_name)
+            .transpose()
+            .map_err(|_| "The account was malformed.".to_owned())?;
+        self.resolve_service_account(service, named.as_deref())
+    }
     pub(crate) fn parked(&self, request_id: &str) -> Result<(PendingRow, ParkedRequest), CoreError> {
         let row = self.store.pending_item(request_id, unix_now())?.ok_or(CoreError::NotFound)?;
         if row.kind != PendingKind::Request {
@@ -610,8 +642,22 @@ impl Engine {
             return Err(CoreError::invalid("not a permission request"));
         };
         let shorten_to = choice.standing.as_ref().and_then(|s| s.duration_secs);
-        let grant = grant_from_request(asked, &parked.request.connection_id, now, shorten_to)?
-            .for_account(parked.request.account.clone());
+        // A write permission covers the one account it was asked for, still connected now; never every account.
+        let account = if asked.action == GrantAction::Write {
+            let bound = parked
+                .request
+                .account
+                .as_deref()
+                .ok_or_else(|| CoreError::invalid("no account for this permission"))?;
+            let now_bound = self.write_grant_account(asked, Some(bound)).map_err(CoreError::invalid)?;
+            if now_bound != bound {
+                return Err(CoreError::invalid("the account this permission was asked for is no longer connected"));
+            }
+            Some(now_bound)
+        } else {
+            parked.request.account.clone()
+        };
+        let grant = grant_from_request(asked, &parked.request.connection_id, now, shorten_to)?.for_account(account);
         self.store.insert_grant_from(
             &grant,
             &parked.label(),
