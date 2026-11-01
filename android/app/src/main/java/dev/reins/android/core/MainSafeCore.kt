@@ -125,10 +125,6 @@ class MainSafeCore(
 
     override suspend fun approveQuick(requestId: String) = io { approveQuick(requestId) }
 
-    override suspend fun approveBatch(batchId: String) = io { approveBatch(batchId) }
-
-    override suspend fun denyBatch(batchId: String) = io { denyBatch(batchId) }
-
     override suspend fun startingPolicy(): StartingPolicy? = io { startingPolicy() }
 
     override suspend fun setStartingPolicy(policy: StartingPolicy) = io { setStartingPolicy(policy) }

@@ -2435,7 +2435,8 @@ fn in_batch(mut request: Value, batch: &str, index: u32, size: u32) -> Value {
 }
 
 /// Calls an AI made together are one queue on the phone, but each is still its own request: approved or denied on
-/// its own, answered on its own and audited on its own. "Approve all" never approves a standing permission.
+/// its own, answered on its own and audited on its own. "Approve all" (the apps approve each routine call of the batch
+/// with `approve_quick`) never approves a standing permission: it is not routine, and approving it untouched is refused.
 #[tokio::test]
 async fn a_batch_is_one_queue_of_separate_requests() {
     let env = env().await;
@@ -2455,13 +2456,18 @@ async fn a_batch_is_one_queue_of_separate_requests() {
     .await;
     env.core.sync(0).await.unwrap();
     let pending = env.core.pending().await.unwrap();
-    let batch_of = |id: &str| pending.iter().find(|p| p.id == id).unwrap().batch.clone();
-    assert_eq!(batch_of("b2").map(|b| (b.id, b.index, b.size)), Some(("batch-1".to_owned(), 1, 4)));
-    assert!(batch_of("lone").is_none());
+    let item = |id: &str| pending.iter().find(|p| p.id == id).unwrap().clone();
+    assert_eq!(item("b2").batch.map(|b| (b.id, b.index, b.size)), Some(("batch-1".to_owned(), 1, 4)));
+    assert!(item("lone").batch.is_none());
+    assert!(item("b1").quick && item("b2").quick && item("b4").quick);
+    assert!(!item("b3").quick, "a standing permission is never part of Approve all");
+    assert!(env.core.approve_quick("b3".to_owned()).await.is_err(), "and cannot be approved untouched");
 
-    // One denied on its own first; then "Approve all" approves what is left, except the permission.
+    // One denied on its own first; then "Approve all" approves the routine rest, one by one.
     env.core.deny("b4".to_owned()).await.unwrap();
-    assert_eq!(env.core.approve_batch("batch-1".to_owned()).await.unwrap(), 2);
+    for id in ["b1", "b2"] {
+        env.core.approve_quick(id.to_owned()).await.unwrap();
+    }
     let sent = answers(&env).await;
     let ids: Vec<&str> = sent.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids.len(), 3, "{ids:?}");
@@ -2470,13 +2476,6 @@ async fn a_batch_is_one_queue_of_separate_requests() {
     assert!(left.contains(&"b3".to_owned()) && left.contains(&"lone".to_owned()), "{left:?}");
     assert!(env.core.grants().await.unwrap().is_empty());
 
-    // "Deny all" answers the rest of the batch and leaves the lone call alone.
-    assert_eq!(env.core.deny_batch("batch-1".to_owned()).await.unwrap(), 1);
-    assert_eq!(answers(&env).await.len(), 4);
-    let left: Vec<String> = env.core.pending().await.unwrap().into_iter().map(|p| p.id).collect();
-    assert_eq!(left, ["lone"]);
-    assert_eq!(env.core.approve_batch("batch-1".to_owned()).await.unwrap(), 0, "nothing left");
-
     // Each call of the batch has its own audit entry.
-    assert!(env.core.activity(50).await.unwrap().len() >= 4);
+    assert!(env.core.activity(50).await.unwrap().len() >= 3);
 }
