@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,7 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
 import dev.reins.android.design.ServiceAvatar
 import dev.reins.android.design.pressable
+import dev.reins.android.platform.Browser
 import dev.reins.android.platform.GoogleAuthorizer
 import dev.reins.android.platform.PhoneBridge
 import dev.reins.android.state.AppState
@@ -62,8 +64,14 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val connected by state.connectedAccounts.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
+    val finishing by viewModel.finishing.collectAsStateWithLifecycle()
+    val notice by state.serviceNotice.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val openPage = remember(context) { { url: String -> Browser.open(context, url) } }
     LaunchedEffect(viewModel) { viewModel.refresh() }
+    // How a sign-in in the browser failed is shown while this page is open, and only once.
+    DisposableEffect(viewModel.service) { onDispose { if (state.serviceNotice.value?.service == viewModel.service) state.setServiceNotice(null) } }
 
     val service = services.firstOrNull { it.service == viewModel.service }
     if (service == null) {
@@ -86,6 +94,8 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
             return
         }
     }
+    // While the sign-in page's answer is with the core, the button waits too.
+    val working = busy || finishing == service.service
     Screen(title = service.name, onBack = onBack) {
         connected[service.service]?.let { identity ->
             dev.reins.android.ui.common.IntegrationCompletion("Account connected", identity,
@@ -106,13 +116,14 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
                     service = service,
                     account = account,
                     status = statuses[account.account],
-                    busy = busy,
+                    busy = working,
                     onReconnect = {
                         when (service.kind) {
                             "google" -> viewModel.accountChosen(account.account) { pending ->
                                 consent.launch(IntentSenderRequest.Builder(pending.intentSender).build())
                             }
                             "device" -> permissions.launch(PhoneBridge.permissionsOf(service.service).toTypedArray())
+                            "oauth" -> viewModel.oauthBegin(openPage)
                             else -> Unit
                         }
                     },
@@ -138,13 +149,17 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
             AddAccount(
                 service = service,
                 viewModel = viewModel,
-                busy = busy,
+                busy = working,
                 login = login,
                 onChooseGoogle = { chooser.launch(GoogleAuthorizer.chooseAccountIntent()) },
                 onAllowDevice = { permissions.launch(PhoneBridge.permissionsOf(service.service).toTypedArray()) },
+                onSignIn = { viewModel.oauthBegin(openPage) },
             )
         } else {
             Banner(service.note ?: "Not available in this build.", Modifier.padding(16.dp), BannerKind.Warning, tag = "unavailable")
+        }
+        notice?.takeIf { it.service == service.service && connected[service.service] == null }?.let {
+            Banner(untrusted(it.text), Modifier.padding(horizontal = 16.dp), BannerKind.Error, tag = "signInError")
         }
         error?.let { Banner(untrusted(it), Modifier.padding(horizontal = 16.dp), BannerKind.Error, tag = "accountError") }
         Spacer(Modifier.height(32.dp))
@@ -175,6 +190,7 @@ private fun intro(service: ServiceView): String = when (service.service) {
     "device_contacts" -> "Let your AIs look up the contacts on this phone."
     "sms" -> "Let your AIs read and send text messages from this phone."
     "vault" -> "Let your AIs ask for a login from your password vault, one field at a time."
+    "x" -> "Sign in to X so your AIs can read posts and, when you approve, post and send messages."
     else -> "Connect an account so your AIs can use it."
 }
 
@@ -193,6 +209,7 @@ private fun fineprint(service: ServiceView): String = when (service.service) {
     "sms" -> "Messages that look like login codes are hidden from lists and are never shared unless you tick them one by one."
     "vault" -> "Your master password is used once to unlock the vault key, which is then kept encrypted on this phone. The password itself is not kept."
     "device_calendar", "device_contacts" -> "Android asks you to allow this. You can take the permission back in the phone's settings at any time."
+    "x" -> "You sign in on X's own page. The access it gives is kept encrypted on this phone, and every post and message is shown to you first."
     else -> "Reins asks Google for access on this phone only. Nothing is stored on the server."
 }
 
@@ -204,6 +221,7 @@ private fun AddAccount(
     login: LoginStep,
     onChooseGoogle: () -> Unit,
     onAllowDevice: () -> Unit,
+    onSignIn: () -> Unit,
 ) {
     val c = LocalColors.current
     Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
@@ -223,6 +241,7 @@ private fun AddAccount(
                 SecretForm(placeholder = "Master password", button = "Unlock and connect", busy = busy) { viewModel.addSecret(it) }
             }
             "telegram" -> TelegramLogin(viewModel, busy, login)
+            "oauth" -> CapsuleButton("Sign in with ${service.name}", Modifier.fillMaxWidth().testTag("oauthSignIn"), enabled = !busy, busy = busy, onClick = onSignIn)
             else -> RText("This kind of integration cannot be added here.", RType.sans(14f), c.secondary)
         }
     }
@@ -399,7 +418,7 @@ private fun AccountRow(
                 GmailStatus.NeedsConsent -> ConsentLine(
                     needsAgain(service),
                     account.account,
-                    canAllow = service.kind == "google" || service.kind == "device",
+                    canAllow = service.kind == "google" || service.kind == "device" || service.kind == "oauth",
                     busy = busy,
                     onAllow = onReconnect,
                 )
@@ -424,7 +443,7 @@ internal fun needsAgain(service: ServiceView): String = needsAgain(service.kind)
 
 internal fun needsAgain(kind: String): String = when (kind) {
     "device" -> "Access turned off"
-    "telegram" -> "Signed out"
+    "telegram", "oauth" -> "Signed out"
     "vault" -> "Locked"
     else -> "Token expired"
 }

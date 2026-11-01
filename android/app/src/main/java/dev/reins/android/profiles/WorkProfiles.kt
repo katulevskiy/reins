@@ -134,6 +134,7 @@ object ProfilesProvider {
             null,
             dev.reins.android.BuildConfig.TELEGRAM_API_ID,
             dev.reins.android.BuildConfig.TELEGRAM_API_HASH,
+            dev.reins.android.BuildConfig.X_CLIENT_ID,
         )
     }
 }

@@ -54,6 +54,10 @@ android {
         val telegramHash = providers.gradleProperty("reins.telegramApiHash").getOrElse("")
         buildConfigField("int", "TELEGRAM_API_ID", telegramId)
         buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramHash\"")
+        // X's OAuth 2.0 client id (developer.x.com, a public client: no secret). Like Telegram's, it lives in
+        // ~/.gradle/gradle.properties; without it X shows as unavailable.
+        val xClientId = providers.gradleProperty("reins.xClientId").getOrElse("")
+        buildConfigField("String", "X_CLIENT_ID", "\"$xClientId\"")
     }
 
     // Where the app comes from. Both have the same application id: one is installed at a time, and as Google Play

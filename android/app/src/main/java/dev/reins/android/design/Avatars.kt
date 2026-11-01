@@ -273,6 +273,7 @@ fun serviceColor(service: String, colors: RColors): Color = when (service) {
     "gmail" -> Color(0xFFEA4335)
     "telegram" -> Color(0xFF26A5E4)
     "github" -> colors.text
+    "x" -> colors.text
     "gitlab" -> Color(0xFFFC6D26)
     "codeberg" -> Color(0xFF2185D0)
     "bitbucket" -> Color(0xFF0052CC)

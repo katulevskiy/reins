@@ -23,6 +23,7 @@ import dev.reins.android.platform.FirebaseSupport
 import dev.reins.android.platform.GoogleAuthorizer
 import dev.reins.android.platform.KeystoreKeyWrapper
 import dev.reins.android.platform.McpSignIn
+import dev.reins.android.platform.OAuthSignIn
 import dev.reins.android.platform.PhoneBridge
 import dev.reins.android.platform.SsoSignIn
 import dev.reins.android.platform.Foreground
@@ -191,6 +192,9 @@ class AppContainer(private val context: Context) {
     /** The MCP server sign-in that waits for its browser page to come back. */
     val mcpSignIn = McpSignIn(context, { core }, state)
 
+    /** The sign-in in the browser to a service the core signs in to itself (X), waiting for its page to come back. */
+    val oauthSignIn = OAuthSignIn(context, { core }, state)
+
     /** The sign-in through the server's SSO ("Continue") that waits for its browser page to come back. */
     val ssoSignIn = SsoSignIn(context)
 
@@ -208,6 +212,7 @@ class AppContainer(private val context: Context) {
             phone.takeIf { !profile.managed },
             BuildConfig.TELEGRAM_API_ID,
             BuildConfig.TELEGRAM_API_HASH,
+            BuildConfig.X_CLIENT_ID,
         ).also { it.setModelRuntime(modelRuntime) }
     }
 
@@ -820,6 +825,7 @@ class AppContainer(private val context: Context) {
             notifier.cancelOwn()
             dev.reins.android.push.PushRouting.forget(context, profile.id)
             mcpSignIn.clear()
+            oauthSignIn.clear()
         }
         state.setApprovalDevice(false)
         state.setDeviceReplaced(false)

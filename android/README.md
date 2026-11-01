@@ -55,7 +55,9 @@ Activity → Integrations lists every service. Telegram (own account: phone numb
 permissions) and the password vault (master password once) are each added from their own screen; see
 `docs/deployment.md` for what each needs. Telegram's credentials come from `reins.telegramApiId` /
 `reins.telegramApiHash` in `~/.gradle/gradle.properties`; release builds in CI take them from the `TELEGRAM_API_ID` /
-`TELEGRAM_API_HASH` repository secrets, and `google-services.json` from `GOOGLE_SERVICES_JSON`.
+`TELEGRAM_API_HASH` repository secrets, and `google-services.json` from `GOOGLE_SERVICES_JSON`. X signs in on X's own
+page (a Custom Tab that comes back to `com.reins2fa.app://x-oauth`); its OAuth client id comes from `reins.xClientId`,
+and without it X shows as unavailable.
 
 ### Onboarding, pairing codes and links
 

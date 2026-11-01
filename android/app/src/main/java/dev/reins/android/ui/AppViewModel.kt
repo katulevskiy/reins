@@ -12,7 +12,9 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.Foreground
 import dev.reins.android.platform.McpSignInResult
+import dev.reins.android.platform.OAuthSignInResult
 import dev.reins.android.state.McpNotice
+import dev.reins.android.state.ServiceNotice
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
 import dev.reins.android.ui.nav.DeepLink
@@ -245,6 +247,33 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             home()
             selectTab(Tab.Connections)
             open(Route.McpServer(id))
+        }
+    }
+
+    /** X's sign-in page came back to the app: add the account and show the service's page, with how it went. */
+    fun finishOAuthSignIn(redirect: String) {
+        viewModelScope.launch {
+            val epoch = container.state.accountEpoch.value
+            val result = container.oauthSignIn.finish(redirect)
+            if (!container.state.isCurrent(epoch)) return@launch
+            val service = when (result) {
+                OAuthSignInResult.Ignored -> return@launch
+                is OAuthSignInResult.Done -> {
+                    container.state.setServiceNotice(null)
+                    container.state.accountConnected(result.account, epoch)
+                    container.feedback.play(Event.Connected)
+                    launch { container.refreshPending() }
+                    result.account.service
+                }
+                is OAuthSignInResult.Failed -> {
+                    container.state.setServiceNotice(ServiceNotice(result.service, "Signing in did not work: ${result.message}"))
+                    container.feedback.play(Event.Error)
+                    result.service
+                }
+            }
+            home()
+            selectTab(Tab.Connections)
+            open(Route.Service(service))
         }
     }
 

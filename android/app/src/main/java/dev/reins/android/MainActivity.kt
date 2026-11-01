@@ -17,6 +17,8 @@ import dev.reins.android.platform.Foreground
 import dev.reins.android.platform.GrantReminders
 import dev.reins.android.platform.McpRedirectActivity
 import dev.reins.android.platform.SsoRedirectActivity
+import dev.reins.android.platform.XRedirectActivity
+import dev.reins.android.ui.services.isXRedirect
 import dev.reins.android.ui.mcp.isMcpRedirect
 import dev.reins.android.platform.AuthenticatorProvider
 import dev.reins.android.platform.PasskeyPromptProvider
@@ -233,6 +235,16 @@ class MainActivity : FragmentActivity() {
                 lifecycleScope.launch {
                     container.state.session.first { it !is SessionState.Loading }
                     app.finishMcpSignIn(redirect)
+                }
+            }
+            return
+        }
+        if (intent?.action == XRedirectActivity.ACTION_SIGNED_IN) {
+            val redirect = intent.dataString
+            if (redirect != null && isXRedirect(redirect)) {
+                lifecycleScope.launch {
+                    container.state.session.first { it !is SessionState.Loading }
+                    app.finishOAuthSignIn(redirect)
                 }
             }
             return

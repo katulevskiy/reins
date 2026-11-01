@@ -190,6 +190,14 @@ class AppState {
         _mcpNotice.value = notice
     }
 
+    /** How the last sign-in in the browser to a service (X) failed, shown on that service's page until it is left. */
+    private val _serviceNotice = MutableStateFlow<ServiceNotice?>(null)
+    val serviceNotice: StateFlow<ServiceNotice?> = _serviceNotice.asStateFlow()
+
+    fun setServiceNotice(notice: ServiceNotice?) {
+        _serviceNotice.value = notice
+    }
+
     /** Autopilot's modes, bypasses and model; null until first read. */
     private val _autopilot = MutableStateFlow<AutopilotSettings?>(null)
     val autopilot: StateFlow<AutopilotSettings?> = _autopilot.asStateFlow()
@@ -353,6 +361,7 @@ class AppState {
             _connectionsHidden.value = false
             setMcpServers(emptyList())
             _mcpNotice.value = null
+            _serviceNotice.value = null
             _approvalDevice.value = false
             _keysLocked.value = false
             _approvalTakeover.value = false
@@ -506,3 +515,5 @@ data class ActivitySearch(
 
 /** A sign-in to an MCP server finished: [text] says how, [failed] when it did not work. */
 data class McpNotice(val serverId: String, val text: String, val failed: Boolean)
+
+data class ServiceNotice(val service: String, val text: String)
