@@ -260,6 +260,77 @@ jobs:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['replay'] }}-replay
 
+  # The onboarding pages in a browser (playwright/tests/onboarding): the server binary, a phone simulated by the core
+  # (crates/reins-e2e/examples/playwright_phone.rs) and Firefox. Its own job, next to the server tests rather than after
+  # them: it builds only the two binaries (dependencies from the server tests' cache). No docker: the web-vault suite in
+  # playwright/tests is separate and does not run here.
+  onboarding:
+    name: Onboarding in the browser (Playwright)
+    needs: plan
+    if: fromJSON(needs.plan.outputs.suites)['onboarding']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-server-core
+          save-if: false
+      # The workspace's feature resolution, as the server tests build it, so the cached dependencies match.
+      - name: Build the server and the simulated phone
+        run: cargo build --locked --workspace --exclude reins-desktop-app --features sqlite --bin vaultwarden --example playwright_phone
+      - name: Install the test dependencies
+        id: playwright
+        working-directory: playwright
+        run: |
+          npm ci --no-audit --no-fund
+          echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-firefox-${{ steps.playwright.outputs.version }}
+      # The runner image already has most of Firefox's libraries: apt runs only when one is missing (as Playwright checks
+      # them, with ldd on the browser's files and its own directory on the library path).
+      - name: Install Firefox
+        working-directory: playwright
+        env:
+          CACHED: ${{ steps.browsers.outputs.cache-hit }}
+        run: |
+          if [ "$CACHED" != "true" ]; then
+            npx playwright install firefox
+          fi
+          browser=$(find ~/.cache/ms-playwright -type f -name libxul.so -printf '%h:')
+          missing=$(LD_LIBRARY_PATH="$browser" find ~/.cache/ms-playwright -type f \( -name '*.so' -o -name firefox \) \
+            -exec ldd {} + 2>/dev/null | grep 'not found' | sort -u || true)
+          if [ -n "$missing" ]; then
+            echo "$missing"
+            npx playwright install-deps firefox
+          fi
+      - name: Onboarding tests
+        working-directory: playwright
+        env:
+          REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
+          REINS_PHONE_DRIVER: ${{ github.workspace }}/target/debug/examples/playwright_phone
+        run: npx playwright test -c onboarding.config.ts
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: onboarding-playwright-report
+          path: |
+            playwright/playwright-report/
+            playwright/test-results/
+      - name: Record the pass (CI skips this job while its inputs stay the same)
+        if: fromJSON(needs.plan.outputs.keys)['onboarding']
+        uses: actions/cache/save@v5
+        with:
+          path: rust-toolchain.toml
+          key: ${{ fromJSON(needs.plan.outputs.keys)['onboarding'] }}-onboarding
+
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)
     needs: plan
@@ -792,7 +863,7 @@ jobs:
   # plan did not select, or that already passed on the same inputs, is skipped and counts as passed.
   result:
     name: CI result
-    needs: [plan, admit, checks, rust, rust-clippy, replay, desktop-linux, linux-packages, desktop-macos, desktop-windows, android-native, android-release-smoke, android, ios]
+    needs: [plan, admit, checks, rust, rust-clippy, replay, onboarding, desktop-linux, linux-packages, desktop-macos, desktop-windows, android-native, android-release-smoke, android, ios]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
