@@ -72,14 +72,7 @@ pub struct GitHub {
 
 /// `owner/name` with only the characters GitHub allows.
 pub(super) fn repo_ok(repo: &str) -> bool {
-    let mut parts = repo.split('/');
-    let valid = |s: &str| {
-        !s.is_empty()
-            && s.len() <= 100
-            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-    };
-    matches!((parts.next(), parts.next(), parts.next()), (Some(o), Some(n), None) if valid(o) && valid(n))
-        && !repo.contains("..")
+    reins_proto::permission::exact_repo(repo)
 }
 
 pub(super) fn repo_arg(call: &ConnectorCall) -> Result<String, CoreError> {

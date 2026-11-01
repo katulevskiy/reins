@@ -47,7 +47,7 @@ pub fn service_of(server_id: &str) -> String {
 /// The service id its permissions name. Permissions name integrations as `[a-z0-9_]{1,32}`, so `mcp:my-srv` becomes
 /// `mcp_my_srv` (one-to-one: server ids have no `_`).
 pub fn grant_service(server_id: &str) -> String {
-    format!("mcp_{}", server_id.replace('-', "_"))
+    reins_proto::permission::mcp_grant_service(server_id)
 }
 
 /// An MCP or OAuth endpoint the phone may talk to: https, or http on a local host; no credentials, no fragment.

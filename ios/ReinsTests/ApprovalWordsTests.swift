@@ -58,6 +58,11 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(sentence(push([ref("v1.2", kind: "tag", change: "create", commitCount: 0)])), "Wants to **push tag v1.2**\nto **octo/app**")
         XCTAssertEqual(sentence(push([ref("old", change: "delete", commitCount: 0)])), "Wants to **delete branch old**\nfrom **octo/app**")
         XCTAssertEqual(sentence(T.grantView()), "Wants to **read emails**\n**without asking**")
+        // A write permission names its one tool and its one thing, never emails.
+        XCTAssertEqual(sentence(T.writeGrantView()), "Wants to **edit a GitHub comment**\nin **octo/app** without asking")
+        XCTAssertEqual(
+            sentence(T.writeGrantView(tool: "create_issue", resource: "", service: "mcp_linear")),
+            "Wants to use **create_issue**\n**without asking**")
     }
 
     private func storeView() -> ApprovalView {

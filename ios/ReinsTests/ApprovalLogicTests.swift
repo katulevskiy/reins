@@ -42,6 +42,15 @@ final class ApprovalLogicTests: XCTestCase {
         ), action: "grant")
     }
 
+    /// A standing write permission asked for over MCP: one tool on one thing (`resource` empty for an MCP tool).
+    static func writeGrantView(tool: String = "Edit a GitHub comment", resource: String = "octo/app", service: String = "github") -> ApprovalView {
+        view("req4", kind: .grant, service: service, account: service == "github" ? "octo" : "linear", grant: GrantRequestView(
+            action: "write", summary: "\(tool) on \(resource) for 1 day", reason: "Fix typos", durationSecs: 86_400, maxUses: nil,
+            breadth: "narrow", lines: ["Tool: \(tool)", "Only on \(resource)", "Every other tool and every other thing still asks you"],
+            tool: tool, resource: resource
+        ), action: "grant")
+    }
+
     static func fetchView() -> ApprovalView {
         view("req7", kind: .fetch, messages: [
             MessageView(id: "100:2", from: "Anna", subject: "", date: 1_700_000_050, snippet: "Dinner at eight?", coveredByGrant: false, sensitive: false),

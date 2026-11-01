@@ -5,6 +5,7 @@ use std::{convert::Infallible, io::Cursor, time::Duration};
 
 use reins_proto::ticket::{TicketState, request_of, ticket_of};
 use reins_proto::{
+    batch::BatchRef,
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
     pairing::{PushKind, PushMessage},
@@ -288,21 +289,9 @@ pub fn enter_waiting(connection: &ReinsConnection) -> Result<Admitted<String>, D
 
 /// Queues a validated call for the user's approval device and wakes it with a push. Shared with the desktop API so
 /// both relay exactly the same way, under the same per-account rate. `via`: the sanitized `X-Reins-Via`, appended
-/// to the label.
-pub async fn submit_to_phone(
-    connection: &ReinsConnection,
-    via: Option<&str>,
-    call: ToolCall,
-    account: Option<String>,
-    conn: &DbConn,
-    pool: &DbPool,
-) -> Result<RequestId, SubmitError> {
-    submit_to_phone_waiting(connection, via, call, account, conn, pool, None).await
-}
-
-/// Like [`submit_to_phone`] for a caller that keeps asking for up to `waits` (the desktop app); the phone shows that
-/// deadline. When nothing can wake the phone (no push, its app not open) or the push fails, the first wait says so
-/// at once instead of after the offline threshold.
+/// to the label. `waits`: how long a caller that keeps asking (the desktop app) waits; the phone shows that deadline.
+/// When nothing can wake the phone (no push, its app not open) or the push fails, the first wait says so at once
+/// instead of after the offline threshold.
 pub async fn submit_to_phone_waiting(
     connection: &ReinsConnection,
     via: Option<&str>,
@@ -312,23 +301,39 @@ pub async fn submit_to_phone_waiting(
     pool: &DbPool,
     waits: Option<Duration>,
 ) -> Result<RequestId, SubmitError> {
+    submit_to_phone_in(connection, via, call, account, conn, pool, Submit::Waiting(waits)).await
+}
+
+/// How a call is queued: alone (waited on for up to the given time) or as one call of a `reins_batch`.
+enum Submit {
+    Waiting(Option<Duration>),
+    Batch(BatchRef),
+}
+
+async fn submit_to_phone_in(
+    connection: &ReinsConnection,
+    via: Option<&str>,
+    call: ToolCall,
+    account: Option<String>,
+    conn: &DbConn,
+    pool: &DbPool,
+    how: Submit,
+) -> Result<RequestId, SubmitError> {
     let user = connection.user_uuid.to_string();
     limits::ACCOUNT_CALLS.check(&user).map_err(SubmitError::RateLimited)?;
-    let request = HUB
-        .relay
-        .submit_waiting(
-            &user,
-            &ConnectionId(connection.uuid.clone()),
-            &label_with_via(&connection.label, via),
-            call,
-            account,
-            now_unix(),
-            waits,
-        )
-        .map_err(|full| match full {
-            QueueFull::Server => SubmitError::Busy,
-            QueueFull::Account => SubmitError::Queued,
-        })?;
+    let (connection_id, label) = (ConnectionId(connection.uuid.clone()), label_with_via(&connection.label, via));
+    let request = match how {
+        Submit::Waiting(waits) => {
+            HUB.relay.submit_waiting(&user, &connection_id, &label, call, account, now_unix(), waits)
+        }
+        Submit::Batch(batch) => {
+            HUB.relay.submit_in_batch(&user, &connection_id, &label, call, account, now_unix(), batch)
+        }
+    }
+    .map_err(|full| match full {
+        QueueFull::Server => SubmitError::Busy,
+        QueueFull::Account => SubmitError::Queued,
+    })?;
     let pushing = match ReinsDevice::find_by_user(&connection.user_uuid, conn).await {
         Some(device) => {
             let (id, user) = (request.id.clone(), user.clone());
@@ -397,7 +402,6 @@ async fn run_tool(
         }
         Err(ToolArgError::Invalid(message)) => return ok(tools::failure(&message)),
     };
-    let connection_id = ConnectionId(connection.uuid.clone());
     let _waiting = match enter_waiting(&connection) {
         Ok(place) => place,
         Err(wait) => return ok(tools::failure(&rate_limited_text(CONNECTION_WAITING_LIMITED, wait))),
@@ -413,67 +417,217 @@ async fn run_tool(
         ToolInvocation::Reply(request_id, text) => {
             return ok(reply(&request_id, &text, &connection, &conn, pool.inner()).await);
         }
+        ToolInvocation::Batch(calls) => {
+            let how = Relay {
+                connection: &connection,
+                via: via.as_deref(),
+                defer,
+            };
+            return ok(run_batch(calls, &how, conn, pool.inner()).await);
+        }
         ToolInvocation::Relay(call, account) => {
-            let summary = super::tickets::summary_of(&call);
-            if let Some(open) = super::tickets::open_for(&connection.uuid, account.as_deref(), &call, &conn).await {
-                return ok(tools::success(&super::tickets::pending_review(&open, Some(&summary))));
-            }
-            match submit_to_phone(&connection, via.as_deref(), call, account, &conn, pool.inner()).await {
-                Ok(request_id) => (request_id, true, Some(summary)),
-                Err(SubmitError::Busy) => {
-                    return ok(tools::failure("Reins is busy right now. Try again in a minute."));
-                }
-                Err(SubmitError::Queued) => return ok(tools::failure(QUEUED_TEXT)),
-                Err(SubmitError::RateLimited(wait)) => {
-                    return ok(tools::failure(&rate_limited_text(ACCOUNT_CALLS_LIMITED, wait)));
-                }
+            let how = Relay {
+                connection: &connection,
+                via: via.as_deref(),
+                defer,
+            };
+            match queue_call(&how, call, account, None, &conn, pool.inner()).await {
+                Queued::Answer(answer) => return ok(answer),
+                Queued::Waiting {
+                    request_id,
+                    summary,
+                } => (request_id, true, Some(summary)),
             }
         }
     };
+    // Never hold a pooled DB connection while waiting for the phone.
+    drop(conn);
+    ok(answer_after_wait(&request_id, first, summary.as_deref(), &connection, pool.inner()).await)
+}
+
+/// Who relays a call and how: the connection, its `X-Reins-Via`, and whether the client asked for a ticket at once.
+struct Relay<'a> {
+    connection: &'a ReinsConnection,
+    via: Option<&'a str>,
+    defer: bool,
+}
+
+/// A call after [`queue_call`]: answered already, or waiting for the phone.
+enum Queued {
+    Answer(Value),
+    Waiting {
+        request_id: RequestId,
+        summary: String,
+    },
+}
+
+/// Queues one call as every call is, alone or in a batch: an open ticket for the same call is that ticket (never a
+/// second card); else it goes to the phone (as call `batch` of a `reins_batch`), and becomes a ticket at once when the
+/// client asked to defer.
+async fn queue_call(
+    how: &Relay<'_>,
+    call: ToolCall,
+    account: Option<String>,
+    batch: Option<BatchRef>,
+    conn: &DbConn,
+    pool: &DbPool,
+) -> Queued {
+    let connection = how.connection;
+    let summary = super::tickets::summary_of(&call);
+    if let Some(open) = super::tickets::open_for(&connection.uuid, account.as_deref(), &call, conn).await {
+        return Queued::Answer(tools::success(&super::tickets::pending_review(&open, Some(&summary))));
+    }
+    let submit = match batch {
+        None => Submit::Waiting(None),
+        Some(batch) => Submit::Batch(batch),
+    };
+    let request_id = match submit_to_phone_in(connection, how.via, call, account, conn, pool, submit).await {
+        Ok(request_id) => request_id,
+        Err(e) => return Queued::Answer(submit_failure(&e)),
+    };
     let user = connection.user_uuid.to_string();
-    if defer
-        && first
+    if how.defer
         && let Some(relayed) = HUB.relay.unanswered(&user, &request_id)
     {
-        match super::tickets::park(&user, &relayed, TicketState::Deferred, None, &conn, pool.inner()).await {
-            Ok(row) => return ok(tools::success(&super::tickets::pending_review(&row, summary.as_deref()))),
-            Err(super::tickets::ParkError::TooMany) => return ok(tools::failure(TOO_MANY_TICKETS)),
+        match super::tickets::park(&user, &relayed, TicketState::Deferred, None, conn, pool).await {
+            Ok(row) => return Queued::Answer(tools::success(&super::tickets::pending_review(&row, Some(&summary)))),
+            Err(super::tickets::ParkError::TooMany) => return Queued::Answer(tools::failure(TOO_MANY_TICKETS)),
             // No key to seal it to: it waits as an Instant request.
             Err(_) => {}
         }
     }
-    // Never hold a pooled DB connection while waiting for the phone.
-    drop(conn);
+    Queued::Waiting {
+        request_id,
+        summary,
+    }
+}
+
+/// The answer to a relayed call once the phone has decided, or how it still waits: a ticket when it was deferred
+/// meanwhile. `first`: the call was just queued (else it is `reins_get_result` on an earlier one).
+async fn answer_after_wait(
+    request_id: &RequestId,
+    first: bool,
+    summary: Option<&str>,
+    connection: &ReinsConnection,
+    pool: &DbPool,
+) -> Value {
+    let connection_id = ConnectionId(connection.uuid.clone());
     let waited = if first {
-        HUB.relay.wait_first(&request_id, &connection_id).await
+        HUB.relay.wait_first(request_id, &connection_id).await
     } else {
-        HUB.relay.wait(&request_id, &connection_id).await
+        HUB.relay.wait(request_id, &connection_id).await
     };
     match waited {
         WaitResult::Deferred(ref ticket) => {
             let Ok(conn) = pool.get().await else {
-                return ok(tools::render_wait(&waited, &request_id, PhoneSeen::Never));
+                return tools::render_wait(&waited, request_id, PhoneSeen::Never);
             };
             // A duplicate shares the ticket of the first call.
             let parked = request_of(ticket).unwrap_or_else(|| request_id.clone());
             match ReinsTicket::find_for_connection(&parked.0, &connection.uuid, &conn).await {
-                Some(row) => ok(tools::success(&super::tickets::pending_review(&row, summary.as_deref()))),
-                None => ok(tools::render_wait(&waited, &request_id, PhoneSeen::Never)),
+                Some(row) => tools::success(&super::tickets::pending_review(&row, summary)),
+                None => tools::render_wait(&waited, request_id, PhoneSeen::Never),
             }
         }
         // Not in the relay: a ticket by now (or never one of this connection's).
         WaitResult::NotFound if !first => {
-            ok(wait_ticket(&request_id, &connection, Duration::from_secs(CONFIG.reins_relay_wait_secs()), pool).await)
+            wait_ticket(request_id, connection, Duration::from_secs(CONFIG.reins_relay_wait_secs()), pool).await
         }
         _ => {
-            let seen = HUB.presence.status(&user, now_unix());
-            ok(tools::render_wait(&waited, &request_id, seen))
+            tools::render_wait(&waited, request_id, HUB.presence.status(&connection.user_uuid.to_string(), now_unix()))
         }
     }
 }
 
+/// What the AI is told when a call could not be queued.
+fn submit_failure(e: &SubmitError) -> Value {
+    match e {
+        SubmitError::Busy => tools::failure("Reins is busy right now. Try again in a minute."),
+        SubmitError::Queued => tools::failure(QUEUED_TEXT),
+        SubmitError::RateLimited(wait) => tools::failure(&rate_limited_text(ACCOUNT_CALLS_LIMITED, *wait)),
+    }
+}
+
+/// A place for one more call of a batch: each call counts against the connection's request rate and against its calls
+/// waiting for the phone, exactly as if it had been made alone (the first rides on the batch's own `tools/call`).
+fn admit_batch_call(connection: &ReinsConnection) -> Result<Admitted<String>, Value> {
+    check_connection_rate(connection)
+        .map_err(|wait| tools::failure(&rate_limited_text(CONNECTION_REQUESTS_LIMITED, wait)))?;
+    enter_waiting(connection).map_err(|wait| tools::failure(&rate_limited_text(CONNECTION_WAITING_LIMITED, wait)))
+}
+
+/// One call of a batch: its answer once the phone has decided (or how it still waits), or what it was told at once.
+async fn batch_answer(outcome: &Queued, connection: &ReinsConnection, pool: &DbPool) -> Value {
+    match outcome {
+        Queued::Answer(answer) => answer.clone(),
+        Queued::Waiting {
+            request_id,
+            summary,
+        } => answer_after_wait(request_id, true, Some(summary), connection, pool).await,
+    }
+}
+
+/// `reins_batch`: every valid call goes as it would alone ([`queue_call`]: an open ticket is shared, `defer` makes
+/// tickets, each counts against the connection's limits) under one batch id, so the phone shows them as one queue,
+/// each approved or denied on its own and audited on its own. Waits for all of them together and answers with one
+/// result per call, in order. A refused call fails alone.
+async fn run_batch(calls: Vec<tools::BatchCall>, how: &Relay<'_>, conn: DbConn, pool: &DbPool) -> Value {
+    let batch_id = crate::util::get_uuid();
+    let size = u32::try_from(calls.len()).unwrap_or(u32::MAX);
+    let mut queued = Vec::with_capacity(calls.len());
+    // The places held for the batch's calls while they wait (the batch's own covers its first call).
+    let mut places = Vec::new();
+    let mut relayed = 0usize;
+    for (index, item) in (0u32..).zip(calls) {
+        let outcome = match item.call {
+            Err(why) => Queued::Answer(tools::failure(&why)),
+            Ok((call, account)) => {
+                let admitted = if relayed == 0 {
+                    Ok(None)
+                } else {
+                    admit_batch_call(how.connection).map(Some)
+                };
+                match admitted {
+                    Err(limited) => Queued::Answer(limited),
+                    Ok(place) => {
+                        relayed += 1;
+                        places.extend(place);
+                        let batch = BatchRef {
+                            id: batch_id.clone(),
+                            index,
+                            size,
+                        };
+                        queue_call(how, call, account, Some(batch), &conn, pool).await
+                    }
+                }
+            }
+        };
+        queued.push((item.name, outcome));
+    }
+    // Never hold a pooled DB connection while waiting for the phone.
+    drop(conn);
+    let results =
+        futures::future::join_all(queued.iter().map(|(_, outcome)| batch_answer(outcome, how.connection, pool))).await;
+    drop(places);
+    let items = queued
+        .into_iter()
+        .zip(results)
+        .map(|((name, outcome), result)| {
+            let request_id = match outcome {
+                Queued::Waiting {
+                    request_id,
+                    ..
+                } => Some(request_id),
+                Queued::Answer(_) => None,
+            };
+            (name, request_id, result)
+        })
+        .collect();
+    tools::render_batch(&batch_id, items)
+}
+
 /// `reins_get_result` / `reins_wait` on a ticket: waits up to `max`, collecting an approved read.
-async fn wait_ticket(id: &RequestId, connection: &ReinsConnection, max: Duration, pool: &State<DbPool>) -> Value {
+async fn wait_ticket(id: &RequestId, connection: &ReinsConnection, max: Duration, pool: &DbPool) -> Value {
     // Still Instant: the relay's own wait first.
     let connection_id = ConnectionId(connection.uuid.clone());
     if !matches!(HUB.relay.peek(id, &connection_id), WaitResult::NotFound | WaitResult::Deferred(_)) {
@@ -483,7 +637,7 @@ async fn wait_ticket(id: &RequestId, connection: &ReinsConnection, max: Duration
             return tools::render_wait(&waited, id, seen);
         }
     }
-    match super::tickets::agent_wait(&id.0, &connection.uuid, max, true, pool.inner()).await {
+    match super::tickets::agent_wait(&id.0, &connection.uuid, max, true, pool).await {
         Some(view) => tools::render_ticket(&view),
         None => tools::render_wait(&WaitResult::NotFound, id, PhoneSeen::Never),
     }

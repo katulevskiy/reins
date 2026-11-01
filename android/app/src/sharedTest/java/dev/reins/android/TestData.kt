@@ -89,11 +89,13 @@ object TestData {
         taskProposal: dev.reins.core.TaskView? = null,
         circle: dev.reins.core.CircleProgress? = null,
         parked: Boolean = parkedUntil != null,
+        batch: dev.reins.core.PendingBatch? = null,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
         service, account, ticket?.deadline ?: waitUntil, op, opTitle, suggestion, headline, quick,
         ticket = ticket, canDefer = canDefer, parkedUntil = parkedUntil, taskId = taskId, taskTitle = taskTitle,
         batchable = batchable, taskProposal = taskProposal, circle = circle, parked = parked,
+        batch = batch,
     )
 
     /** A task (or a proposal's envelope): one agent's, for [length] seconds from [startedAt]. */
@@ -568,6 +570,19 @@ object TestData {
         null,
         null,
     )
+
+    /** A standing write permission asked for over MCP: one tool ([tool]) on one thing ([resource]; empty for an MCP tool). */
+    fun writeGrantView(tool: String = "Edit a GitHub comment", resource: String = "octo/app", service: String = "github") =
+        grantView().copy(
+            service = service,
+            account = if (service == "github") "octo" else "linear",
+            grant = GrantRequestView(
+                action = "write", summary = "$tool on $resource for 1 day", reason = "Fix typos",
+                durationSecs = 86_400u, maxUses = null, breadth = "narrow",
+                lines = listOf("Tool: $tool", "Only on $resource", "Every other tool and every other thing still asks you"),
+                tool = tool, resource = resource,
+            ),
+        )
 
     fun defaultScope(action: String, allMail: Boolean = false) = dev.reins.core.GrantScopeChoice(
         allMail = allMail,

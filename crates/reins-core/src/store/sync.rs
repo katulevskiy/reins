@@ -969,6 +969,7 @@ mod tests {
                 wait_until: None,
                 account: None,
                 call: call.clone(),
+                batch: None,
             },
             messages: Vec::new(),
             covered: BTreeMap::new(),

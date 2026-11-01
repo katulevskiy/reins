@@ -320,3 +320,158 @@ async fn reading_can_be_allowed_for_a_branch_and_asks_again_for_another() {
     let other = request("r3", "file_get", &json!({"repo": "me/app", "path": "README.md", "ref": "dev"}));
     assert!(other["call"]["args"]["ref"].is_string());
 }
+
+/// A `reins_request_access` with `action: "write"`: one tool on one repository.
+fn write_ask(id: &str, account: Option<&str>, op: &str, resource: &str) -> Value {
+    let mut request = json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "Helper", "created_at": 100,
+        "call": {"tool": "request_grant", "grant": {"action": "write", "duration_secs": 86_400, "reason": "Triage",
+            "service": "github", "op": op, "resource": resource, "tool": format!("github_{op}")}}});
+    if let Some(account) = account {
+        request["account"] = json!(account);
+    }
+    request
+}
+
+/// Error messages the phone answered, by request id.
+async fn errors(env: &Env) -> Vec<(String, String)> {
+    env.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/response"))
+        .filter_map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).ok()?;
+            let message = body["message"].as_str()?.to_owned();
+            Some((r.url.path().split('/').nth_back(1)?.to_owned(), message))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_asked_write_permission_is_bound_to_its_account_and_covers_one_tool_on_one_repository() {
+    let env = env().await;
+    serve(&env, &[write_ask("g1", None, "issue_update", "me/app")]).await;
+    env.core.sync(0).await.unwrap();
+    let view = env.core.approval_view("g1".to_owned()).await.unwrap();
+    assert_eq!(view.kind, ApprovalKind::Grant);
+    assert_eq!(view.account.as_deref(), Some("octo"), "the only GitHub account, resolved before the user is asked");
+    let grant = view.grant.expect("the permission asked for");
+    assert_eq!(grant.action, "write");
+    assert!(grant.lines.iter().any(|l| l == "Only on me/app"), "{:?}", grant.lines);
+    env.core.approve("g1".to_owned(), choice(None)).await.unwrap();
+    let grants = env.core.grants().await.unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!((grants[0].service.as_str(), grants[0].account.as_deref()), ("github", Some("octo")));
+
+    // Covered: the one tool on the one repository of that account. Everything else asks.
+    env.core.engine().register_account("github", "octo-work").unwrap();
+    let as_account = |mut request: Value, account: &str| {
+        request["account"] = json!(account);
+        request
+    };
+    let other_repo = request("r2", "issue_update", &json!({"repo": "me/other", "number": 3, "state": "closed"}));
+    serve(
+        &env,
+        &[
+            as_account(issue("r1"), "octo"),
+            as_account(other_repo, "octo"),
+            as_account(issue("r3"), "octo-work"),
+            as_account(put("r4", "dev"), "octo"),
+        ],
+    )
+    .await;
+    let waiting = env.core.sync(0).await.unwrap();
+    let ids: Vec<_> = waiting.iter().map(|p| p.id.as_str()).collect();
+    assert!(!ids.contains(&"r1"), "{ids:?}");
+    assert!(ids.contains(&"r2") && ids.contains(&"r3") && ids.contains(&"r4"), "{ids:?}");
+    assert_eq!(*env.github.done.lock().unwrap(), ["issue_update:"]);
+}
+
+#[tokio::test]
+async fn a_write_permission_names_one_connected_account_and_one_repository_exactly() {
+    let env = env().await;
+    env.core.engine().register_account("github", "octo-work").unwrap();
+    serve(
+        &env,
+        &[
+            // Two accounts and none named: which one is never guessed (and never all of them).
+            write_ask("g1", None, "issue_update", "me/app"),
+            write_ask("g2", Some("nobody"), "issue_update", "me/app"),
+            // Named as connected, in any case.
+            write_ask("g3", Some("OCTO-WORK"), "issue_update", "me/app"),
+            // A whole owner would cover every repository of it.
+            write_ask("g4", Some("octo"), "issue_update", "me"),
+        ],
+    )
+    .await;
+    let waiting = env.core.sync(0).await.unwrap();
+    let ids: Vec<_> = waiting.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, ["g3"], "{ids:?}");
+    assert_eq!(env.core.approval_view("g3".to_owned()).await.unwrap().account.as_deref(), Some("octo-work"));
+    let errors = errors(&env).await;
+    let error = |id: &str| errors.iter().find(|(i, _)| i == id).map(|(_, m)| m.clone()).unwrap_or_default();
+    assert!(error("g1").contains("Several GitHub accounts"), "{errors:?}");
+    assert!(error("g2").contains("not connected"), "{errors:?}");
+    assert!(!error("g4").is_empty(), "{errors:?}");
+    env.core.approve("g3".to_owned(), choice(None)).await.unwrap();
+    let grants = env.core.grants().await.unwrap();
+    assert_eq!(grants[0].account.as_deref(), Some("octo-work"));
+}
+
+/// A write permission asked for over MCP for committing files never covers a commit to the default branch, a protected
+/// one, or anything under `.github/` (what CI runs): those ask as usual. A branch of the repository is covered.
+#[tokio::test]
+async fn an_asked_commit_permission_never_covers_the_default_branch_or_github_folder() {
+    let env = env().await;
+    serve(&env, &[write_ask("g1", None, "file_put", "me/app"), write_ask("g2", None, "commit_files", "me/app")]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("g1".to_owned(), choice(None)).await.unwrap();
+    env.core.approve("g2".to_owned(), choice(None)).await.unwrap();
+    let put_to = |id: &str, branch: Option<&str>, path: &str| {
+        let mut args = json!({"repo": "me/app", "path": path, "content": "x", "message": "m"});
+        if let Some(branch) = branch {
+            args["branch"] = json!(branch);
+        }
+        request(id, "file_put", &args)
+    };
+    let commit = |id: &str, paths: &[&str]| {
+        let files: Vec<Value> = paths.iter().map(|p| json!({"path": p, "content": "x"})).collect();
+        request(id, "commit_files", &json!({"repo": "me/app", "message": "m", "branch": "feature/x", "files": files}))
+    };
+    serve(
+        &env,
+        &[
+            put_to("r1", Some("feature/x"), "src/a.rs"),
+            put_to("r2", Some("main"), "src/a.rs"),
+            put_to("r10", Some("dev"), "src/a.rs"),
+            put_to("r3", None, "src/a.rs"),
+            put_to("r4", Some("release/1.0"), "src/a.rs"),
+            put_to("r5", Some("feature/x"), ".github/workflows/ci.yml"),
+            put_to("r6", Some("feature/x"), "./.GitHub//workflows/x.yml"),
+            put_to("r7", Some("feature/x"), "src/../.github/actions/a/action.yml"),
+            commit("r8", &["src/a.rs", "README.md"]),
+            commit("r9", &["src/a.rs", ".github/workflows/ci.yml"]),
+        ],
+    )
+    .await;
+    let waiting = env.core.sync(0).await.unwrap();
+    let mut ids: Vec<_> = waiting.iter().map(|p| p.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["r10", "r2", "r3", "r4", "r5", "r6", "r7", "r9"], "only r1 and r8 went through: {ids:?}");
+    assert_eq!(*env.github.done.lock().unwrap(), ["file_put:feature/x", "commit_files:feature/x"]);
+}
+
+/// Merging, deleting, running workflows, variables and the repository itself are never covered by an asked
+/// permission: the phone refuses to keep one.
+#[tokio::test]
+async fn an_asked_permission_for_a_merge_or_a_delete_is_refused() {
+    let env = env().await;
+    let ops = ["pr_merge", "branch_merge", "branch_delete", "workflow_dispatch", "variable_update", "repo_update"];
+    let asks: Vec<Value> =
+        ops.iter().enumerate().map(|(i, op)| write_ask(&format!("g{i}"), None, op, "me/app")).collect();
+    serve(&env, &asks).await;
+    let waiting = env.core.sync(0).await.unwrap();
+    assert!(waiting.is_empty(), "{:?}", waiting.iter().map(|p| &p.id).collect::<Vec<_>>());
+    assert!(env.core.grants().await.unwrap().is_empty());
+}

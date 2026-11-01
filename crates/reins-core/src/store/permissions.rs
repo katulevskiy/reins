@@ -239,7 +239,10 @@ fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Resu
         .query_map([&action.actor.connection_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
     for (raw, origin) in rows {
-        if origin == BUDGET_ORIGIN || !crate::autopilot::store::origin_in_force(conn, &origin, now)? {
+        if origin == BUDGET_ORIGIN
+            || !crate::autopilot::store::origin_in_force(conn, &origin, now)?
+            || crate::autopilot::store::lockdown_suspends(conn, &origin, &action.actor.connection_id)?
+        {
             continue;
         }
         let grant: Grant =

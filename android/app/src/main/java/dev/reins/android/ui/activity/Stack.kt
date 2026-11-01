@@ -91,7 +91,7 @@ import kotlinx.coroutines.launch
 /** What a card is about, for the stack: one request, or a burst of one AI. */
 private val WaitCard.key: String get() = when (this) {
     is WaitCard.One -> "p:${item.id}"
-    is WaitCard.Group -> "g:${burst.connectionId}"
+    is WaitCard.Group -> "g:${burst.key}"
 }
 
 private val WaitCard.first: PendingItem get() = when (this) {

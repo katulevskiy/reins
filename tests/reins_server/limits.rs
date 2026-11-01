@@ -116,6 +116,54 @@ async fn calls_waiting_for_the_phone_are_bounded_per_connection() {
     assert!(tool_error(&mcp(&server, &a.access, &search(3)).await.2).contains("offline"));
 }
 
+/// A `reins_batch` of `n` searches of their own.
+fn batch(id: u64, n: u64) -> Value {
+    let calls: Vec<Value> = (0..n)
+        .map(|i| json!({"name": "gmail_search", "arguments": {"query": format!("from:bank {id}-{i}")}}))
+        .collect();
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": {"name": "reins_batch", "arguments": {"calls": calls}}})
+}
+
+/// The text of each call's result in a batch's answer.
+fn batch_texts(body: &Value) -> Vec<String> {
+    body["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no items: {body}"))
+        .iter()
+        .map(|item| item["result"]["content"][0]["text"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn each_call_of_a_batch_counts_against_the_connection_limits() {
+    // Waiting calls: the batch's own place covers its first call; each further call needs one of its own.
+    let options = with_env(&[("REINS_CONNECTION_MAX_WAITING", "2")]);
+    let (server, phone, a) = connected(options, "batchwait@example.com").await;
+    let (status, _, body) = mcp(&server, &a.access, &batch(1, 3)).await;
+    assert_eq!(status, StatusCode::OK);
+    let texts = batch_texts(&body);
+    assert!(texts[0].contains("offline") && texts[1].contains("offline"), "{texts:?}");
+    assert!(
+        texts[2].starts_with("Rate limited: too many calls of this connection are waiting for the phone"),
+        "{texts:?}"
+    );
+    let (_, pending) = phone.get("/pending?wait=0").await;
+    assert_eq!(pending["requests"].as_array().map(Vec::len), Some(2), "the limited call never reached the phone");
+
+    // Requests: each call of a batch is a request of the connection, as it would be alone.
+    let options = with_env(&[("REINS_CONNECTION_REQUESTS_PER_MINUTE", "2")]);
+    let (server, _phone, b) = connected(options, "batchrate@example.com").await;
+    let (_, _, body) = mcp(&server, &b.access, &batch(2, 3)).await;
+    let texts = batch_texts(&body);
+    assert!(texts[0].contains("offline") && texts[1].contains("offline"), "{texts:?}");
+    assert!(texts[2].starts_with("Rate limited: too many requests on this connection"), "{texts:?}");
+    assert_retry_hint(&texts[2]);
+    let (_, _, body) = mcp(&server, &b.access, &search(3)).await;
+    let text = tool_error(&body);
+    assert!(text.starts_with("Rate limited: too many requests on this connection"), "the batch used them up: {text}");
+}
+
 #[tokio::test]
 async fn an_account_queues_a_bounded_number_of_unanswered_calls() {
     let options = with_env(&[("REINS_ACCOUNT_MAX_QUEUED", "1")]);

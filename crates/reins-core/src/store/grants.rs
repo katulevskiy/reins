@@ -44,8 +44,19 @@ fn parse_row(id: &str, connection_id: &str, json: &str) -> Option<Grant> {
 
 /// The grants of `connection` that may be used now. Every evaluation reads them here, so this is where a grant a
 /// bypass gave stops counting the moment its bypass is no longer in force (read in the caller's transaction), whether
-/// or not taking it back has happened yet: it fails closed.
+/// or not taking it back has happened yet: it fails closed. A permission asked for with `reins_request_access` does
+/// not count while Lockdown holds.
 fn all_connection_grants(conn: &Connection, connection: &ConnectionId, now: i64) -> Result<Vec<Grant>, CoreError> {
+    connection_grants_of(conn, connection, now, true)
+}
+
+/// [`all_connection_grants`], without the permissions asked for with `reins_request_access` unless `asked`.
+fn connection_grants_of(
+    conn: &Connection,
+    connection: &ConnectionId,
+    now: i64,
+    asked: bool,
+) -> Result<Vec<Grant>, CoreError> {
     let mut stmt = conn.prepare("SELECT id, connection_id, grant_json, origin FROM grants WHERE connection_id = ?1")?;
     let rows = stmt
         .query_map(params![connection.0], |r| {
@@ -57,7 +68,10 @@ fn all_connection_grants(conn: &Connection, connection: &ConnectionId, now: i64)
         if origin == super::permissions::BUDGET_ORIGIN {
             continue;
         }
-        if !crate::autopilot::store::origin_in_force(conn, origin, now)? {
+        if !crate::autopilot::store::origin_in_force(conn, origin, now)?
+            || crate::autopilot::store::lockdown_suspends(conn, origin, c)?
+            || (!asked && origin == crate::autopilot::store::ASKED_ORIGIN)
+        {
             continue;
         }
         grants.extend(parse_row(id, c, json));
@@ -399,7 +413,8 @@ impl Store {
 
     /// Which grants let `connection`, acting as `account`, do `access` to each of `resources` of `service`. When
     /// `reserve` is set and every resource is covered, one use of each grant relied on is spent in the same
-    /// transaction (nothing is spent for a partial cover, which the user has to decide on anyway).
+    /// transaction (nothing is spent for a partial cover, which the user has to decide on anyway). `asked`: whether a
+    /// permission asked for with `reins_request_access` may cover it ([`crate::views::asked_grant_may_cover`]).
     #[allow(clippy::too_many_arguments, reason = "a lookup is described by this many independent facts")]
     pub fn service_reserve(
         &self,
@@ -411,11 +426,12 @@ impl Store {
         op: &str,
         resources: &[String],
         reserve: bool,
+        asked: bool,
         now: i64,
     ) -> Result<std::collections::BTreeMap<String, GrantId>, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut grants = all_connection_grants(&tx, connection, now)?;
+        let mut grants = connection_grants_of(&tx, connection, now, asked)?;
         let mut covered = std::collections::BTreeMap::new();
         for resource in resources {
             if let Some(id) =
@@ -642,6 +658,47 @@ pub(crate) mod tests {
         assert!(!read("c1").fully_allowed() && read("c3").fully_allowed());
         assert!(store.grants().unwrap().iter().all(|g| !g.grant.revoked));
         assert_eq!(store.headlines_reserve(&"c1".into(), None, "gmail", 100).unwrap(), None);
+    }
+
+    /// A permission asked for with `reins_request_access` is suspended while Lockdown holds (the global one, or the
+    /// connection's own) and counts again once it ends; the user's own permissions are not touched.
+    #[test]
+    fn lockdown_suspends_asked_permissions_until_it_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let set = |scope: &str, mode: Option<&str>| {
+            store
+                .lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO autopilot_settings (scope, mode, bypass_until, profile_id, updated_at) \
+                     VALUES (?1, ?2, NULL, NULL, 0) ON CONFLICT (scope) DO UPDATE SET mode = ?2",
+                    params![scope, mode],
+                )
+                .unwrap();
+        };
+        let read = |c: &str| store.evaluate_read_and_reserve(&c.into(), None, &[fact("m", "a@bank.com")], 100).unwrap();
+        let asked = crate::autopilot::store::ASKED_ORIGIN;
+        store.insert_grant_from(&read_grant("g1", "c1", None), "Helper", asked).unwrap();
+        store.insert_grant_from(&read_grant("g2", "c2", None), "Other", asked).unwrap();
+        store
+            .insert_grant_from(&read_grant("g3", "c1", None).for_account(Some("x".into())), "Helper", "approval")
+            .unwrap();
+        assert!(read("c1").fully_allowed() && read("c2").fully_allowed());
+        // The connection's own Lockdown: only its asked permissions stop.
+        set("c1", Some("lockdown"));
+        assert!(!read("c1").fully_allowed() && read("c2").fully_allowed());
+        let covered =
+            store.evaluate_read_and_reserve(&"c1".into(), Some("x"), &[fact("m", "a@bank.com")], 100).unwrap();
+        assert!(covered.fully_allowed(), "the user's own permission still counts");
+        // The global Lockdown: every asked permission stops.
+        set("c1", None);
+        set("", Some("lockdown"));
+        assert!(!read("c1").fully_allowed() && !read("c2").fully_allowed());
+        // Lockdown ends: they count again, none was revoked.
+        set("", Some("manual"));
+        assert!(read("c1").fully_allowed() && read("c2").fully_allowed());
+        assert!(store.grants().unwrap().iter().all(|g| !g.grant.revoked));
     }
 
     #[test]

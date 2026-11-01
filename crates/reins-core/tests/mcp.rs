@@ -755,3 +755,67 @@ async fn deny_during_mcp_read_withholds_success_and_error_content() {
         assert!(w.core.approve("late-read".to_owned(), once()).await.is_err());
     }
 }
+
+/// A `reins_request_access` with `action: "write"` for a tool of an added server (`mcp_<server>`).
+fn mcp_write_ask(id: &str, tool: &str) -> reins_proto::relay::RelayRequest {
+    let grant: reins_proto::gmail::GrantRequest = serde_json::from_value(json!({
+        "action": "write", "duration_secs": 3_600, "reason": "Triage", "service": "mcp_tracker", "resource": tool}))
+    .unwrap();
+    let mut request = mcp_request(id, "tracker", tool, &json!({}));
+    request.call = reins_proto::gmail::ToolCall::RequestGrant {
+        grant: Box::new(grant),
+    };
+    request
+}
+
+/// A write permission for an MCP tool is checked against the server as the phone added it (a tool it lists, that
+/// changes things and is not destructive) and bound to that server.
+#[tokio::test]
+async fn an_asked_mcp_write_permission_is_bound_to_its_server_and_never_covers_a_destructive_tool() {
+    let w = World::new(|_| {}).await;
+    w.add_open().await;
+    for (id, tool) in [("g1", "delete_issue"), ("g2", "search"), ("g3", "no_such_tool")] {
+        w.core.engine().process_relayed(mcp_write_ask(id, tool)).await.unwrap();
+        assert!(!w.is_pending(id).await, "{tool}");
+        assert_eq!(w.answer(id).await["outcome"], "error", "{tool}");
+    }
+    w.core.engine().process_relayed(mcp_write_ask("g4", "create_issue")).await.unwrap();
+    let view = w.core.approval_view("g4".to_owned()).await.unwrap();
+    assert_eq!(view.account.as_deref(), Some("tracker"));
+    let grant = view.grant.unwrap();
+    assert_eq!((grant.action.as_str(), grant.tool.as_str(), grant.resource.as_str()), ("write", "create_issue", ""));
+    w.core.approve("g4".to_owned(), once()).await.unwrap();
+    let grants = w.core.grants().await.unwrap();
+    assert_eq!(grants[0].account.as_deref(), Some("tracker"));
+
+    // Covered: that tool, without asking. Another tool still asks.
+    w.relay("r1", "create_issue", &json!({"title": "x"})).await;
+    assert!(!w.is_pending("r1").await);
+    w.relay("r2", "delete_issue", &json!({"id": "ISS-1"})).await;
+    assert!(w.is_pending("r2").await);
+}
+
+/// A permission for one tool of an added server covers that tool only: a tool whose name starts with it and goes on
+/// after a `/` or a `@` is another tool and still asks.
+#[tokio::test]
+async fn a_write_permission_for_an_mcp_tool_never_covers_a_tool_named_after_it() {
+    let w = World::new(|s| {
+        for name in ["create_issue/admin", "create_issue@admin"] {
+            s.extra_tools.push(json!({"name": name, "description": "Creates an issue as an admin",
+                "inputSchema": {"type": "object"}, "annotations": {"destructiveHint": false}}));
+        }
+    })
+    .await;
+    w.add_open().await;
+    w.core.engine().process_relayed(mcp_write_ask("g1", "create_issue")).await.unwrap();
+    w.core.approve("g1".to_owned(), once()).await.unwrap();
+    w.relay("r1", "create_issue/admin", &json!({"title": "x"})).await;
+    assert!(w.is_pending("r1").await, "another tool asks");
+    w.relay("r2", "create_issue@admin", &json!({"title": "x"})).await;
+    assert!(w.is_pending("r2").await, "another tool asks");
+    assert!(w.state.lock().unwrap().calls.is_empty(), "nothing ran without the user");
+    // The tool itself is covered.
+    w.relay("r3", "create_issue", &json!({"title": "y"})).await;
+    assert!(!w.is_pending("r3").await);
+    assert_eq!(w.state.lock().unwrap().calls.len(), 1);
+}

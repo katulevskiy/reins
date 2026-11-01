@@ -27,6 +27,7 @@ fn parked(call: Value) -> ParkedRequest {
             wait_until: None,
             account: None,
             call: ToolCall::Connector(serde_json::from_value(call).unwrap()),
+            batch: None,
         },
         messages: Vec::new(),
         covered: std::collections::BTreeMap::default(),

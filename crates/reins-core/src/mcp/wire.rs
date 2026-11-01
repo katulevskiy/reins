@@ -65,6 +65,7 @@ mod tests {
                 wait_until: Some(9),
                 account: Some("tracker".into()),
                 call,
+                batch: None,
             },
         }
     }
