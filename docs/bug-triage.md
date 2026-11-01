@@ -19,7 +19,7 @@ what the tester saw. Start **What happened** with `Filed for a tester.` Leave ou
 address, secrets, tokens, a master password, a recovery code, and message contents.
 
 Security reports stay private, as [SECURITY.md](../SECURITY.md) describes. The issue chooser links to that
-private report. Blank issues are off, so the chooser offers the bug report form and that security link.
+private report, beside the bug report form and a blank issue.
 
 ## Labels
 
@@ -52,7 +52,7 @@ connection may fit none of the area labels. Leave area unset then.
 
 ## Severity
 
-The form's menu and the `sev:*` label descriptions use these lines.
+The form's menu lists only the names; the `sev:*` label descriptions use these lines.
 
 | Severity | Definition |
 | --- | --- |

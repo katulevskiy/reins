@@ -1,6 +1,5 @@
-# Blank issues stay off so a report uses a form in this directory.
 # The contact link is the private security report described in SECURITY.md.
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability
     url: https://github.com/katulevskiy/reins/security/advisories/new

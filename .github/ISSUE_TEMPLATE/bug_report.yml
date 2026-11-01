@@ -5,62 +5,44 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting this. A short, specific note is enough.
-
-        **Security problems** (someone can see another person's data, skip an approval, or take an account): do not file them here. Report them privately, as described in `SECURITY.md`.
-
-        Please search existing issues first, including closed ones.
-
-        Do not paste secrets, tokens, master passwords, recovery codes, or private message contents. If you include logs, remove those first.
+        Security problems: report privately (`SECURITY.md`), not here. Never paste secrets, tokens, passwords or recovery codes.
   - type: dropdown
     id: platform
     attributes:
       label: Platform
-      description: |
-        Where you saw the problem. Android includes Google Play closed testing and the Full build (the one installed from a file).
       options:
         - iPhone or iPad
-        - Android phone
-        - Desktop app (Linux, Mac, or Windows)
-        - Server or relay
+        - Android
+        - Desktop
+        - Server
         - Not sure
     validations:
       required: true
   - type: dropdown
     id: beta-build
     attributes:
-      label: Beta or testing build
-      description: |
-        TestFlight, Google Play closed testing, the Android Full build, or another pre-release. Choose Not sure if you do not know.
+      label: Build
       options:
-        - "Yes, TestFlight"
-        - "Yes, Google Play closed testing"
-        - "Yes, the Android Full build (installed from a file)"
-        - "Yes, another pre-release build"
-        - "No, this is a public release"
+        - TestFlight
+        - Google Play testing
+        - Android Full build
+        - Other pre-release
+        - Public release
         - Not sure
     validations:
       required: false
   - type: input
     id: version
     attributes:
-      label: App version or build
-      description: |
-        On an iPhone or iPad, open Settings and copy the Version row. It looks like `0.1.0 (7)`.
-        On Android, open Settings and copy the Version row. It looks like `0.1.0 (0.1.0-202610010115-a9643bcb)`.
-        On a computer, run `reins --version`. It looks like `0.1.0 (0.1.0-202609301800-b20e06b5)`.
-        If you cannot, say how you installed Reins and about when.
-        On a server, the version or the day you last updated it is enough.
+      label: Version
+      description: Settings → Version, or `reins --version`.
       placeholder: "0.1.0 (7)"
     validations:
       required: true
   - type: input
     id: device
     attributes:
-      label: Device and OS version
-      description: |
-        The phone or computer, and its system version. On a computer, say Linux, Mac, or Windows.
-        For a server, say whether it is the hosted service or one you run.
+      label: Device and OS
       placeholder: "iPhone 15, iOS 18.2"
     validations:
       required: true
@@ -68,7 +50,6 @@ body:
     id: actual
     attributes:
       label: What happened
-      description: What you saw, in a sentence or two.
       placeholder: The approval never showed up on the phone.
     validations:
       required: true
@@ -76,7 +57,6 @@ body:
     id: expected
     attributes:
       label: What should have happened
-      description: What you expected instead.
       placeholder: The phone should have asked me to approve.
     validations:
       required: true
@@ -84,7 +64,6 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: What you did, in order. Fill in the numbered lines.
       value: |
         1.
         2.
@@ -95,21 +74,18 @@ body:
     id: severity
     attributes:
       label: Severity
-      description: How much this gets in the way. A blocker stops a release.
+      description: Blocker stops a release.
       options:
-        - "Blocker: Cannot install, sign in, pair, or approve, or this must not ship. Blocks a release."
-        - "Major: A main flow is broken. A workaround may exist. Does not by itself block a release."
-        - "Minor: Something is wrong and there is a workaround. Does not block a release."
-        - "Cosmetic: Look, layout, or wording only. Behavior is right. Does not block a release."
+        - Blocker
+        - Major
+        - Minor
+        - Cosmetic
     validations:
       required: true
   - type: upload
     id: screenshots
     attributes:
-      label: Screenshots or a recording
-      description: |
-        Optional. A picture or a short recording of the problem.
-        Pictures can be png, jpg, gif, or webp. Video can be mp4, mov, or webm.
+      label: Screenshots or recording
     validations:
       required: false
       accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm"
@@ -117,9 +93,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: |
-        Optional. Paste server output, the desktop terminal, or a phone log if you have it.
-        Remove secrets, tokens, master passwords, recovery codes, and message contents first.
+      description: Remove secrets first.
       render: text
     validations:
       required: false
