@@ -93,6 +93,11 @@ enum AskFormat {
         }
         switch view.kind {
         case .grant:
+            // One tool on one thing: the tool's title is Reins' own; an MCP tool's name is its server's, so mono only.
+            if let g = view.grant, g.action == "write" {
+                if g.resource.isEmpty { return line("Use a tool without asking", nil, mono: untrusted(g.tool)) }
+                return line("\(g.tool.isEmpty ? "Change something" : g.tool) in ", untrustedName(g.resource), " without asking", stand: "a repository")
+            }
             let send = view.grant?.action == "send"
             let lines = (view.grant?.lines ?? []).map(untrusted).joined(separator: " · ")
             return line(send ? "Send email from " : "Read email in ", "your \(service)", " without asking", mono: lines)

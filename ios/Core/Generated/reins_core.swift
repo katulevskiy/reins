@@ -3149,12 +3149,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approveAll(connectionId: String, taskId: String?) async throws  -> UInt32
     
     /**
-     * "Approve all" of a batch (`PendingItem.batch`): approves each of its waiting calls that may be approved without
-     * opening it, each with its own audit entry and answer; returns how many were. The rest stay to be opened.
-     */
-    func approveBatch(batchId: String) async throws  -> UInt32
-    
-    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
@@ -3362,11 +3356,6 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deleteProfile(profileId: String) async throws 
     
     func deny(requestId: String) async throws 
-    
-    /**
-     * "Deny all" of a batch: denies each of its waiting calls; returns how many were.
-     */
-    func denyBatch(batchId: String) async throws  -> UInt32
     
     /**
      * The user refused, with an optional note the agent receives ("Use the staging bucket").
@@ -4774,26 +4763,6 @@ open func approveAll(connectionId: String, taskId: String?)async throws  -> UInt
 }
     
     /**
-     * "Approve all" of a batch (`PendingItem.batch`): approves each of its waiting calls that may be approved without
-     * opening it, each with its own audit entry and answer; returns how many were. The rest stay to be opened.
-     */
-open func approveBatch(batchId: String)async throws  -> UInt32  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_approve_batch(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(batchId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_u32,
-            completeFunc: ffi_reins_core_rust_future_complete_u32,
-            freeFunc: ffi_reins_core_rust_future_free_u32,
-            liftFunc: FfiConverterUInt32.lift,
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
      * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
      * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
      */
@@ -5586,25 +5555,6 @@ open func deny(requestId: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCoreError_lift
-        )
-}
-    
-    /**
-     * "Deny all" of a batch: denies each of its waiting calls; returns how many were.
-     */
-open func denyBatch(batchId: String)async throws  -> UInt32  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_reins_core_fn_method_reinscore_deny_batch(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(batchId)
-                )
-            },
-            pollFunc: ffi_reins_core_rust_future_poll_u32,
-            completeFunc: ffi_reins_core_rust_future_complete_u32,
-            freeFunc: ffi_reins_core_rust_future_free_u32,
-            liftFunc: FfiConverterUInt32.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -16776,7 +16726,7 @@ public func FfiConverterTypeGitRefView_lower(_ value: GitRefView) -> RustBuffer 
  */
 public struct GrantRequestView: Equatable, Hashable {
     /**
-     * "read" | "send"
+     * "read" | "send" | "write"
      */
     public var action: String
     public var summary: String
@@ -16791,19 +16741,35 @@ public struct GrantRequestView: Equatable, Hashable {
      * One line per limit, e.g. "From @bank.com".
      */
     public var lines: [String]
+    /**
+     * "write": the one tool it covers, in a few words ("Edit a GitHub comment"; the tool's own name for a tool of an
+     * added MCP server, which is that server's text). Empty otherwise.
+     */
+    public var tool: String
+    /**
+     * "write": the one thing it covers (the repository `owner/name`); empty for an MCP tool, and otherwise.
+     */
+    public var resource: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * "read" | "send"
+         * "read" | "send" | "write"
          */action: String, summary: String, reason: String, durationSecs: UInt64, maxUses: UInt32?, 
         /**
          * "narrow" | "broad" | "everything": how much mail or how many recipients it opens up.
          */breadth: String, 
         /**
          * One line per limit, e.g. "From @bank.com".
-         */lines: [String]) {
+         */lines: [String], 
+        /**
+         * "write": the one tool it covers, in a few words ("Edit a GitHub comment"; the tool's own name for a tool of an
+         * added MCP server, which is that server's text). Empty otherwise.
+         */tool: String = "", 
+        /**
+         * "write": the one thing it covers (the repository `owner/name`); empty for an MCP tool, and otherwise.
+         */resource: String = "") {
         self.action = action
         self.summary = summary
         self.reason = reason
@@ -16811,6 +16777,8 @@ public struct GrantRequestView: Equatable, Hashable {
         self.maxUses = maxUses
         self.breadth = breadth
         self.lines = lines
+        self.tool = tool
+        self.resource = resource
     }
 
     
@@ -16835,7 +16803,9 @@ public struct FfiConverterTypeGrantRequestView: FfiConverterRustBuffer {
                 durationSecs: FfiConverterUInt64.read(from: &buf), 
                 maxUses: FfiConverterOptionUInt32.read(from: &buf), 
                 breadth: FfiConverterString.read(from: &buf), 
-                lines: FfiConverterSequenceString.read(from: &buf)
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                tool: FfiConverterString.read(from: &buf), 
+                resource: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -16847,6 +16817,8 @@ public struct FfiConverterTypeGrantRequestView: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.maxUses, into: &buf)
         FfiConverterString.write(value.breadth, into: &buf)
         FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.tool, into: &buf)
+        FfiConverterString.write(value.resource, into: &buf)
     }
 }
 
@@ -19650,7 +19622,7 @@ public func FfiConverterTypePaymentsOverview_lower(_ value: PaymentsOverview) ->
  */
 public struct PendingBatch: Equatable, Hashable {
     /**
-     * Shared by every call of the batch (`approve_batch`, `deny_batch`).
+     * Shared by every call of the batch.
      */
     public var id: String
     /**
@@ -19663,7 +19635,7 @@ public struct PendingBatch: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Shared by every call of the batch (`approve_batch`, `deny_batch`).
+         * Shared by every call of the batch.
          */id: String, 
         /**
          * 0-based.
@@ -34061,9 +34033,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_approve_all() != 40812) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_approve_batch() != 7142) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -34188,9 +34157,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_reins_core_checksum_method_reinscore_deny_batch() != 12274) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_deny_with_note() != 61995) {

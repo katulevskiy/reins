@@ -93,7 +93,8 @@ enum ApprovalWords {
 
     /// The service whose logo the hero shows ("mcp" for any MCP server).
     static func service(_ view: ApprovalView) -> String {
-        view.service.hasPrefix("mcp:") || view.mcp != nil ? "mcp" : view.service
+        // `mcp_<server>`: a permission for one tool of an added MCP server.
+        view.service.hasPrefix("mcp:") || view.service.hasPrefix("mcp_") || view.mcp != nil ? "mcp" : view.service
     }
 
     /// "Read Telegram messages" → "read Telegram messages"; a name that starts with capitals ("GitHub") stays.
@@ -155,6 +156,12 @@ enum ApprovalWords {
         }
         switch view.kind {
         case .grant:
+            // A write permission names its one tool and its one thing (an MCP tool's name is its server's text).
+            if let g = view.grant, g.action == "write" {
+                let on = untrusted(g.resource)
+                if on.isEmpty { return [wants, p("use "), b(untrusted(g.tool).isEmpty ? "a tool" : untrusted(g.tool)), p("\n"), b("without asking")] }
+                return [wants, b(lowerFirst(g.tool.isEmpty ? "change something" : g.tool)), p("\nin "), b(on), p(" without asking")]
+            }
             return [wants, b(view.grant?.action == "send" ? "send emails" : "read emails"), p("\n"), b("without asking")]
         case .accounts:
             return [p("Wants to see your\n"), b("\(serviceName(view.service.isEmpty ? "gmail" : view.service)) addresses")]
