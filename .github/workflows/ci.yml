@@ -177,6 +177,8 @@ jobs:
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
+          # The `reins` program Cargo builds for reins-desktop's integration tests, installed by reins-e2e's agent_hook_force_push.
+          REINS_TEST_DESKTOP_BINARY: ${{ github.workspace }}/target/debug/reins
           # Unoptimized async state machines in the core's bigger flows outgrow the default 2 MiB test thread stack.
           RUST_MIN_STACK: "16777216"
         run: |
