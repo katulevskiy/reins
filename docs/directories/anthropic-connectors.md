@@ -35,7 +35,7 @@ Portal: [claude.ai/directory/manage](https://claude.ai/directory/manage), **Subm
 | Categories | 1 to 5 | Productivity; Communication; Developer tools; Security |
 | Documentation URL | | `https://reins2fa.com/developers` (public). The quick start is also public: <https://github.com/katulevskiy/reins/blob/main/docs/quick-start.md> |
 | Privacy policy URL | | `https://reins2fa.com/privacy` |
-| Support URL | | `https://reins2fa.com/support`. **Pending**: answers 404 on 2026-10-29. A draft is on the local branch `docs/support-page` (`docs/support.md`), not published. |
+| Support URL | | `https://reins2fa.com/support`. **Pending**: answers 404 on 2026-10-29; the page is not published yet. |
 | Support contact | | `support@reins2fa.com`, with a reply within 2 business days |
 | Icon | | [`docs/assets/logo.svg`](../assets/logo.svg) (vector). PNG fallbacks: [`docs/assets/logo.png`](../assets/logo.png) (256 x 256) and `android/play/graphics/icon.png` (512 x 512). |
 | Slug | permanent | `reins` |
@@ -187,13 +187,13 @@ Lockdown: `<APPROVER_DEVICE>` must not be in Lockdown during the review: Lockdow
 what already waits, and a global Lockdown overrides every connection's own mode. Where it is turned off, from the
 repository (the exact in-app labels are **unverified**):
 
-- In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md), lines 6 and 18).
+- In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md)).
 - Android: while Lockdown is on, the Quick Settings tile opens Trust to end it
-  (`android/app/src/main/java/dev/reins/android/platform/tiles/ReinsTiles.kt`, line 112).
-- iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`, line 8).
-- Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md),
-  lines 536 to 541), and Lockdown on one phone wins across the account's phones
-  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md), line 20), so check the phone signed in to the review account.
+  (`android/app/src/main/java/dev/reins/android/platform/tiles/ReinsTiles.kt`).
+- iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`).
+- Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md)),
+  and Lockdown on one phone wins across the account's phones
+  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md)), so check the phone signed in to the review account.
 
 The reviewer:
 
@@ -249,7 +249,7 @@ first (see the gaps below).
 | Public documentation | Done (`/developers`, GitHub docs). A help-center style "Use Reins with Claude" page would be better. |
 | Support channel | `support@reins2fa.com` (reply within 2 business days). The support page `https://reins2fa.com/support` is **pending** (404). |
 | Test account with sample data | Account exists (`appreview@reins2fa.com`); demo data and connections to check (question 4) |
-| No money transfers or financial transactions | **Gap**: `payments_purchase_request` buys things with a virtual card. The optional `claude` tool profile (proposed) removes it. |
+| No money transfers or financial transactions | **Gap**: `payments_purchase_request` buys things with a virtual card. The optional `claude` tool profile (PR #279) removes it. |
 | Tested as a custom connector in Claude | To do before submitting |
 
 ## Gaps and blockers
@@ -257,10 +257,10 @@ first (see the gaps below).
 1. **Payments and secrets.** The policy excludes software that "executes financial transactions for users", and the
    review criteria reject connectors that "transfer money". `payments_purchase_request` makes a purchase with a card,
    and the vault tools, the GitHub secret scanning alert tools and SMS reads can return passwords, one-time codes and
-   card details. An optional server profile, `REINS_MCP_TOOL_PROFILE=claude`, is **proposed** on the local branch
-   `feat/directory-tool-profile`, not merged. It is the same set as the `chatgpt` profile: no vault, Reins Pay,
-   secret scanning, `github_secret_set` or SMS read tools, neither listed nor callable, and the GitHub API tools
-   refuse `secret-scanning` paths. The per-group counts are in
+   card details. An optional server profile, `REINS_MCP_TOOL_PROFILE=claude`, added in PR #279, removes them. It is
+   the same set as the `chatgpt` profile: no vault, Reins Pay, secret scanning, `github_secret_set` or SMS read tools,
+   neither listed nor callable; the GitHub API tools refuse `secret-scanning` paths, and the GitHub API write tools
+   refuse `secrets` paths. The per-group counts are in
    [ChatGPT: optional tool profile](openai-apps.md#optional-chatgpt-tool-profile). The default is unchanged. It is
    server-wide, so the listing needs its own deployment or a per-endpoint profile (question 5). Daniel decides
    whether to drop the tools. Without it, expect a rejection with the payments tools listed, or ask
@@ -275,9 +275,9 @@ first (see the gaps below).
 4. **Google verification.** Gmail and Google Calendar use scopes that need Google's app verification before the
    general public can use them (see the README's status section). Reviewers use the team's demo account, but public
    users can't connect Gmail until it passes.
-5. **Support page.** `https://reins2fa.com/support` answers 404 (pending). A draft is on the local branch `docs/support-page` (`docs/support.md`), not published.
+5. **Support page.** `https://reins2fa.com/support` answers 404 (pending): the page is not published yet.
 6. **Tool count.** 285 tools are listed with the full profile, 208 of them for GitHub (the duplicate
-   `github_request_*` are no longer listed but stay callable); the proposed `claude` profile lists 245. Claude
+   `github_request_*` are no longer listed but stay callable); the optional `claude` profile lists 245. Claude
    loads tools on demand when there are many, but reviewers weigh "token use proportionate to the task". Merging rarely used GitHub tools would help further.
 7. **Icon.** A 512 x 512 PNG and the SVG exist. The portal does not state a size; use the SVG, or the 512 PNG.
 
@@ -292,8 +292,8 @@ first (see the gaps below).
    `<REVIEW_WINDOW>`, `<DEMO_GMAIL>`, `<DEMO_SENDER>`, `<DEMO_RECIPIENT>`, `<DEMO_GITHUB_USER>` and `<DEMO_REPO>`, and
    the sample data: a few emails from `<DEMO_SENDER>`, two calendar events tomorrow, and a pull request with a
    failing check in `<DEMO_REPO>`.
-5. **Tool profile.** Drop the tools for the listing (merge `feat/directory-tool-profile` and serve it from a
-   deployment that runs `REINS_MCP_TOOL_PROFILE=claude`, a second URL), make the profile per endpoint first, or keep
+5. **Tool profile.** Drop the tools for the listing (serve it from a deployment that runs
+   `REINS_MCP_TOOL_PROFILE=claude`, a second URL), make the profile per endpoint first, or keep
    the full set? The `claude` profile now matches `chatgpt`, which also leaves out the vault password generators;
    Anthropic's policy alone would allow a looser set (only Reins Pay out).
 6. **Support page.** When will `https://reins2fa.com/support` be live? Submit only after it is.

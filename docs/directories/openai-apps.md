@@ -44,7 +44,7 @@ again before submitting.
 | developerName | 80 | The verified identity's name (question 1) |
 | category | | Productivity |
 | websiteURL | | `https://reins2fa.com` |
-| supportURL | | `https://reins2fa.com/support`. **Pending**: 404 on 2026-10-29. A draft is on the local branch `docs/support-page` (`docs/support.md`), not published. Support email `support@reins2fa.com`, with a reply within 2 business days. |
+| supportURL | | `https://reins2fa.com/support`. **Pending**: 404 on 2026-10-29; the page is not published yet. Support email `support@reins2fa.com`, with a reply within 2 business days. |
 | privacyPolicyURL | | `https://reins2fa.com/privacy` |
 | termsOfServiceURL | | `https://reins2fa.com/terms` |
 | defaultPrompt | 3 x 128 | "Summarize my unread emails from today", "What's on my calendar tomorrow?", "Which of my pull requests have failing checks?" |
@@ -188,13 +188,13 @@ Lockdown: `<APPROVER_DEVICE>` must not be in Lockdown during the review: Lockdow
 what already waits, and a global Lockdown overrides every connection's own mode. Where it is turned off, from the
 repository (the exact in-app labels are **unverified**):
 
-- In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md), lines 6 and 18).
+- In the app, the **Trust** tab or the mode pill ([docs/autopilot.md](../autopilot.md)).
 - Android: while Lockdown is on, the Quick Settings tile opens Trust to end it
-  (`android/app/src/main/java/dev/reins/android/platform/tiles/ReinsTiles.kt`, line 112).
-- iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`, line 8).
-- Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md),
-  lines 536 to 541), and Lockdown on one phone wins across the account's phones
-  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md), line 20), so check the phone signed in to the review account.
+  (`android/app/src/main/java/dev/reins/android/platform/tiles/ReinsTiles.kt`).
+- iPhone: the Control Center Lockdown toggle, which needs an unlocked phone (`ios/ReinsWidgets/Controls.swift`).
+- Leaving Lockdown from the desktop needs an approval on the phone ([docs/security-model.md](../security-model.md)),
+  and Lockdown on one phone wins across the account's phones
+  ([docs/ACCOUNT_STORAGE.md](../ACCOUNT_STORAGE.md)), so check the phone signed in to the review account.
 
 The reviewer:
 
@@ -212,14 +212,16 @@ OpenAI's [guidelines](https://developers.openai.com/apps-sdk/app-submission-guid
 process Restricted Data: payment card data, and access credentials including passwords, API keys and MFA/OTP codes.
 Reins' password vault, Reins Pay and a few GitHub and SMS tools hand exactly that to the AI after the user approves.
 
-A server option on the local branch `feat/directory-tool-profile` (**proposed**, not merged) leaves those tools out.
-It is optional: the default is unchanged, and whether to drop the tools for the listing is Daniel's decision
-(question 6).
+A server option, added in PR #279 ("feat(server): optional MCP tool profile (chatgpt, claude) for the directory
+listings"), leaves those tools out. It is optional: the default is unchanged, and whether to drop the tools for the
+listing is Daniel's decision (question 6).
 
 - Turn it on with the environment variable **`REINS_MCP_TOOL_PROFILE=chatgpt`** (config key `reins_mcp_tool_profile`
   in `config.json`). Values: `full` (default, every tool), `chatgpt`, `claude` (the same set as `chatgpt`).
 - Left-out tools are neither listed in `tools/list` nor callable (a call answers "Unknown tool"). The GitHub API tools
-  (`github_api_read`, `github_api_write` and the unlisted `github_request_*`) refuse `secret-scanning` paths.
+  (`github_api_read`, `github_api_write` and the unlisted `github_request_*`) refuse `secret-scanning` paths, and the
+  write tools (`github_api_write`, `github_request_write`) refuse `secrets` paths: Actions, Dependabot, Codespaces and
+  environment secrets of a repository, an organization or the account, whatever the method.
 - The instructions no longer name the vault or promise secrets.
 - The tools of MCP servers a user added in Reins are always listed; Reins can't vouch for them.
 - Server-wide: the listing needs its own deployment, or a per-endpoint profile as a follow-up.
@@ -246,7 +248,7 @@ two unlisted `github_request_*` tools are not counted):
 | **Total** | 285 | 245 | 40 | |
 
 The `claude` profile lists exactly the same 245 tools and leaves out the same 40 (a test checks that the two lists
-are equal). Counts are at `main` 88b193e.
+are equal). Counts are from PR #279 on `main` 88b193e.
 
 What stays that may still show a secret: Gmail and Telegram reads can contain a code someone sent the user, and
 `github_variable_*` reads Actions variables (not secrets). The phone shows each read before anything is returned.
@@ -290,12 +292,12 @@ does not end the Reins connection: remove that in the Reins app as well (the Con
    but a new Reins connection still needs a two-digit code confirmed on `<APPROVER_DEVICE>` by the team. OpenAI may
    count that as an MFA step (question 5). This is the main blocker.
 2. **Public HTTPS URLs.** All four are required. `websiteURL`, `privacyPolicyURL` and `termsOfServiceURL` answer 200;
-   `supportURL` (`https://reins2fa.com/support`) answers 404 (pending). A draft is on the local branch `docs/support-page` (`docs/support.md`), not published.
+   `supportURL` (`https://reins2fa.com/support`) answers 404 (pending): the page is not published yet.
 3. **Restricted Data: payments, passwords, OTP codes.** The guidelines forbid apps that handle payment card data,
    passwords, API keys or MFA/OTP codes. With the full tool set Reins does all of these after an approval (vault,
    Reins Pay, GitHub secret scanning, reading SMS). OpenAI also limits commerce to physical goods and asks for a
-   commerce declaration (`review.commerce`). The optional `chatgpt` profile above removes them; it is **proposed** on
-   the local branch `feat/directory-tool-profile`, not merged, and server-wide. Without it, expect a rejection.
+   commerce declaration (`review.commerce`). The optional `chatgpt` profile above (PR #279) removes them; it is
+   server-wide. Without it, expect a rejection.
 4. **Domain token.** `REINS_OPENAI_APPS_CHALLENGE` is not set; `/.well-known/openai-apps-challenge` answers 404 (code
    is in place, `src/api/reins/pages.rs`).
 5. **No store build.** There is no App Store build yet (iOS is a TestFlight beta), and Android is an APK or
@@ -317,8 +319,8 @@ does not end the Reins connection: remove that in the Reins app as well (the Con
    no phone step at all (which these accounts can't provide)? Also values for `<APPROVER_DEVICE>`, `<REVIEW_WINDOW>`,
    `<DEMO_GMAIL>`, `<DEMO_SENDER>`, `<DEMO_RECIPIENT>`, `<DEMO_GITHUB_USER>` and `<DEMO_REPO>`, and whether the account
    already has demo services connected.
-6. **Tool profile.** Drop the tools for the listing (merge `feat/directory-tool-profile` and run a deployment with
-   `REINS_MCP_TOOL_PROFILE=chatgpt`), or keep the full set and risk rejection? Also: should SMS reads stay out (they
+6. **Tool profile.** Drop the tools for the listing (run a deployment with `REINS_MCP_TOOL_PROFILE=chatgpt`), or keep
+   the full set and risk rejection? Also: should SMS reads stay out (they
    are where one-time codes arrive), and is a per-endpoint profile worth building instead of a second deployment?
 7. **Demo video.** Who records the five positive cases for `demo_recording_url`?
 
