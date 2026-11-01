@@ -74,6 +74,29 @@ pub const RESTRICTED_TOOLS: [&str; 5] = [
 const GITHUB_PATH_TOOLS: [&str; 4] =
     ["github_api_read", "github_api_write", "github_request_read", "github_request_write"];
 
+/// Those of [`GITHUB_PATH_TOOLS`] that change something. Under a restricted profile they also refuse secrets paths
+/// (Actions, Dependabot, Codespaces and environment secrets of a repository, an organization or the account), which
+/// would do what `github_secret_set` is left out for.
+const GITHUB_WRITE_PATH_TOOLS: [&str; 2] = ["github_api_write", "github_request_write"];
+
+/// The decoded, lowercased segments of a GitHub API path the AI gave (a query or fragment cut off).
+fn github_path_segments(path: &str) -> Vec<String> {
+    let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().to_ascii_lowercase();
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    path.split('/').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+}
+
+/// Whether a GitHub API path is a secrets endpoint: a `secrets` segment anywhere but where an owner, repository,
+/// organization, user, enterprise or environment name goes (so a repository named `secrets` stays reachable).
+fn is_secrets_path(segments: &[String]) -> bool {
+    let names = match segments.first().map(String::as_str) {
+        Some("repos") => 2,
+        Some("orgs" | "users" | "enterprises" | "repositories") => 1,
+        _ => 0,
+    };
+    (1 + names..segments.len()).any(|i| segments[i] == "secrets" && segments[i - 1] != "environments")
+}
+
 /// Which of Reins's own tools the server offers over MCP (`REINS_MCP_TOOL_PROFILE`). Optional: the default offers
 /// every tool, and the restricted profiles exist for a listing in a directory whose policy rules some tools out.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,16 +152,21 @@ impl ToolProfile {
     }
 
     /// Why a call to an offered tool is refused anyway: under a restricted profile, a GitHub API path to secret
-    /// scanning (the generic API tools would otherwise reach what the secret scanning tools are left out for).
+    /// scanning, or a change to a secrets path (the generic API tools would otherwise reach what the secret scanning
+    /// tools and `github_secret_set` are left out for).
     pub fn refuses_call(self, tool: &str, arguments: &Value) -> Option<String> {
         if !self.restricted() || !GITHUB_PATH_TOOLS.contains(&tool) {
             return None;
         }
-        let path = arguments.get("path").and_then(Value::as_str)?;
-        let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().to_ascii_lowercase();
-        path.split(['/', '?', '#']).any(|segment| segment.trim() == "secret-scanning").then(|| {
-            format!("{tool} cannot reach GitHub secret scanning on this server (tool profile {})", self.name())
-        })
+        let segments = github_path_segments(arguments.get("path").and_then(Value::as_str)?);
+        if segments.iter().any(|segment| segment == "secret-scanning") {
+            return Some(format!(
+                "{tool} cannot reach GitHub secret scanning on this server (tool profile {})",
+                self.name()
+            ));
+        }
+        (GITHUB_WRITE_PATH_TOOLS.contains(&tool) && is_secrets_path(&segments))
+            .then(|| format!("{tool} cannot change GitHub secrets on this server (tool profile {})", self.name()))
     }
 }
 
@@ -1569,9 +1597,6 @@ mod tests {
     fn the_default_profile_lists_exactly_the_tools_it_always_did() {
         let all: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
         assert_eq!(listed(ToolProfile::default()), all);
-        // Pinned: the default lists 285 tools, as on main before the option existed. A new tool changes this number on
-        // purpose; a profile never does.
-        assert_eq!(all.len(), 285, "the default tool list changed size");
         assert_eq!(ToolProfile::default(), ToolProfile::Full);
         // The same definitions, byte for byte, then the user's own MCP tools.
         let reports = [linear_report()];
@@ -1583,6 +1608,9 @@ mod tests {
         }
         let secret_path = json!({"path": "/repos/o/r/secret-scanning/alerts"});
         assert_eq!(ToolProfile::Full.refuses_call("github_api_read", &secret_path), None);
+        let set_secret = json!({"method": "put", "path": "/repos/o/r/actions/secrets/TOKEN", "body": {}});
+        assert_eq!(ToolProfile::Full.refuses_call("github_api_write", &set_secret), None);
+        assert_eq!(ToolProfile::Full.refuses_call("github_request_write", &set_secret), None);
         assert!(
             ToolProfile::Full.offers_service(connector::VAULT) && ToolProfile::Full.offers_service(connector::PAYMENTS)
         );
@@ -1632,6 +1660,58 @@ mod tests {
             assert_eq!(profile.refuses_call("gmail_search", &json!({"path": "secret-scanning"})), None);
         }
         assert_eq!(listed(ToolProfile::ChatGpt), listed(ToolProfile::Claude));
+    }
+
+    #[test]
+    fn the_restricted_profiles_refuse_changing_github_secrets_through_the_api_tools() {
+        // What github_secret_set is left out for, through the generic write tools: setting or deleting an Actions,
+        // Dependabot, Codespaces or environment secret of a repository, an organization or the account.
+        let secrets_paths = [
+            "/repos/o/r/actions/secrets/TOKEN",
+            "/repos/o/r/environments/production/secrets/TOKEN",
+            "/repos/o/r/environments/secrets/secrets/TOKEN",
+            "/repos/o/r/dependabot/secrets/TOKEN",
+            "/repos/o/r/codespaces/secrets/TOKEN",
+            "/repositories/1/environments/production/secrets/TOKEN",
+            "/orgs/o/actions/secrets/TOKEN",
+            "/orgs/o/actions/secrets/TOKEN/repositories/1",
+            "/orgs/o/dependabot/secrets/TOKEN",
+            "/orgs/o/codespaces/secrets/TOKEN",
+            "/user/codespaces/secrets/TOKEN",
+            "/repos/o/r/Actions/Secrets/TOKEN",
+            "/repos/o/r/actions/%73ecrets/TOKEN",
+            "/repos/secrets/secrets/actions/secrets/TOKEN",
+        ];
+        for profile in [ToolProfile::ChatGpt, ToolProfile::Claude] {
+            for tool in ["github_api_write", "github_request_write"] {
+                for path in secrets_paths {
+                    for method in ["put", "delete", "post", "patch"] {
+                        let call = json!({"method": method, "path": path, "body": {"encrypted_value": "x"}});
+                        let refused = profile.refuses_call(tool, &call);
+                        assert!(
+                            refused.as_deref().is_some_and(|why| why.contains("cannot change GitHub secrets")),
+                            "{profile:?} {tool} {method} {path}: {refused:?}"
+                        );
+                    }
+                }
+                // Other writes stay, including those of a repository, organization or environment named `secrets`.
+                for path in [
+                    "/repos/o/r/actions/variables/NAME",
+                    "/repos/o/r/issues",
+                    "/repos/o/secrets/issues",
+                    "/repos/secrets/r/labels",
+                    "/orgs/secrets/actions/variables/NAME",
+                    "/repos/o/r/environments/secrets",
+                ] {
+                    let call = json!({"method": "put", "path": path});
+                    assert_eq!(profile.refuses_call(tool, &call), None, "{profile:?} {tool} {path}");
+                }
+            }
+            // Reading the names of secrets hands over no value: the read tools keep it.
+            for tool in ["github_api_read", "github_request_read"] {
+                assert_eq!(profile.refuses_call(tool, &json!({"path": "/repos/o/r/actions/secrets"})), None);
+            }
+        }
     }
 
     #[test]

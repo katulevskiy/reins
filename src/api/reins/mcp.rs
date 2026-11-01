@@ -733,6 +733,11 @@ mod tests {
                 json!({"name": "github_api_read", "arguments": {"path": "/repos/o/r/secret-scanning/alerts"}}),
             )));
             assert_eq!((status, &body["error"]["code"]), (400, &json!(INVALID_PARAMS)));
+            let set_secret = json!({"name": "github_api_write", "arguments": {
+                "method": "put", "path": "/repos/o/r/actions/secrets/TOKEN", "body": {"encrypted_value": "x"}
+            }});
+            let (status, body) = reply(with(rpc(3, "tools/call", set_secret)));
+            assert_eq!((status, &body["error"]["code"]), (400, &json!(INVALID_PARAMS)));
             assert!(matches!(
                 with(rpc(4, "tools/call", json!({"name": "github_api_read", "arguments": {"path": "/user"}}))),
                 Action::CallTool { .. }
