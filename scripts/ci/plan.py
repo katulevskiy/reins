@@ -57,6 +57,7 @@ SUITE_JOBS: dict[str, list[tuple[str, str]]] = {
     "rust": [("rust", "linux")],
     "clippy": [("clippy", "linux")],
     "replay": [("replay", "linux")],
+    "onboarding": [("onboarding", "linux")],
     "packages": [("packages", "linux")],
     "desktop-linux": [("desktop-linux", "linux")],
     "desktop-macos": [("desktop-macos", "macos")],
