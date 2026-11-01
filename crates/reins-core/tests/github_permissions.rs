@@ -418,3 +418,60 @@ async fn a_write_permission_names_one_connected_account_and_one_repository_exact
     let grants = env.core.grants().await.unwrap();
     assert_eq!(grants[0].account.as_deref(), Some("octo-work"));
 }
+
+/// A write permission asked for over MCP for committing files never covers a commit to the default branch, a protected
+/// one, or anything under `.github/` (what CI runs): those ask as usual. A branch of the repository is covered.
+#[tokio::test]
+async fn an_asked_commit_permission_never_covers_the_default_branch_or_github_folder() {
+    let env = env().await;
+    serve(&env, &[write_ask("g1", None, "file_put", "me/app"), write_ask("g2", None, "commit_files", "me/app")]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("g1".to_owned(), choice(None)).await.unwrap();
+    env.core.approve("g2".to_owned(), choice(None)).await.unwrap();
+    let put_to = |id: &str, branch: Option<&str>, path: &str| {
+        let mut args = json!({"repo": "me/app", "path": path, "content": "x", "message": "m"});
+        if let Some(branch) = branch {
+            args["branch"] = json!(branch);
+        }
+        request(id, "file_put", &args)
+    };
+    let commit = |id: &str, paths: &[&str]| {
+        let files: Vec<Value> = paths.iter().map(|p| json!({"path": p, "content": "x"})).collect();
+        request(id, "commit_files", &json!({"repo": "me/app", "message": "m", "branch": "feature/x", "files": files}))
+    };
+    serve(
+        &env,
+        &[
+            put_to("r1", Some("feature/x"), "src/a.rs"),
+            put_to("r2", Some("main"), "src/a.rs"),
+            put_to("r10", Some("dev"), "src/a.rs"),
+            put_to("r3", None, "src/a.rs"),
+            put_to("r4", Some("release/1.0"), "src/a.rs"),
+            put_to("r5", Some("feature/x"), ".github/workflows/ci.yml"),
+            put_to("r6", Some("feature/x"), "./.GitHub//workflows/x.yml"),
+            put_to("r7", Some("feature/x"), "src/../.github/actions/a/action.yml"),
+            commit("r8", &["src/a.rs", "README.md"]),
+            commit("r9", &["src/a.rs", ".github/workflows/ci.yml"]),
+        ],
+    )
+    .await;
+    let waiting = env.core.sync(0).await.unwrap();
+    let mut ids: Vec<_> = waiting.iter().map(|p| p.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["r10", "r2", "r3", "r4", "r5", "r6", "r7", "r9"], "only r1 and r8 went through: {ids:?}");
+    assert_eq!(*env.github.done.lock().unwrap(), ["file_put:feature/x", "commit_files:feature/x"]);
+}
+
+/// Merging, deleting, running workflows, variables and the repository itself are never covered by an asked
+/// permission: the phone refuses to keep one.
+#[tokio::test]
+async fn an_asked_permission_for_a_merge_or_a_delete_is_refused() {
+    let env = env().await;
+    let ops = ["pr_merge", "branch_merge", "branch_delete", "workflow_dispatch", "variable_update", "repo_update"];
+    let asks: Vec<Value> =
+        ops.iter().enumerate().map(|(i, op)| write_ask(&format!("g{i}"), None, op, "me/app")).collect();
+    serve(&env, &asks).await;
+    let waiting = env.core.sync(0).await.unwrap();
+    assert!(waiting.is_empty(), "{:?}", waiting.iter().map(|p| &p.id).collect::<Vec<_>>());
+    assert!(env.core.grants().await.unwrap().is_empty());
+}

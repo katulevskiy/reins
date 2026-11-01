@@ -856,6 +856,38 @@ pub fn github_targets_default_branch(op: &str, branch: Option<&str>) -> bool {
     }
 }
 
+/// Whether a standing permission asked for with `reins_request_access` may cover this write. Never a GitHub write
+/// that lands, or may land, on the default branch or a protected one (`default_branch`: the preview found the named
+/// branch is the default), and never one that touches `.github/` (the workflows CI runs with the repository's
+/// secrets, the actions they use, who must review): those ask as usual. A permission the user chose on the approval
+/// sheet is not limited by this.
+pub fn asked_grant_may_cover(call: &ConnectorCall, default_branch: bool) -> bool {
+    if call.service != reins_proto::connector::GITHUB {
+        return true;
+    }
+    if default_branch || github_targets_default_branch(&call.op, call.str_arg("branch")) {
+        return false;
+    }
+    match call.op.as_str() {
+        "file_put" | "file_delete" => !touches_dot_github(call.str_arg("path").unwrap_or_default()),
+        "commit_files" => call
+            .args
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|files| files.iter().all(|f| f["path"].as_str().is_some_and(|p| !touches_dot_github(p)))),
+        _ => true,
+    }
+}
+
+/// Whether a repository path is under `.github/` (its workflows and the actions they use, CODEOWNERS), read the way it
+/// could be meant: any case, `\` as `/`, empty and `.` parts skipped. A path with `..` counts as one (it could lead
+/// there).
+fn touches_dot_github(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase().replace('\\', "/");
+    let parts: Vec<&str> = lower.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    parts.contains(&"..") || parts.first() == Some(&".github")
+}
+
 /// "Read emails from alerts@bank.com for 1 hour" — one line describing what an AI asked for.
 pub fn grant_request_summary(g: &GrantRequest) -> String {
     let what = match g.action {
@@ -902,6 +934,20 @@ fn write_tool_name(g: &GrantRequest) -> String {
         title if title.is_empty() => format!("{service}.{op}"),
         title => title,
     }
+}
+
+/// Whether a write permission covers one tool that destroys nothing: a GitHub tool a standing permission may cover
+/// (none of them deletes), or an MCP tool (the phone refuses one its server marks destructive).
+fn write_grant_destroys_nothing(g: &GrantRequest) -> bool {
+    let service = g.service.as_deref().unwrap_or_default();
+    let op = g.op.as_deref().unwrap_or_default();
+    if service.starts_with(reins_proto::permission::MCP_SERVICE_PREFIX) {
+        return true;
+    }
+    reins_proto::connector::specs()
+        .iter()
+        .find(|s| s.service == service && s.op == op)
+        .is_some_and(|s| reins_proto::permission::write_grantable(s) && !s.op.contains("delete"))
 }
 
 /// The one thing a connector write permission covers ("me/app"); `None` for an MCP tool, which is its own thing.
@@ -953,6 +999,13 @@ pub fn grant_request_view(g: &GrantRequest) -> GrantRequestView {
     let exact_only = g.from.iter().chain(&g.recipients).all(|r| !r.starts_with('@'));
     let breadth = if g.any {
         "everything"
+    } else if g.action == GrantAction::Write {
+        // One tool that destroys nothing, for at most a day; anything more reads as broad.
+        if g.duration_secs <= 86_400 && write_grant_destroys_nothing(g) {
+            "narrow"
+        } else {
+            "broad"
+        }
     } else if exact_only && g.duration_secs <= 86_400 {
         "narrow"
     } else {
@@ -1478,6 +1531,17 @@ mod tests {
         assert!(summary.ends_with(" on me/app for 1 day"), "{summary}");
         let view = grant_request_view(&github);
         assert_eq!(view.action, "write");
+        assert_eq!(view.breadth, "narrow", "one tool that destroys nothing, for a day");
+        let longer = GrantRequest {
+            duration_secs: 86_401,
+            ..github.clone()
+        };
+        assert_eq!(grant_request_view(&longer).breadth, "broad", "more than a day");
+        let delete = GrantRequest {
+            op: Some("issue_comment_delete".to_owned()),
+            ..github.clone()
+        };
+        assert_eq!(grant_request_view(&delete).breadth, "broad", "a tool that deletes is never narrow");
         assert_eq!((view.tool.as_str(), view.resource.as_str()), ("Edit a GitHub comment", "me/app"));
         let read = grant_request_view(&GrantRequest {
             action: GrantAction::Read,
@@ -1495,6 +1559,51 @@ mod tests {
             assert_eq!((view.tool.as_str(), view.resource.as_str()), ("label issue", ""));
             assert!(!grant_request_view(&mcp).lines.iter().any(|l| l.starts_with("Only on")));
         }
+    }
+
+    /// A permission asked for over MCP never covers a GitHub change to the default branch, a protected one or
+    /// `.github/`; elsewhere, and outside GitHub, it may.
+    #[test]
+    fn an_asked_permission_never_covers_the_default_branch_or_the_github_folder() {
+        let call = |op: &str, args: serde_json::Value| ConnectorCall {
+            service: "github".to_owned(),
+            op: op.to_owned(),
+            args: args.as_object().unwrap().clone(),
+        };
+        let put = |branch: &str, path: &str| {
+            call("file_put", serde_json::json!({"repo": "me/app", "branch": branch, "path": path}))
+        };
+        assert!(asked_grant_may_cover(&put("feature/x", "src/a.rs"), false));
+        assert!(!asked_grant_may_cover(&put("feature/x", "src/a.rs"), true), "the preview found it is the default");
+        assert!(!asked_grant_may_cover(&put("main", "src/a.rs"), false));
+        assert!(
+            !asked_grant_may_cover(&call("file_put", serde_json::json!({"repo": "me/app", "path": "a"})), false),
+            "no branch"
+        );
+        for path in [
+            ".github/workflows/ci.yml",
+            "/.github/workflows/x",
+            ".GITHUB\\workflows\\x",
+            "./.github/CODEOWNERS",
+            "a/../b",
+        ] {
+            assert!(!asked_grant_may_cover(&put("feature/x", path), false), "{path}");
+        }
+        assert!(asked_grant_may_cover(&put("feature/x", "docs/.github.md"), false));
+        let commit = |paths: serde_json::Value| {
+            call("commit_files", serde_json::json!({"repo": "me/app", "branch": "feature/x", "files": paths}))
+        };
+        assert!(asked_grant_may_cover(&commit(serde_json::json!([{"path": "a"}, {"path": "b/c"}])), false));
+        assert!(!asked_grant_may_cover(
+            &commit(serde_json::json!([{"path": "a"}, {"path": ".github/workflows/x"}])),
+            false
+        ));
+        assert!(!asked_grant_may_cover(&commit(serde_json::json!([{"content": "no path"}])), false));
+        assert!(!asked_grant_may_cover(&call("pr_merge", serde_json::json!({"repo": "me/app", "number": 1})), false));
+        assert!(asked_grant_may_cover(
+            &call("issue_update", serde_json::json!({"repo": "me/app", "number": 1})),
+            false
+        ));
     }
 
     /// GitHub writes that land on the default branch or a protected one, by the call: a merge always, a file committed

@@ -661,7 +661,7 @@ impl Engine {
         self.store.insert_grant_from(
             &grant,
             &parked.label(),
-            &crate::autopilot::context::grant_origin("ai_request"),
+            &crate::autopilot::context::grant_origin(crate::autopilot::store::ASKED_ORIGIN),
         )?;
         let summary = views::grant_summary(&grant.scope);
         let expires_at = grant.expires_at.unwrap_or(now);

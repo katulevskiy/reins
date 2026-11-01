@@ -416,6 +416,7 @@ impl Engine {
                 "",
                 std::slice::from_ref(&tool.name),
                 true,
+                true,
                 unix_now(),
             )?
         };
