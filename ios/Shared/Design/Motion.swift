@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Signal's motion tokens (signal.tokens.json `motion-time`, Motion.png). Every animation reads its curve here and
+/// Signal's motion tokens (`design/signal/tokens/signal.tokens.json` `motion-time`, Motion.png). Every animation reads its curve here and
 /// asks `Motion.of(_:reduce:)`, so Reduce Motion turns slides and folds into 150 ms cross-fades in one place. A hold's
 /// duration is never animation: it is measured in elapsed time (`HoldButton`), so nothing here can shorten it.
 enum Motion {

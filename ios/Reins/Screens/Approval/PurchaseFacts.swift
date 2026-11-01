@@ -1,7 +1,7 @@
 import SwiftUI
 
-// A purchase on the approval (And-Pay 01), display-only on this phone: what the store or Reins flagged first, in full;
-// the store and its domain; every line of the cart; the amount in the serif, because it is the point; the card it is
+// A purchase on the approval, display-only on this phone: what the store or Reins flagged first, in full;
+// the store and its domain; every line of the cart; the amount in the display face (Sora), because it is the point; the card it is
 // paid with; and what is left of the spend limit. Everything the AI wrote (the store's name, the items, the note) is
 // untrusted text, and nothing that is paid for is cut.
 

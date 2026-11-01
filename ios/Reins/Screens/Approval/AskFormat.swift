@@ -1,9 +1,10 @@
 import Foundation
 
-// How a request is written and marked (design/signal/ASK-TEXT.md): the kind in mono capitals, the sentence in the
-// serif with exactly one italic run, the target (short and human: owner/repo, a person, a folder, a file, project ·
-// env), and machine details (a command, a branch, a host, a path, an address) only on a mono line under it, never in
-// the serif. Waiting asks are present tense and start with the verb: the asker is in the field's top bar. The icon is
+// How a request is written and marked (design/signal/ASK-TEXT.md) and set in the app's type (Typography.swift): the
+// kind label ("GitHub · Push"), the sentence in the display face (Sora) with exactly one semibold target (short and
+// human: owner/repo, a person, a folder, a file, project · env), and machine details (a command, a branch, a host, a
+// path, an address) only on a JetBrains Mono line under it, never in the sentence. Waiting asks are present tense and
+// start with the verb: the asker is in the field's top bar. The icon is
 // the integration's mark with the action as a badge in the kind's colour. Screens never build the sentence themselves.
 //
 // The sentence never claims more than what was asked: its verb, counts and target come only from structured fields

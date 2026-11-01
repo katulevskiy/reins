@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "Correct in one swipe" (iOS-Activity.png, 04): a river row Autopilot decided can be swiped left to show "This was
+/// "Correct in one swipe" (`design/next/iphone`, Next-Activity): a river row Autopilot decided can be swiped left to show "This was
 /// wrong" in violet; letting go past it asks what should have happened, as the entry's page does, and Autopilot learns.
 /// What was done stays done. Only rows the core says can still be corrected; others do not move.
 struct CorrectionSwipe: ViewModifier {

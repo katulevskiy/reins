@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Signal's menu (Components.png, Menus): a raised card of rows that grows from the control that opened it, scale 0.92
+// The menu (`design/next/iphone`, the System board): a raised card of rows that grows from the control that opened it, scale 0.92
 // to 1 over 180 ms, and folds back into it in 120 ms. It replaces system pickers and context menus: the same paper and
 // rows on every platform. Press the trigger and slide down the rows to pick in one gesture; each row crossed ticks.
 //

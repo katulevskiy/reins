@@ -6,6 +6,9 @@ before you write the code.
 
 Security problems: do not open a public issue; see [SECURITY.md](SECURITY.md).
 
+Bugs, including reports from beta testers, use the bug report form.
+[Bug triage](docs/bug-triage.md) describes the labels and which bugs block a release.
+
 ## Contributor License Agreement
 
 Every contributor signs the [Contributor License Agreement](CLA.md) (CLA) once, before their first pull request can be
@@ -19,8 +22,12 @@ How to sign: open your pull request. The CLA bot comments on it; reply with exac
     I have read the CLA Document and I hereby sign the CLA
 
 The bot records your GitHub account in the signatures branch and the check turns green. If it does not, comment
-`recheck`. Every author of every commit in the pull request must sign, so make sure your commits use an email address
-linked to your GitHub account.
+`recheck`. Every person who authored a commit in the pull request must sign too, so make sure your commits use an
+email address linked to your GitHub account.
+
+The person who opens the pull request must always have signed. Commits made by a coding agent (Claude, Cursor,
+Codex, Copilot, Devin, Grok, Gemini or Jules) count as theirs and need no other signature, and `Co-authored-by:` lines
+are ignored. Section 5 of the CLA states this as a clarification, so existing signatures already cover it.
 
 We do not use the Developer Certificate of Origin (DCO): no `Signed-off-by:` line is needed.
 
@@ -212,7 +219,8 @@ The CLA check is `.github/workflows/cla.yml`, using
 5. When the text of CLA.md changes in substance, bump the signature path in the workflow
    (`signatures/version2/cla.json`) so everyone signs the new version.
 
-Bots and maintainers who do not need to sign are listed in the workflow's `allowlist`.
+The bots and coding-agent identities that never sign are listed in the workflow's first step. It also checks
+that the pull request's opener has signed and records their signature when they sign by comment.
 
 ## Maintainers: signing the APK in releases
 
@@ -273,12 +281,18 @@ signs the iOS app, then exports it for the App Store and uploads it to App Store
 `com.reins2fa.app`). It is one job after publication, not a build beside the others: its signing material is the
 `testflight` environment's, which the `macos` job, bound to the main ref's Infisical identity, cannot have, and a
 second macOS job before publication waited in the account's macOS queue on its own. Then
-`scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
-Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
-beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
+`scripts/testflight.py` waits for processing, reports the build's export compliance (it never sets it: the archive's
+Info.plist declares non-exempt encryption and the approved declaration's code, from the environment secret
+`ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE`; without it the job warns and uploads a build that shows as Missing Compliance, see
+[docs/ios-app-store-submission.md](docs/ios-app-store-submission.md#export-compliance)), sets "What to Test" from the
+release notes, adds the build to the TestFlight groups and submits it for beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
 never touches the GitHub release: rerun the failed job. A newer release's upload cancels an older one still waiting or
 running. To test or redo one release, run the Release workflow from main with `testflight_tag` = `vX.Y.Z`; only this
 job runs.
+
+App Store review is a separate, manual step: the App Store submission workflow (`ios-app-store.yml`) sends a
+processed TestFlight build for review with a manual release, using the same API key. Checklist and steps:
+[docs/ios-app-store-submission.md](docs/ios-app-store-submission.md).
 
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.
@@ -292,6 +306,7 @@ testflight); the job fails naming any that is missing. They are copies: the mast
 | `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | the Apple Distribution certificate and key (`.p12`, base64) and its password |
 | `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
 | `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
+| `ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE` | the export compliance code of the app's approved encryption declaration (`ITSEncryptionExportComplianceCode`) |
 
 The job does not use Infisical (its plan allows no second identity, and the release identity `github-release-android`
 keeps only its main-ref subject; an environment's OIDC subject would not match it), and asks for no OIDC token.

@@ -3,8 +3,9 @@ import UIKit
 import XCTest
 @testable import Reins
 
-/// Signal's foundation: the tokens as the design package sets them (design/signal/tokens/signal.tokens.json), the
-/// fonts and glyphs the app ships, and which field each kind of request gets.
+/// Colour and motion as `design/signal/tokens/signal.tokens.json` sets them, the Next type scale
+/// (`Typography.swift`: Sora, Geologica for Cyrillic, JetBrains Mono), the glyphs the app ships, and which field each
+/// kind of request gets.
 final class SignalFoundationTests: XCTestCase {
     private func hex(_ color: Color, dark: Bool) -> UInt32 {
         let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)

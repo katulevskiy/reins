@@ -2,7 +2,7 @@ import XCTest
 
 /// The phone half of `ios/scripts/live-smoke.sh`: the real app (real core, no `-demo`) signs in to a real local
 /// server, becomes the approval device, connects the AI the host plays, adds the host's MCP server, approves one call
-/// once and allows the next for a while, then shows Activity, Grants and Settings. Skipped unless the script passes the
+/// once and allows the next for a while, then shows Activity, Trust and Settings. Skipped unless the script passes the
 /// server's details (TEST_RUNNER_REINS_LIVE_*). Screenshots go to the live folder (/tmp/reins-live).
 ///
 /// The script and this test talk through files in that folder: `code` (the number the AI's browser shows), `faceid`

@@ -1,7 +1,8 @@
 import SwiftUI
 
-// The shared building blocks, in Next: paper, ink and hairlines; raised groups and plates with a hairline ring; one
-// violet; the type roles of Typography.swift; the three page templates of the System board (hero, standard, quiet).
+// The shared building blocks. Layout and the three page templates (hero, standard, quiet) follow design/next/iphone,
+// the System board. Type roles are Typography.swift (Sora, Geologica for Cyrillic, JetBrains Mono). Paper, ink,
+// hairlines and violet are the Signal colour tokens (Palette.swift, design/signal/tokens/signal.tokens.json).
 
 /// A section's header over its group (the System board's `sec`): an optional glyph, the title in `section` (13
 /// semibold, never capitals) in ink-2, and counts or a control at the right. `quiet` is the smaller one of pushed pages
@@ -386,12 +387,12 @@ struct CapsuleButtonStyle: PrimitiveButtonStyle {
     }
 }
 
-/// The height of everything beside a page title: the glass pills and the round buttons, so none stands taller.
+/// The height of everything beside a page title: the pills and the round buttons, so none stands taller.
 enum HeaderControl {
     static let height: CGFloat = 40
 }
 
-/// A round header button (close, more, settings): `paper-raised` with a hairline ring, as Signal draws them (no glass).
+/// A round header button (close, more, settings): `paper-raised` with a hairline ring, as the System board draws them (no glass).
 struct GlassIconButton: View {
     var symbol: String
     var size: CGFloat = HeaderControl.height
@@ -424,7 +425,7 @@ struct EmptyState: View {
     var title: String
     var message: String? = nil
 
-    /// All quiet: the pond and one line in the mood serif ("All quiet on the water.").
+    /// All quiet: the pond and one line in body ("All quiet on the water.").
     static func calm(_ mood: String) -> CalmState { CalmState(mood: mood) }
 
     var body: some View {
@@ -491,7 +492,7 @@ struct Toast: View {
     }
 }
 
-/// The page title in the serif with optional trailing controls ("Activity  [Manual] [Integrations]").
+/// The page title in the display face (`TextRole.title`, Sora) with optional trailing controls ("Activity  [Manual] [Integrations]").
 struct PageHeader<Trailing: View>: View {
     var title: String
     @ViewBuilder var trailing: Trailing
