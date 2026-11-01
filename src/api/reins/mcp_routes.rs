@@ -31,7 +31,7 @@ use super::{
     presence::PhoneSeen,
     push,
     relay::{QueueFull, WaitResult},
-    tools::{self, ToolArgError, ToolInvocation},
+    tools::{self, ToolArgError, ToolInvocation, ToolProfile},
 };
 use crate::{
     CONFIG,
@@ -631,7 +631,7 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
     let user = connection.user_uuid.to_string();
     let services = HUB.services_of(&user);
     let mcp_servers = HUB.mcp_servers_of(&user);
-    let action = mcp::handle(&request.headers, &body, services.as_deref(), &mcp_servers);
+    let action = mcp::handle(&request.headers, &body, services.as_deref(), &mcp_servers, ToolProfile::configured());
     // Notifications are answered with an empty 202 and cost nothing; every other request counts.
     let notification = matches!(
         action,
