@@ -239,8 +239,6 @@ final class AppModel {
     var connectStartsTyped = false
     /// A one-line message over the content (a toast).
     var notice: String?
-    /// Whether the Ended grants list on Trust is open; kept while the user browses.
-    var expiredOpen = false
     /// Changes for every visit to "New grant", so the form always starts empty.
     private(set) var newGrantToken = 0
     /// Items already popped up once; dismissing one leaves it in the list without popping up again.

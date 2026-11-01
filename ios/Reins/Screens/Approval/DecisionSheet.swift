@@ -38,7 +38,7 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                     ScrollView { details.padding(.bottom, 12) }
                         .scrollDismissesKeyboard(.interactively)
                         .safeAreaInset(edge: .bottom, spacing: 0) {
-                            // The glass buttons float over the details; a fade above them and a fill underneath keep both
+                            // The buttons float over the details; a fade above them and a fill underneath keep both
                             // readable, however tall the decision is (the shortcut and its caption sit above the buttons).
                             decision.background {
                                 VStack(spacing: 0) {

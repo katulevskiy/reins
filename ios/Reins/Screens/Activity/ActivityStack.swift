@@ -12,7 +12,8 @@ enum ActivityText {
     /// and "undone" and "not_sent" never went.
     static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
 
-    /// The kind label of a waiting card ("Gmail · Send"), from the core's provider and action. The card shows the icon; VoiceOver reads this.
+    /// The kind label WaitingInbox shows on a batch card: "Gmail · Send" (set in mono capitals), from the core's provider
+    /// and action.
     static func label(_ item: PendingItem) -> String { AskLabels.pending(item, field: field(item, danger: false)).kind }
 
     /// The ask on a waiting card (ASK-TEXT): the shared formatter's sentence, one semibold target; a burst of several

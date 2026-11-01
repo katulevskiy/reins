@@ -132,7 +132,8 @@ Reins/Feedback/ haptics (Core Haptics patterns ported from Android's HapticDesig
              Zeron's sound set, the detent ladder), the feedback store
 Reins/Platform/ notifications and their actions, grant reminders, background refresh and model update, Google sign-in, MCP
              sign-in, Live Activities, Face ID
-Reins/Screens/ activity, approval, trust (grants and Autopilot), connections, settings, integrations, vault, pairing, sign-in
+Reins/Screens/ activity, approval, upload, trust (grants and Autopilot), connections, circles, org reviews, settings,
+             integrations, vault, pairing, sign-in
 Reins/Autopilot/ ONNX Runtime model runner and the model download
 Reins/Debug/ DemoCore: an in-memory core with sample data (-demo)
 ```
