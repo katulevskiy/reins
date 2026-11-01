@@ -2,6 +2,7 @@ gmail_read
 gmail_search
 gmail_send
 reins_request_access
+reins_batch
 reins_list_accounts
 reins_get_result
 reins_wait

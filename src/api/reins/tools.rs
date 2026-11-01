@@ -1474,7 +1474,7 @@ mod tests {
     #[test]
     fn every_tool_carries_the_same_permission_metadata() {
         let reports = mcp_report();
-        for tool in tool_definitions_with(&reports) {
+        for tool in tool_definitions_for(ToolProfile::Full, &reports) {
             let name = tool["name"].as_str().unwrap();
             let meta = &tool["_meta"][permission::META_KEY];
             for key in ["access", "approval", "every_time", "standing_grant", "resource_param", "max_grant_seconds"] {
@@ -1484,7 +1484,8 @@ mod tests {
                 assert_ne!(meta["access"], "write", "{name}");
             }
         }
-        let by_name = |n: &str| tool_definitions_with(&reports).into_iter().find(|t| t["name"] == n).unwrap();
+        let by_name =
+            |n: &str| tool_definitions_for(ToolProfile::Full, &reports).into_iter().find(|t| t["name"] == n).unwrap();
         assert_eq!(
             by_name(github_tool("issue_comment_edit"))["_meta"][permission::META_KEY]["standing_grant"],
             "write"
