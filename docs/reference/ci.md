@@ -141,6 +141,7 @@ apart. On `main`, every suite runs unless `main` recorded a pass on its exact in
 |---|---|---|
 | `rust`, `clippy` | Server and core tests (nextest + doctests), clippy | every workspace package but the desktop app (read from the manifests, so a new member is in), with the lockfile, toolchain and cargo config |
 | `replay` | Replay gate | `reins-replay` and its dependencies |
+| `onboarding` | Onboarding in the browser (Playwright, the server and a simulated phone) | the server, `reins-e2e` and their dependencies, `playwright/onboarding.config.ts`, `playwright/tests/onboarding`, `playwright/package.json` and its lockfile |
 | `packages` | Linux packages and repositories | `scripts/package`, the packaging test, the installers, `release.yml`, the app's packaging files |
 | `desktop-linux` | Desktop UI on Linux | `reins-desktop-app` and its dependencies |
 | `desktop-macos` | Desktop app on macOS | `reins-desktop`, `reins-desktop-app` and their dependencies |

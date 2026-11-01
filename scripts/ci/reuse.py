@@ -65,6 +65,8 @@ SUITE_PACKAGES: dict[str, list[str] | AllBut] = {
     "rust": AllBut(["reins-desktop-app"]),
     "clippy": AllBut(["reins-desktop-app"]),
     "replay": ["reins-replay"],
+    # The browser onboarding tests: the server binary and reins-e2e's simulated phone (examples/playwright_phone.rs).
+    "onboarding": [ROOT_PACKAGE, "reins-e2e"],
     "desktop-linux": ["reins-desktop-app"],
     "desktop-macos": ["reins-desktop", "reins-desktop-app"],
     "desktop-windows": ["reins-desktop", "reins-desktop-app"],
@@ -77,6 +79,8 @@ SUITE_INPUTS: dict[str, list[str]] = {
     "rust": [],
     "clippy": [],
     "replay": [],
+    "onboarding": ["playwright/onboarding.config.ts", "playwright/tests/onboarding/**", "playwright/package.json",
+                   "playwright/package-lock.json"],
     # scripts/test-linux-packages.py builds a fake release from these (and pins nfpm against release.yml's).
     "packages": ["scripts/package/**", "scripts/test-linux-packages.py", "scripts/release-feed.sh",
                  "scripts/install.sh", "scripts/install.ps1", ".github/workflows/release.yml",

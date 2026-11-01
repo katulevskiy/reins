@@ -23,7 +23,8 @@ def run(paths, tier="fast", event="pull_request", patches=None):
     return {suite for suite, on in plan.select(files, tier, event, INPUTS).items() if on}
 
 
-LINUX_RUST = {"rust", "clippy"}
+# The server and core suites; the browser onboarding tests build the server and reins-e2e, which reach the same crates.
+LINUX_RUST = {"rust", "clippy", "onboarding"}
 
 
 class SelectTest(unittest.TestCase):
@@ -40,6 +41,13 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(run(["src/api/core/mod.rs"]), LINUX_RUST)
         self.assertEqual(run(["migrations/sqlite/2026-10-01/up.sql"]), LINUX_RUST)
         self.assertEqual(run(["tests/reins_server/main.rs"]), LINUX_RUST)
+
+    def test_onboarding_playwright(self):
+        self.assertEqual(run(["playwright/tests/onboarding/support.ts"]), {"onboarding"})
+        self.assertEqual(run(["playwright/onboarding.config.ts", "playwright/package-lock.json"]), {"onboarding"})
+        self.assertEqual(run(["crates/reins-e2e/examples/playwright_phone.rs"]), {"rust", "clippy", "onboarding"})
+        # The web-vault suite does not run in CI.
+        self.assertEqual(run(["playwright/tests/login.spec.ts"]), set())
 
     def test_policy_reaches_desktop_but_fast_tier_skips_macos(self):
         policy = "crates/reins-policy/src/engine.rs"
