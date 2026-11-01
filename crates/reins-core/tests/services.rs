@@ -227,9 +227,12 @@ async fn the_catalogue_lists_every_integration_and_what_this_build_lacks() {
             ("sms", "device", false),
             ("vault", "vault", true),
             ("payments", "payments", true),
+            ("x", "oauth", false),
         ]
     );
     assert!(services.iter().find(|s| s.service == "sms").unwrap().note.is_some());
+    let x = services.iter().find(|s| s.service == "x").unwrap();
+    assert_eq!(x.note.as_deref(), Some("This build has no X client id."));
     let (with_phone, _, _dir) = core(Some(Arc::default()));
     assert!(with_phone.services().await.unwrap().iter().find(|s| s.service == "sms").unwrap().available);
 }
