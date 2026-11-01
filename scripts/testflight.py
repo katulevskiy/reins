@@ -511,6 +511,24 @@ class Asc:
         log(f"{len(existing)} builds in App Store Connect; this one is {version} ({number})")
         return str(number), False
 
+    def approved_compliance_code(self, bundle_id):
+        """The code of the app's newest APPROVED encryption declaration, or "" when it has none. Reads only: the
+        archive puts it in ITSEncryptionExportComplianceCode when the secret ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE is
+        not set, since App Store Connect refuses an upload whose code differs from the approved declaration's."""
+        declarations = self.pages(f"apps/{self.app_id(bundle_id)}/appEncryptionDeclarations?limit=200")
+        approved = [
+            d["attributes"] for d in declarations
+            if (d.get("attributes") or {}).get("appEncryptionDeclarationState") == "APPROVED"
+            and re.fullmatch(EXPORT_COMPLIANCE_CODE_PATTERN, str(d["attributes"].get("codeValue") or ""))
+        ]
+        if not approved:
+            self.warn(f"Export compliance: none of the app's {len(declarations)} encryption declarations is APPROVED "
+                      "with a code: the upload will be refused until one is (docs/ios-app-store-submission.md)")
+            return ""
+        newest = max(approved, key=lambda a: str(a.get("uploadedDate") or a.get("createdDate") or ""))
+        log("export compliance: using the code of the app's approved encryption declaration")
+        return newest["codeValue"]
+
     def wait_processed(self, app_id, version, number, timeout, interval):
         deadline = self.clock() + timeout
         state = "not there yet"
@@ -819,6 +837,14 @@ def main(argv=None, http=None, environ=os.environ):
             number, uploaded = asc.prepare(args.bundle_id, args.version, args.minimum)
             print(f"build-number={number}")
             print(f"uploaded={str(uploaded).lower()}")
+            if not uploaded and not environ.get("EXPORT_COMPLIANCE_CODE", "").strip():
+                try:
+                    code = asc.approved_compliance_code(args.bundle_id)
+                except AscError as error:
+                    asc.warn(f"Export compliance: could not read the app's encryption declarations ({error})")
+                    code = ""
+                if code:
+                    print(f"export-compliance-code={code}")
             return 0
         if args.command == "submit":
             if not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}", args.version) or not re.fullmatch(r"[0-9]+(\.[0-9]+)*",

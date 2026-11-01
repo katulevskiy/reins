@@ -2204,7 +2204,8 @@ jobs:
           # The code of the app's encryption declaration Apple approved (it uses standard non-exempt encryption; France
           # excluded: Pricing and Availability): ITSEncryptionExportComplianceCode, through
           # ios/scripts/export-compliance.sh. Optional: without it the archive leaves the key out.
-          EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}
+          # The secret wins; otherwise the code of the app's approved declaration, read by the Build number step.
+          EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE || steps.number.outputs.export-compliance-code }}
           VERIFY_ONLY: ${{ inputs.verify_only }}
           # The X developer app's OAuth 2.0 client id (public; docs/connectors/x.md). Without it X shows as unavailable.
           X_CLIENT_ID: ${{ vars.X_CLIENT_ID }}
@@ -2230,7 +2231,7 @@ jobs:
             # The archive is built without the key. The upload goes on; App Store Connect shows the build as Missing
             # Compliance until its encryption questions are answered there.
             if [[ "$VERIFY_ONLY" != true ]]; then
-              echo "::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set: this build uploads without ITSEncryptionExportComplianceCode and shows as Missing Compliance in App Store Connect until answered there (docs/ios-app-store-submission.md, Export compliance)."
+              echo "::warning::The ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE secret is not set and the app has no approved encryption declaration: this build uploads without ITSEncryptionExportComplianceCode and shows as Missing Compliance in App Store Connect until answered there (docs/ios-app-store-submission.md, Export compliance)."
             fi
             compliance="REINS_EXPORT_COMPLIANCE_REQUIRED = NO"
           fi
