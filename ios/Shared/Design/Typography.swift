@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Reins Next's type (design/next/iphone, the Type board): one face, Sora, for everything you read and decide on, and
+/// The app's type (`design/next/iphone`, the Type board): one face, Sora, for everything you read and decide on, and
 /// JetBrains Mono for machine values (branches, hashes, addresses, codes, diffs). Sora has no Cyrillic, so each Sora
 /// file carries Geologica's at the same weight (ios/scripts/make-fonts.py); Latin stays Sora. Display text (asks,
-/// titles, big numbers) is Sora 500 with its target in 600, tracked tighter as it grows. No 700: `.bold` draws
-/// semibold. Sizes follow Dynamic Type relative to the text style closest to them.
+/// titles, big numbers) is Sora 500 with its target in 600, tracked tighter as it grows. No italic, and no 700: `.bold`
+/// draws semibold. Colour is the Signal tokens in `Palette.swift`, not this file. Sizes follow Dynamic Type relative to
+/// the text style closest to them.
 enum RFont {
     enum Weight {
         case regular, medium, semibold
@@ -82,7 +83,7 @@ enum TextRole: CaseIterable {
     case ask
     /// Display 22: the ask on a waiting card, a mode's name on its card, a sheet's title.
     case cardAsk
-    /// Display 30: a tab's title (Activity, Trust, Connections, Vault, Settings).
+    /// Display 30: a root page's title (Activity, Trust, Connections, Settings).
     case title
     /// Display 24: a pushed page's title (everything under Settings, service details, forms).
     case quietTitle

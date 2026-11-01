@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// One operation, opened (iOS-Activity.png, 05): decided means paper, so the entry's own header (its kind tile, the line
-/// in the serif, the verdict) stands where the field was. An entry that kept its approval then shows the approval's
+/// One operation, opened (`design/next/iphone`, Next-Activity): decided means paper, so the entry's own header (its kind tile, the line
+/// in the display face, the verdict) stands where the field was. An entry that kept its approval then shows the approval's
 /// facts and pages, read-only, what was asked in full below and "This was wrong" where the decision dock was. An older entry shows what it kept: who asked, what exactly, what was released or sent and to whom, who
 /// decided, and the grant that covered it.
 struct ActivityDetailScreen: View {

@@ -1,7 +1,8 @@
 import SwiftUI
 
-// Grouped lists in Signal's look (Settings, a connection's page, the vault): rows on paper with rule hairlines between
-// them, never cards; monochrome tiles, since nothing on these pages is asking anything; mono capital headers.
+// Grouped lists (Settings, a connection's page, the vault): rows on paper with rule hairlines between them, never
+// cards; monochrome tiles, since nothing on these pages is asking anything. Section headers use `TextRole.section`
+// (Sora, not capitals). Colour is the Signal tokens in Palette.swift.
 
 extension View {
     /// An inset-grouped list on the page background.
@@ -21,7 +22,7 @@ extension View {
     }
 }
 
-/// A section header: Signal's section label, mono capitals tracked 0.16 em in ink-meta.
+/// A section header: `TextRole.section` (Sora 13 semibold, +0.015 em, not capitals) in ink-meta.
 struct GroupHeader: View {
     var text: String
 

@@ -39,7 +39,7 @@ struct RootView: View {
         #if DEBUG
         // `-gallery`: every avatar on one page (provider logos, service logos, blobatars).
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
-        // `-signalGallery [page]`: the Signal components, type, colours and glyphs (also Settings > Developer).
+        // `-signalGallery [page]`: the design gallery (Sora type, Signal colours, glyphs; also Settings > Developer).
         .overlay { if SignalGallery.requested { SignalGallery(page: SignalGallery.requestedPage) } }
         #endif
         .toggleStyle(SignalSwitchStyle())

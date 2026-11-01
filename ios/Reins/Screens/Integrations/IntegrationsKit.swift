@@ -42,7 +42,7 @@ struct IntegrationCompletion: View {
 // progress, status pills, secret fields with a paste button, and an account's row.
 
 extension View {
-    /// A list of rows on paper with rule hairlines between them, never cards (Signal's lists).
+    /// A list of rows on paper with rule hairlines between them, never cards (the System board's lists).
     func integrationList() -> some View {
         listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -137,7 +137,7 @@ struct ActionButton: View {
 
     private var colors: (fg: Color, bg: Color) {
         switch kind {
-        // Signal's buttons: ink for the one thing to do, violet only where a permission is given, the soft wash, red.
+        // The kit's buttons: ink for the one thing to do, violet only where a permission is given, the soft wash, red.
         case .primary: (Palette.onInverse, Palette.inverse)
         case .accent: (Palette.onInverse, Palette.inverse)
         case .secondary: (Palette.ink, Palette.paperSunken)
