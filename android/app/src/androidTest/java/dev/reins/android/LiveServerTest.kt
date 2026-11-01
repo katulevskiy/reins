@@ -61,6 +61,7 @@ class LiveServerTest {
                 null,
                 BuildConfig.TELEGRAM_API_ID,
                 BuildConfig.TELEGRAM_API_HASH,
+                BuildConfig.X_CLIENT_ID,
             )
             val session = core.login(server!!, email!!, password!!, null)
             assertEquals(email, session.email)

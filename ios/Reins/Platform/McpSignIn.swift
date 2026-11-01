@@ -21,9 +21,8 @@ enum McpSignInResult: Equatable {
 /// It plays `.connected` / `.error`, sets `model.mcpNotice` with Android's wording and reloads the servers.
 @MainActor
 enum McpSignIn {
-    nonisolated static let redirectScheme = "com.reins2fa.app"
+    nonisolated static let redirectScheme = AppRedirect.scheme
     nonisolated static let redirectHost = "mcp-oauth"
-    nonisolated private static let maxRedirectChars = 8_192
 
     static func run(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInResult {
         let epoch = model.accountEpoch
@@ -73,10 +72,7 @@ enum McpSignIn {
     }
 
     /// The core's own redirect address (anything else is never handed to it).
-    nonisolated static func isRedirect(_ uri: String) -> Bool {
-        guard uri.count <= maxRedirectChars, let c = URLComponents(string: uri) else { return false }
-        return c.scheme == redirectScheme && c.host == redirectHost && c.user == nil && c.port == nil
-    }
+    nonisolated static func isRedirect(_ uri: String) -> Bool { AppRedirect.matches(uri, host: redirectHost) }
 
     /// A sign-in page may only be a web page (never a `file:` or an app's address).
     nonisolated static func isWebPage(_ url: URL) -> Bool {

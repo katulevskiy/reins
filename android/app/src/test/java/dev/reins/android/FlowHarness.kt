@@ -125,6 +125,9 @@ abstract class FlowHarness {
         core.connectionsError = null
         core.resetEnroll()
         container.ssoSignIn.clear()
+        core.resetOAuth()
+        container.oauthSignIn.clear()
+        container.state.setServiceNotice(null)
         authResult = AuthResult.Success
         prompts.set(0)
         promptTexts.clear()

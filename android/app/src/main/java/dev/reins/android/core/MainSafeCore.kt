@@ -183,6 +183,10 @@ class MainSafeCore(
 
     override suspend fun loginPassword(service: String, password: String): AccountView = io { loginPassword(service, password) }
 
+    override suspend fun oauthBegin(service: String): String = io { oauthBegin(service) }
+
+    override suspend fun oauthFinish(service: String, callback: String): AccountView = io { oauthFinish(service, callback) }
+
     override suspend fun removeServiceAccount(service: String, account: String) = io { removeServiceAccount(service, account) }
 
     override suspend fun serviceAccountStatus(service: String, account: String): GmailStatus =

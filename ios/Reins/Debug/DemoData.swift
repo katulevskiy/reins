@@ -905,6 +905,7 @@ enum DemoData {
         ("device_contacts", "Phone contacts", "device", true, nil),
         ("sms", "Text messages", "device", false, "Not available in this build."),
         ("vault", "Password vault", "vault", true, nil),
+        ("x", "X", "oauth", true, nil),
     ]
 
     static func mcpTools() -> [McpToolView] {

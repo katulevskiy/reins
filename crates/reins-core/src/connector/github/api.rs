@@ -374,6 +374,7 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
         blob: None,
         secrets: None,
         default_branch: moves_a_branch,
+        image: None,
     })
 }
 

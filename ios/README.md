@@ -78,6 +78,7 @@ Apple hardware, so there is no CI job.
 |---|---|
 | `REINS_TEAM` | Your Apple developer team, for device builds (simulator builds need none) |
 | `REINS_TELEGRAM_API_ID`, `REINS_TELEGRAM_API_HASH` | Telegram (your own account); without them Telegram is unavailable |
+| `REINS_X_CLIENT_ID` | The OAuth 2.0 client id of your X app (callback `com.reins2fa.app://x-oauth`); without it X is unavailable |
 | `REINS_GOOGLE_CLIENT_ID`, `REINS_GOOGLE_REDIRECT_SCHEME` | An iOS OAuth client of your Google Cloud project and its reversed id; without them Gmail, Google Calendar and Contacts say "needs setup" |
 | `REINS_APS_ENVIRONMENT` | `development` for Debug, `production` for Release (also picks the push-token prefix the server sees) |
 

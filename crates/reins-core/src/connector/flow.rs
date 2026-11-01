@@ -417,6 +417,7 @@ impl Engine {
                         connector.as_ref(),
                         &account,
                         call,
+                        &preview,
                         granted_command,
                         AuthorizationSource::Automatic,
                     )
@@ -747,7 +748,8 @@ impl Engine {
                     disclosure_error: None,
                 }
             } else {
-                self.perform_write(request, connector.as_ref(), &account, call, granted_command, source).await?
+                self.perform_write(request, connector.as_ref(), &account, call, preview, granted_command, source)
+                    .await?
             };
             let data = match attempt.result {
                 Ok(data) => data,
@@ -973,12 +975,14 @@ impl Engine {
 
     /// Carries out an approved (or permitted) write: a release of secrets bound to `command`, a git host's token for
     /// the phone's integration, or the integration's own write.
+    #[expect(clippy::too_many_arguments, reason = "the write as the user approved it: its call and its preview")]
     async fn perform_write(
         &self,
         request: &RelayRequest,
         connector: &dyn super::Connector,
         account: &str,
         call: &ConnectorCall,
+        preview: &super::Preview,
         command: Option<(desktop::CommandScope, Option<i64>)>,
         source: AuthorizationSource,
     ) -> Result<WriteAttempt, CoreError> {
@@ -995,7 +999,7 @@ impl Engine {
         } else if is_secrets_store(call) {
             Box::pin(self.secrets_store_perform(account, call)).await
         } else {
-            connector.perform(account, call).await
+            connector.perform_approved(account, call, preview).await
         };
         let disclosure_error = self.authorization_execute(request, source).err();
         // Provider errors may contain content too; suppress them after a late policy restriction.

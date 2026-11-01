@@ -150,13 +150,14 @@ struct AccountsScreen: View {
         switch service.kind {
         case "google": Task { await m.addGoogle(hint: account) }
         case "device": Task { await m.addDevice() }
+        case "oauth": Task { await m.addOAuth() }
         default: break
         }
     }
 }
 
-/// Connecting another account: Google's sign-in, this phone's permission, a token, the vault's master password, or
-/// Telegram's phone number and code.
+/// Connecting another account: Google's sign-in, this phone's permission, a token, the vault's master password,
+/// Telegram's phone number and code, or a service's own sign-in page (X).
 private struct AddAccountControls: View {
     var service: ServiceView
     var accounts: AccountsModel
@@ -225,6 +226,18 @@ private struct AddAccountControls: View {
             .padding(.top, 18)
         case "telegram":
             TelegramLogin(accounts: accounts)
+        case "oauth":
+            // What it is for and the small print are behind the page's (?).
+            Button {
+                Task { await accounts.addOAuth() }
+            } label: {
+                BusyLabel(title: "Sign in with \(service.name)", glyph: nil, busy: accounts.busy)
+            }
+            .buttonStyle(SignalButtonStyle(service.accounts.isEmpty ? .inverse : .soft))
+            .disabled(accounts.busy)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .accessibilityIdentifier("oauthSignIn")
         default:
             Text("This kind of integration cannot be added here.")
                 .textRole(.body)

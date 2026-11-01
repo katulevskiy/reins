@@ -208,6 +208,43 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertNil(telegram.error)
     }
 
+    // MARK: X
+
+    func testXSignsInOnItsOwnPageAndAddsTheAccount() async {
+        let x = accounts("x")
+        await x.addOAuth()
+        XCTAssertNil(x.error)
+        XCTAssertEqual(platform.oauthAsked.map(\.service), ["x"])
+        XCTAssertTrue(platform.oauthAsked.first?.url.hasPrefix("https://x.com/") ?? false)
+        XCTAssertEqual(x.accounts.map(\.account), ["@ada"])
+        XCTAssertEqual(x.connectedAccount, "@ada")
+        XCTAssertFalse(x.busy)
+        XCTAssertEqual(feedback.cues.last, .reconnected)
+    }
+
+    func testClosingXsPageShowsNothing() async {
+        platform.oauthAnswer = nil
+        let x = accounts("x")
+        await x.addOAuth()
+        XCTAssertNil(x.error)
+        XCTAssertTrue(x.accounts.isEmpty)
+        XCTAssertFalse(feedback.cues.contains(.error))
+    }
+
+    func testXRefusingOrAFailedPageSaysSo() async {
+        platform.oauthAnswer = "com.reins2fa.app://x-oauth?error=access_denied&state=s"
+        let x = accounts("x")
+        await x.addOAuth()
+        XCTAssertEqual(x.error, "X did not allow it: access_denied")
+        XCTAssertTrue(x.accounts.isEmpty)
+        XCTAssertEqual(feedback.cues.last, .error)
+
+        platform.oauthFails = IntegrationsFailure("The sign-in page sent the browser somewhere else.")
+        await x.addOAuth()
+        XCTAssertEqual(x.error, "The sign-in page sent the browser somewhere else.")
+        XCTAssertTrue(x.accounts.isEmpty)
+    }
+
     // MARK: MCP
 
     private func mcp() -> McpModel { McpModel(model: model, platform: platform) }
@@ -353,6 +390,10 @@ private final class FakePlatform: IntegrationsPlatform {
     var revoked: [(account: String, service: String)] = []
     var phoneAsked: [String] = []
     var signIns: [(serverId: String, url: String)] = []
+    /// The address X's page comes back to; nil: the user closed it.
+    var oauthAnswer: String? = "com.reins2fa.app://x-oauth?state=s&code=c"
+    var oauthFails: Error?
+    var oauthAsked: [(service: String, url: String)] = []
 
     func authorizeGoogle(service: String, loginHint: String?) async throws -> String? {
         googleAsked.append((service, loginHint))
@@ -378,6 +419,12 @@ private final class FakePlatform: IntegrationsPlatform {
         } catch {
             return await model.finishMcpSignIn(.failure(error), serverId: serverId)
         }
+    }
+
+    func oauthSignIn(service: String, authorizeUrl: String) async throws -> String? {
+        oauthAsked.append((service, authorizeUrl))
+        if let oauthFails { throw oauthFails }
+        return oauthAnswer
     }
 }
 

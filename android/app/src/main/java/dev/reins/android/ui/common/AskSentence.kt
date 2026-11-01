@@ -438,7 +438,7 @@ private fun subjectPhrase(lead: String, subject: String, code: Boolean, tail: St
 }
 
 /** Integrations whose subjects are people, chats, events or words (a chat's name, a contact): [ValueKind.Name]. */
-private val NAME_PROVIDERS = setOf("telegram", "sms", "gmail", "gcontacts", "device_contacts", "gcalendar", "device_calendar")
+private val NAME_PROVIDERS = setOf("telegram", "sms", "gmail", "gcontacts", "device_contacts", "gcalendar", "device_calendar", "x")
 
 /** An entry from before labels: built from what the operation is called and what the core kept of it. */
 private fun legacy(entry: ActivityEntry, tense: Tense): AskSentence {

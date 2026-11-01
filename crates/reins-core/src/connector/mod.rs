@@ -18,6 +18,7 @@ pub mod tasks;
 pub mod telegram;
 pub mod telegram_client;
 pub mod vault;
+pub mod x;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -105,6 +106,23 @@ pub struct Preview {
     /// committed to it): Autopilot never decides it on the model (`ApprovalView::targets_default_branch`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub default_branch: bool,
+    /// The image the write publishes, read by the phone itself (given inline, or uploaded and larger than the server
+    /// previews whole): shown with the approval as `ApprovalView.blob`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<PreviewImage>,
+}
+
+/// An image a write publishes, as the phone read it (see [`Preview::image`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewImage {
+    /// The file name the AI gave (shown only).
+    pub name: String,
+    /// Sniffed from the bytes ("image/png").
+    pub mime: String,
+    pub size: u64,
+    /// Lowercase hex.
+    pub sha256: String,
+    pub data_base64: String,
 }
 
 /// The structured part of a Reins Secrets preview (see [`Preview::secrets`]).
@@ -158,6 +176,17 @@ pub trait Connector: Send + Sync {
     /// Does the write the user approved and says what happened.
     async fn perform(&self, _account: &str, _call: &ConnectorCall) -> Result<Value, CoreError> {
         Err(CoreError::service("this integration cannot do that"))
+    }
+
+    /// [`Connector::perform`], given the preview the user approved: a connector that looked a name up for the approval
+    /// acts on what the approval showed, not on a second lookup.
+    async fn perform_approved(
+        &self,
+        account: &str,
+        call: &ConnectorCall,
+        _approved: &Preview,
+    ) -> Result<Value, CoreError> {
+        self.perform(account, call).await
     }
 
     /// The headers a download from this integration needs (its token), so that the server can fetch a large result in
@@ -217,6 +246,18 @@ pub trait Connector: Send + Sync {
 
     /// Step 3, when the account has two-step verification: its password. Returns the account.
     async fn login_password(&self, _password: &str) -> Result<String, CoreError> {
+        Err(CoreError::invalid("this integration is not added that way"))
+    }
+
+    /// An OAuth 2.0 sign-in with PKCE run by the core ([`reins_proto::connector::AuthType::OAuth`]), step 1: the
+    /// service's sign-in page for the phone to open.
+    fn oauth_begin(&self) -> Result<String, CoreError> {
+        Err(CoreError::invalid("this integration is not added that way"))
+    }
+
+    /// Step 2: the redirect the sign-in page sent the phone to. Exchanges its code, keeps the tokens and returns the
+    /// account.
+    async fn oauth_finish(&self, _callback: &str) -> Result<String, CoreError> {
         Err(CoreError::invalid("this integration is not added that way"))
     }
 }

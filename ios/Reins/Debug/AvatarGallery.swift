@@ -6,7 +6,7 @@ struct AvatarGallery: View {
     static var requested: Bool { ProcessInfo.processInfo.arguments.contains("-gallery") }
 
     private static let services = ["gmail", "telegram", "github", "gitlab", "codeberg", "bitbucket", "gcalendar", "gcontacts",
-                                   "device_calendar", "device_contacts", "sms", "vault", "mcp:demo", "unknown"]
+                                   "device_calendar", "device_contacts", "sms", "vault", "x", "mcp:demo", "unknown"]
     private static let names = ["alain", "Claude Desktop", "my laptop", "Team Rocket 3", "user-0", "Build bot", "Ana", "Kitchen iPad",
                                 "Research agent", "zed", "x", "office-mac", "night shift", "Codex CLI?", "pixel", "Long running worker",
                                 "Ollama box", "dev@example.com", "Hermes", "Mallory"]

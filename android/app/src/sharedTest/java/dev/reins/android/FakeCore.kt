@@ -490,6 +490,27 @@ class FakeCore : ReinsCoreInterface {
         return withAccount(service, telegramPhone)
     }
 
+    /** Sign-ins in the browser (X): ["begin", service] and ["finish", service, redirect]. */
+    val oauthCalls = CopyOnWriteArrayList<List<String>>()
+    @Volatile var oauthAuthorizeUrl = OAUTH_AUTHORIZE_URL
+
+    fun resetOAuth() {
+        oauthCalls.clear()
+        oauthAuthorizeUrl = OAUTH_AUTHORIZE_URL
+    }
+
+    override suspend fun oauthBegin(service: String): String {
+        serviceFailure?.let { throw it }
+        oauthCalls += listOf("begin", service)
+        return oauthAuthorizeUrl
+    }
+
+    override suspend fun oauthFinish(service: String, callback: String): AccountView {
+        oauthCalls += listOf("finish", service, callback)
+        serviceFailure?.let { throw it }
+        return withAccount(service, "reins_test")
+    }
+
     override suspend fun removeServiceAccount(service: String, account: String) {
         serviceRemoved += service to account
         accounts = accounts.filterNot { it.service == service && it.account == account }
@@ -2313,6 +2334,8 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun phoneKeyFingerprint() = phoneKeyDigits
 
     companion object {
+        const val OAUTH_AUTHORIZE_URL = "https://x.com/i/oauth2/authorize?client_id=test&state=st4te"
+
         fun defaultServices(): List<ServiceView> = listOf(
             ServiceView("gmail", "Gmail", "google", true, null, emptyList()),
             ServiceView("gcalendar", "Google Calendar", "google", true, null, emptyList()),
@@ -2327,6 +2350,7 @@ class FakeCore : ReinsCoreInterface {
             ServiceView("sms", "Text messages", "device", true, null, emptyList()),
             ServiceView("vault", "Password vault", "vault", true, null, emptyList()),
             ServiceView("payments", "Payments", "payments", true, null, emptyList()),
+            ServiceView("x", "X", "oauth", true, null, emptyList()),
         )
 
         /** The PRF output of every passkey of the fake account (its vault's copy opens with it). */

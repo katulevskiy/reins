@@ -126,6 +126,36 @@ final class IntegrationsLogicTests: XCTestCase {
         XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://mcp-oauth?code=" + String(repeating: "a", count: 9_000)))
     }
 
+    func testOnlyXsOwnRedirectFinishesItsSignIn() {
+        XCTAssertTrue(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth?state=s&code=c", service: "x"))
+        XCTAssertTrue(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth?error=access_denied&state=s", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect(nil, service: "x"))
+        // Another host of the app's scheme, or X's host for another service.
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://mcp-oauth?state=s&code=c", service: "x"))
+        XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://x-oauth?state=s&code=c"))
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth?state=s&code=c", service: "github"))
+        // Look-alikes.
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth.evil.com?state=s&code=c", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect("https://x-oauth/?state=s&code=c", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect("https://evil.example.com/x-oauth?state=s&code=c", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app.evil://x-oauth?state=s&code=c", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://user@x-oauth?state=s&code=c", service: "x"))
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth:8080?state=s&code=c", service: "x"))
+        // Oversized.
+        XCTAssertFalse(OAuthLogic.isRedirect("com.reins2fa.app://x-oauth?state=s&code=" + String(repeating: "a", count: 9_000), service: "x"))
+    }
+
+    func testOnlyAnHttpsPageOpensForXsSignIn() {
+        XCTAssertTrue(OAuthLogic.isSignInPage("https://x.com/i/oauth2/authorize?response_type=code&state=s"))
+        XCTAssertFalse(OAuthLogic.isSignInPage("http://x.com/i/oauth2/authorize"))
+        XCTAssertFalse(OAuthLogic.isSignInPage("https://user@x.com/i/oauth2/authorize"))
+        XCTAssertFalse(OAuthLogic.isSignInPage("javascript:alert(1)"))
+        XCTAssertFalse(OAuthLogic.isSignInPage("com.reins2fa.app://x-oauth?code=c"))
+        XCTAssertFalse(OAuthLogic.isSignInPage("https://"))
+        XCTAssertEqual(OAuthLogic.redirectHost("x"), "x-oauth")
+        XCTAssertNil(OAuthLogic.redirectHost("gmail"))
+    }
+
     func testOnlyWebPagesAreOpenedForASignIn() {
         XCTAssertTrue(McpLogic.isWebPage("https://linear.app/oauth/authorize?x=1"))
         XCTAssertTrue(McpLogic.isWebPage("http://localhost:3000/authorize"))
@@ -167,6 +197,8 @@ final class IntegrationsLogicTests: XCTestCase {
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("gcalendar", kind: "google")))
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("device_contacts", kind: "device")))
         XCTAssertFalse(ServiceCopy.canAllowAgain(service("telegram", kind: "telegram")))
+        XCTAssertEqual(ServiceCopy.needsAgain(service("x", kind: "oauth")), "Signed out")
+        XCTAssertTrue(ServiceCopy.canAllowAgain(service("x", kind: "oauth")))
     }
 
     func testThisPhonesServicesAreNamedByTheService() {
