@@ -743,25 +743,33 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
         }
     }
     out!("\nStep 2 of 3: the background service and git.");
-    if !daemon_running(paths, config).await {
-        let exe = update::current_executable()?;
-        install_service(paths, config, &exe).await?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !daemon_running(paths, config).await {
-            if std::time::Instant::now() > deadline {
-                return Err(reins_desktop::port::not_started(config.listen));
+    let mut next: Vec<String> = Vec::new();
+    let running = daemon_running(paths, config).await;
+    if !running && cfg!(target_os = "linux") && !service::systemd_user_available() {
+        // Nothing to install the service with; git stays direct, since no proxy would answer it.
+        summary.push("– Background service skipped: no systemd user session; git stays direct".to_owned());
+        next.push(service::no_systemd_note());
+    } else {
+        if !running {
+            let exe = update::current_executable()?;
+            install_service(paths, config, &exe).await?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !daemon_running(paths, config).await {
+                if std::time::Instant::now() > deadline {
+                    return Err(reins_desktop::port::not_started(config.listen));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+        summary.push(format!("✓ Background service running on {}", config.listen));
+        let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
+        Git::default().setup_hosts(&Scope::Global, &routed)?;
+        let hosts = enabled_hosts(&routed)?;
+        if !hosts.is_empty() {
+            summary.push(format!("✓ git for {hosts} goes through Reins"));
+        }
+        next.extend(direct.iter().map(reins_desktop::setup::unserved_note));
     }
-    summary.push(format!("✓ Background service running on {}", config.listen));
-    let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
-    Git::default().setup_hosts(&Scope::Global, &routed)?;
-    let hosts = enabled_hosts(&routed)?;
-    if !hosts.is_empty() {
-        summary.push(format!("✓ git for {hosts} goes through Reins"));
-    }
-    let mut next: Vec<String> = direct.iter().map(reins_desktop::setup::unserved_note).collect();
     out!("\nStep 3 of 3: your AI tools.");
     let s = reins_desktop::harness::Setup {
         home: home()?,
@@ -1046,16 +1054,21 @@ fn pause(config: &Config) -> Result<(), String> {
 }
 
 async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
-    if !daemon_running(paths, config).await {
-        let exe = update::current_executable()?;
-        let installed = install_service(paths, config, &exe).await?;
-        out!("Started the background service ({installed}).");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !daemon_running(paths, config).await {
-            if std::time::Instant::now() > deadline {
-                return Err(format!("{}; git was left as it was", reins_desktop::port::not_started(config.listen)));
+    let running = daemon_running(paths, config).await;
+    match service::start(running, cfg!(target_os = "linux"), service::systemd_user_available) {
+        service::Start::Running => {}
+        service::Start::ByHand => return Err(service::start_by_hand_note()),
+        service::Start::Install => {
+            let exe = update::current_executable()?;
+            let installed = install_service(paths, config, &exe).await?;
+            out!("Started the background service ({installed}).");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !daemon_running(paths, config).await {
+                if std::time::Instant::now() > deadline {
+                    return Err(format!("{}; git was left as it was", reins_desktop::port::not_started(config.listen)));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
     let (routed, direct) = reins_desktop::setup::routable(paths, config).await;

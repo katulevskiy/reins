@@ -110,6 +110,65 @@ fn run(program: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
+/// Whether a systemd user manager answers here (`systemctl --user` works). Containers, WSL and minimal systems often
+/// have none, even when `XDG_RUNTIME_DIR` and a session bus are set, so it is asked rather than guessed.
+#[must_use]
+pub fn systemd_user_available() -> bool {
+    user_manager_answers("systemctl")
+}
+
+fn user_manager_answers(systemctl: &str) -> bool {
+    Command::new(systemctl)
+        .args(["--user", "show-environment"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// What `reins setup` says when it installs no service because there is no systemd user session.
+#[must_use]
+pub fn no_systemd_note() -> String {
+    "No background service: this system has no systemd user session (common in containers, WSL and minimal \
+     installs). AI tools still ask through Reins without it. To send git through Reins too, keep `reins daemon` \
+     running (in a terminal, or from your own startup scripts), then run `reins resume`."
+        .to_owned()
+}
+
+/// How `reins resume` gets a daemon to route git through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// One already runs (the service, or `reins daemon` started by hand).
+    Running,
+    /// Install and start the service.
+    Install,
+    /// No service manager to start it with: the user starts `reins daemon` by hand.
+    ByHand,
+}
+
+/// What `reins resume` does: `running` whether a daemon answers; `user_manager` asked only on Linux, and only when
+/// none runs.
+#[must_use]
+pub fn start(running: bool, linux: bool, user_manager: impl FnOnce() -> bool) -> Start {
+    if running {
+        Start::Running
+    } else if linux && !user_manager() {
+        Start::ByHand
+    } else {
+        Start::Install
+    }
+}
+
+/// Why `reins resume` stopped when there is nothing to start the daemon with.
+#[must_use]
+pub fn start_by_hand_note() -> String {
+    "this system has no systemd user session, so Reins cannot start its background service. Start `reins daemon` \
+     first (in another terminal, or from your own startup scripts), then run `reins resume` again. git was left as \
+     it was."
+        .to_owned()
+}
+
 /// Writes the service file for `exe`; when `start`, enables and starts it. Returns the file.
 pub fn install(manager: Manager, home: &Path, exe: &Path, start: bool) -> Result<PathBuf, String> {
     let file = manager.file(home);
@@ -198,6 +257,28 @@ mod tests {
         let plist = launchd_plist(Path::new("/Apps/R&D/reins"), Path::new("/Users/me/Library/Logs/reins.log"));
         assert!(plist.contains("<string>/Apps/R&amp;D/reins</string><string>daemon</string>"), "{plist}");
         assert!(plist.contains("<string>dev.reins.daemon</string>"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_or_failing_systemctl_means_no_user_session() {
+        assert!(user_manager_answers("true"));
+        assert!(!user_manager_answers("false"), "systemctl --user fails: no user manager");
+        assert!(!user_manager_answers("/nonexistent/systemctl"), "no systemctl at all");
+        let note = no_systemd_note();
+        assert!(note.contains("`reins daemon`") && note.contains("`reins resume`"), "{note}");
+    }
+
+    #[test]
+    fn resume_starts_the_daemon_by_hand_only_without_a_user_manager() {
+        let never = || -> bool { panic!("asked the service manager needlessly") };
+        assert_eq!(start(true, true, never), Start::Running);
+        assert_eq!(start(true, false, never), Start::Running);
+        assert_eq!(start(false, false, never), Start::Install, "macOS: launchd");
+        assert_eq!(start(false, true, || true), Start::Install, "systemd as before");
+        assert_eq!(start(false, true, || false), Start::ByHand);
+        let note = start_by_hand_note();
+        assert!(note.contains("`reins daemon`") && note.contains("`reins resume`"), "{note}");
     }
 
     #[test]

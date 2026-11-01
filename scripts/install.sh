@@ -102,9 +102,10 @@ PAIR_SERVER="${REINS_SERVER:-https://app.reins2fa.com}"
 APP_RELEASES="${REINS_APP_RELEASES:-https://github.com/katulevskiy/reins/releases/latest/download}"
 reins="$INSTALL_DIR/reins"
 
-# A terminal to ask in (the script itself arrives on stdin with `curl | sh`).
+# A terminal to ask in (the script itself arrives on stdin with `curl | sh`). `true`, not `:`: a redirection that fails on
+# a special builtin like `:` ends a POSIX shell (dash) outright, which it does without a controlling terminal (CI, cron).
 interactive=false
-if [ -r /dev/tty ] && [ -w /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+if [ -r /dev/tty ] && [ -w /dev/tty ] && { true </dev/tty; } 2>/dev/null; then
     interactive=true
 fi
 ask() { # question; true for yes

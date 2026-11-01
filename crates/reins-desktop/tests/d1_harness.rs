@@ -99,7 +99,15 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
     let settings = env.json(".claude/settings.json");
     let pre = &settings["hooks"]["PreToolUse"][0];
     assert_eq!(pre["matcher"], "Bash|Edit|Write|MultiEdit|NotebookEdit|Read");
-    assert_eq!(pre["hooks"], json!([{"type": "command", "command": hook_cmd("claude-code"), "timeout": 150}]));
+    assert_eq!(
+        pre["hooks"],
+        json!([{
+            "type": "command",
+            "command": hook_cmd("claude-code"),
+            "timeout": 150,
+            "statusMessage": "Reins: waiting for your phone"
+        }])
+    );
     // A session hears what changed for its parked questions when the user writes and before Claude Code stops.
     for event in ["UserPromptSubmit", "Stop"] {
         assert_eq!(

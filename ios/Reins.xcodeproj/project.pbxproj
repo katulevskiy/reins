@@ -20,6 +20,26 @@
 			isa = PBXBuildFile;
 			productRef = "29737CB6C16A5E34C87037A3";
 		};
+		311C960E630564E76A7E44B0 = {
+			isa = PBXBuildFile;
+			fileRef = "681482E27ED6E33CAF7365A1";
+		};
+		4D0B104BB81BDB88CD451B50 = {
+			isa = PBXBuildFile;
+			fileRef = "45F0EDC6BFD5053728E7FA46";
+		};
+		6B3AA97C40CD4E719E236ACB = {
+			isa = PBXBuildFile;
+			fileRef = CF2443B18F70C223404214C1;
+		};
+		9C5EF35D36ABB7B0754558B0 = {
+			isa = PBXBuildFile;
+			fileRef = A3FFC9584AAAEABC24B05FD6;
+		};
+		EECC8AB9B3D0B42DF89CABD9 = {
+			isa = PBXBuildFile;
+			fileRef = E21CB5462F51A4627997A929;
+		};
 		F912E701182D086B0F7CAA07 = {
 			isa = PBXBuildFile;
 			fileRef = "5ACD98726ACB1EEB235263E3";
@@ -78,12 +98,24 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1D6AEBC25FBC2FA27BC44266 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
+			sourceTree = "<group>";
+		};
 		42B0F2EAE970B136EAF8ECFE = {
 			isa = PBXFileReference;
 			explicitFileType = wrapper.application;
 			includeInIndex = "0";
 			path = Reins.app;
 			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		45F0EDC6BFD5053728E7FA46 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
+			sourceTree = "<group>";
 		};
 		49C45D5AD92F515FADC43625 = {
 			isa = PBXFileReference;
@@ -106,10 +138,22 @@
 			path = ReinsNotifications.appex;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		681482E27ED6E33CAF7365A1 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
+			sourceTree = "<group>";
+		};
 		88CEAA489E5229503EE15E09 = {
 			isa = PBXFileReference;
 			lastKnownFileType = text.xcconfig;
 			path = Config/Reins.xcconfig;
+			sourceTree = "<group>";
+		};
+		A3FFC9584AAAEABC24B05FD6 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
 			sourceTree = "<group>";
 		};
 		C52976123585A007A461829D = {
@@ -118,6 +162,18 @@
 			includeInIndex = "0";
 			path = ReinsWidgets.appex;
 			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		CF2443B18F70C223404214C1 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
+			sourceTree = "<group>";
+		};
+		E21CB5462F51A4627997A929 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = PrivacyInfo.xcprivacy;
+			sourceTree = "<group>";
 		};
 /* End PBXFileReference section */
 
@@ -244,10 +300,27 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		109FA4E5426F2BE314D0751B = {
+			isa = PBXGroup;
+			children = (
+				E21CB5462F51A4627997A929,
+			);
+			path = ReinsNotifications;
+			sourceTree = "<group>";
+		};
+		1C022469112BE5944FBB2F19 = {
+			isa = PBXGroup;
+			children = (
+				CF2443B18F70C223404214C1,
+			);
+			path = ReinsTests;
+			sourceTree = "<group>";
+		};
 		66ADC382DA4DC6DC7D4A96AB = {
 			isa = PBXGroup;
 			children = (
 				"88CEAA489E5229503EE15E09",
+				B7590D7CE841E27D5E7A6952,
 				"67721DCC6205844093A31C07",
 				"7E1C827E485A5287AD7242F2",
 				A90FB683184E5628DF4D288E,
@@ -257,6 +330,51 @@
 				"5F30DECF8227AE1FF4FD5480",
 				"0500089CBF0A8CDDA7483BA4",
 			);
+			sourceTree = "<group>";
+		};
+		89646AB5764D56ED91D4FA9D = {
+			isa = PBXGroup;
+			children = (
+				"681482E27ED6E33CAF7365A1",
+			);
+			path = ReinsWidgets;
+			sourceTree = "<group>";
+		};
+		89E98DD0680903A68901D35B = {
+			isa = PBXGroup;
+			children = (
+				A3FFC9584AAAEABC24B05FD6,
+			);
+			path = ReinsUITests;
+			sourceTree = "<group>";
+		};
+		AB629E6094D75E1E35E99D47 = {
+			isa = PBXGroup;
+			children = (
+				"1D6AEBC25FBC2FA27BC44266",
+			);
+			path = OnnxRuntime;
+			sourceTree = "<group>";
+		};
+		B7590D7CE841E27D5E7A6952 = {
+			isa = PBXGroup;
+			children = (
+				CCD983715756C29FDACB23E0,
+				"89646AB5764D56ED91D4FA9D",
+				"109FA4E5426F2BE314D0751B",
+				"1C022469112BE5944FBB2F19",
+				"89E98DD0680903A68901D35B",
+				AB629E6094D75E1E35E99D47,
+			);
+			path = Privacy;
+			sourceTree = "<group>";
+		};
+		CCD983715756C29FDACB23E0 = {
+			isa = PBXGroup;
+			children = (
+				"45F0EDC6BFD5053728E7FA46",
+			);
+			path = Reins;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -427,6 +545,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = "2147483647";
 			files = (
+				"311C960E630564E76A7E44B0",
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
@@ -434,6 +553,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = "2147483647";
 			files = (
+				"4D0B104BB81BDB88CD451B50",
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
@@ -441,6 +561,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = "2147483647";
 			files = (
+				"6B3AA97C40CD4E719E236ACB",
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
@@ -448,6 +569,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = "2147483647";
 			files = (
+				"9C5EF35D36ABB7B0754558B0",
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
@@ -455,6 +577,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = "2147483647";
 			files = (
+				EECC8AB9B3D0B42DF89CABD9,
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
