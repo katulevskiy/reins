@@ -124,7 +124,7 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
-      - uses: zizmorcore/zizmor-action@v0.6.4
+      - uses: zizmorcore/zizmor-action@v0.8.0
         with:
           inputs: ./.github/
           advanced-security: false
@@ -190,7 +190,7 @@ jobs:
         run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['rust']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['rust'] }}-rust
@@ -220,7 +220,7 @@ jobs:
 
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['clippy']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['clippy'] }}-clippy
@@ -255,7 +255,7 @@ jobs:
           { echo '```'; cat replay.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['replay']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['replay'] }}-replay
@@ -289,7 +289,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         id: browsers
         with:
           path: ~/.cache/ms-playwright
@@ -326,7 +326,7 @@ jobs:
             playwright/test-results/
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['onboarding']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['onboarding'] }}-onboarding
@@ -357,7 +357,7 @@ jobs:
 
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['desktop-linux']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-linux'] }}-desktop-linux
@@ -390,7 +390,7 @@ jobs:
       - run: NFPM="$RUNNER_TEMP/nfpm" python3 scripts/test-linux-packages.py
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['packages']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['packages'] }}-packages
@@ -421,7 +421,7 @@ jobs:
       - run: cargo test --locked -p reins-desktop-app
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['desktop-macos']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-macos'] }}-desktop-macos
@@ -486,7 +486,7 @@ jobs:
         run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['desktop-windows']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['desktop-windows'] }}-desktop-windows
@@ -507,7 +507,7 @@ jobs:
           persist-credentials: false
       # Outputs of exactly these sources (no prefix fallback), restored everywhere and saved from main. This workflow is
       # not in the key (any edit to it would miss): bump the v2 when this job's build or the Cargo variables above change.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: native
         with:
           path: native
@@ -523,7 +523,7 @@ jobs:
           # Bindgen can read the host dependencies built by the server/core tests; do not duplicate that cache.
           shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('android-debug-native-{0}', matrix.kind) }}
           save-if: ${{ matrix.kind != 'bindings' && github.ref == 'refs/heads/main' }}
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: cargo-ndk
         if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
         with:
@@ -541,7 +541,7 @@ jobs:
             echo "::warning::sdkmanager could not install ndk;${ndk} (attempt $attempt); trying again"
             sleep $(( attempt * 20 ))
           done
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: >-
           steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
           github.ref == 'refs/heads/main'
@@ -553,7 +553,7 @@ jobs:
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native" dev
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: steps.native.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with:
           path: native
@@ -566,7 +566,7 @@ jobs:
           retention-days: 1
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['android']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-native-${{ matrix.kind }}
@@ -581,7 +581,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -632,7 +632,7 @@ jobs:
             android/app/build/outputs/mapping/fullRelease/mapping.txt
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['android']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-smoke
@@ -662,7 +662,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -679,7 +679,7 @@ jobs:
       - name: Restore Robolectric's Android jar
         if: matrix.id != 'apk'
         id: robolectric
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.m2/repository/org/robolectric
           key: robolectric-${{ hashFiles('android/gradle/libs.versions.toml') }}
@@ -705,7 +705,7 @@ jobs:
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
       - name: Save Robolectric's Android jar
         if: matrix.id == 'full' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ~/.m2/repository/org/robolectric
           key: ${{ steps.robolectric.outputs.cache-primary-key }}
@@ -728,7 +728,7 @@ jobs:
           if-no-files-found: ignore
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['android']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['android'] }}-${{ matrix.id }}
@@ -772,7 +772,7 @@ jobs:
           [[ "$(uname -m)" == arm64 ]] || { echo "::error::The simulator core is arm64-only; this runner is $(uname -m)"; exit 1; }
       # The library and the bindings for exactly these sources (ios.yml's key). No prefix fallback: a partial match would
       # link a core that was not built from this tree.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: core
         with:
           path: target/ios-core/iphonesimulator
@@ -823,7 +823,7 @@ jobs:
           lipo -info "$lib/libreins_core.a" | grep -q arm64
       # main's Swift compilation cache, module cache and packages (ios.yml saves them; the paths must be ios.yml's
       # exactly, or the cache does not match). Restore only.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         with:
           path: |
             derived/ModuleCache.noindex
@@ -854,7 +854,7 @@ jobs:
           retention-days: 7
       - name: Record the pass (CI skips this job while its inputs stay the same)
         if: fromJSON(needs.plan.outputs.keys)['ios']
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: rust-toolchain.toml
           key: ${{ fromJSON(needs.plan.outputs.keys)['ios'] }}-ios

@@ -161,7 +161,7 @@ jobs:
           }
       # The library and the bindings for exactly these sources. No prefix fallback: a partial match would link
       # a core that was not built from this tree.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: core
         with:
           path: target/ios-core/iphonesimulator
@@ -217,7 +217,7 @@ jobs:
           fi
           lipo -info "$lib/libreins_core.a" | grep -q arm64
           find "$lib" -type f
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: steps.core.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with:
           path: target/ios-core/iphonesimulator
@@ -269,7 +269,7 @@ jobs:
       # Module cache, the compilation cache, and Swift packages (ONNX Runtime). Not DerivedData:
       # its products store absolute paths and the simulator id. Restore-keys so a partial hit still
       # compiles less. Exact-key misses are saved from main only; a pull request only restores.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: swift
         with:
           path: |
@@ -323,7 +323,7 @@ jobs:
               : > "$dir/.keep"
             fi
           done
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: success() && steps.swift.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with:
           path: |
