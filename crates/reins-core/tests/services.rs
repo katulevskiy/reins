@@ -247,6 +247,7 @@ fn app_core(phone: Phone) -> (Arc<ReinsCore>, tempfile::TempDir) {
         Some(device),
         0,
         String::new(),
+        String::new(),
     )
     .unwrap();
     (core, dir)

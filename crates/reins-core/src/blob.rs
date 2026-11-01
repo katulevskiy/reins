@@ -2,10 +2,11 @@
 //! [`reins_proto::blob`]).
 //!
 //! - **Inputs.** A tool that takes a file (`github_release_asset_upload`, `github_file_put`, `vault_attachment_add`,
-//!   `vault_send_create`) called without its content gets [`UploadInstructions`] back: the phone opened a slot for that
-//!   tool. Called again with `blob=<id>`, the file is checked (this connection's, uploaded, unexpired, for this tool),
-//!   shown with the preview, and used when the write runs: GitHub gets it from the server ([`send`]), the vault
-//!   encrypts it on the phone ([`read`]). It is deleted once used.
+//!   `vault_send_create`, an image on `x_post`, `x_reply` or `x_dm_send`) called without its content gets
+//!   [`UploadInstructions`] back: the phone opened a slot for that tool. Called again with `blob=<id>`, the file is
+//!   checked (this connection's, uploaded, unexpired, for this tool), shown with the preview, and used when the write
+//!   runs: GitHub gets it from the server ([`send`]), the vault encrypts it on the phone and X gets it from the phone
+//!   ([`read`]). It is deleted once used.
 //! - **Uploads.** `reins_upload` opens a slot of its own and answers at once; when the file arrives the user
 //!   decides on it ([`crate::types::PendingKind::Blob`]), and only then can it be downloaded.
 //! - **Large results.** Connectors mark an item whose content is too large to hand over inline (a marker in its
@@ -285,6 +286,15 @@ fn file_tool(call: &ConnectorCall) -> Option<(&'static str, FileTool)> {
             content: &["content_base64"],
             max: reins_proto::connector::gmail::MAX_DRAFT_FILE_BYTES,
         },
+        // A post, a reply or a direct message carries a file only when it names one.
+        "x_post" | "x_reply" | "x_dm_send"
+            if ["content_base64", "blob", "file_name"].iter().any(|k| call.args.contains_key(*k)) =>
+        {
+            FileTool {
+                content: &["content_base64"],
+                max: reins_proto::connector::x::MAX_IMAGE_BYTES,
+            }
+        }
         // A text Send takes no file (and text given for a file Send is a mistake the vault explains).
         "vault_send_create"
             if call.str_arg("type") == Some("file")
@@ -410,6 +420,37 @@ pub fn blob_view(info: &BlobInfo) -> BlobView {
         preview_image,
         created_at: info.created_at,
         expires_at: info.expires_at,
+    }
+}
+
+/// The file a write uses, as its approval shows it: the upload the server holds, or the image the phone read itself
+/// ([`Preview::image`]), which also fills in an upload the server previewed without its picture (same bytes only).
+pub(crate) fn write_file_view(preview: &Preview, connection_label: &str) -> Option<BlobView> {
+    let image = preview.image.as_ref();
+    let picture =
+        |sha256: &str| image.filter(|i| i.sha256 == sha256).and_then(|i| BASE64.decode(i.data_base64.as_bytes()).ok());
+    match (&preview.blob, image) {
+        (Some(info), _) => {
+            let mut view = blob_view(info);
+            if view.preview_image.is_none() {
+                view.preview_image = picture(&info.sha256);
+            }
+            Some(view)
+        }
+        (None, Some(i)) => Some(BlobView {
+            id: String::new(),
+            connection_label: crate::avatar::shown_label(connection_label),
+            name: clean_name(&i.name),
+            size: i.size,
+            content_type: text::one_line(&i.mime),
+            sha256: text::one_line(&i.sha256),
+            purpose: "Attached to this write".to_owned(),
+            preview_text: None,
+            preview_image: picture(&i.sha256),
+            created_at: 0,
+            expires_at: 0,
+        }),
+        (None, None) => None,
     }
 }
 
@@ -1058,5 +1099,72 @@ mod tests {
             },
             50
         ));
+    }
+
+    #[test]
+    fn an_x_post_takes_a_file_only_when_it_names_one() {
+        let call = |op: &str, args: Value| ConnectorCall {
+            service: "x".into(),
+            op: op.into(),
+            args: args.as_object().unwrap().clone(),
+        };
+        assert!(file_tool(&call("post", json!({"text": "hi"}))).is_none());
+        for op in ["post", "reply", "dm_send"] {
+            let (tool, file) = file_tool(&call(op, json!({"file_name": "cat.png"}))).unwrap();
+            assert_eq!((tool, file.content, file.max), (format!("x_{op}").as_str(), &["content_base64"][..], 5 << 20));
+        }
+        assert!(file_tool(&call("thread", json!({"file_name": "cat.png"}))).is_none());
+    }
+
+    #[test]
+    fn a_write_shows_the_image_the_phone_read_when_the_server_previewed_none() {
+        let info = BlobInfo {
+            v: 1,
+            id: reins_proto::blob::BlobId("blob-0123456789abcdef".into()),
+            connection_id: "c1".into(),
+            connection_label: "Claude".into(),
+            request_id: None,
+            name: "big.jpg".into(),
+            purpose: BlobPurpose::ToolInput {
+                tool: "x_post".into(),
+            },
+            state: BlobState::Uploaded,
+            size: 3,
+            sha256: "ab".into(),
+            content_type: "image/jpeg".into(),
+            preview: BlobPreview::Image {
+                mime: "image/jpeg".into(),
+                data_base64: None,
+            },
+            created_at: 1,
+            expires_at: 100,
+        };
+        let image = crate::connector::PreviewImage {
+            name: "big.jpg".into(),
+            mime: "image/jpeg".into(),
+            size: 3,
+            sha256: "ab".into(),
+            data_base64: BASE64.encode(b"jpg"),
+        };
+        let mut preview = Preview {
+            blob: Some(info),
+            image: Some(image.clone()),
+            ..Preview::default()
+        };
+        assert_eq!(write_file_view(&preview, "Claude").unwrap().preview_image.as_deref(), Some(&b"jpg"[..]));
+        // Other bytes than the server holds are never shown in their place.
+        preview.image = Some(crate::connector::PreviewImage {
+            sha256: "cd".into(),
+            ..image.clone()
+        });
+        assert_eq!(write_file_view(&preview, "Claude").unwrap().preview_image, None);
+        // Given inline, the image alone is the file.
+        let inline = Preview {
+            image: Some(image),
+            ..Preview::default()
+        };
+        let view = write_file_view(&inline, "Claude").unwrap();
+        assert_eq!((view.name.as_str(), view.preview_image.as_deref()), ("big.jpg", Some(&b"jpg"[..])));
+        assert_eq!(write_file_view(&Preview::default(), "Claude"), None);
     }
 }
