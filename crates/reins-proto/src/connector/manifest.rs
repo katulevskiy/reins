@@ -13,7 +13,7 @@
 
 use super::{
     BITBUCKET, CODEBERG, ClassInfo, DESKTOP, DEVICE_CALENDAR, DEVICE_CONTACTS, GCALENDAR, GCONTACTS, GITHUB, GITLAB,
-    GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, desktop, github, gmail, payments, tasks, vault,
+    GMAIL, PAYMENTS, SMS, TASKS, TELEGRAM, ToolSpec, VAULT, X, desktop, github, gmail, payments, tasks, vault, x,
 };
 
 /// How an account of a connector is added on the phone. [`AuthType::kind`] is the string the apps switch on.
@@ -31,6 +31,9 @@ pub enum AuthType {
     Vault,
     /// Payment methods set up on their own screen.
     Payments,
+    /// OAuth 2.0 Authorization Code with PKCE, run by the core: the phone opens the service's sign-in page and hands
+    /// the redirect back; the core keeps the tokens in the phone's secret store.
+    OAuth,
     /// Part of Reins itself (the desktop app, tasks): no account to add, never on the Integrations screen.
     Builtin,
 }
@@ -46,6 +49,7 @@ impl AuthType {
             Self::Device => "device",
             Self::Vault => "vault",
             Self::Payments => "payments",
+            Self::OAuth => "oauth",
             Self::Builtin => "builtin",
         }
     }
@@ -133,6 +137,7 @@ const MANIFESTS: &[ConnectorManifest] = &[
     plain(PAYMENTS, "Payments", AuthType::Payments, Some(12), payments::tools),
     // Tasks never had a display name: the id is what the user has always seen.
     plain(TASKS, TASKS, AuthType::Builtin, None, tasks::tools),
+    with(plain(X, "X", AuthType::OAuth, Some(13), x::tools), x::SCOPES, &[]),
 ];
 
 /// Every connector, in tool order.
@@ -195,6 +200,7 @@ mod tests {
                 ("sms", "device"),
                 ("vault", "vault"),
                 ("payments", "payments"),
+                ("x", "oauth"),
             ]
         );
     }
@@ -221,5 +227,16 @@ mod tests {
             }
         }
         assert_eq!(manifest(GMAIL).unwrap().scopes, GOOGLE_GMAIL_SCOPES);
+    }
+
+    #[test]
+    fn every_x_tool_names_its_scopes() {
+        let x = manifest(X).unwrap();
+        assert_eq!(x.auth.kind(), "oauth");
+        assert!(x.screen.is_some());
+        for spec in (x.tools)() {
+            assert!(!spec.scopes.is_empty(), "{}", spec.tool);
+        }
+        assert!(x.scopes.contains(&"offline.access"), "X's tokens are refreshed");
     }
 }

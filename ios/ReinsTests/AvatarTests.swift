@@ -22,7 +22,7 @@ final class AvatarTests: XCTestCase {
         XCTAssertEqual(Set(Providers.all.map(\.key)).count, Providers.all.count)
         for p in Providers.all { XCTAssertNotNil(UIImage(named: p.asset), p.key) }
         for s in ["gmail", "telegram", "github", "gitlab", "codeberg", "bitbucket", "mcp", "gcalendar", "gcontacts",
-                  "device_calendar", "device_contacts", "sms", "vault"] {
+                  "device_calendar", "device_contacts", "sms", "vault", "x"] {
             XCTAssertNotNil(UIImage(named: "service-\(s)"), s)
         }
     }

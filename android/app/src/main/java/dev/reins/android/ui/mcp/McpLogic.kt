@@ -46,11 +46,14 @@ fun toolBadges(tool: McpToolView): List<ToolBadge> = buildList {
 }
 
 /** The sign-in page sent the browser to the app's own redirect address (anything else is never handed to the core). */
-fun isMcpRedirect(uri: String?): Boolean {
+fun isMcpRedirect(uri: String?): Boolean = isAppRedirect(uri, MCP_REDIRECT_HOST)
+
+/** [uri] is the app's own redirect address with exactly [host] (`com.reins2fa.app://<host>?…`), and not oversized. */
+fun isAppRedirect(uri: String?, host: String): Boolean {
     if (uri == null || uri.length > MAX_REDIRECT_CHARS) return false
     return try {
         val parsed = URI(uri)
-        parsed.scheme == MCP_REDIRECT_SCHEME && parsed.rawAuthority == MCP_REDIRECT_HOST
+        parsed.scheme == MCP_REDIRECT_SCHEME && parsed.rawAuthority == host
     } catch (e: java.net.URISyntaxException) {
         false
     }

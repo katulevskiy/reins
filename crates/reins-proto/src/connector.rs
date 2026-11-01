@@ -27,6 +27,8 @@ pub const GITLAB: &str = "gitlab";
 pub const CODEBERG: &str = "codeberg";
 pub const BITBUCKET: &str = "bitbucket";
 pub const PAYMENTS: &str = crate::payments::PAYMENTS;
+/// X (formerly Twitter), through the X API v2; `connector::x`.
+pub const X: &str = "x";
 
 /// Longest text an argument may carry (messages, comments, event descriptions).
 pub const MAX_TEXT_LEN: usize = 8_000;
@@ -45,6 +47,7 @@ pub use manifest::{AuthType, ConnectorManifest};
 mod payments;
 mod vault;
 pub use vault::env_release_args;
+pub mod x;
 
 /// What a call does to the integration, which decides how it is approved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -373,6 +376,9 @@ impl ToolSpec {
             "review",
             "write",
         ];
+        if let Some((_, idempotent)) = IDEMPOTENT_OVERRIDES.iter().find(|(tool, _)| *tool == self.tool) {
+            return *idempotent;
+        }
         !self.name_has(NOT_IDEMPOTENT)
     }
 
@@ -380,6 +386,7 @@ impl ToolSpec {
     /// closed; a Bitwarden Send is a public link.
     fn is_open_world(&self) -> bool {
         self.service == GITHUB
+            || self.service == X
             || matches!(
                 self.tool,
                 "telegram_send"
@@ -722,6 +729,20 @@ pub const DESTRUCTIVE_OVERRIDES: &[(&str, bool)] = &[
     ("github_webhook_ping", false),
     // Reports how a purchase went; the purchase itself was approved before.
     ("payments_purchase_complete", false),
+    // Published to everyone at once: seen, copied and quoted before it can be deleted.
+    ("x_post", true),
+    ("x_reply", true),
+    ("x_thread", true),
+    ("x_repost", true),
+];
+
+/// The writes whose `idempotentHint` is not what their name suggests: `false` when the same call made twice does it
+/// twice.
+pub const IDEMPOTENT_OVERRIDES: &[(&str, bool)] = &[
+    // Each call publishes new posts, even with the same text.
+    ("x_post", false),
+    ("x_reply", false),
+    ("x_thread", false),
 ];
 
 /// An integration's name as the user knows it ("Google Calendar" for `gcalendar`); the id itself for one it does not
@@ -1120,6 +1141,19 @@ mod tests {
         assert_eq!(hint("vault_send_update", "openWorldHint"), true);
         assert_eq!(hint("gmail_create_filter", "openWorldHint"), false, "filters never forward mail");
         assert_eq!(hint("vault_item_create", "openWorldHint"), false);
+    }
+
+    #[test]
+    fn idempotent_overrides_name_writes_and_win() {
+        for (tool, idempotent) in IDEMPOTENT_OVERRIDES {
+            let spec = spec_for_tool(tool).unwrap_or_else(|| panic!("{tool} is not a tool"));
+            assert_eq!(spec.effect, Effect::Write, "{tool}");
+            assert_eq!(spec.annotations()["idempotentHint"], *idempotent, "{tool}");
+        }
+        let hint = |tool: &str, name: &str| spec_for_tool(tool).unwrap().annotations()[name].clone();
+        assert_eq!(hint("x_post", "destructiveHint"), true, "a post is public at once");
+        assert_eq!(hint("x_repost", "idempotentHint"), true, "reposting twice reposts once");
+        assert_eq!(hint("x_like", "destructiveHint"), false);
     }
 
     #[test]

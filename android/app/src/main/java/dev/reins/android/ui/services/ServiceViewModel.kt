@@ -11,12 +11,14 @@ import dev.reins.core.AccountView
 import dev.reins.core.GmailStatus
 import dev.reins.core.LoginProgress
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Where a phone-number sign-in stands. */
 sealed interface LoginStep {
@@ -211,6 +213,35 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     fun loginRestart() {
         _login.value = LoginStep.Phone
         _error.value = null
+    }
+
+    // ---- a sign-in page in the browser (X) ----------------------------------------------------------------------
+
+    /** The service's redirect is being handed to the core (the page came back). */
+    val finishing: StateFlow<String?> = container.oauthSignIn.finishing
+
+    /**
+     * Opens the service's sign-in page with [open]. The page comes back to the app's redirect address, and
+     * [dev.reins.android.ui.AppViewModel.finishOAuthSignIn] adds the account; a page closed without signing in leaves
+     * nothing to undo.
+     */
+    fun oauthBegin(open: (String) -> Boolean) = operation {
+        val epoch = container.state.accountEpoch.value
+        if (container.state.serviceNotice.value?.service == service) container.state.setServiceNotice(null)
+        val url = container.core.oauthBegin(service)
+        if (!container.state.isCurrent(epoch)) return@operation
+        if (!isSignInPage(url)) {
+            container.feedback.play(Event.Error)
+            _error.value = "This sign-in page is not a secure web page, so it was not opened."
+            return@operation
+        }
+        withContext(Dispatchers.IO) { container.oauthSignIn.begin(service) }
+        if (!container.state.isCurrent(epoch)) return@operation
+        if (!open(url)) {
+            container.oauthSignIn.clear()
+            container.feedback.play(Event.Error)
+            _error.value = "No browser on this phone can open the sign-in page."
+        }
     }
 
     // ---- removing --------------------------------------------------------------------------------------------

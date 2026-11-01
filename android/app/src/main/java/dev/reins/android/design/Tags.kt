@@ -44,6 +44,7 @@ fun serviceName(service: String): String = when {
         "files" -> "Files"
         "vault" -> "Password vault"
         "payments" -> "Payments"
+        "x" -> "X"
         else -> service.replaceFirstChar { it.uppercase() }
     }
 }

@@ -17,6 +17,15 @@ func serviceColor(_ service: String) -> Color {
     case "device_contacts": Color(uiColor: UIColor(hex: 0xF57C00))
     case "sms": Color(uiColor: UIColor(hex: 0x00A884))
     case "vault": Color(uiColor: UIColor(hex: 0x175DDC))
+    case "x": Palette.ink
     default: Palette.ink2
+    }
+}
+
+/// A service's mark on a white plate in both themes: a black logo (GitHub's, X's) stays black.
+func serviceColorOnWhite(_ service: String) -> Color {
+    switch service {
+    case "github", "x": Palette.onFieldInk
+    default: serviceColor(service)
     }
 }

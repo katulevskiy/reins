@@ -44,7 +44,7 @@ class RealCoreTest {
         override fun circleChanged(event: dev.reins.core.CircleEvent) = Unit
     }
 
-    /** The app's constructor: no on-phone integrations, and this build's Telegram credentials (empty when unset). */
+    /** The app's constructor: no on-phone integrations, and this build's Telegram credentials and X client id (empty when unset). */
     private fun openCore(dir: File, alias: String): ReinsCore = ReinsCore(
         dir.absolutePath,
         KeystoreKeyWrapper(alias),
@@ -53,6 +53,7 @@ class RealCoreTest {
         null,
         BuildConfig.TELEGRAM_API_ID,
         BuildConfig.TELEGRAM_API_HASH,
+        BuildConfig.X_CLIENT_ID,
     )
 
     private fun newCore(): ReinsCore {

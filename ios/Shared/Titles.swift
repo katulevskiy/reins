@@ -156,6 +156,7 @@ func serviceName(_ service: String) -> String {
     case "desktop": return "Desktop app"
     case "files": return "Files"
     case "vault": return "Password vault"
+    case "x": return "X"
     default: return service.prefix(1).uppercased() + service.dropFirst()
     }
 }

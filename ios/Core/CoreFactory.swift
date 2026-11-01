@@ -46,7 +46,8 @@ enum CoreFactory {
             notifier: SilentNotifier(),
             device: nil,
             telegramApiId: Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0,
-            telegramApiHash: (info["ReinsTelegramApiHash"] as? String) ?? ""
+            telegramApiHash: (info["ReinsTelegramApiHash"] as? String) ?? "",
+            xClientId: (info["ReinsXClientId"] as? String) ?? ""
         )
     }
 
@@ -65,6 +66,8 @@ enum CoreFactory {
         let info = Bundle.main.infoDictionary ?? [:]
         let apiId = Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0
         let apiHash = (info["ReinsTelegramApiHash"] as? String) ?? ""
+        // Empty: X shows as unavailable.
+        let xClientId = (info["ReinsXClientId"] as? String) ?? ""
         return try ReinsCore(
             dataDir: dataDir.path,
             keys: keys,
@@ -72,7 +75,8 @@ enum CoreFactory {
             notifier: notifier,
             device: device,
             telegramApiId: apiId,
-            telegramApiHash: apiHash
+            telegramApiHash: apiHash,
+            xClientId: xClientId
         )
     }
 }

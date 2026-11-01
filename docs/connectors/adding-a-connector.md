@@ -23,7 +23,7 @@ in their own module (`crates/reins-proto/src/connector/<service>.rs`, with a `to
 | --- | --- |
 | `service` | The service id (`"gmail"`). Tool calls, accounts, grants, secrets and the core's registry carry it. |
 | `name` | The display name (`"Gmail"`). |
-| `auth` | How an account is added: `AuthType::Google`, `PhoneLogin`, `Token`, `Device`, `Vault`, `Payments` or `Builtin`. `AuthType::kind()` is the `kind` the apps' Integrations screen switches on. |
+| `auth` | How an account is added: `AuthType::Google`, `PhoneLogin`, `Token`, `Device`, `Vault`, `Payments`, `OAuth` (a sign-in with PKCE run by the core through `oauth_begin` and `oauth_finish`, as [X](x.md) does) or `Builtin`. `AuthType::kind()` is the `kind` the apps' Integrations screen switches on. |
 | `scopes` | The access the sign-in asks the service for (OAuth scopes), when it asks for any. |
 | `classes` | Its kinds of change, so that a standing permission can name the ones it allows. Leave it empty if there are none. |
 | `screen` | The connector's place on the Integrations screen, or `None` if it is not listed there (only `Builtin` ones). |
@@ -59,7 +59,8 @@ defaults refuse the rest.
 | `fetch(account, call)` | Runs a list, read or search and returns `Item`s. The user chooses which ones are released. |
 | `preview(account, call)` | Spells out a write for the approval screen before anything is sent. Show the exact text, the account, the recipient or target, and any media, one `lines` entry each, as Gmail's send does. Fail here, not after approval, when the account is not connected. |
 | `perform(account, call)` | Makes the approved write. |
-| `sign_in_token`, `identify`, `login_begin` / `login_code` / `login_password` | Adding an account, one of them per `AuthType`: `Token`, `Google` and `PhoneLogin`. |
+| `perform_approved(account, call, preview)` | The same, given the preview the user approved. Override it when the preview looked something up (an @username's id) and the write must act on what the approval showed, as X does. |
+| `sign_in_token`, `identify`, `login_begin` / `login_code` / `login_password`, `oauth_begin` / `oauth_finish` | Adding an account, one of them per `AuthType`: `Token`, `Google`, `PhoneLogin` and `OAuth`. |
 | `status(account)`, `forget(account)` | Whether an account still works, and disconnecting it (delete its secrets). |
 | `party`, `choose_account`, `commit_change`, `fetch_headers`, `unavailable` | Optional extras that some connectors use. |
 

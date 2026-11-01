@@ -1165,6 +1165,8 @@ jobs:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          # The X developer app's OAuth 2.0 client id (public; docs/connectors/x.md). Without it X shows as unavailable.
+          X_CLIENT_ID: ${{ vars.X_CLIENT_ID }}
         run: |
           export REINS_RELEASE_KEYSTORE_PASSWORD="${REINS_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
           export REINS_RELEASE_KEY_ALIAS="${REINS_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
@@ -1180,6 +1182,11 @@ jobs:
             extra+=("-Preins.telegramApiId=$TELEGRAM_API_ID" "-Preins.telegramApiHash=$TELEGRAM_API_HASH")
           else
             echo "::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set: this APK cannot connect Telegram."
+          fi
+          if [[ "${X_CLIENT_ID:-}" =~ ^[A-Za-z0-9_-]{8,128}$ ]]; then
+            extra+=("-Preins.xClientId=$X_CLIENT_ID")
+          else
+            echo "::warning::The X_CLIENT_ID variable is not set (or not a client id): this APK cannot connect X."
           fi
           if [[ -n "${GOOGLE_SERVICES_JSON:-}" ]]; then
             (umask 077; printf '%s' "$GOOGLE_SERVICES_JSON" > "$RUNNER_TEMP/google-services.json")
@@ -1887,7 +1894,8 @@ jobs:
   #     (ReinsNotifications)
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID  the App Store Connect API key "Reins CI"
   # Repository variables: TESTFLIGHT_EXTERNAL_GROUP_ID (the external group's id: two groups are named "Testers"),
-  # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (required: Gmail, Calendar, Contacts).
+  # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (required: Gmail, Calendar, Contacts),
+  # X_CLIENT_ID (optional: X; the Android builds use it too).
   ios-testflight:
     name: TestFlight upload
     needs: [plan, publish]
@@ -2198,6 +2206,8 @@ jobs:
           # ios/scripts/export-compliance.sh. Optional: without it the archive leaves the key out.
           EXPORT_COMPLIANCE_CODE: ${{ secrets.ITS_ENCRYPTION_EXPORT_COMPLIANCE_CODE }}
           VERIFY_ONLY: ${{ inputs.verify_only }}
+          # The X developer app's OAuth 2.0 client id (public; docs/connectors/x.md). Without it X shows as unavailable.
+          X_CLIENT_ID: ${{ vars.X_CLIENT_ID }}
         run: |
           umask 077
           dir="$RUNNER_TEMP/ios-signing"
@@ -2224,6 +2234,12 @@ jobs:
             fi
             compliance="REINS_EXPORT_COMPLIANCE_REQUIRED = NO"
           fi
+          x_client_id=""
+          if [[ "${X_CLIENT_ID:-}" =~ ^[A-Za-z0-9_-]{8,128}$ ]]; then
+            x_client_id="$X_CLIENT_ID"
+          else
+            echo "::warning::The X_CLIENT_ID variable is not set (or not a client id): this build cannot connect X."
+          fi
           {
             echo "#include \"$dir/signing.xcconfig\""
             echo "REINS_VERSION = $VERSION"
@@ -2233,6 +2249,7 @@ jobs:
             echo "REINS_GOOGLE_CLIENT_ID = $GOOGLE_CLIENT_ID"
             echo "REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.${GOOGLE_CLIENT_ID%.apps.googleusercontent.com}"
             echo "$compliance"
+            echo "REINS_X_CLIENT_ID = $x_client_id"
           } > "$dir/release.xcconfig"
       # What the archive's build phases and packages could reach: the keychain (its key non-extractable), the profiles
       # (public) and the settings. No certificate file, password file or API key.

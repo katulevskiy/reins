@@ -181,7 +181,7 @@ struct GlanceRequestIcon: View {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(full ? (key == "github" ? Palette.onFieldInk : serviceColor(key)) : Color.primary)
+                .foregroundStyle(full ? serviceColorOnWhite(key) : Color.primary)
                 .frame(width: size * 0.56, height: size * 0.56)
         } else {
             FixedGlyph(glyph == .phone ? .phone : glyph == .link ? .link : .help, size: size * 0.5)

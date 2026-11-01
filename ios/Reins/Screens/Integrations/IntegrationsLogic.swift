@@ -104,10 +104,8 @@ enum GitHosts {
 
 enum McpLogic {
     /// Where an MCP server's sign-in page sends the browser back to (the core registers it with the server).
-    static let redirectScheme = "com.reins2fa.app"
+    static let redirectScheme = AppRedirect.scheme
     static let redirectHost = "mcp-oauth"
-    /// Longest redirect address passed on to the core; a real one is a code and a state.
-    static let maxRedirectChars = 8_192
 
     /// The host (and port) of a server's address, as the list shows it; never its path or query.
     static func host(_ url: String) -> String {
@@ -133,15 +131,56 @@ enum McpLogic {
 
     /// The sign-in page sent the browser to the app's own redirect address (anything else is never handed to the
     /// core).
-    static func isRedirect(_ uri: String?) -> Bool {
-        guard let uri, uri.count <= maxRedirectChars, let c = URLComponents(string: uri) else { return false }
-        return c.scheme == redirectScheme && c.host == redirectHost && c.user == nil && c.password == nil && c.port == nil
-    }
+    static func isRedirect(_ uri: String?) -> Bool { AppRedirect.matches(uri, host: redirectHost) }
 
     /// A sign-in page may only be a web page (never a `file:`, `javascript:` or another app's address).
     static func isWebPage(_ url: String) -> Bool {
         guard let c = URLComponents(string: url), let scheme = c.scheme?.lowercased() else { return false }
         return (scheme == "https" || scheme == "http") && !(c.host ?? "").isEmpty
+    }
+}
+
+// MARK: Sign-in redirects
+
+/// The app's own addresses a sign-in page sends the browser back to, `com.reins2fa.app://<host>?…`: `mcp-oauth` for
+/// an MCP server, `x-oauth` for X. ASWebAuthenticationSession catches the scheme itself, so the app registers no URL
+/// type for it.
+enum AppRedirect {
+    static let scheme = "com.reins2fa.app"
+    /// Longest redirect address passed on to the core; a real one is a code and a state.
+    static let maxChars = 8_192
+
+    /// `uri` is exactly the app's redirect for `host`: its scheme and host, no user, password or port, and not
+    /// oversized. Anything else is never handed to the core.
+    static func matches(_ uri: String?, host: String) -> Bool {
+        guard let uri, uri.count <= maxChars, let c = URLComponents(string: uri) else { return false }
+        return c.scheme == scheme && c.host == host && c.user == nil && c.password == nil && c.port == nil
+    }
+}
+
+// MARK: OAuth sign-ins run by the core
+
+/// A service whose account is added with the core's own OAuth sign-in (`kind` "oauth": X): `oauthBegin` gives the
+/// service's sign-in page, it comes back to the app's redirect for the service, and `oauthFinish` takes that address.
+enum OAuthLogic {
+    /// Where the service's sign-in page sends the browser back to; nil for a service the app does not sign in to.
+    static func redirectHost(_ service: String) -> String? {
+        switch service {
+        case "x": "x-oauth"
+        default: nil
+        }
+    }
+
+    /// The sign-in page came back to the app's redirect for `service`.
+    static func isRedirect(_ uri: String?, service: String) -> Bool {
+        guard let host = redirectHost(service) else { return false }
+        return AppRedirect.matches(uri, host: host)
+    }
+
+    /// A service's sign-in page may only be an https page.
+    static func isSignInPage(_ url: String) -> Bool {
+        guard let c = URLComponents(string: url), c.scheme?.lowercased() == "https" else { return false }
+        return !(c.host ?? "").isEmpty && c.user == nil && c.password == nil
     }
 }
 
@@ -225,6 +264,7 @@ enum ServiceCopy {
         case "device_contacts": "Let your AIs look up the contacts on this phone."
         case "sms": "On Android, Reins lets your AIs read and send text messages. iPhone keeps them to the Messages app."
         case "vault": "Let your AIs ask for a login from your password vault, one field at a time."
+        case "x": "Sign in so your AIs can read X and, when you approve, post, reply and send messages."
         default: "Connect an account so your AIs can use it."
         }
     }
@@ -257,6 +297,8 @@ enum ServiceCopy {
             "The token is kept encrypted on this phone and never leaves it. Each push is shown to you branch by branch before it goes to \(service.name)."
         case "sms": ""
         case "vault": "Your master password is used once to unlock the vault key, which is then kept encrypted on this phone. The password itself is not kept."
+        case "x":
+            "Reins signs in with X on this phone only; the access is kept encrypted here and never sent to the server. Every post and message is shown to you first."
         case "device_calendar", "device_contacts": "iOS asks you to allow this. You can take the permission back in Settings at any time."
         default: "Reins asks Google for access on this phone only. Nothing is stored on the server."
         }
@@ -270,12 +312,13 @@ enum ServiceCopy {
         case "telegram": "Signed out"
         case "token": "Token expired"
         case "vault": "Locked"
+        case "oauth": "Signed out"
         default: "Token expired"
         }
     }
 
-    /// "Allow again" can fix it: a Google consent or this phone's permission.
-    static func canAllowAgain(_ service: ServiceView) -> Bool { service.kind == "google" || service.kind == "device" }
+    /// "Allow again" can fix it: a Google consent, this phone's permission or signing in again (X).
+    static func canAllowAgain(_ service: ServiceView) -> Bool { ["google", "device", "oauth"].contains(service.kind) }
 
     /// How an account is named in its row and the removal question: this phone's services by the service.
     static func accountTitle(_ service: ServiceView, _ account: String) -> String {

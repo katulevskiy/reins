@@ -28,6 +28,7 @@ ios/Reins/Platform/WebAuth.swift                  PasskeyUITests
 ios/Reins/Platform/GrantReminders.swift           GrantsSettingsUITests
 ios/Reins/Platform/GoogleSignIn.swift             IntegrationsUITests
 ios/Reins/Platform/McpSignIn.swift                IntegrationsUITests
+ios/Reins/Platform/OAuthSignIn.swift              IntegrationsUITests
 ios/Reins/Platform/LiveActivityController.swift   ActivityFlowTests
 ios/ReinsUITests/ActivityFlowTests.swift          ActivityFlowTests
 ios/ReinsUITests/ApprovalFieldUITests.swift       ApprovalFieldUITests

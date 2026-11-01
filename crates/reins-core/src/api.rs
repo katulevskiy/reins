@@ -105,6 +105,7 @@ impl ReinsCore {
 impl ReinsCore {
     #[uniffi::constructor]
     #[expect(clippy::needless_pass_by_value, reason = "UniFFI hands constructor arguments over by value")]
+    #[expect(clippy::too_many_arguments, reason = "UniFFI constructors take the app's build settings one by one")]
     pub fn new(
         data_dir: String,
         keys: Arc<dyn KeyWrapper>,
@@ -113,10 +114,12 @@ impl ReinsCore {
         device: Option<Arc<dyn DeviceBridge>>,
         telegram_api_id: i32,
         telegram_api_hash: String,
+        x_client_id: String,
     ) -> Result<Arc<Self>, CoreError> {
         let cfg = CoreConfig {
             telegram_api_id,
             telegram_api_hash,
+            x_client_id: Some(x_client_id.trim().to_owned()).filter(|id| !id.is_empty()),
             ..CoreConfig::default()
         };
         Self::with_connectors(&data_dir, keys.as_ref(), google, notifier, cfg, Self::device_connectors(device))
@@ -2197,6 +2200,36 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_password(&service, &password).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// An OAuth sign-in run by the core (X, `kind` "oauth"), step 1: the service's sign-in page. Open it in
+    /// ASWebAuthenticationSession / a Custom Tab; it comes back to `com.reins2fa.app://x-oauth?…`.
+    pub async fn oauth_begin(&self, service: String) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.oauth_begin(&service);
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Step 2: the address the sign-in page came back to. Its code is exchanged and the account added.
+    pub async fn oauth_finish(&self, service: String, callback: String) -> Result<AccountView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let callback = Zeroizing::new(callback);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.oauth_finish(&service, &callback).await }).await;
             runtime.finish(&engine, result)
         })
         .await

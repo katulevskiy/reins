@@ -116,6 +116,22 @@ final class AccountsModel {
         }
     }
 
+    // MARK: A sign-in the core runs (X)
+
+    /// The core makes the service's sign-in page, it opens in the web sheet, and the address it came back to is
+    /// handed to the core, which trades the code and adds the account. Closing the page does nothing.
+    func addOAuth() async {
+        await operation {
+            let epoch = model.accountEpoch
+            let authorizeUrl = try await model.core.oauthBegin(service: service)
+            guard epoch == model.accountEpoch else { return }
+            guard let redirect = try await platform.oauthSignIn(service: service, authorizeUrl: authorizeUrl) else { return }
+            guard epoch == model.accountEpoch else { return }
+            let account = try await model.core.oauthFinish(service: service, callback: redirect)
+            await connected(account, epoch: epoch)
+        }
+    }
+
     // MARK: An access token or the vault's master password
 
     func addSecret(_ secret: String) async {

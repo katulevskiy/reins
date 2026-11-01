@@ -1643,6 +1643,19 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         return locked { Self.addAccount(&$0, service: service, account: account) }
     }
 
+    func oauthBegin(service: String) async throws -> String {
+        try await latency(0.3)
+        guard service == "x" else { throw CoreError.Invalid(reason: "that integration is not available here") }
+        return "https://x.com/i/oauth2/authorize?response_type=code&client_id=demo&state=demo"
+    }
+
+    func oauthFinish(service: String, callback: String) async throws -> AccountView {
+        try await latency(0.6)
+        guard OAuthLogic.isRedirect(callback, service: service) else { throw CoreError.Invalid(reason: "That sign-in came back to the wrong address.") }
+        if callback.contains("error=") { throw CoreError.Invalid(reason: "X did not allow it: access_denied") }
+        return locked { Self.addAccount(&$0, service: service, account: "@ada") }
+    }
+
     func loginBegin(service: String, phone: String) async throws {
         try await latency(0.6)
         guard phone.filter(\.isNumber).count >= 7 else { throw CoreError.Invalid(reason: "That phone number does not look right. Include the country code.") }

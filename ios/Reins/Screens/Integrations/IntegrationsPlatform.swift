@@ -25,6 +25,9 @@ protocol IntegrationsPlatform: AnyObject {
     /// Runs an MCP server's sign-in page and finishes the sign-in with the core. Sets `model.mcpNotice` and plays
     /// `.connected` / `.error` the way Android's redirect handling does.
     func mcpSignIn(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInOutcome
+    /// Shows the sign-in page of a service the core signs in to itself (X; `authorizeUrl` from `oauthBegin`) and
+    /// returns the app's redirect it came back to, for `oauthFinish`; nil when the user closed the page.
+    func oauthSignIn(service: String, authorizeUrl: String) async throws -> String?
 }
 
 /// How an MCP sign-in ended.
@@ -70,8 +73,8 @@ extension AppModel {
 
 // MARK: The real platform
 
-/// The system's pieces: Google's sign-in (`GoogleSignIn`), this phone's permissions (`PhoneBridge`) and the MCP
-/// browser sheet (`McpSignIn`).
+/// The system's pieces: Google's sign-in (`GoogleSignIn`), this phone's permissions (`PhoneBridge`) and the browser
+/// sheet of an MCP server's or X's sign-in (`McpSignIn`, `OAuthSignIn`).
 @MainActor
 final class SystemIntegrations: IntegrationsPlatform {
     static let shared = SystemIntegrations()
@@ -112,12 +115,16 @@ final class SystemIntegrations: IntegrationsPlatform {
         case .cancelled: return .cancelled
         }
     }
+
+    func oauthSignIn(service: String, authorizeUrl: String) async throws -> String? {
+        try await OAuthSignIn.run(service: service, authorizeUrl: authorizeUrl)
+    }
 }
 
 // MARK: The -demo platform
 
 /// Signs in to anything at once: Google answers with the asked address (or a new one), the phone allows
-/// everything, and an MCP sign-in comes back after a moment as if the user had signed in.
+/// everything, and an MCP or X sign-in comes back after a moment as if the user had signed in.
 @MainActor
 final class DemoIntegrations: IntegrationsPlatform {
     static let shared = DemoIntegrations()
@@ -144,5 +151,11 @@ final class DemoIntegrations: IntegrationsPlatform {
         } catch {
             return await model.finishMcpSignIn(.failure(error), serverId: serverId)
         }
+    }
+
+    func oauthSignIn(service: String, authorizeUrl: String) async throws -> String? {
+        try await Task.sleep(for: .milliseconds(900))
+        guard let host = OAuthLogic.redirectHost(service) else { throw IntegrationsFailure("This integration cannot be added here.") }
+        return "\(AppRedirect.scheme)://\(host)?state=demo&code=demo"
     }
 }

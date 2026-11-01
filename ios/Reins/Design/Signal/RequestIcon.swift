@@ -43,7 +43,7 @@ struct RequestIcon: View {
                     .resizable()
                     .scaledToFit()
                     // On the white plate in both themes: a black mark stays black.
-                    .foregroundStyle(key == "github" ? Palette.onFieldInk : serviceColor(key))
+                    .foregroundStyle(serviceColorOnWhite(key))
                     .frame(width: size * 0.54, height: size * 0.54)
             } else {
                 GlyphIcon(.link, size: size * 0.5).foregroundStyle(Palette.onFieldInk)

@@ -813,7 +813,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             _ => None,
         },
         mcp: crate::mcp::flow::call_view(parked),
-        blob: held.and_then(|h| h.preview.as_ref()).and_then(|p| p.blob.as_ref()).map(crate::blob::blob_view),
+        blob: held.and_then(|h| h.preview.as_ref()).and_then(|p| crate::blob::write_file_view(p, &parked.label())),
         headline: String::new(),
         quick: None,
         purchase: held.and_then(|h| h.purchase.as_ref()).map(crate::connector::payments::Plan::view),
