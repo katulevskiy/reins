@@ -797,7 +797,11 @@ async fn mandatory_connector_review_overrides_grants_and_bypass_and_records_exac
     assert_eq!(trace.phase, AuthorizationPhase::Succeeded);
     assert_eq!(trace.policy_state_revision, 1);
     assert_eq!(trace.determining_policy_ids, ["required-review"]);
-    let start = activity.iter().find(|row| row.outcome == "started").unwrap();
+    assert!(activity.iter().all(|row| row.action != "execute"), "an attempt is never a row of its own");
+    let execution = activity[0].execution.as_ref().expect("the attempt is folded into the decision");
+    assert_eq!(execution.state, reins_core::ExecutionState::Done);
+    let start = engine.activity_entry(execution.records[0]).unwrap().unwrap();
+    assert_eq!(start.outcome, "started");
     assert_eq!(engine.activity_authorization(start.id).unwrap().unwrap().attempt_id, trace.attempt_id);
 }
 
@@ -908,14 +912,13 @@ async fn connector_unknown_outcome_keeps_consumption_and_records_started_and_unk
     env.core.sync(0).await.unwrap();
     assert_eq!(env.telegram.sent.lock().unwrap().len(), 2, "the provider acted before reporting failure");
     assert_eq!(env.core.grants().await.unwrap()[0].uses, 1);
-    assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "unknown");
-    let traces: Vec<_> = env
-        .core
-        .activity(8)
-        .await
-        .unwrap()
-        .iter()
-        .filter_map(|row| engine.activity_authorization(row.id).unwrap())
+    let row = env.core.activity(1).await.unwrap().remove(0);
+    assert_eq!(row.outcome, "unknown");
+    let execution = row.execution.expect("its attempt is folded into it");
+    assert_eq!(execution.state, reins_core::ExecutionState::Unknown);
+    let traces: Vec<_> = std::iter::once(row.id)
+        .chain(execution.records)
+        .filter_map(|id| engine.activity_authorization(id).unwrap())
         .filter(|trace| trace.request_id == "ambiguous")
         .collect();
     assert!(traces.iter().any(|trace| trace.phase == AuthorizationPhase::Started));

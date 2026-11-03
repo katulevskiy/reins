@@ -8,6 +8,7 @@ import dev.reins.android.ui.common.operationTitle
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
 import dev.reins.core.ApprovalView
+import dev.reins.core.ExecutionState
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import dev.reins.core.SuggestionView
@@ -273,7 +274,7 @@ fun waitCards(all: List<PendingItem>): List<WaitCard> {
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
 
 /** How an entry ended, as the marker at the end of its row. */
-enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Permission, Bypass, Lockdown, Failed, Started, Unknown, Withheld, Held, Undone, NotSent }
+enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Permission, Bypass, Lockdown, Failed, Pending, Unknown, Withheld, Held, Undone, NotSent }
 
 /**
  * Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). A held send
@@ -282,7 +283,11 @@ enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDen
 private val DONE = setOf("released", "sent", "granted")
 
 fun outcomeOf(entry: ActivityEntry): Outcome = when {
-    entry.outcome == "started" -> Outcome.Started
+    // The core folds a request's execution records into its row: one that may have happened, or whose result was
+    // withheld, never reads as plainly allowed (nor as a row of its own).
+    entry.execution?.state == ExecutionState.UNKNOWN -> Outcome.Unknown
+    entry.execution?.state == ExecutionState.WITHHELD -> Outcome.Withheld
+    entry.outcome == "started" -> Outcome.Pending
     entry.outcome == "unknown" -> Outcome.Unknown
     entry.outcome == "succeeded_withheld" -> Outcome.Withheld
     // The send hold (08 R10), whoever approved it: waiting out its Undo, undone, or not sent.
@@ -359,10 +364,11 @@ fun permissionActor(decidedBy: String): String? = when (decidedBy) {
 
 /** The AI's pick in words, for the entry's outcome pill: "Allowed by Autopilot · 96%". */
 fun outcomeLine(entry: ActivityEntry): String {
-    when (entry.outcome) {
-        "started" -> return "Awaiting outcome"
-        "unknown" -> return "Outcome unknown · do not repeat"
-        "succeeded_withheld" -> return "Completed; response withheld · do not repeat"
+    when (outcomeOf(entry)) {
+        Outcome.Pending -> return "In progress"
+        Outcome.Unknown -> return "Outcome unknown · do not repeat"
+        Outcome.Withheld -> return "Completed; response withheld · do not repeat"
+        else -> Unit
     }
     holdOutcomeLabel(entry.outcome, live = entry.hold != null)?.let { return it }
     val note = entry.autopilot

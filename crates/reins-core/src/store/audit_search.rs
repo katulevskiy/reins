@@ -24,11 +24,12 @@ use serde_json::Value;
 
 use super::Store;
 use super::audit::{AuditRecord, sealed_rows};
+use super::audit_fold::{self, EXECUTION_UNKNOWN_AFTER, Facts};
 use crate::CoreError;
 use crate::text;
 use crate::types::{
-    ActivityConnection, ActivityCursor, ActivityDecider, ActivityFacets, ActivityField, ActivityHighlight,
-    ActivityOutcome, ActivityQuery, ActivitySnippet, ActivityStamp,
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityExecution, ActivityFacets, ActivityField,
+    ActivityHighlight, ActivityOutcome, ActivityQuery, ActivitySnippet, ActivityStamp,
 };
 use crate::views::ParkedRequest;
 
@@ -54,8 +55,11 @@ CREATE TABLE IF NOT EXISTS temp.audit_search_rows (
     seq INTEGER PRIMARY KEY,
     tag BLOB,
     snap INTEGER NOT NULL,
-    decided_by TEXT NOT NULL
+    decided_by TEXT NOT NULL,
+    request TEXT NOT NULL DEFAULT '',
+    execution INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS temp.audit_search_rows_request ON audit_search_rows (request);
 CREATE VIRTUAL TABLE IF NOT EXISTS temp.audit_search USING fts5(
     doc, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 0'
 );
@@ -460,12 +464,39 @@ pub(crate) fn snippet(fields: &[(ActivityField, String)], terms: &[String]) -> O
     })
 }
 
-fn outcome_of(outcome: &str) -> ActivityOutcome {
+/// How an entry ended, as the filters group it; `doubt` when its request's execution is unknown ([`doubt`]).
+fn outcome_of(outcome: &str, doubt: bool) -> ActivityOutcome {
     match outcome {
         "denied" | "undone" => ActivityOutcome::Denied,
-        "error" | "not_sent" => ActivityOutcome::Failed,
+        o if doubt || FAILED.contains(&o) => ActivityOutcome::Failed,
         _ => ActivityOutcome::Approved,
     }
+}
+
+/// Outcomes that need attention on their own; an execution that may or may not have happened ([`doubt`]) too.
+const FAILED: &[&str] = &["error", "started", "unknown", "succeeded_withheld", "not_sent"];
+
+/// Kept as a row (`r`: the entry's indexed row): every entry but an execution record folded into its request's rows,
+/// as [`audit_fold::shown`] keeps them.
+const SHOWN: &str = "NOT (r.execution = 1 AND r.request <> '' AND EXISTS (SELECT 1 FROM temp.audit_search_rows d \
+                     WHERE d.request = r.request AND (d.execution = 0 OR d.seq > r.seq)))";
+
+/// The entries of the same request as `r`, indexed (`t`) and stored (`x`).
+const SIBLINGS: &str = "FROM temp.audit_search_rows t JOIN audit x ON x.seq = t.seq WHERE t.request = r.request";
+
+/// Whether the execution of `r`'s request is unknown at `now`, as [`audit_fold::execution`] says
+/// [`crate::types::ExecutionState::Unknown`]: it has an execution record, and one of its entries says unknown, or
+/// nothing withheld or closed it and it did not start within [`EXECUTION_UNKNOWN_AFTER`].
+fn doubt(now: i64) -> String {
+    let recent = now.saturating_sub(EXECUTION_UNKNOWN_AFTER);
+    format!(
+        "(r.request <> '' AND EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1) AND (\
+         EXISTS (SELECT 1 {SIBLINGS} AND x.outcome = 'unknown') OR (\
+         NOT EXISTS (SELECT 1 {SIBLINGS} AND (x.outcome = 'succeeded_withheld' \
+         OR (t.execution = 1 AND x.outcome IN ('sent', 'unknown')) OR (t.execution = 0 AND x.outcome <> 'held'))) \
+         AND NOT (EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1 AND x.outcome = 'started') \
+         AND NOT EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1 AND x.outcome = 'started' AND x.at <= {recent})))))"
+    )
 }
 
 fn decider_of(decided_by: &str) -> ActivityDecider {
@@ -479,9 +510,10 @@ fn decider_of(decided_by: &str) -> ActivityDecider {
     }
 }
 
-/// The SQL that keeps an entry for `q`'s filters (on `audit a` joined with the indexed rows `r`), with its values.
-fn filters(q: &ActivityQuery, fts: Option<&str>) -> (String, Vec<Sql>) {
-    let mut clauses: Vec<String> = Vec::new();
+/// The SQL that keeps an entry for `q`'s filters at `now` (on `audit a` joined with the indexed rows `r`), with its
+/// values. Execution records folded into their request's rows are never kept ([`SHOWN`]).
+fn filters(q: &ActivityQuery, fts: Option<&str>, now: i64) -> (String, Vec<Sql>) {
+    let mut clauses: Vec<String> = vec![SHOWN.to_owned()];
     let mut values: Vec<Sql> = Vec::new();
     let mut one_of = |column: &str, items: Vec<String>, clauses: &mut Vec<String>| {
         if !items.is_empty() {
@@ -489,17 +521,26 @@ fn filters(q: &ActivityQuery, fts: Option<&str>) -> (String, Vec<Sql>) {
             values.extend(items.into_iter().map(Sql::Text));
         }
     };
-    let outcomes: Vec<String> = q
-        .outcomes
-        .iter()
-        .flat_map(|o| match o {
-            ActivityOutcome::Approved => &["released", "sent", "granted", "held"][..],
-            ActivityOutcome::Denied => &["denied", "undone"][..],
-            ActivityOutcome::Failed => &["error", "started", "unknown", "succeeded_withheld", "not_sent"][..],
-        })
-        .map(|s| (*s).to_owned())
-        .collect();
-    one_of("a.outcome", outcomes, &mut clauses);
+    if !q.outcomes.is_empty() {
+        // Each entry is in one of them (as `outcome_of` counts it): one whose execution is unknown needs attention,
+        // however its own row ended.
+        let list = |outcomes: &[&str]| outcomes.iter().map(|o| format!("'{o}'")).collect::<Vec<_>>().join(", ");
+        let doubt = doubt(now);
+        let any: Vec<String> = q
+            .outcomes
+            .iter()
+            .map(|o| match o {
+                ActivityOutcome::Approved => {
+                    format!("(a.outcome IN ('released', 'sent', 'granted', 'held') AND NOT {doubt})")
+                }
+                ActivityOutcome::Denied => "a.outcome IN ('denied', 'undone')".to_owned(),
+                ActivityOutcome::Failed => {
+                    format!("(a.outcome IN ({}) OR (a.outcome NOT IN ('denied', 'undone') AND {doubt}))", list(FAILED))
+                }
+            })
+            .collect();
+        clauses.push(format!("({})", any.join(" OR ")));
+    }
     one_of("a.service", q.services.clone(), &mut clauses);
     one_of("a.action", q.actions.clone(), &mut clauses);
     one_of("a.connection_id", q.connections.clone(), &mut clauses);
@@ -539,6 +580,8 @@ fn filters(q: &ActivityQuery, fts: Option<&str>) -> (String, Vec<Sql>) {
 pub(crate) struct Found {
     pub record: AuditRecord,
     pub snippet: Option<ActivitySnippet>,
+    /// Its request's execution, folded in ([`audit_fold`]).
+    pub execution: Option<ActivityExecution>,
 }
 
 pub(crate) struct FoundPage {
@@ -554,6 +597,9 @@ struct Indexed {
     tag: Option<Vec<u8>>,
     snap: bool,
     decided_by: String,
+    /// Its request ([`audit_fold::request_of`]), empty when none is known.
+    request: String,
+    execution: bool,
     doc: String,
 }
 
@@ -624,6 +670,8 @@ impl Store {
                     seq,
                     tag: tags.get(&seq).cloned().flatten(),
                     snap: snaps.contains_key(&seq),
+                    request: audit_fold::request_of(&record).unwrap_or_default().to_owned(),
+                    execution: audit_fold::is_execution(&record),
                     decided_by: record.info.decided_by,
                     doc,
                 }
@@ -638,12 +686,15 @@ impl Store {
             tag,
             snap,
             decided_by,
+            request,
+            execution,
             doc,
         } in docs
         {
             let added = tx.execute(
-                "INSERT OR IGNORE INTO temp.audit_search_rows (seq, tag, snap, decided_by) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![seq, tag, snap, decided_by],
+                "INSERT OR IGNORE INTO temp.audit_search_rows (seq, tag, snap, decided_by, request, execution) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![seq, tag, snap, decided_by, request, execution],
             )?;
             if added == 1 {
                 tx.execute("INSERT INTO temp.audit_search (rowid, doc) VALUES (?1, ?2)", rusqlite::params![seq, doc])?;
@@ -654,16 +705,18 @@ impl Store {
         Ok(())
     }
 
-    /// The entries matching `q`, newest first, `limit` (at most [`PAGE_MAX`]) after `after`, with where each matched.
+    /// The entries matching `q` at `now`, newest first, `limit` (at most [`PAGE_MAX`]) after `after`, with where each
+    /// matched and its request's execution. Execution records are folded into their request's rows ([`audit_fold`]).
     pub(crate) fn search_activity(
         &self,
         q: &ActivityQuery,
         after: Option<ActivityCursor>,
         limit: u32,
+        now: i64,
     ) -> Result<FoundPage, CoreError> {
         self.refresh_search()?;
         let parsed = parse(&q.text);
-        let (filter, mut values) = filters(q, parsed.fts.as_deref());
+        let (filter, mut values) = filters(q, parsed.fts.as_deref(), now);
         let limit = limit.clamp(1, PAGE_MAX);
         let (total, page): (u32, Vec<(i64, i64)>) = {
             let conn = self.read()?;
@@ -705,11 +758,14 @@ impl Store {
         } else {
             self.audit_rows(&format!("WHERE seq IN ({list})"), [])?.into_iter().map(|r| (r.seq, r)).collect()
         };
+        let requests: Vec<&str> = records.values().filter_map(audit_fold::request_of).collect();
+        let executions = self.indexed_executions(&requests, now)?;
         let mut found = Vec::with_capacity(page.len());
         for (seq, _) in page {
             let Some(record) = records.remove(seq) else {
                 continue;
             };
+            let execution = audit_fold::request_of(&record).and_then(|id| executions.get(id).cloned().flatten());
             let snippet = if parsed.terms.is_empty() {
                 None
             } else {
@@ -719,6 +775,7 @@ impl Store {
             found.push(Found {
                 record,
                 snippet,
+                execution,
             });
         }
         Ok(FoundPage {
@@ -729,23 +786,24 @@ impl Store {
         })
     }
 
-    /// When each entry matching `q` was logged and how it ended, newest first (at most [`STAMPS_MAX`]): enough to
-    /// group them by day and count each day.
-    pub(crate) fn activity_stamps(&self, q: &ActivityQuery) -> Result<Vec<ActivityStamp>, CoreError> {
+    /// When each entry matching `q` at `now` was logged and how it ended, newest first (at most [`STAMPS_MAX`]): enough
+    /// to group them by day and count each day. One per request, as the rows are ([`audit_fold`]).
+    pub(crate) fn activity_stamps(&self, q: &ActivityQuery, now: i64) -> Result<Vec<ActivityStamp>, CoreError> {
         self.refresh_search()?;
         let parsed = parse(&q.text);
-        let (filter, mut values) = filters(q, parsed.fts.as_deref());
+        let (filter, mut values) = filters(q, parsed.fts.as_deref(), now);
         values.push(Sql::Integer(i64::from(STAMPS_MAX)));
         let conn = self.read()?;
         let stamps = conn
             .prepare(&format!(
-                "SELECT a.seq, a.at, a.outcome, r.decided_by {JOINED} {filter} ORDER BY a.at DESC, a.seq DESC LIMIT ?"
+                "SELECT a.seq, a.at, a.outcome, r.decided_by, {} {JOINED} {filter} ORDER BY a.at DESC, a.seq DESC LIMIT ?",
+                doubt(now)
             ))?
             .query_map(params_from_iter(values.iter()), |r| {
                 Ok(ActivityStamp {
                     id: r.get(0)?,
                     at: r.get(1)?,
-                    outcome: outcome_of(&r.get::<_, String>(2)?),
+                    outcome: outcome_of(&r.get::<_, String>(2)?, r.get(4)?),
                     decider: decider_of(&r.get::<_, String>(3)?),
                 })
             })?
@@ -753,7 +811,60 @@ impl Store {
         Ok(stamps)
     }
 
-    /// The integrations, kinds and connections the Activity holds.
+    /// The execution of each of `requests` at `now`, from every entry of theirs this device holds; a request without
+    /// execution records is left out.
+    pub(crate) fn executions(
+        &self,
+        requests: &[&str],
+        now: i64,
+    ) -> Result<HashMap<String, Option<ActivityExecution>>, CoreError> {
+        self.refresh_search()?;
+        self.indexed_executions(requests, now)
+    }
+
+    /// [`Store::executions`] from the index as it is.
+    fn indexed_executions(
+        &self,
+        requests: &[&str],
+        now: i64,
+    ) -> Result<HashMap<String, Option<ActivityExecution>>, CoreError> {
+        let mut groups: HashMap<String, Vec<Facts>> = HashMap::new();
+        let mut wanted: Vec<&str> = requests.iter().copied().filter(|r| !r.is_empty()).collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        let conn = self.read()?;
+        for chunk in wanted.chunks(BATCH) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT r.request, a.seq, a.at, r.execution, a.outcome {JOINED} WHERE r.request IN ({marks})"
+            ))?;
+            let rows = stmt.query_map(params_from_iter(chunk.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    Facts {
+                        seq: row.get(1)?,
+                        at: row.get(2)?,
+                        execution: row.get(3)?,
+                        outcome: row.get(4)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (request, facts) = row?;
+                groups.entry(request).or_default().push(facts);
+            }
+        }
+        drop(conn);
+        Ok(groups
+            .into_iter()
+            .map(|(request, group)| {
+                let execution = audit_fold::execution(&group, now);
+                (request, execution)
+            })
+            .collect())
+    }
+
+    /// The integrations, kinds and connections the Activity holds. Execution records are no kind of their own.
     pub(crate) fn activity_facets(&self) -> Result<ActivityFacets, CoreError> {
         let conn = self.read()?;
         let column = |sql: &str| -> Result<Vec<String>, CoreError> {
@@ -761,8 +872,11 @@ impl Store {
         };
         let services =
             column("SELECT service FROM audit WHERE service <> '' GROUP BY service ORDER BY COUNT(*) DESC, service")?;
-        let actions =
-            column("SELECT action FROM audit WHERE action <> '' GROUP BY action ORDER BY COUNT(*) DESC, action")?;
+        let actions = column(&format!(
+            "SELECT action FROM audit WHERE action <> '' AND action <> '{}' GROUP BY action ORDER BY COUNT(*) DESC, \
+             action",
+            audit_fold::EXECUTE
+        ))?;
         let connections = conn
             .prepare(
                 "SELECT connection_id, connection_label FROM audit a WHERE connection_id <> '' AND seq = \

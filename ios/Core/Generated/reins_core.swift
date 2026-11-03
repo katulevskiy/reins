@@ -9915,6 +9915,11 @@ public struct ActivityEntry: Equatable, Hashable {
      * `None` once it went, or was undone.
      */
     public var hold: ActivityHold?
+    /**
+     * How the request's policy-checked execution went, folded in from its execution records (which are never rows of
+     * their own). `None` when the request has none.
+     */
+    public var execution: ActivityExecution?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9949,7 +9954,11 @@ public struct ActivityEntry: Equatable, Hashable {
         /**
          * A held email send (08 R10): "Sending in 30 s · Undo" while it waits, "Still send?" when it was not sent in time.
          * `None` once it went, or was undone.
-         */hold: ActivityHold? = nil) {
+         */hold: ActivityHold? = nil, 
+        /**
+         * How the request's policy-checked execution went, folded in from its execution records (which are never rows of
+         * their own). `None` when the request has none.
+         */execution: ActivityExecution? = nil) {
         self.id = id
         self.at = at
         self.connectionId = connectionId
@@ -9969,6 +9978,7 @@ public struct ActivityEntry: Equatable, Hashable {
         self.label = label
         self.request = request
         self.hold = hold
+        self.execution = execution
     }
 
     
@@ -10005,7 +10015,8 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
                 autopilot: FfiConverterOptionTypeAutopilotNote.read(from: &buf), 
                 label: FfiConverterOptionTypeRequestLabel.read(from: &buf), 
                 request: FfiConverterOptionTypeActivityRequest.read(from: &buf), 
-                hold: FfiConverterOptionTypeActivityHold.read(from: &buf)
+                hold: FfiConverterOptionTypeActivityHold.read(from: &buf), 
+                execution: FfiConverterOptionTypeActivityExecution.read(from: &buf)
         )
     }
 
@@ -10029,6 +10040,7 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
         FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
         FfiConverterOptionTypeActivityRequest.write(value.request, into: &buf)
         FfiConverterOptionTypeActivityHold.write(value.hold, into: &buf)
+        FfiConverterOptionTypeActivityExecution.write(value.execution, into: &buf)
     }
 }
 
@@ -10045,6 +10057,81 @@ public func FfiConverterTypeActivityEntry_lift(_ buf: RustBuffer) throws -> Acti
 #endif
 public func FfiConverterTypeActivityEntry_lower(_ value: ActivityEntry) -> RustBuffer {
     return FfiConverterTypeActivityEntry.lower(value)
+}
+
+
+/**
+ * A request's execution, folded into the row that decided it (or that tells how it ended).
+ */
+public struct ActivityExecution: Equatable, Hashable {
+    public var state: ExecutionState
+    /**
+     * The execution records folded in (their entry ids, oldest first): the evidence a detail page can show, through
+     * `activity_entry` and `activity_authorization`.
+     */
+    public var records: [Int64]
+    /**
+     * When the attempt started (Unix seconds); 0 when no start was kept.
+     */
+    public var startedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: ExecutionState, 
+        /**
+         * The execution records folded in (their entry ids, oldest first): the evidence a detail page can show, through
+         * `activity_entry` and `activity_authorization`.
+         */records: [Int64], 
+        /**
+         * When the attempt started (Unix seconds); 0 when no start was kept.
+         */startedAt: Int64) {
+        self.state = state
+        self.records = records
+        self.startedAt = startedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityExecution: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityExecution: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityExecution {
+        return
+            try ActivityExecution(
+                state: FfiConverterTypeExecutionState.read(from: &buf), 
+                records: FfiConverterSequenceInt64.read(from: &buf), 
+                startedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityExecution, into buf: inout [UInt8]) {
+        FfiConverterTypeExecutionState.write(value.state, into: &buf)
+        FfiConverterSequenceInt64.write(value.records, into: &buf)
+        FfiConverterInt64.write(value.startedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExecution_lift(_ buf: RustBuffer) throws -> ActivityExecution {
+    return try FfiConverterTypeActivityExecution.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExecution_lower(_ value: ActivityExecution) -> RustBuffer {
+    return FfiConverterTypeActivityExecution.lower(value)
 }
 
 
@@ -25636,7 +25723,8 @@ public enum ActivityOutcome: Equatable, Hashable {
     case approved
     case denied
     /**
-     * Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
+     * Needs attention: error, a start with no result, unknown outcome, successful response withheld, or an execution
+     * that may or may not have happened (`ExecutionState::Unknown`), however its row ended.
      */
     case failed
 
@@ -27819,6 +27907,101 @@ public func FfiConverterTypeEnrollProgress_lift(_ buf: RustBuffer) throws -> Enr
 #endif
 public func FfiConverterTypeEnrollProgress_lower(_ value: EnrollProgress) -> RustBuffer {
     return FfiConverterTypeEnrollProgress.lower(value)
+}
+
+
+
+/**
+ * Where a request's execution stands, as its execution records tell.
+ */
+
+public enum ExecutionState: Equatable, Hashable {
+    
+    /**
+     * Started less than five minutes ago, with no result yet.
+     */
+    case pending
+    /**
+     * Carried out: the provider returned success, or the request's own outcome row closed it.
+     */
+    case done
+    /**
+     * It may or may not have happened: do not repeat it. Also a start that got no result in time.
+     */
+    case unknown
+    /**
+     * Carried out, but its result was withheld because policy changed while it ran: do not repeat it.
+     */
+    case withheld
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ExecutionState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeExecutionState: FfiConverterRustBuffer {
+    typealias SwiftType = ExecutionState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ExecutionState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .pending
+        
+        case 2: return .done
+        
+        case 3: return .unknown
+        
+        case 4: return .withheld
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ExecutionState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .pending:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .withheld:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeExecutionState_lift(_ buf: RustBuffer) throws -> ExecutionState {
+    return try FfiConverterTypeExecutionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeExecutionState_lower(_ value: ExecutionState) -> RustBuffer {
+    return FfiConverterTypeExecutionState.lower(value)
 }
 
 
@@ -30559,6 +30742,30 @@ fileprivate struct FfiConverterOptionTypeActivityEntry: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeActivityEntry.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeActivityExecution: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityExecution?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityExecution.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityExecution.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

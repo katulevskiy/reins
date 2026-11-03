@@ -154,7 +154,8 @@ enum ActivityDays {
         // As the core files them: an undone send with the denied, one not sent with the failed.
         case "denied", "undone": .denied
         case "error", "started", "unknown", "succeeded_withheld", "not_sent": .failed
-        default: .approved
+        // One whose execution is unknown needs attention, however its row ended.
+        default: e.execution?.state == .unknown ? .failed : .approved
         }
         let decider: ActivityDecider = switch e.decidedBy {
         case "": .you

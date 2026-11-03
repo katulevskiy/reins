@@ -1110,6 +1110,34 @@ pub struct ActivityEntry {
     /// `None` once it went, or was undone.
     #[uniffi(default)]
     pub hold: Option<crate::send_hold::ActivityHold>,
+    /// How the request's policy-checked execution went, folded in from its execution records (which are never rows of
+    /// their own). `None` when the request has none.
+    #[uniffi(default)]
+    pub execution: Option<ActivityExecution>,
+}
+
+/// Where a request's execution stands, as its execution records tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ExecutionState {
+    /// Started less than five minutes ago, with no result yet.
+    Pending,
+    /// Carried out: the provider returned success, or the request's own outcome row closed it.
+    Done,
+    /// It may or may not have happened: do not repeat it. Also a start that got no result in time.
+    Unknown,
+    /// Carried out, but its result was withheld because policy changed while it ran: do not repeat it.
+    Withheld,
+}
+
+/// A request's execution, folded into the row that decided it (or that tells how it ended).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityExecution {
+    pub state: ExecutionState,
+    /// The execution records folded in (their entry ids, oldest first): the evidence a detail page can show, through
+    /// `activity_entry` and `activity_authorization`.
+    pub records: Vec<i64>,
+    /// When the attempt started (Unix seconds); 0 when no start was kept.
+    pub started_at: i64,
 }
 
 /// How an Activity entry ended, as search filters and day counts group it.
@@ -1118,7 +1146,8 @@ pub enum ActivityOutcome {
     /// Carried out: released, sent or granted.
     Approved,
     Denied,
-    /// Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
+    /// Needs attention: error, a start with no result, unknown outcome, successful response withheld, or an execution
+    /// that may or may not have happened (`ExecutionState::Unknown`), however its row ended.
     Failed,
 }
 

@@ -35,7 +35,7 @@ struct OutcomeTag: View {
         switch outcome {
         case "denied": OutcomePill(text: "Denied", tone: .bad)
         case "error": TintTag(text: "Failed", tint: Palette.warning)
-        case "started": TintTag(text: "Awaiting outcome", tint: Palette.warning)
+        case "started": OutcomePill(text: "In progress")
         case "unknown": TintTag(text: "Outcome unknown", tint: Palette.warning)
         case "succeeded_withheld": TintTag(text: "Response withheld", tint: Palette.warning)
         case "granted": OutcomePill(text: "Granted", tone: .accent)
@@ -52,7 +52,7 @@ struct OutcomeTag: View {
         switch outcome {
         case "denied": "Denied"
         case "error": "Failed"
-        case "started": "Awaiting outcome"
+        case "started": "In progress"
         case "unknown": "Outcome unknown"
         case "succeeded_withheld": "Completed; response withheld"
         case "granted": "Granted"
@@ -79,18 +79,25 @@ enum EntryText {
 
     /// How an entry ended, as the history row's trailing mark.
     enum Mark: Equatable {
-        case approved, denied, failed, auto, grant, permission, overnight, bypass, lockdown, started, unknown, withheld
+        case approved, denied, failed, auto, grant, permission, overnight, bypass, lockdown, pending, unknown, withheld
         /// A held email (08 R10): waiting out its hold or being sent (`sending`), undone, or not sent (too late).
         case held(sending: Bool), undone, notSent
     }
 
     static func mark(_ entry: ActivityEntry) -> Mark {
+        // The core folds a request's execution records into its row: one that may have happened, or whose result was
+        // withheld, never reads as plainly allowed (nor as a row of its own).
+        switch entry.execution?.state {
+        case .unknown?: return .unknown
+        case .withheld?: return .withheld
+        default: break
+        }
         switch entry.outcome {
         // A held send's own outcomes come before who decided it: approved, it still has not gone.
         case "held": return .held(sending: entry.hold != nil)
         case "undone": return .undone
         case "not_sent": return .notSent
-        case "started": return .started
+        case "started": return .pending
         case "unknown": return .unknown
         case "succeeded_withheld": return .withheld
         case "error": return .failed
@@ -166,7 +173,7 @@ enum EntryMark {
         case .grant: "Under a grant"
         case .denied: "Denied"
         case .failed: "Failed"
-        case .started: "Awaiting outcome"
+        case .pending: "In progress"
         case .unknown: "Outcome unknown; do not repeat"
         case .withheld: "Completed; response withheld; do not repeat"
         case .auto: "Decided by Autopilot"
@@ -214,7 +221,7 @@ enum EntryRowText {
         case .bypass: return .bypass
         case .lockdown: return .locked
         case .failed: return .failed
-        case .started: return .attention(word: "Waiting", spoken: EntryMark.spoken(mark))
+        case .pending: return .pending
         case .unknown: return .attention(word: "Unknown", spoken: EntryMark.spoken(mark))
         case .withheld: return .attention(word: "Withheld", spoken: EntryMark.spoken(mark))
         case let .held(sending): return .held(word: sending ? "Sending" : "Held")

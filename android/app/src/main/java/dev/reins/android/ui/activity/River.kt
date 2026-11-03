@@ -408,7 +408,7 @@ fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier, share: String? =
         Outcome.Bypass -> OutcomeTag("Bypass", Glyph.Bypass, c.danger, modifier)
         Outcome.Lockdown -> OutcomeTag("Locked", Glyph.Block, c.warning, modifier, spoken = "Denied in lockdown")
         Outcome.Failed -> OutcomeTag("Failed", Glyph.CircleAlert, c.warning, modifier)
-        Outcome.Started -> OutcomeTag("Awaiting outcome", Glyph.CircleAlert, c.warning, modifier, spoken = "Attempted; awaiting outcome")
+        Outcome.Pending -> GlyphIcon(Glyph.More, c.inkMeta, modifier = modifier.semantics { this.contentDescription = "In progress" }, size = 18.dp)
         Outcome.Unknown -> OutcomeTag("Outcome unknown", Glyph.CircleAlert, c.warning, modifier, spoken = "Outcome unknown; do not repeat")
         Outcome.Withheld -> OutcomeTag("Response withheld", Glyph.CircleAlert, c.warning, modifier, spoken = "Completed; response withheld; do not repeat")
         Outcome.Held -> OutcomeTag(SENDING, Glyph.Timer, c.violet, modifier, spoken = "Approved; sending soon")

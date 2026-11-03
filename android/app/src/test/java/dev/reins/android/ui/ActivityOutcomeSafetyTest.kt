@@ -5,12 +5,13 @@ import dev.reins.android.ui.activity.*
 import dev.reins.android.ui.common.*
 import dev.reins.core.ActivityOutcome
 import dev.reins.core.ActivityDecider
+import dev.reins.core.ExecutionState
 import org.junit.Assert.*
 import org.junit.Test
 
 class ActivityOutcomeSafetyTest {
     @Test fun uncertainAndWithheldOutcomesOverrideEveryDeciderAndGrantSuccess() {
-        val states = mapOf("started" to Outcome.Started, "unknown" to Outcome.Unknown, "succeeded_withheld" to Outcome.Withheld)
+        val states = mapOf("started" to Outcome.Pending, "unknown" to Outcome.Unknown, "succeeded_withheld" to Outcome.Withheld)
         for ((status, expected) in states) for (decider in listOf("", "autopilot", "overnight", "bypass", "lockdown", "account_permission", "temporary_permission", "future_actor")) {
             val entry = TestData.entry(1).copy(outcome = status, decidedBy = decider, grantId = "grant")
             assertEquals(expected, outcomeOf(entry))
@@ -19,6 +20,27 @@ class ActivityOutcomeSafetyTest {
             assertFalse(outcomeLine(entry).contains("Allowed"))
             if (status != "started") assertTrue(outcomeLine(entry).contains("do not repeat"))
         }
+    }
+    @Test fun aFoldedExecutionTellsOnItsDecisionRowOnlyWhenSomethingIsWrong() {
+        val decided = TestData.entry(1, "write", "sent", decidedBy = "bypass", service = "desktop", op = "ssh")
+        val fine = decided.copy(execution = TestData.execution(ExecutionState.DONE, listOf(0L), startedAt = 1))
+        assertEquals(Outcome.Bypass, outcomeOf(fine))
+        assertEquals("Allowed during a bypass", outcomeLine(fine))
+        assertEquals(ActivityOutcome.APPROVED, outcomeKind(fine))
+        assertEquals(Tense.Done, entryTense(fine))
+        val unknown = decided.copy(execution = TestData.execution(ExecutionState.UNKNOWN, listOf(0L)))
+        assertEquals(Outcome.Unknown, outcomeOf(unknown))
+        assertEquals("Outcome unknown · do not repeat", outcomeLine(unknown))
+        assertEquals(ActivityOutcome.FAILED, outcomeKind(unknown))
+        assertEquals("never says it ran", Tense.Refused, entryTense(unknown))
+        val withheld = decided.copy(execution = TestData.execution(ExecutionState.WITHHELD))
+        assertEquals(Outcome.Withheld, outcomeOf(withheld))
+        assertTrue(outcomeLine(withheld).contains("do not repeat"))
+        // A decided row says how it was decided while its execution runs; a record with nothing else is in progress.
+        assertEquals(Outcome.Bypass, outcomeOf(decided.copy(execution = TestData.execution(ExecutionState.PENDING))))
+        val running = TestData.entry(2, "execute", "started", execution = TestData.execution(ExecutionState.PENDING, listOf(2L)))
+        assertEquals(Outcome.Pending, outcomeOf(running))
+        assertEquals("In progress", outcomeLine(running))
     }
     @Test fun explicitPermissionsHaveTheirOwnAttributionWithoutLearnedConfidence() {
         for ((actor, name) in listOf("account_permission" to "account permission", "temporary_permission" to "temporary permission")) {
