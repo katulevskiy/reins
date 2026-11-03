@@ -243,6 +243,25 @@ fn connector(call: &ConnectorCall, cx: &Context) -> RequestLabel {
                 label("ssh", "secrets", "Sign in to", host, true)
             }
         }
+        (VAULT, "git_sign") => {
+            let object = call
+                .str_arg("object_base64")
+                .and_then(|b| {
+                    let b = b.trim().as_bytes();
+                    data_encoding::BASE64.decode(b).or_else(|_| data_encoding::BASE64_NOPAD.decode(b)).ok()
+                })
+                .and_then(|o| reins_proto::sshsig::parse_object(&o));
+            let repo = call.str_arg("repo").map(line).unwrap_or_default();
+            let what = match object.as_ref().map(|o| o.kind) {
+                Some(reins_proto::sshsig::ObjectKind::Tag) => "Sign a git tag",
+                _ => "Sign a git commit",
+            };
+            if repo.is_empty() {
+                label("ssh", "secrets", what, "", false)
+            } else {
+                label("ssh", "secrets", format!("{what} in"), repo, true)
+            }
+        }
         (VAULT, "ssh_keys") => label("ssh", "read", "See your SSH keys", "", false),
         (_, reins_proto::desktop::GIT_PUSH_OP | reins_proto::desktop::GIT_TAG_PUSH_OP) => git_push(call),
         (_, reins_proto::desktop::GIT_FETCH_OP) => {
@@ -496,11 +515,12 @@ fn why_asked(call: &ConnectorCall, h: &Hook) -> String {
 }
 
 /// Argument names never kept in full: keys, nonces, digests, what is sealed, and anything that may hold a secret.
-const HIDDEN_ARGS: [&str; 14] = [
+const HIDDEN_ARGS: [&str; 15] = [
     "client_key",
     "nonce",
     "digest",
     "data_base64",
+    "object_base64",
     "sealed",
     "password",
     "notes",

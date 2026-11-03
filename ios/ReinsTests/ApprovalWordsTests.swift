@@ -88,6 +88,22 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(sentence(token), "Wants to add a **GitHub token**\nfor **github.com**")
     }
 
+    func testAGitSignatureNamesTheMessageOrTheTag() {
+        XCTAssertEqual(ApprovalWords.badge(T.gitSignView()), .terminal)
+        XCTAssertEqual(sentence(T.gitSignView()), "Wants to **sign the commit**\n**Fix the login redirect**")
+        XCTAssertEqual(sentence(T.gitSignView(subject: "")), "Wants to **sign the commit**\n**(no message)**")
+        XCTAssertEqual(sentence(T.gitSignView(kind: "tag", tag: "v1.2.0", subject: "Release 1.2")), "Wants to **sign the tag**\n**v1.2.0**")
+    }
+
+    func testAGitSignatureIsNeverCalledIrreversible() {
+        XCTAssertFalse(ApprovalWords.destructive(T.gitSignView(repo: nil)))
+        XCTAssertFalse(ApprovalWords.held(T.gitSignView(repo: nil)))
+        XCTAssertNil(ApprovalWords.dangerTag(T.gitSignView()))
+        let hidden = T.gitSignView(hiddenChars: true)
+        XCTAssertEqual(ApprovalWords.dangerTag(hidden)?.id, "hiddenChars")
+        XCTAssertTrue(ApprovalWords.held(hidden))
+    }
+
     func testReinsSecretsIsAskedEveryTimeWithoutBeingCalledIrreversible() {
         XCTAssertFalse(ApprovalWords.destructive(storeView()))
         XCTAssertNil(ApprovalWords.dangerTag(storeView()))

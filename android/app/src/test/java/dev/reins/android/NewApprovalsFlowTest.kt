@@ -142,6 +142,22 @@ class NewApprovalsFlowTest : FlowHarness() {
     }
 
     @Test
+    fun aGitSignatureShowsTheCommitTheAuthorAndTheKey() {
+        openRequest(TestData.gitSignView(TestData.gitSign(committer = "GitHub <noreply@github.com>", parents = 2u)))
+        awaitTag("gitSign")
+        rule.onNodeWithTag("gitSignRepo").assertTextEquals("octo/app · main")
+        rule.onNodeWithTag("gitSignSubject").assertTextEquals("fix: keep the session on refresh")
+        rule.onNodeWithTag("gitSignAuthor").assertTextEquals("Ada Lovelace <ada@example.com>")
+        rule.onNodeWithTag("gitSignCommitter").assertTextEquals("GitHub <noreply@github.com>")
+        rule.onNodeWithTag("gitSignMerge").assertTextEquals("2 parents")
+        assertTrue(has("gitSignDate"))
+        rule.onNodeWithTag("gitSignKey").assertTextContains("SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", substring = true)
+        tap("gitSignBody")
+        awaitTag("gitSignBodyText")
+        rule.onNodeWithTag("gitSignBodyText").assertTextContains("Closes #12.", substring = true)
+    }
+
+    @Test
     fun aPushToGitlabNamesGitlab() {
         val ref = TestData.gitRef("old", change = "delete", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         openRequest(TestData.gitPushView(TestData.gitPush(ref)).copy(service = "gitlab"))

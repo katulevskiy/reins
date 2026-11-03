@@ -40,6 +40,9 @@ enum ApprovalWords {
     static func destructive(_ view: ApprovalView) -> Bool {
         // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
         if let ask = view.ask { return ask.destructive }
+        // A signature on this computer's commit undoes with the commit: asked every time when no repository is named,
+        // never "can't be undone".
+        if view.gitSign != nil { return false }
         return view.noStanding && view.kind == .write && !isSecrets(view)
     }
 
@@ -73,7 +76,7 @@ enum ApprovalWords {
         if destructive(view) && deletes(view) { return .trash }
         if view.ask != nil { return .question }
         if view.secrets != nil || isSecrets(view) { return .key }
-        if view.ssh != nil { return .terminal }
+        if view.ssh != nil || view.gitSign != nil { return .terminal }
         switch view.kind {
         case .grant: return .shield
         case .accounts: return .people
@@ -105,6 +108,12 @@ enum ApprovalWords {
     }
 
     /// "Bank <alerts@bank.com>" → "Bank"; a bare address stays as it is.
+    /// A signed commit's or tag's message line, as the phone read it from the object: "(no message)" when empty.
+    static func gitSignSubject(_ g: GitSignView) -> String {
+        let subject = untrusted(g.subject)
+        return subject.trimmingCharacters(in: .whitespaces).isEmpty ? "(no message)" : subject
+    }
+
     static func displayName(_ from: String) -> String {
         let name = (from.components(separatedBy: "<").first ?? from).trimmingCharacters(in: .whitespaces)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
@@ -150,6 +159,11 @@ enum ApprovalWords {
             return [p("Wants to add a "), b("\(serviceName(t.service)) token"), p("\nfor "), b(untrusted(t.host))]
         }
         if let s = view.ssh { return [wants, b("sign in"), p(" to\n"), b(untrusted(sshTarget(host: s.host, hostKey: s.hostKey)))] }
+        if let g = view.gitSign {
+            let tag = untrusted(g.tag ?? "")
+            if g.kind == "tag" { return [wants, b("sign the tag"), p("\n"), b(tag.isEmpty ? gitSignSubject(g) : tag)] }
+            return [wants, b("sign the commit"), p("\n"), b(gitSignSubject(g))]
+        }
         if let mcp = view.mcp {
             let title = untrusted(mcp.title)
             return [wants, b(lowerFirst(title.isEmpty ? untrusted(mcp.tool) : title)), p("\non "), b(untrusted(mcp.serverName))]
@@ -383,6 +397,9 @@ enum ApprovalWords {
                     destructive: false, symbol: "arrow.triangle.branch"
                 ))
             }
+        }
+        if view.gitSign?.hiddenChars == true {
+            tags.append(DangerTag(label: "Hidden characters", id: "hiddenChars", help: hiddenHelp))
         }
         if let mcp = view.mcp, mcp.destructive {
             tags.append(DangerTag(label: "Destructive", id: "mcpDestructive", help: "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance."))

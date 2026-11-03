@@ -30,7 +30,7 @@ mod totp;
 pub(crate) use items::desktop::env::{
     ReleaseAsk, always_ask_choice, perform_release, perform_store_parts, release_ask, runner_label, set_always_ask,
 };
-pub use items::desktop::{secret_release_view, ssh_sign_view};
+pub use items::desktop::{git_sign_view, secret_release_view, ssh_sign_view};
 pub(crate) use items::editor;
 pub(crate) use items::wallet;
 pub use totp::totp_code;

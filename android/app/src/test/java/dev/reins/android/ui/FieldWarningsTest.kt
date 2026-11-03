@@ -3,6 +3,7 @@ package dev.reins.android.ui
 import dev.reins.android.TestData
 import dev.reins.android.ui.approval.FieldWarning
 import dev.reins.android.ui.approval.WarnTone
+import dev.reins.android.ui.approval.alwaysAskReason
 import dev.reins.android.ui.approval.dangerTag
 import dev.reins.android.ui.approval.fieldWarnings
 import dev.reins.android.ui.approval.heldByDanger
@@ -135,6 +136,30 @@ class FieldWarningsTest {
         assertEquals("Server known only by its key", lines(TestData.sshView(host = null)).line("unknownHost").text)
         assertEquals("Unknown server", lines(TestData.sshView(host = null, hostKey = null)).line("unknownHost").text)
         assertTrue(lines(TestData.sshView()).none { it.tag == "unknownHost" })
+    }
+
+    @Test
+    fun `a git signature warns of hidden characters and an unnamed repository`() {
+        val plain = lines(TestData.gitSignView())
+        assertTrue(plain.none { it.tag == "hiddenChars" || it.tag == "unknownRepo" })
+        assertEquals("it signs a commit", alwaysAskReason(TestData.gitSignView().copy(noStanding = true)))
+        assertEquals("it signs a tag", alwaysAskReason(TestData.gitSignView(TestData.gitSign(kind = "tag", tag = "v1")).copy(noStanding = true)))
+        val hidden = lines(TestData.gitSignView(TestData.gitSign(hiddenChars = true))).line("hiddenChars")
+        assertEquals(WarnTone.Red, hidden.tone)
+        assertTrue(hidden.help!!.contains("this commit"))
+        val unknown = lines(TestData.gitSignView(TestData.gitSign(repo = null, branch = null))).line("unknownRepo")
+        assertEquals("Unknown repository", unknown.text)
+        assertEquals(WarnTone.Amber, unknown.tone)
+        // No repository: asked every time, amber, never "Can't be undone" nor held.
+        val unnamed = TestData.gitSignView(TestData.gitSign(repo = null, branch = null))
+        val noRepo = lines(unnamed)
+        assertEquals(listOf("unknownRepo", "alwaysAsks"), noRepo.map { it.tag })
+        assertEquals("Always asks · it signs a commit", noRepo.line("alwaysAsks").text)
+        assertFalse(heldByDanger(unnamed))
+        // Hidden characters stay red and held.
+        val hiddenView = TestData.gitSignView(TestData.gitSign(repo = null, hiddenChars = true))
+        assertTrue(heldByDanger(hiddenView))
+        assertTrue(lines(hiddenView).none { it.tag == "onceWarning" || it.tag == "alwaysAsks" })
     }
 
     @Test

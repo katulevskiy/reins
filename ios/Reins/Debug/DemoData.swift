@@ -600,6 +600,22 @@ enum DemoData {
             ssh: SshSignView(keyName: "Deploy key", keyFingerprint: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", host: "build.example.com", hostKey: "SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E")
         ), "\(desktop) wants to sign in to a server with ssh", "Deploy key on build.example.com")
 
+        var gitSign = view(
+            "req45", conn: "c6", label: desktop, kind: .write, action: "write", service: "vault", account: "me@example.com",
+            createdAt: now - 44, waitUntil: now + 200,
+            op: "git_sign", resources: [ResourceView(id: "SHA256:abc@octo/app", label: "Signing key for octo/app", wider: false)],
+            preview: ["Sign a commit with Signing key", "In octo/app on main", "By Ada Lovelace <ada@example.com>"],
+            opTitle: "Sign a git commit", klass: "signing"
+        )
+        gitSign.gitSign = GitSignView(
+            kind: "commit", keyName: "Signing key", keyFingerprint: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8",
+            repo: "octo/app", branch: "main", tag: nil, subject: "Fix the login redirect",
+            body: "The callback lost the return path when the session had expired.\n\nCloses #42.",
+            author: "Ada Lovelace <ada@example.com>", committer: nil, date: now - 60, parents: 1, targetShort: "4f2a9c1",
+            hiddenChars: false
+        )
+        add(gitSign, "\(desktop) wants to sign a git commit in octo/app", "Fix the login redirect")
+
         // Reins Secrets: an agent runs the dev server with two variables of web · dev; values from the computer for the vault.
         var envRelease = view(
             "req43", conn: "c6", label: desktop, kind: .write, action: "write", service: "vault", account: "me@example.com",

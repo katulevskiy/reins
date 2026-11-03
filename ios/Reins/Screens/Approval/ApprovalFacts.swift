@@ -41,6 +41,8 @@ struct Facts: View {
                     SecretsFacts(secrets: secrets)
                 } else if let ssh = view.ssh {
                     SshFacts(ssh: ssh)
+                } else if let sign = view.gitSign {
+                    GitSignFacts(sign: sign)
                 } else {
                     WriteFacts(view: view)
                 }
@@ -742,6 +744,44 @@ private struct SshFacts: View {
             }
         }
         .accessibilityContainer("ssh")
+    }
+}
+
+/// A git commit or tag to sign: what the computer says (repository, branch), what the phone read from the object
+/// (message, author, date, parents), and the key. The message's body opens on its own page.
+private struct GitSignFacts: View {
+    var sign: GitSignView
+
+    var body: some View {
+        FactGroup {
+            if let repo = sign.repo.map(untrusted), !repo.isEmpty {
+                let branch = sign.branch.map(untrusted) ?? ""
+                FactRow(key: "Repo", value: branch.isEmpty ? repo : "\(repo) · \(branch)", mono: true, valueId: "gitSignRepo")
+            }
+            if sign.kind == "tag", let tag = sign.tag.map(untrusted), !tag.isEmpty {
+                FactRow(key: "Tag", value: tag, mono: true, valueId: "gitSignTag")
+            }
+            FactRow(key: "Message", value: ApprovalWords.gitSignSubject(sign), valueId: "gitSignSubject")
+            let body = untrusted(sign.body).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !body.isEmpty {
+                DrillRow(title: "Full message", id: "gitSignBody", page: .text(title: "Message", body: body, mono: false, id: "gitSignBodyText")) {
+                    EmptyView()
+                }
+            }
+            FactRow(key: sign.kind == "tag" ? "Tagger" : "Author", value: untrusted(sign.author), valueId: "gitSignAuthor")
+            if let committer = sign.committer.map(untrusted), !committer.isEmpty {
+                FactRow(key: "Committer", value: committer, valueId: "gitSignCommitter")
+            }
+            if sign.date != 0 {
+                FactRow(key: "Date", value: TimeText.relative(sign.date), valueId: "gitSignDate")
+            }
+            if sign.parents >= 2 {
+                FactRow(key: "Merge", value: "\(sign.parents) parents", valueId: "gitSignMerge")
+            }
+            FactRow(key: "Key", value: untrusted(sign.keyName))
+            MonoBlock(text: untrusted(sign.keyFingerprint), id: "gitSignKey")
+        }
+        .accessibilityContainer("gitSign")
     }
 }
 

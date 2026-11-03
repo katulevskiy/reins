@@ -24,6 +24,11 @@ pub enum SshCmd {
     Unsetup,
     /// Where the agent listens, whether it runs, and whether ssh uses it.
     Status,
+    /// Sign git commits and tags with a key on your phone (`reins` as git's SSH signing program).
+    Git {
+        #[command(subcommand)]
+        action: super::git_sign::GitCmd,
+    },
 }
 
 /// `~/.ssh/config` under `home`.
@@ -221,6 +226,9 @@ pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<
     let shown = file.display();
     let mut out = Vec::new();
     match cmd {
+        SshCmd::Git {
+            action,
+        } => return super::git_sign::run(action, paths, config),
         SshCmd::Setup => {
             let line = match setup(&file, &socket)? {
                 Change::Added => format!("{shown}: ssh now asks Reins's agent for keys ({}).", socket.display()),

@@ -29,6 +29,7 @@ pub mod relay;
 pub mod remote_mcp;
 pub mod rollout;
 pub mod roster;
+pub mod sshsig;
 pub mod ticket;
 mod validate;
 

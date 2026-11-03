@@ -139,6 +139,13 @@ final class AskFormatTests: XCTestCase {
         check(AskFormat.waiting(v), "Sign in with Deploy key", target: "Deploy key", mono: "build.example.com", kind: "SSH · Sign in")
     }
 
+    func testAGitSignatureNamesTheRepositoryAndShowsTheMessage() {
+        check(AskFormat.waiting(T.gitSignView()), "Sign a git commit in octo/app", target: "octo/app", mono: "Fix the login redirect", kind: "SSH · Sign",
+              icon: AskIcon(mark: .glyph(.key), action: .gitBranch, kind: ApprovalWords.tone(T.gitSignView()).field))
+        check(AskFormat.waiting(T.gitSignView(kind: "tag", tag: "v1.2.0")), "Sign a git tag in octo/app", target: "octo/app", mono: "v1.2.0")
+        check(AskFormat.waiting(T.gitSignView(repo: nil)), "Sign a git commit", target: nil, mono: "Fix the login redirect")
+    }
+
     func testAnEmailToSendNamesItsFirstRecipient() {
         var v = T.view("m", kind: .send, service: "gmail", op: "send", action: "send")
         v.email = EmailView(to: ["Anna Petrova <anna@example.com>", "bob@example.com"], cc: [], subject: "Hi", body: "")

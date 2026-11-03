@@ -92,6 +92,15 @@ enum AskFormat {
         if let s = view.ssh {
             return line("Sign in with ", untrustedName(s.keyName), mono: untrusted(sshTarget(host: s.host.map(asciiHost), hostKey: s.hostKey)))
         }
+        if let g = view.gitSign {
+            let tag = g.kind == "tag"
+            let what = tag ? untrusted(g.tag ?? "") : ApprovalWords.gitSignSubject(g)
+            let mono = what.isEmpty ? nil : what
+            guard let repo = g.repo.map({ untrustedName($0) }), !repo.isEmpty else {
+                return line(tag ? "Sign a git tag" : "Sign a git commit", nil, mono: mono)
+            }
+            return line(tag ? "Sign a git tag in " : "Sign a git commit in ", repo, mono: mono, stand: "a repository")
+        }
         switch view.kind {
         case .grant:
             // One tool on one thing: the tool's title is Reins' own; an MCP tool's name is its server's, so mono only.
@@ -145,7 +154,7 @@ enum AskFormat {
             place = "Computer"
         } else if view.secrets != nil || ApprovalWords.isSecrets(view) {
             place = "Vault"
-        } else if view.ssh != nil {
+        } else if view.ssh != nil || view.gitSign != nil {
             place = "SSH"
         } else {
             place = serviceName(view.service.isEmpty ? "gmail" : view.service)
@@ -168,6 +177,7 @@ enum AskFormat {
         if view.secrets != nil || view.envRelease != nil { return "Secrets" }
         if view.secretsStore != nil || view.tokenStore != nil { return "Save" }
         if view.ssh != nil { return "Sign in" }
+        if view.gitSign != nil { return "Sign" }
         if view.kind == .grant { return "Permission" }
         if view.kind == .accounts { return "Accounts" }
         if ApprovalWords.deletes(view) { return "Delete" }
@@ -210,6 +220,7 @@ enum AskFormat {
         if view.secretsStore != nil { return spec(.service("vault"), .plus) }
         if view.tokenStore != nil { return spec(.glyph(.key), .plus) }
         if view.ssh != nil { return spec(.glyph(.key), .lockOpen) }
+        if view.gitSign != nil { return spec(.glyph(.key), .gitBranch) }
         let mark = AskIcon.Mark.service(ApprovalWords.service(view).isEmpty ? "gmail" : ApprovalWords.service(view))
         switch view.kind {
         case .grant: return spec(mark, .shieldCheck)

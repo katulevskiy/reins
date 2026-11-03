@@ -63,6 +63,18 @@ class ApprovalWordsTest {
     }
 
     @Test
+    fun `a git signature names the commit or the tag, under the terminal badge`() {
+        assertEquals("Wants to **sign the commit**\n**fix: keep the session on refresh**", sentence(TestData.gitSignView()))
+        val tag = TestData.gitSign(kind = "tag", tag = "v1.2.0", subject = "Release 1.2")
+        assertEquals("Wants to **sign the tag**\n**v1.2.0**", sentence(TestData.gitSignView(tag)))
+        assertEquals("Wants to **sign a commit**", sentence(TestData.gitSignView(TestData.gitSign(subject = ""))))
+        assertEquals(Badge.Terminal, badge(TestData.gitSignView()))
+        // The subject is the object's own words: it cannot reorder the sentence.
+        val evil = TestData.gitSignView(TestData.gitSign(subject = "fix\u202Eexe.txt"))
+        assertFalse(heroSentence(evil).any { s -> s.text.any { it == '\u202E' } })
+    }
+
+    @Test
     fun `untrusted text cannot reorder the sentence`() {
         val view = TestData.designMailView(null).copy(messages = listOf(TestData.message("m1", "Ev‮il <a@b.c>")))
         assertFalse(heroSentence(view).any { s -> s.text.any { it == '‮' } })

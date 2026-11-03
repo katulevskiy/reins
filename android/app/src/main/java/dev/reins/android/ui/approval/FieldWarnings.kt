@@ -36,7 +36,7 @@ data class FieldWarning(
  *   or that couldn't be checked, hidden characters, a destructive tool, what can't be undone;
  * - that the computer reported the rule (this phone doesn't know it);
  * - a push to the repository's default branch (display only), the computer's safety net (display only), an SSH
- *   server with no name;
+ *   server with no name, a git signature in a repository the computer didn't name;
  * - why it is asked every time, when no danger tag already says so;
  * - the first time this AI asks for this target;
  * - the risk Overnight's model saw (two lines; its word only once the reason went to the facts), and that it held it.
@@ -57,6 +57,7 @@ fun fieldWarnings(view: ApprovalView, suggestion: SuggestionView?, risk: RiskVie
     view.ssh?.takeIf { it.host.isNullOrBlank() }?.let { ssh ->
         add(FieldWarning("unknownHost", if (ssh.hostKey.isNullOrBlank()) "Unknown server" else "Server known only by its key", WarnTone.Amber))
     }
+    view.gitSign?.takeIf { it.repo.isNullOrBlank() }?.let { add(FieldWarning("unknownRepo", "Unknown repository", WarnTone.Amber)) }
     if (dangers.isEmpty()) {
         if (mailPermissionSettings(view)) add(FieldWarning("alwaysAsks", "This approval is once only. Manage ongoing access in Trust.", WarnTone.Plain))
         else alwaysAskReason(view)?.let { add(FieldWarning("alwaysAsks", "Always asks · $it", WarnTone.Plain)) }
@@ -93,6 +94,7 @@ fun alwaysAskReason(view: ApprovalView): String? {
         env != null && env.alwaysAsk -> "your computer asks for it every time"
         env != null -> "this command can't be remembered"
         view.ssh != null -> "it signs in to a server"
+        view.gitSign != null -> if (view.gitSign!!.kind == "tag") "it signs a tag" else "it signs a commit"
         view.service == "vault" -> "it hands over a password"
         else -> "it's never remembered"
     }

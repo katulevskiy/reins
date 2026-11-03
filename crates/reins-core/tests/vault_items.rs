@@ -753,7 +753,7 @@ async fn a_login_is_created_encrypted_with_everything_and_the_preview_hides_the_
     }
     assert_eq!(view.resources[0].id, "f1/login");
     assert_eq!((view.class.as_str(), view.no_standing), ("items", false));
-    assert_eq!(view.classes.len(), 5, "items, organize, sends, secrets, ssh");
+    assert_eq!(view.classes.len(), 6, "items, organize, sends, secrets, ssh, signing");
     // What the AI got.
     assert_eq!(
         (done["created"].as_bool(), done["id"].as_str(), done["type"].as_str()),

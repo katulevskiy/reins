@@ -6,6 +6,7 @@ import dev.reins.android.design.serviceName
 import dev.reins.android.push.PushPayload
 import dev.reins.android.ui.approval.leaseLabel
 import dev.reins.android.ui.approval.sshTarget
+import dev.reins.android.ui.approval.gitSignWhere
 import dev.reins.android.ui.common.fileSize
 import dev.reins.android.ui.common.fullTitle
 import dev.reins.android.ui.common.isTextFile
@@ -139,6 +140,13 @@ class NewFeaturesLogicTest {
         assertEquals("SHA256:x", sshTarget(null, "SHA256:x"))
         assertEquals("SHA256:x", sshTarget("  ", "SHA256:x"))
         assertEquals("an unknown server", sshTarget(null, null))
+    }
+
+    @Test
+    fun `a git signature's repository reads with its branch`() {
+        assertEquals("octo/app · main", gitSignWhere(TestData.gitSign()))
+        assertEquals("octo/app", gitSignWhere(TestData.gitSign(branch = " ")))
+        assertNull(gitSignWhere(TestData.gitSign(repo = null)))
     }
 
     // ---- token pages ---------------------------------------------------------------------------------------------

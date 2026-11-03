@@ -10,6 +10,13 @@
 //!   the app as an [`SshSignature`]. Only an SSH user authentication request is signed, and only with the key it names,
 //!   so that "Sign in to <host> with <key>" is exactly what happens. Permissions: `<fingerprint>@<host>`, within
 //!   `<fingerprint>`; a sign-in to a server nobody named is asked for every time.
+//! - `git_sign`: one git commit or annotated tag, signed here as `ssh-keygen -Y sign -n git` would sign it (SSHSIG,
+//!   [`reins_proto::sshsig`]). The phone gets the whole object, reads it (only a commit or a tag, never anything else),
+//!   hashes it itself and signs that, so "Sign the commit <subject>" is exactly what happens; the signature cannot be
+//!   used as an SSH sign-in (and a sign-in is never signed here). Permissions: `<fingerprint>#git/<owner>/<name>` (a
+//!   repository known only by its folder: `<fingerprint>#git/local:<folder>`), within `<fingerprint>#git`; an object
+//!   from a repository nobody named is asked for every time. The repository and branch are what the computer says:
+//!   nothing signed holds them.
 
 use data_encoding::{BASE64, BASE64_NOPAD};
 use reins_proto::connector::{ConnectorCall, VAULT};
@@ -27,7 +34,7 @@ use crate::connector::vault::Vault;
 use crate::connector::vault::totp::{totp_code, unix_seconds};
 use crate::connector::{Item, Preview};
 use crate::store::unix_now;
-use crate::types::{SecretReleaseView, SshSignView};
+use crate::types::{GitSignView, SecretReleaseView, SshSignView};
 use crate::{CoreError, text};
 
 pub(crate) mod env;
@@ -71,6 +78,7 @@ pub(in crate::connector::vault) async fn preview(
     Some(match call.op.as_str() {
         "secret_release" => preview_release(vault, account, call).await,
         "ssh_sign" => preview_sign(vault, account, call).await,
+        "git_sign" => preview_git_sign(vault, account, call).await,
         "phone_key" => store::preview_phone_key(vault, call),
         "secret_store" => store::preview_store(vault, account, call).await,
         "names" => store::preview_names(vault, account, call).await,
@@ -90,6 +98,7 @@ pub(in crate::connector::vault) async fn perform(
     Some(match call.op.as_str() {
         "secret_release" => perform_release(vault, account, call).await,
         "ssh_sign" => perform_sign(vault, account, call).await,
+        "git_sign" => perform_git_sign(vault, account, call).await,
         "phone_key" => store::perform_phone_key(vault, call),
         "secret_store" => store::perform_store(vault, account, call).await,
         "names" => store::perform_names(vault, account, call).await,
@@ -664,7 +673,7 @@ fn rsa_private(k: &ssh_key::private::RsaKeypair) -> Option<rsa::RsaPrivateKey> {
 }
 
 /// Signs `data` with `key`: Ed25519, ECDSA (P-256, P-384), or RSA with the hash given.
-fn sign(key: &PrivateKey, data: &[u8], hash: Option<HashAlg>) -> Result<Vec<u8>, CoreError> {
+fn sign_data(key: &PrivateKey, data: &[u8], hash: Option<HashAlg>) -> Result<Vec<u8>, CoreError> {
     let failed = || bad("The SSH key could not sign.");
     let signature: ssh_key::Signature = match key.key_data() {
         KeypairData::Ed25519(k) => k.try_sign(data).map_err(|_| failed())?,
@@ -700,7 +709,7 @@ async fn perform_sign(vault: &Vault, account: &str, call: &ConnectorCall) -> Res
     let snap = Snapshot::load(vault, account).await?;
     let keys = ssh_keys_of(&snap);
     let key = signing_key(&keys, call, &sign_in)?;
-    let blob = sign(&key.private, &sign_in.data, rsa_hash(&key.private, call)?)?;
+    let blob = sign_data(&key.private, &sign_in.data, rsa_hash(&key.private, call)?)?;
     let answer = SshSignature {
         v: 1,
         nonce: nonce_arg(call)?,
@@ -718,6 +727,190 @@ pub fn ssh_sign_view(call: &ConnectorCall, preview: &Preview) -> Option<SshSignV
         key_fingerprint: text::one_line(call.str_arg("key").unwrap_or_default()),
         host: sign_in.as_ref().and_then(|s| s.host.clone()),
         host_key: sign_in.and_then(|s| s.host_key),
+    })
+}
+
+// ---- git signing ----------------------------------------------------------------------------------------------------
+
+/// The largest part of a message the approval shows.
+const MAX_BODY: usize = 2_000;
+/// Repository and branch names as the desktop app sends them (a resource stays within 200 characters).
+const MAX_LABEL: usize = 100;
+
+/// A label the computer sends (`repo`, `branch`): one line, no hidden characters, at most [`MAX_LABEL`].
+fn label_arg(call: &ConnectorCall, name: &str) -> Result<Option<String>, CoreError> {
+    match call.str_arg(name).map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(v)
+            if v.chars().count() <= MAX_LABEL
+                && !v.chars().any(|c| c.is_control() || reins_proto::sshsig::hidden_char(c)) =>
+        {
+            Ok(Some(v.to_owned()))
+        }
+        Some(_) => Err(bad(format!("`{name}` must be one line of at most {MAX_LABEL} plain characters."))),
+    }
+}
+
+/// A commit or tag to sign, checked against the arguments.
+struct GitSign {
+    object: Zeroizing<Vec<u8>>,
+    parsed: reins_proto::sshsig::GitObject,
+    hash: reins_proto::sshsig::Hash,
+    repo: Option<String>,
+    branch: Option<String>,
+}
+
+impl GitSign {
+    fn what(&self) -> String {
+        let subject = text::truncate_chars(&text::one_line(&self.parsed.subject), 80);
+        match self.parsed.kind {
+            reins_proto::sshsig::ObjectKind::Commit if subject.is_empty() => "Sign a commit".to_owned(),
+            reins_proto::sshsig::ObjectKind::Commit => format!("Sign the commit \u{201c}{subject}\u{201d}"),
+            reins_proto::sshsig::ObjectKind::Tag => {
+                format!("Sign the tag {}", text::one_line(self.parsed.tag.as_deref().unwrap_or_default()))
+            }
+        }
+    }
+}
+
+fn git_sign_args(call: &ConnectorCall) -> Result<GitSign, CoreError> {
+    let encoded = call.str_arg("object_base64").unwrap_or_default().trim();
+    let object = Zeroizing::new(
+        BASE64
+            .decode(encoded.as_bytes())
+            .or_else(|_| BASE64_NOPAD.decode(encoded.as_bytes()))
+            .map_err(|_| bad("`object_base64` is not base64."))?,
+    );
+    let parsed = reins_proto::sshsig::parse_object(&object)
+        .ok_or_else(|| bad("Only a git commit or an annotated tag can be signed here, and this is not one."))?;
+    let hash = match call.str_arg("hash") {
+        None | Some("") => reins_proto::sshsig::Hash::Sha512,
+        Some(h) => reins_proto::sshsig::Hash::parse(h).ok_or_else(|| bad("`hash` is sha512 or sha256."))?,
+    };
+    Ok(GitSign {
+        object,
+        parsed,
+        hash,
+        repo: label_arg(call, "repo")?,
+        branch: label_arg(call, "branch")?,
+    })
+}
+
+/// The vault key a call names by fingerprint.
+fn named_key<'a>(keys: &'a [SshKey<'a>], call: &ConnectorCall) -> Result<&'a SshKey<'a>, CoreError> {
+    let wanted = call.str_arg("key").unwrap_or_default().trim().trim_end_matches('=');
+    keys.iter()
+        .find(|k| k.fingerprint == wanted)
+        .ok_or_else(|| bad("No SSH key with that fingerprint is in the vault. Use vault_ssh_keys to list them."))
+}
+
+/// The resource of signing with `fingerprint`: within one repository, or anywhere. A name without a `/` is a folder's
+/// (no remote), kept apart so that `me` never covers `me/app`.
+fn git_resource(fingerprint: &str, repo: Option<&str>) -> String {
+    match repo {
+        Some(r) if r.contains('/') => format!("{fingerprint}#git/{}", r.to_lowercase()),
+        Some(r) => format!("{fingerprint}#git/local:{}", r.to_lowercase()),
+        None => format!("{fingerprint}#git"),
+    }
+}
+
+async fn preview_git_sign(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Preview, CoreError> {
+    client_key(call)?;
+    nonce_arg(call)?;
+    let sign = git_sign_args(call)?;
+    let snap = Snapshot::load(vault, account).await?;
+    let keys = ssh_keys_of(&snap);
+    let key = named_key(&keys, call)?;
+    let name = key.entry.name();
+    let fp = &key.fingerprint;
+    let mut lines = vec![format!("{} with {name}", sign.what())];
+    match (&sign.repo, &sign.branch) {
+        (Some(r), Some(b)) => lines.push(format!("In {r} on {b}, as the computer names them")),
+        (Some(r), None) => lines.push(format!("In {r}, as the computer names it")),
+        _ => {}
+    }
+    if !sign.parsed.author.is_empty() {
+        lines.push(format!("By {}", text::one_line(&sign.parsed.author)));
+    }
+    if sign.parsed.hidden_chars {
+        lines.push("It holds characters that change how the text reads without being seen.".to_owned());
+    }
+    let anywhere = git_resource(fp, None);
+    Ok(match &sign.repo {
+        Some(repo) => Preview {
+            resource: git_resource(fp, Some(repo)),
+            resource_label: format!("{name} for {repo}"),
+            lines,
+            parents: vec![(anywhere, format!("{name} for any repository"))],
+            once_only: false,
+            ..Preview::default()
+        },
+        // Nobody said which repository: never remembered.
+        None => Preview {
+            resource: anywhere,
+            resource_label: name,
+            lines,
+            parents: Vec::new(),
+            once_only: true,
+            ..Preview::default()
+        },
+    })
+}
+
+async fn perform_git_sign(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Value, CoreError> {
+    let sign = git_sign_args(call)?;
+    let snap = Snapshot::load(vault, account).await?;
+    let keys = ssh_keys_of(&snap);
+    let key = named_key(&keys, call)?;
+    let data = reins_proto::sshsig::signed_data(reins_proto::sshsig::GIT_NAMESPACE, sign.hash, &sign.object);
+    // An RSA key signs SSHSIG with rsa-sha2-512, as ssh-keygen does.
+    let blob = sign_data(&key.private, &data, Some(HashAlg::Sha512))?;
+    let answer = SshSignature {
+        v: 1,
+        nonce: nonce_arg(call)?,
+        signature_base64: BASE64.encode(&blob),
+    };
+    Ok(json!({ SEALED_FIELD: seal(client_key(call)?, &answer)? }))
+}
+
+/// The commit or tag as the approval shows it (`None` for anything else).
+pub fn git_sign_view(call: &ConnectorCall, preview: &Preview) -> Option<GitSignView> {
+    (call.service == VAULT && call.op == "git_sign").then_some(())?;
+    let sign = git_sign_args(call).ok()?;
+    let o = &sign.parsed;
+    let label = &preview.resource_label;
+    let key_name = match &sign.repo {
+        Some(repo) => label.strip_suffix(&format!(" for {repo}")).unwrap_or(label),
+        None => label,
+    };
+    Some(GitSignView {
+        kind: match o.kind {
+            reins_proto::sshsig::ObjectKind::Commit => "commit",
+            reins_proto::sshsig::ObjectKind::Tag => "tag",
+        }
+        .to_owned(),
+        key_name: text::one_line(key_name),
+        key_fingerprint: text::one_line(call.str_arg("key").unwrap_or_default()),
+        repo: sign.repo.clone(),
+        branch: sign.branch.clone(),
+        tag: o.tag.as_deref().map(text::one_line),
+        subject: text::one_line(&o.subject),
+        body: match o.body.chars().count() {
+            n if n > MAX_BODY => {
+                format!(
+                    "{}\n\u{2026} {} more characters not shown",
+                    text::truncate_chars(&o.body, MAX_BODY),
+                    n - MAX_BODY
+                )
+            }
+            _ => o.body.clone(),
+        },
+        author: text::one_line(&o.author),
+        committer: o.committer.as_deref().map(text::one_line),
+        date: o.date,
+        parents: u32::try_from(o.parents).unwrap_or(u32::MAX),
+        target_short: o.target.chars().take(7).collect(),
+        hidden_chars: o.hidden_chars,
     })
 }
 
@@ -781,7 +974,7 @@ mod tests {
         ] {
             let key = PrivateKey::from_openssh(pem).unwrap();
             assert!(supported(&key), "{alg}");
-            let blob = sign(&key, b"data", hash).unwrap_or_else(|e| panic!("{alg}: {e}"));
+            let blob = sign_data(&key, b"data", hash).unwrap_or_else(|e| panic!("{alg}: {e}"));
             let mut rest = blob.as_slice();
             assert_eq!(take_string(&mut rest).unwrap(), alg.as_bytes());
             assert!(!take_string(&mut rest).unwrap().is_empty() && rest.is_empty());

@@ -139,7 +139,7 @@ enum Cmd {
     /// Undo everything Reins did on this computer and end its connection to your phone.
     ///
     /// Takes Reins out of every AI tool, sends git directly again, removes the SSH agent block from ~/.ssh/config,
-    /// stops and removes the background service, and signs this computer out (the phone's list no longer shows
+    /// puts back the git signing settings `reins ssh git setup` changed, stops and removes the background service, and signs this computer out (the phone's list no longer shows
     /// it). `--purge` also deletes this computer's key, activity log and settings. The `reins` program itself stays.
     #[command(display_order = 30)]
     Uninstall {
@@ -939,6 +939,11 @@ async fn uninstall(paths: &Paths, config: &Config, purge: bool) -> Result<(), St
             }
         }),
     );
+    step(
+        "Git signing",
+        reins_desktop::ssh_agent::git_sign::unsetup(&reins_desktop::ssh_agent::git_sign::GitConfig::global(), paths)
+            .map(|lines| lines.join("; ").trim().to_owned()),
+    );
     #[cfg(windows)]
     let service = service::windows::uninstall(paths, config, true).await;
     #[cfg(not(windows))]
@@ -1205,6 +1210,11 @@ fn net(action: NetCmd) -> ExitCode {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // git runs `reins -Y sign …` as its SSH signing program (`reins ssh git setup`).
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if reins_desktop::ssh_agent::git_sign::is_signer(&args) {
+        return reins_desktop::ssh_agent::git_sign::main(&args);
+    }
     let cli = Cli::parse();
     if let Cmd::Net {
         action,

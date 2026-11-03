@@ -11269,6 +11269,11 @@ public struct ApprovalView: Equatable, Hashable {
      * Overnight always ask for it.
      */
     public var targetsDefaultBranch: Bool
+    /**
+     * A git commit or tag the computer asks the phone to sign with a vault SSH key (`reins` as git's signing
+     * program): what the object says.
+     */
+    public var gitSign: GitSignView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11347,7 +11352,11 @@ public struct ApprovalView: Equatable, Hashable {
          * A write to a GitHub repository that lands on its default branch or a protected one, or may (a pull request or a
          * branch merged, a file committed to the default branch or without naming a branch): Autopilot's Auto and
          * Overnight always ask for it.
-         */targetsDefaultBranch: Bool = false) {
+         */targetsDefaultBranch: Bool = false, 
+        /**
+         * A git commit or tag the computer asks the phone to sign with a vault SSH key (`reins` as git's signing
+         * program): what the object says.
+         */gitSign: GitSignView? = nil) {
         self.requestId = requestId
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -11384,6 +11393,7 @@ public struct ApprovalView: Equatable, Hashable {
         self.secretsStore = secretsStore
         self.tokenStore = tokenStore
         self.targetsDefaultBranch = targetsDefaultBranch
+        self.gitSign = gitSign
     }
 
     
@@ -11437,7 +11447,8 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
                 envRelease: FfiConverterOptionTypeEnvReleaseView.read(from: &buf), 
                 secretsStore: FfiConverterOptionTypeSecretsStoreView.read(from: &buf), 
                 tokenStore: FfiConverterOptionTypeTokenStoreView.read(from: &buf), 
-                targetsDefaultBranch: FfiConverterBool.read(from: &buf)
+                targetsDefaultBranch: FfiConverterBool.read(from: &buf), 
+                gitSign: FfiConverterOptionTypeGitSignView.read(from: &buf)
         )
     }
 
@@ -11478,6 +11489,7 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
         FfiConverterOptionTypeSecretsStoreView.write(value.secretsStore, into: &buf)
         FfiConverterOptionTypeTokenStoreView.write(value.tokenStore, into: &buf)
         FfiConverterBool.write(value.targetsDefaultBranch, into: &buf)
+        FfiConverterOptionTypeGitSignView.write(value.gitSign, into: &buf)
     }
 }
 
@@ -16769,6 +16781,190 @@ public func FfiConverterTypeGitRefView_lift(_ buf: RustBuffer) throws -> GitRefV
 #endif
 public func FfiConverterTypeGitRefView_lower(_ value: GitRefView) -> RustBuffer {
     return FfiConverterTypeGitRefView.lower(value)
+}
+
+
+/**
+ * A git commit or annotated tag to sign with a vault SSH key. Everything but `repo` and `branch` is read by the phone
+ * from the object it signs; those two are what the computer says.
+ */
+public struct GitSignView: Equatable, Hashable {
+    /**
+     * "commit" | "tag"
+     */
+    public var kind: String
+    public var keyName: String
+    /**
+     * `SHA256:…`
+     */
+    public var keyFingerprint: String
+    /**
+     * The repository, as the computer names it (owner/name, or its folder's name).
+     */
+    public var repo: String?
+    /**
+     * The branch checked out, as the computer says.
+     */
+    public var branch: String?
+    /**
+     * A tag's name.
+     */
+    public var tag: String?
+    /**
+     * The message's first line.
+     */
+    public var subject: String
+    /**
+     * The rest of the message, cut to 2,000 characters.
+     */
+    public var body: String
+    /**
+     * "Name <email>" of the author (or the tagger).
+     */
+    public var author: String
+    /**
+     * The committer, when it is not the author.
+     */
+    public var committer: String?
+    /**
+     * Unix seconds; 0 when not known.
+     */
+    public var date: Int64
+    /**
+     * How many parents a commit has (2 or more: a merge).
+     */
+    public var parents: UInt32
+    /**
+     * A commit's tree, or the object a tag points at: the first 7 hex digits.
+     */
+    public var targetShort: String
+    /**
+     * Characters that change how the text reads without being seen (bidi controls, zero-width): show a warning.
+     */
+    public var hiddenChars: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "commit" | "tag"
+         */kind: String, keyName: String, 
+        /**
+         * `SHA256:…`
+         */keyFingerprint: String, 
+        /**
+         * The repository, as the computer names it (owner/name, or its folder's name).
+         */repo: String?, 
+        /**
+         * The branch checked out, as the computer says.
+         */branch: String?, 
+        /**
+         * A tag's name.
+         */tag: String?, 
+        /**
+         * The message's first line.
+         */subject: String, 
+        /**
+         * The rest of the message, cut to 2,000 characters.
+         */body: String, 
+        /**
+         * "Name <email>" of the author (or the tagger).
+         */author: String, 
+        /**
+         * The committer, when it is not the author.
+         */committer: String?, 
+        /**
+         * Unix seconds; 0 when not known.
+         */date: Int64, 
+        /**
+         * How many parents a commit has (2 or more: a merge).
+         */parents: UInt32, 
+        /**
+         * A commit's tree, or the object a tag points at: the first 7 hex digits.
+         */targetShort: String, 
+        /**
+         * Characters that change how the text reads without being seen (bidi controls, zero-width): show a warning.
+         */hiddenChars: Bool) {
+        self.kind = kind
+        self.keyName = keyName
+        self.keyFingerprint = keyFingerprint
+        self.repo = repo
+        self.branch = branch
+        self.tag = tag
+        self.subject = subject
+        self.body = body
+        self.author = author
+        self.committer = committer
+        self.date = date
+        self.parents = parents
+        self.targetShort = targetShort
+        self.hiddenChars = hiddenChars
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension GitSignView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeGitSignView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GitSignView {
+        return
+            try GitSignView(
+                kind: FfiConverterString.read(from: &buf), 
+                keyName: FfiConverterString.read(from: &buf), 
+                keyFingerprint: FfiConverterString.read(from: &buf), 
+                repo: FfiConverterOptionString.read(from: &buf), 
+                branch: FfiConverterOptionString.read(from: &buf), 
+                tag: FfiConverterOptionString.read(from: &buf), 
+                subject: FfiConverterString.read(from: &buf), 
+                body: FfiConverterString.read(from: &buf), 
+                author: FfiConverterString.read(from: &buf), 
+                committer: FfiConverterOptionString.read(from: &buf), 
+                date: FfiConverterInt64.read(from: &buf), 
+                parents: FfiConverterUInt32.read(from: &buf), 
+                targetShort: FfiConverterString.read(from: &buf), 
+                hiddenChars: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: GitSignView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.keyName, into: &buf)
+        FfiConverterString.write(value.keyFingerprint, into: &buf)
+        FfiConverterOptionString.write(value.repo, into: &buf)
+        FfiConverterOptionString.write(value.branch, into: &buf)
+        FfiConverterOptionString.write(value.tag, into: &buf)
+        FfiConverterString.write(value.subject, into: &buf)
+        FfiConverterString.write(value.body, into: &buf)
+        FfiConverterString.write(value.author, into: &buf)
+        FfiConverterOptionString.write(value.committer, into: &buf)
+        FfiConverterInt64.write(value.date, into: &buf)
+        FfiConverterUInt32.write(value.parents, into: &buf)
+        FfiConverterString.write(value.targetShort, into: &buf)
+        FfiConverterBool.write(value.hiddenChars, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGitSignView_lift(_ buf: RustBuffer) throws -> GitSignView {
+    return try FfiConverterTypeGitSignView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGitSignView_lower(_ value: GitSignView) -> RustBuffer {
+    return FfiConverterTypeGitSignView.lower(value)
 }
 
 
@@ -31015,6 +31211,30 @@ fileprivate struct FfiConverterOptionTypeGitPushView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeGitPushView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeGitSignView: FfiConverterRustBuffer {
+    typealias SwiftType = GitSignView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeGitSignView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeGitSignView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

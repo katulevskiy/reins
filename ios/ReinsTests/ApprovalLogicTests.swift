@@ -23,6 +23,20 @@ final class ApprovalLogicTests: XCTestCase {
         )
     }
 
+    /// A git commit (or tag) the computer asks to sign with a vault key; no repository named: never remembered.
+    static func gitSignView(
+        kind: String = "commit", repo: String? = "octo/app", branch: String? = "main", tag: String? = nil,
+        subject: String = "Fix the login redirect", parents: UInt32 = 1, hiddenChars: Bool = false
+    ) -> ApprovalView {
+        var v = view("g1", kind: .write, service: "vault", op: "git_sign", noStanding: repo == nil, action: "write", klass: "signing")
+        v.gitSign = GitSignView(
+            kind: kind, keyName: "Signing key", keyFingerprint: "SHA256:abc", repo: repo, branch: branch, tag: tag, subject: subject,
+            body: "", author: "Ada <ada@example.com>", committer: nil, date: 0, parents: parents, targetShort: "4f2a9c1",
+            hiddenChars: hiddenChars
+        )
+        return v
+    }
+
     let readView = view(kind: .search, query: "from:bank", messages: [
         message("m1", "Bank <alerts@bank.com>"),
         message("m2", "Other <x@gmail.com>"),

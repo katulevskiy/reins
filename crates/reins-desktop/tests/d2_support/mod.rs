@@ -31,7 +31,7 @@ pub enum Step {
     Expired,
     /// Approves, sealed to a key that is not the app's.
     OtherKey,
-    /// Signs other data than asked (`vault_ssh_sign`).
+    /// Signs other data than asked (`vault_ssh_sign`, `vault_git_sign`).
     WrongSignature,
     /// `vault_env_release`: approves, remembering the program and its first `n` arguments as a prefix (the user's
     /// pick on the phone).
@@ -361,6 +361,26 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
             } else {
                 data
             };
+            let sig = SshSignature {
+                v: 1,
+                nonce,
+                signature_base64: key.sign(&signed),
+            };
+            result(json!({"sealed": seal_to(&seal_key, &serde_json::to_vec(&sig).unwrap()).unwrap()}))
+        }
+        "vault_git_sign" => {
+            let object = BASE64.decode(r.arguments["object_base64"].as_str().unwrap().as_bytes()).unwrap();
+            let hash = reins_proto::sshsig::Hash::parse(r.arguments["hash"].as_str().unwrap_or("sha512")).unwrap();
+            // As the phone does: only a commit or a tag.
+            if reins_proto::sshsig::parse_object(&object).is_none() {
+                return answered(
+                    json!({"outcome": "error", "message": "Only a git commit or an annotated tag can be signed here."}),
+                );
+            }
+            let mut signed = reins_proto::sshsig::signed_data("git", hash, &object);
+            if matches!(step, Step::WrongSignature) {
+                signed.push(0);
+            }
             let sig = SshSignature {
                 v: 1,
                 nonce,

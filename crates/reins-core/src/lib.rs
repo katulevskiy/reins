@@ -98,6 +98,6 @@ pub use types::{
     ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
 };
 pub use types::{
-    AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,
+    AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, GitSignView, SecretReleaseView, SecretsRevoked,
     SecretsScopeChoice, SecretsStoreView, SshSignView, SshStoreView, TokenStoreView,
 };

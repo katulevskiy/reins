@@ -108,6 +108,7 @@ fun askSentence(
         provider == "terminal" -> commandPhrase(untrusted(full?.takeIf { it.isNotBlank() } ?: label.subject), cwd, matched, uncertain)
         provider == "file" -> filePhrase(lead.ifBlank { "Read" }, subject, tail)
         provider == "secrets" && subject.isNotEmpty() -> Phrase("${dropPreposition(lead)} for a command", details = subject, full = subject)
+        provider == "ssh" && lead.startsWith("Sign a git") -> if (subject.isEmpty()) Phrase(lead) else Phrase("$lead ", subject, stand = "a repository")
         provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
         provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
         provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
@@ -122,7 +123,8 @@ fun askSentence(
         subject.isEmpty() -> Phrase(joinTail(lead, tail))
         else -> subjectPhrase(lead, subject, label.code, tail, if (provider in NAME_PROVIDERS) ValueKind.Name else ValueKind.Identifier)
     }
-    val sentence = phrase.told(tense, who, kindOf(provider, action), provider, action)
+    val kind = if (provider == "ssh" && lead.startsWith("Sign a git")) "SSH · Sign" else kindOf(provider, action)
+    val sentence = phrase.told(tense, who, kind, provider, action)
     if (provider == "terminal" && label.command != null && tense == Tense.Done) {
         // A desktop ask records permission, not an executor's report that the command actually ran.
         val heading = serifLine(label.command!!.heading)
@@ -249,6 +251,7 @@ fun askSentence(
         }
         view.secretsStore != null -> Triple(Phrase("Save ${plural(view.secretsStore!!.total.toInt(), "secret")} in your ", "vault"), "vault", "write")
         view.tokenStore != null -> Triple(Phrase("Save a ", "${serviceName(view.tokenStore!!.service)} token"), "vault", "write")
+        view.gitSign != null -> Triple(gitSignPhrase(view.gitSign!!), "ssh", "secrets")
         view.ssh != null -> Triple(Phrase("Sign in to a server", details = hostLine(dev.reins.android.ui.approval.sshTarget(view.ssh!!.host, view.ssh!!.hostKey))), "ssh", "secrets")
         purchase != null -> {
             // The store is its domain as Reins read it from the checkout (the merchant's name is the page's own words),
@@ -608,7 +611,7 @@ private fun viewKind(view: ApprovalView): String {
         view.purchase != null -> "Payments"
         view.ask != null -> "Computer"
         view.secrets != null || dev.reins.android.ui.approval.isSecretsMove(view) -> "Vault"
-        view.ssh != null -> "SSH"
+        view.ssh != null || view.gitSign != null -> "SSH"
         else -> serviceName(view.service.ifBlank { "gmail" })
     }
     val what = when {
@@ -618,6 +621,7 @@ private fun viewKind(view: ApprovalView): String {
         view.secrets != null || view.envRelease != null -> "Secrets"
         view.secretsStore != null || view.tokenStore != null -> "Save"
         view.ssh != null -> "Sign in"
+        view.gitSign != null -> "Sign"
         view.kind == ApprovalKind.GRANT -> "Permission"
         view.kind == ApprovalKind.ACCOUNTS -> "Accounts"
         dev.reins.android.ui.approval.deletes(view) -> "Delete"
@@ -747,6 +751,14 @@ fun asciiHost(host: String): AsciiHost? {
 }
 
 /** A host for the mono line: ASCII or punycode, with its raw form when it was converted or is not a host. */
+/** "Sign a git commit in owner/repo" (the core's words), what it signs on the mono line: the subject, or a tag's name. */
+private fun gitSignPhrase(g: dev.reins.core.GitSignView): Phrase {
+    val head = if (g.kind == "tag") "Sign a git tag" else "Sign a git commit"
+    val repo = g.repo?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() }
+    val what = oneLine(untrusted(if (g.kind == "tag") g.tag.orEmpty() else g.subject).trim()).ifEmpty { null }
+    return if (repo == null) Phrase(head, details = what) else Phrase("$head in ", repo, details = what, stand = "a repository")
+}
+
 private fun hostLine(host: String): String {
     val h = untrusted(host).trim()
     val a = asciiHost(h) ?: return rawForm(oneLine(h))
