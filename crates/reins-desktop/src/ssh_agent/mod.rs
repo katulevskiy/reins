@@ -39,7 +39,7 @@ use crate::phone::{PhoneLink, awaiting, teller, unavailable};
 pub const KEYS_TOOL: &str = "vault_ssh_keys";
 pub const SIGN_TOOL: &str = "vault_ssh_sign";
 /// The agent extension `reins -Y sign` uses: `string control token, string key blob, string namespace, string hash,
-/// string object, string repo, string branch`; answered with `SUCCESS, string signature blob` or
+/// string object, string repo, string branch, string ancestors` (a run of `string` commit objects); answered with `SUCCESS, string signature blob` or
 /// `FAILURE, string reason`. The control token (`control.token`, 0600 in the state folder) proves the caller runs on
 /// this computer as this user: a server the agent was forwarded to cannot read it.
 pub const GIT_SIGN_EXTENSION: &str = "git-sign@reins.dev";
@@ -442,13 +442,35 @@ impl Agent {
         use reins_proto::sshsig;
         let mut r = Reader::new(body);
         let _name = r.str();
-        let (Some(token), Some(blob), Some(namespace), Some(hash), Some(object), Some(repo), Some(branch)) =
-            (r.string(), r.string(), r.str(), r.str(), r.string(), r.str(), r.str())
+        let (
+            Some(token),
+            Some(blob),
+            Some(namespace),
+            Some(hash),
+            Some(object),
+            Some(repo),
+            Some(branch),
+            Some(packed),
+        ) = (r.string(), r.string(), r.str(), r.str(), r.string(), r.str(), r.str(), r.string())
         else {
             return Err(unavailable("Malformed git signing request."));
         };
         if !r.is_empty() {
             return Err(unavailable("Malformed git signing request."));
+        }
+        // What the commit builds on, for the phone to check against history approved in the repository.
+        let mut ancestors = Vec::new();
+        let mut a = Reader::new(packed);
+        while !a.is_empty() {
+            let Some(one) = a.string() else {
+                return Err(unavailable("Malformed git signing request."));
+            };
+            ancestors.push(BASE64.encode(one));
+        }
+        if ancestors.len() > sshsig::MAX_ANCESTORS
+            || packed.len() > sshsig::MAX_ANCESTORS_BYTES + 4 * sshsig::MAX_ANCESTORS
+        {
+            return Err(unavailable("Too many ancestors in the git signing request."));
         }
         let expected = self.token.as_ref().map(|t| t.as_bytes());
         if !expected.is_some_and(|t| constant_time_eq(t, token)) {
@@ -515,6 +537,9 @@ impl Agent {
                     }
                     if let Some(b) = &branch {
                         args["branch"] = json!(b);
+                    }
+                    if !ancestors.is_empty() {
+                        args["ancestors"] = json!(ancestors);
                     }
                     args
                 },
@@ -931,7 +956,8 @@ mod tests {
             .string(b"sha512")
             .string(object)
             .string(b"me/app")
-            .string(b"main");
+            .string(b"main")
+            .string(b"");
         let mut forwarded = Session {
             binds: vec![Bind {
                 host_key: b"hk".to_vec(),
@@ -947,7 +973,7 @@ mod tests {
         let ask = |token: &[u8], namespace: &[u8]| {
             let mut m = Writer::new();
             m.byte(EXTENSION).string(GIT_SIGN_EXTENSION.as_bytes()).string(token).string(b"key").string(namespace);
-            m.string(b"sha512").string(object).string(b"").string(b"");
+            m.string(b"sha512").string(object).string(b"").string(b"").string(b"");
             m.buf
         };
         let reply = agent.handle(&ask(b"tok", b"file"), &mut Session::default()).await;

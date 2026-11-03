@@ -32,7 +32,7 @@ use super::model::{Entry, Kind, Snapshot, State};
 use crate::connector::sealed::{client_key, nonce_arg, seal};
 use crate::connector::vault::Vault;
 use crate::connector::vault::totp::{totp_code, unix_seconds};
-use crate::connector::{Item, Preview};
+use crate::connector::{GitLineage, Item, Preview};
 use crate::store::unix_now;
 use crate::types::{GitSignView, SecretReleaseView, SshSignView};
 use crate::{CoreError, text};
@@ -841,8 +841,13 @@ async fn preview_git_sign(vault: &Vault, account: &str, call: &ConnectorCall) ->
             resource: git_resource(fp, Some(repo)),
             resource_label: format!("{name} for {repo}"),
             lines,
-            parents: vec![(anywhere, format!("{name} for any repository"))],
+            parents: vec![(anywhere.clone(), format!("{name} for any repository"))],
             once_only: false,
+            git_lineage: Some(GitLineage {
+                reaches: reins_proto::sshsig::lineage(&sign.parsed, &ancestors_arg(call)?),
+                record: lineage_record_of(&sign),
+                any: anywhere,
+            }),
             ..Preview::default()
         },
         // Nobody said which repository: never remembered.
@@ -854,6 +859,80 @@ async fn preview_git_sign(vault: &Vault, account: &str, call: &ConnectorCall) ->
             once_only: true,
             ..Preview::default()
         },
+    })
+}
+
+/// The ancestors the computer sends with a commit (`ancestors`: base64 commit objects), within the limits.
+fn ancestors_arg(call: &ConnectorCall) -> Result<Vec<Vec<u8>>, CoreError> {
+    let list = call.list_arg("ancestors");
+    if list.len() > reins_proto::sshsig::MAX_ANCESTORS {
+        return Err(bad(format!("`ancestors` holds at most {} commits.", reins_proto::sshsig::MAX_ANCESTORS)));
+    }
+    let decoded = list
+        .iter()
+        .map(|a| {
+            let a = a.trim().as_bytes();
+            BASE64.decode(a).or_else(|_| BASE64_NOPAD.decode(a)).map_err(|_| bad("`ancestors` are base64."))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if decoded.iter().map(Vec::len).sum::<usize>() > reins_proto::sshsig::MAX_ANCESTORS_BYTES {
+        return Err(bad("`ancestors` are too large."));
+    }
+    Ok(decoded)
+}
+
+/// What signing `sign` adds to its repository's known history: the object signed, and what it builds on directly.
+fn lineage_record_of(sign: &GitSign) -> Vec<String> {
+    let mut out = vec![format!("sig:{}", reins_proto::sshsig::signed_digest(&sign.object))];
+    match sign.parsed.kind {
+        reins_proto::sshsig::ObjectKind::Commit => {
+            out.extend(sign.parsed.parent_ids.iter().map(|p| format!("id:{p}")));
+        }
+        reins_proto::sshsig::ObjectKind::Tag => out.push(format!("id:{}", sign.parsed.target)),
+    }
+    out
+}
+
+/// How many entries of history are kept per repository (newest).
+const LINEAGE_KEEP: usize = 2_000;
+
+fn lineage_key(resource: &str) -> String {
+    format!("git-lineage.{}", data_encoding::HEXLOWER.encode(&Sha256::digest(resource.as_bytes())))
+}
+
+fn lineage_entries(store: &crate::store::Store, resource: &str) -> Result<Vec<String>, CoreError> {
+    let key = lineage_key(resource);
+    Ok(match store.meta_get_sealed(&key)? {
+        Some(b) => serde_json::from_slice(&b).unwrap_or_default(),
+        None => Vec::new(),
+    })
+}
+
+/// Whether some of what a commit to sign reaches is history the user approved in `resource` (its repository).
+pub(crate) fn lineage_known(
+    store: &crate::store::Store,
+    resource: &str,
+    reaches: &[String],
+) -> Result<bool, CoreError> {
+    if reaches.is_empty() {
+        return Ok(false);
+    }
+    let known = lineage_entries(store, resource)?;
+    Ok(reaches.iter().any(|r| known.contains(r)))
+}
+
+/// Keeps `entries` as history approved in `resource` (a signature was made there).
+pub(crate) fn lineage_record(store: &crate::store::Store, resource: &str, entries: &[String]) -> Result<(), CoreError> {
+    store.meta_update_sealed(&lineage_key(resource), |current| {
+        let mut known: Vec<String> = current.and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        for e in entries {
+            known.retain(|k| k != e);
+            known.push(e.clone());
+        }
+        if known.len() > LINEAGE_KEEP {
+            known.drain(..known.len() - LINEAGE_KEEP);
+        }
+        Ok((Some(serde_json::to_vec(&known).map_err(|e| CoreError::storage(e.to_string()))?), ()))
     })
 }
 

@@ -176,6 +176,49 @@ fn agent_socket() -> Option<(PathBuf, zeroize::Zeroizing<String>)> {
 pub struct Place {
     pub repo: String,
     pub branch: String,
+    /// The commits the object builds on (its parents, then theirs, nearest first), exactly as git stores them: the
+    /// phone checks them by hash against what it approved in the repository.
+    pub ancestors: Vec<Vec<u8>>,
+}
+
+/// Up to [`sshsig::MAX_ANCESTORS`] commits from `start` back (breadth first), within
+/// [`sshsig::MAX_ANCESTORS_BYTES`].
+fn ancestors(start: &[String]) -> Vec<Vec<u8>> {
+    let mut queue: std::collections::VecDeque<String> = start.iter().cloned().collect();
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    let mut size = 0;
+    while let Some(id) = queue.pop_front() {
+        if out.len() >= sshsig::MAX_ANCESTORS || seen.contains(&id) {
+            continue;
+        }
+        seen.push(id.clone());
+        let Some(object) = git_bytes(&["cat-file", "commit", &id]) else {
+            continue;
+        };
+        if size + object.len() > sshsig::MAX_ANCESTORS_BYTES {
+            break;
+        }
+        size += object.len();
+        let head = object.windows(2).position(|w| w == b"\n\n").map_or(&object[..], |end| &object[..end]);
+        for line in head.split(|b| *b == b'\n') {
+            if let Some(p) = line.strip_prefix(b"parent ").and_then(|p| std::str::from_utf8(p).ok()) {
+                queue.push_back(p.to_owned());
+            }
+        }
+        out.push(object);
+    }
+    out
+}
+
+fn git_bytes(args: &[&str]) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
 }
 
 fn git_out(args: &[&str]) -> Option<String> {
@@ -223,7 +266,13 @@ pub fn repo_of_url(url: &str) -> Option<String> {
     })
 }
 
-fn place(tag: bool) -> Place {
+fn place(object: &sshsig::GitObject) -> Place {
+    let tag = object.kind == sshsig::ObjectKind::Tag;
+    let start = match object.kind {
+        sshsig::ObjectKind::Commit => object.parent_ids.clone(),
+        sshsig::ObjectKind::Tag if object.target_type.as_deref() == Some("commit") => vec![object.target.clone()],
+        sshsig::ObjectKind::Tag => Vec::new(),
+    };
     let repo = git_out(&["config", "--get", "remote.origin.url"])
         .and_then(|u| repo_of_url(&u))
         .or_else(|| {
@@ -240,6 +289,7 @@ fn place(tag: bool) -> Place {
     Place {
         repo,
         branch,
+        ancestors: ancestors(&start),
     }
 }
 
@@ -274,6 +324,11 @@ fn sign_object(
         .string(object)
         .string(place.repo.as_bytes())
         .string(place.branch.as_bytes());
+    let mut packed = Writer::new();
+    for a in &place.ancestors {
+        packed.string(a);
+    }
+    w.string(&packed.buf);
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let told = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let notice = {
@@ -351,7 +406,7 @@ pub fn main(args: &[OsString]) -> ExitCode {
     let one = |stream: &mut dyn Duplex, object: &[u8]| -> Result<String, String> {
         let parsed = sshsig::parse_object(object)
             .ok_or("your phone signs git commits and annotated tags only, and this is neither")?;
-        let place = place(parsed.kind == sshsig::ObjectKind::Tag);
+        let place = place(&parsed);
         let signature = sign_object(stream, &token, &blob, namespace, hash, object, &place)?;
         Ok(sshsig::armor(&blob, namespace, hash, &signature))
     };

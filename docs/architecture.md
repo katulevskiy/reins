@@ -368,9 +368,19 @@ control token (`control.token`, 0600 in the state folder), so only `reins` on th
 agent was forwarded to (`ssh -A`) cannot read it, and a connection that announced an SSH server (`session-bind`) is
 refused as well. Control characters in the object (but newlines and tabs) count as hidden characters. A standing
 permission covers one key in one repository (`<fp>#git/<owner>/<name>`; a folder without a remote is
-`<fp>#git/local:<folder>`), within `<fp>#git` for any repository. An object from an unnamed repository is asked for every
-time. The repository and branch are what the computer says; nothing signed holds them, so a repository permission
-trusts this computer's processes as an SSH host name from `known_hosts` does.
+`<fp>#git/local:<folder>`), or any repository (`<fp>#git`). An object from an unnamed repository is asked for every
+time.
+
+A repository's name is only what the computer says, so a permission for one repository is also bound to its history.
+`reins` sends, with the object, up to 12 of the commits it builds on (its parents, then theirs), exactly as git stores
+them. The phone follows them by hash only: an ancestor counts when its git id is a parent already reached, and a
+signed one also yields what its signature was made over (`reins_proto::sshsig::lineage`). After each signature in a
+repository, the phone keeps (sealed, under `git-lineage.<hash of the resource>` in `meta`, the newest 2,000) what it
+signed and what that built on directly. The repository's permission covers a new object only when what it reaches meets
+that history: a commit on top of one the phone signed or approved there, or a tag of one. Anything else (unrelated
+history that only claims the name, an ancestor that does not hash to the parent it stands for) is asked again, and
+approving it makes its history known in turn. The permission for any repository ignores history. Autopilot's Auto and
+Overnight never sign on the model (a floor, as for SSH sign-ins); Bypass still approves everything.
 
 ### Large files
 

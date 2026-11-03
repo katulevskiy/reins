@@ -113,6 +113,8 @@ pub struct GitObject {
     /// A tag's name.
     pub tag: Option<String>,
     pub parents: usize,
+    /// A commit's parents (hex ids), in order.
+    pub parent_ids: Vec<String>,
     /// "Name <email>" of the author (commit) or tagger (tag).
     pub author: String,
     /// Unix seconds (0 when it does not parse).
@@ -233,6 +235,7 @@ pub fn parse_object(bytes: &[u8]) -> Option<GitObject> {
         target_type: None,
         tag: None,
         parents: 0,
+        parent_ids: Vec::new(),
         author: String::new(),
         date: 0,
         committer: None,
@@ -247,6 +250,7 @@ pub fn parse_object(bytes: &[u8]) -> Option<GitObject> {
                     return None;
                 }
                 out.parents += 1;
+                out.parent_ids.push(p.to_owned());
             }
             let (author, date) = it.next().filter(|(n, _)| *n == "author").and_then(|(_, v)| ident(v))?;
             let (committer, _) = it.next().filter(|(n, _)| *n == "committer").and_then(|(_, v)| ident(v))?;
@@ -280,6 +284,107 @@ pub fn parse_object(bytes: &[u8]) -> Option<GitObject> {
     Some(out)
 }
 
+// ---- lineage ---------------------------------------------------------------------------------------------------
+
+/// The most ancestors a signing request carries, and their size in all.
+pub const MAX_ANCESTORS: usize = 12;
+pub const MAX_ANCESTORS_BYTES: usize = 96 * 1024;
+
+/// The id git gives a commit `body`: SHA-1, or SHA-256 in a repository that uses it (64-digit ids).
+#[must_use]
+pub fn commit_id(body: &[u8], sha256: bool) -> String {
+    let mut data = format!("commit {}\0", body.len()).into_bytes();
+    data.extend_from_slice(body);
+    if sha256 {
+        data_encoding::HEXLOWER.encode(&Sha256::digest(&data))
+    } else {
+        data_encoding::HEXLOWER.encode(&<sha1::Sha1 as sha1::Digest>::digest(&data))
+    }
+}
+
+/// What a signature was made over: the SHA-256 (hex) of the exact object.
+#[must_use]
+pub fn signed_digest(object: &[u8]) -> String {
+    data_encoding::HEXLOWER.encode(&Sha256::digest(object))
+}
+
+/// A signed commit without its signature (the `gpgsig` / `gpgsig-sha256` header and its continuation lines), which is
+/// what was signed; `None` when it holds no signature.
+#[must_use]
+pub fn strip_signature(commit: &[u8]) -> Option<Vec<u8>> {
+    let end = commit.windows(2).position(|w| w == b"\n\n")?;
+    let (head, rest) = commit.split_at(end + 1);
+    let mut out = Vec::with_capacity(commit.len());
+    let mut in_sig = false;
+    let mut found = false;
+    for line in head.split_inclusive(|b| *b == b'\n') {
+        if in_sig && line.starts_with(b" ") {
+            continue;
+        }
+        in_sig = line.starts_with(b"gpgsig ") || line.starts_with(b"gpgsig-sha256 ");
+        if in_sig {
+            found = true;
+            continue;
+        }
+        out.extend_from_slice(line);
+    }
+    out.extend_from_slice(rest);
+    found.then_some(out)
+}
+
+/// The parents named in a commit's headers.
+fn header_parents(commit: &[u8]) -> Vec<String> {
+    let head = commit.windows(2).position(|w| w == b"\n\n").map_or(commit, |end| &commit[..end]);
+    head.split(|b| *b == b'\n')
+        .filter_map(|l| l.strip_prefix(b"parent "))
+        .filter_map(|p| std::str::from_utf8(p).ok())
+        .filter(|p| hex_id(p))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What an object to sign is known to build on, by hash: `id:<hex>` for every commit it reaches (its parents, or a
+/// tag's object, then the parents of each ancestor whose id is one of those) and `sig:<sha256>` for every ancestor
+/// signed (what that signature was made over). An ancestor that is not reached is ignored, so the computer can only
+/// make the list shorter, never longer than the history really is.
+#[must_use]
+pub fn lineage(object: &GitObject, ancestors: &[Vec<u8>]) -> Vec<String> {
+    let mut ids: Vec<String> = match object.kind {
+        ObjectKind::Commit => object.parent_ids.clone(),
+        ObjectKind::Tag if object.target_type.as_deref() == Some("commit") => vec![object.target.clone()],
+        ObjectKind::Tag => Vec::new(),
+    };
+    let sha256 = ids.first().is_some_and(|i| i.len() == 64);
+    let mut signed = Vec::new();
+    let mut used = vec![false; ancestors.len()];
+    loop {
+        let mut progress = false;
+        for (i, a) in ancestors.iter().enumerate() {
+            if used[i] {
+                continue;
+            }
+            let id = commit_id(a, sha256);
+            if !ids.contains(&id) {
+                continue;
+            }
+            used[i] = true;
+            progress = true;
+            for p in header_parents(a) {
+                if !ids.contains(&p) {
+                    ids.push(p);
+                }
+            }
+            if let Some(stripped) = strip_signature(a) {
+                signed.push(format!("sig:{}", signed_digest(&stripped)));
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    ids.into_iter().map(|i| format!("id:{i}")).chain(signed).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +413,29 @@ mod tests {
         let c = parse_object(commit("", "\n\nBump deps\nand disable auth\n\nWhy.\n").as_bytes()).unwrap();
         assert_eq!((c.subject.as_str(), c.body.as_str()), ("Bump deps and disable auth", "Why.\n"));
         assert!(parse_object(commit("encoding ISO-8859-1\n", "x\n").as_bytes()).is_none());
+    }
+
+    #[test]
+    fn lineage_follows_only_what_hashes_to_the_ids_named() {
+        // A signed parent: its id is the hash of the object with the signature in it.
+        let parent_signed =
+            commit("gpgsig -----BEGIN SSH SIGNATURE-----\n abc\n -----END SSH SIGNATURE-----\n", "one\n");
+        let parent_unsigned = commit("", "one\n");
+        assert_eq!(strip_signature(parent_signed.as_bytes()).unwrap(), parent_unsigned.as_bytes());
+        assert_eq!(strip_signature(parent_unsigned.as_bytes()), None);
+        let pid = commit_id(parent_signed.as_bytes(), false);
+        assert_eq!(pid.len(), 40);
+        let child =
+            format!("tree {TREE}\nparent {pid}\nauthor Ada <a@x> 1 +0000\ncommitter Ada <a@x> 1 +0000\n\ntwo\n");
+        let c = parse_object(child.as_bytes()).unwrap();
+        let known = lineage(&c, &[parent_signed.into_bytes(), b"tree unrelated\n\nx\n".to_vec()]);
+        assert_eq!(
+            known,
+            [format!("id:{pid}"), format!("id:{PARENT}"), format!("sig:{}", signed_digest(parent_unsigned.as_bytes()))]
+        );
+        // An ancestor that is not the parent named adds nothing.
+        let other = commit("gpgsig x\n y\n", "other\n");
+        assert_eq!(lineage(&c, &[other.into_bytes()]), [format!("id:{pid}")]);
     }
 
     #[test]

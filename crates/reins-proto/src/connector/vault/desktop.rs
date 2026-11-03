@@ -196,6 +196,12 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                 choice_p("hash", &["sha512", "sha256"], false, "The message hash (default sha512)."),
                 str_p("repo", 100, false, "The repository, as the desktop app names it (owner/name or folder)."),
                 str_p("branch", 100, false, "The branch checked out, when there is one."),
+                list_p(
+                    "ancestors",
+                    12,
+                    65_536,
+                    "Commits the object builds on (its parents, then theirs), each exactly as git stores it, base64.",
+                ),
                 CLIENT_KEY,
                 NONCE,
             ],

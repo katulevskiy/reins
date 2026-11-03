@@ -152,6 +152,30 @@ async fn a_commit_and_a_tag_are_signed_on_the_phone_and_git_verifies_them() {
     assert!(calls[1].arguments.get("branch").is_none(), "a tag names no branch");
     let tag_object = BASE64.decode(calls[1].arguments["object_base64"].as_str().unwrap().as_bytes()).unwrap();
     assert!(String::from_utf8(tag_object).unwrap().contains("\ntag v1.0\n"));
+    // The first commit had no parent; the tag carries the commit it tags, signed, exactly as git stores it.
+    assert!(calls[0].arguments.get("ancestors").is_none());
+    let head = String::from_utf8_lossy(&r.git(&["rev-parse", "HEAD"]).await.stdout).trim().to_owned();
+    let tagged = BASE64.decode(calls[1].arguments["ancestors"][0].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(reins_proto::sshsig::commit_id(&tagged, false), head);
+    assert!(reins_proto::sshsig::strip_signature(&tagged).is_some(), "the phone's signature is in it");
+
+    // A second commit: its parent comes along, and what the phone reaches through it includes what it signed.
+    r.mock.plan(&[Step::Approve]);
+    let out = r.git(&["commit", "-q", "--allow-empty", "-S", "-m", "second"]).await;
+    assert!(out.status.success(), "{}", text(&out));
+    let calls = r.mock.calls_of("vault_git_sign");
+    let first_object = BASE64.decode(calls[0].arguments["object_base64"].as_str().unwrap().as_bytes()).unwrap();
+    let object = BASE64.decode(calls[2].arguments["object_base64"].as_str().unwrap().as_bytes()).unwrap();
+    let ancestors: Vec<Vec<u8>> = calls[2].arguments["ancestors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| BASE64.decode(a.as_str().unwrap().as_bytes()).unwrap())
+        .collect();
+    let parsed = reins_proto::sshsig::parse_object(&object).unwrap();
+    let reaches = reins_proto::sshsig::lineage(&parsed, &ancestors);
+    assert!(reaches.contains(&format!("id:{head}")), "{reaches:?}");
+    assert!(reaches.contains(&format!("sig:{}", reins_proto::sshsig::signed_digest(&first_object))), "{reaches:?}");
 }
 
 #[tokio::test]

@@ -110,6 +110,21 @@ pub struct Preview {
     /// previews whole): shown with the approval as `ApprovalView.blob`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<PreviewImage>,
+    /// A git commit or tag to sign in a named repository: what it provably builds on. A permission for that
+    /// repository covers it only when some of that is history the user approved there (`vault::lineage_known`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_lineage: Option<GitLineage>,
+}
+
+/// What a git object to sign builds on, by hash, and what signing it adds to its repository's known history.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitLineage {
+    /// `id:<commit>` and `sig:<sha256>` it reaches ([`reins_proto::sshsig::lineage`]).
+    pub reaches: Vec<String>,
+    /// Kept when it is signed: what was signed (`sig:`) and what it was signed on top of (`id:`).
+    pub record: Vec<String>,
+    /// The permission for any repository (`<fingerprint>#git`), which covers it whatever its history.
+    pub any: String,
 }
 
 /// An image a write publishes, as the phone read it (see [`Preview::image`]).
