@@ -534,7 +534,7 @@ fn ambiguous_and_withheld_execution_states_need_attention_and_are_not_approved()
 /// request's row, which tells how the execution went, and one whose outcome is unknown needs attention.
 #[test]
 fn execution_records_fold_into_their_request_everywhere_search_reads() {
-    use crate::store::audit_fold::tests::{attempt, decision};
+    use crate::store::audit_fold::tests::{attempt, decision, key};
     use crate::types::ExecutionState;
     let dir = tempfile::tempdir().unwrap();
     let store = open(dir.path());
@@ -580,8 +580,43 @@ fn execution_records_fold_into_their_request_everywhere_search_reads() {
     assert!(!store.activity_facets().unwrap().actions.iter().any(|a| a == "execute"));
     // The log itself is as it was: every record is still there, and the executions read from it.
     assert_eq!(store.activity(50).unwrap().len(), 7);
-    let executions = store.executions(&["a", "b", "zzz"], NOW).unwrap();
-    assert_eq!(executions["a"].as_ref().map(|e| e.state), Some(ExecutionState::Done));
-    assert_eq!(executions["b"].as_ref().map(|e| e.state), Some(ExecutionState::Unknown));
-    assert!(!executions.contains_key("zzz"));
+    let executions = store.executions(&[key("a"), key("b"), key("zzz")], NOW).unwrap();
+    assert_eq!(executions[&key("a")].as_ref().map(|e| e.state), Some(ExecutionState::Done));
+    assert_eq!(executions[&key("b")].as_ref().map(|e| e.state), Some(ExecutionState::Unknown));
+    assert!(!executions.contains_key(&key("zzz")));
+}
+
+/// Search, its filters and the day counts close an attempt as the list does: an approval of a phone-run action is no
+/// result, and two requests that share an id but not their attempt stay apart.
+#[test]
+fn search_closes_an_attempt_only_by_its_own_result_and_never_across_attempts() {
+    use crate::authorization_trace::AuthorizationPhase;
+    use crate::store::audit_fold::tests::{attempt_of, decision_of};
+    use crate::types::ExecutionState;
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let add = |r: AuditRecord| store.append_audit(&r).unwrap();
+    // A phone-run action: approved, started, and no result since.
+    let approval = add(decision_of("phone", "phone", "released", 100, AuthorizationPhase::Started));
+    add(attempt_of("phone", "phone", "started", 101));
+    // One id, two attempts: the first done, the second started with no result.
+    add(attempt_of("same", "first", "started", 200));
+    let first = add(decision_of("same", "first", "sent", 201, AuthorizationPhase::Succeeded));
+    let second = add(attempt_of("same", "second", "started", 300));
+
+    assert_eq!(ids(&store, &ActivityQuery::default()), [second, first, approval]);
+    let page = store.search_activity(&ActivityQuery::default(), None, 50, NOW).unwrap();
+    let states: Vec<_> = page.found.iter().map(|f| f.execution.as_ref().map(|e| e.state)).collect();
+    assert_eq!(states, [Some(ExecutionState::Unknown), Some(ExecutionState::Done), Some(ExecutionState::Unknown)]);
+    let only = |outcome| ActivityQuery {
+        outcomes: vec![outcome],
+        ..ActivityQuery::default()
+    };
+    assert_eq!(ids(&store, &only(ActivityOutcome::Failed)), [second, approval]);
+    assert_eq!(ids(&store, &only(ActivityOutcome::Approved)), [first], "an approval with no result is not approved");
+    let stamps = store.activity_stamps(&ActivityQuery::default(), NOW).unwrap();
+    assert_eq!(
+        stamps.iter().map(|s| s.outcome).collect::<Vec<_>>(),
+        [ActivityOutcome::Failed, ActivityOutcome::Approved, ActivityOutcome::Failed]
+    );
 }

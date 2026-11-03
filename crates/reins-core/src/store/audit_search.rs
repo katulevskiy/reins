@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS temp.audit_search_rows (
     snap INTEGER NOT NULL,
     decided_by TEXT NOT NULL,
     request TEXT NOT NULL DEFAULT '',
-    execution INTEGER NOT NULL DEFAULT 0
+    execution INTEGER NOT NULL DEFAULT 0,
+    result INTEGER NOT NULL DEFAULT 0,
+    unknown INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS temp.audit_search_rows_request ON audit_search_rows (request);
 CREATE VIRTUAL TABLE IF NOT EXISTS temp.audit_search USING fts5(
@@ -481,19 +483,23 @@ const FAILED: &[&str] = &["error", "started", "unknown", "succeeded_withheld", "
 const SHOWN: &str = "NOT (r.execution = 1 AND r.request <> '' AND EXISTS (SELECT 1 FROM temp.audit_search_rows d \
                      WHERE d.request = r.request AND (d.execution = 0 OR d.seq > r.seq)))";
 
-/// The entries of the same request as `r`, indexed (`t`) and stored (`x`).
+/// The entries of the same attempt as `r`, indexed (`t`) and stored (`x`).
 const SIBLINGS: &str = "FROM temp.audit_search_rows t JOIN audit x ON x.seq = t.seq WHERE t.request = r.request";
 
-/// Whether the execution of `r`'s request is unknown at `now`, as [`audit_fold::execution`] says
-/// [`crate::types::ExecutionState::Unknown`]: it has an execution record, and one of its entries says unknown, or
-/// nothing withheld or closed it and it did not start within [`EXECUTION_UNKNOWN_AFTER`].
+/// The latest start of `r`'s attempt (its row number), 0 when none.
+const LATEST_START: &str = "COALESCE((SELECT MAX(s.seq) FROM temp.audit_search_rows s JOIN audit y ON y.seq = s.seq \
+                            WHERE s.request = r.request AND s.execution = 1 AND y.outcome = 'started'), 0)";
+
+/// Whether the execution of `r`'s attempt is unknown at `now`, as [`audit_fold::execution`] says
+/// [`crate::types::ExecutionState::Unknown`]: it has an execution record, and one of its entries says unknown, or no
+/// result of the phone's newer than its latest start closed it ([`audit_fold::Facts::is_result`]) and it did not
+/// start within [`EXECUTION_UNKNOWN_AFTER`].
 fn doubt(now: i64) -> String {
     let recent = now.saturating_sub(EXECUTION_UNKNOWN_AFTER);
     format!(
         "(r.request <> '' AND EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1) AND (\
-         EXISTS (SELECT 1 {SIBLINGS} AND x.outcome = 'unknown') OR (\
-         NOT EXISTS (SELECT 1 {SIBLINGS} AND (x.outcome = 'succeeded_withheld' \
-         OR (t.execution = 1 AND x.outcome IN ('sent', 'unknown')) OR (t.execution = 0 AND x.outcome <> 'held'))) \
+         EXISTS (SELECT 1 {SIBLINGS} AND t.unknown = 1) OR (\
+         NOT EXISTS (SELECT 1 {SIBLINGS} AND t.result = 1 AND t.seq > {LATEST_START}) \
          AND NOT (EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1 AND x.outcome = 'started') \
          AND NOT EXISTS (SELECT 1 {SIBLINGS} AND t.execution = 1 AND x.outcome = 'started' AND x.at <= {recent})))))"
     )
@@ -597,9 +603,10 @@ struct Indexed {
     tag: Option<Vec<u8>>,
     snap: bool,
     decided_by: String,
-    /// Its request ([`audit_fold::request_of`]), empty when none is known.
+    /// Its attempt ([`audit_fold::group_of`]), empty when none is known.
     request: String,
-    execution: bool,
+    /// What the fold reads of it.
+    facts: Facts,
     doc: String,
 }
 
@@ -670,8 +677,8 @@ impl Store {
                     seq,
                     tag: tags.get(&seq).cloned().flatten(),
                     snap: snaps.contains_key(&seq),
-                    request: audit_fold::request_of(&record).unwrap_or_default().to_owned(),
-                    execution: audit_fold::is_execution(&record),
+                    request: audit_fold::group_of(&record).unwrap_or_default(),
+                    facts: Facts::of(&record),
                     decided_by: record.info.decided_by,
                     doc,
                 }
@@ -687,14 +694,14 @@ impl Store {
             snap,
             decided_by,
             request,
-            execution,
+            facts,
             doc,
         } in docs
         {
             let added = tx.execute(
-                "INSERT OR IGNORE INTO temp.audit_search_rows (seq, tag, snap, decided_by, request, execution) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![seq, tag, snap, decided_by, request, execution],
+                "INSERT OR IGNORE INTO temp.audit_search_rows (seq, tag, snap, decided_by, request, execution, result, \
+                 unknown) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![seq, tag, snap, decided_by, request, facts.execution, facts.result, facts.unknown],
             )?;
             if added == 1 {
                 tx.execute("INSERT INTO temp.audit_search (rowid, doc) VALUES (?1, ?2)", rusqlite::params![seq, doc])?;
@@ -758,14 +765,14 @@ impl Store {
         } else {
             self.audit_rows(&format!("WHERE seq IN ({list})"), [])?.into_iter().map(|r| (r.seq, r)).collect()
         };
-        let requests: Vec<&str> = records.values().filter_map(audit_fold::request_of).collect();
-        let executions = self.indexed_executions(&requests, now)?;
+        let groups: Vec<String> = records.values().filter_map(audit_fold::group_of).collect();
+        let executions = self.indexed_executions(&groups, now)?;
         let mut found = Vec::with_capacity(page.len());
         for (seq, _) in page {
             let Some(record) = records.remove(seq) else {
                 continue;
             };
-            let execution = audit_fold::request_of(&record).and_then(|id| executions.get(id).cloned().flatten());
+            let execution = audit_fold::group_of(&record).and_then(|key| executions.get(&key).cloned().flatten());
             let snippet = if parsed.terms.is_empty() {
                 None
             } else {
@@ -812,10 +819,10 @@ impl Store {
     }
 
     /// The execution of each of `requests` at `now`, from every entry of theirs this device holds; a request without
-    /// execution records is left out.
+    /// execution records is left out. `requests`: attempts, as [`audit_fold::group_of`] names them.
     pub(crate) fn executions(
         &self,
-        requests: &[&str],
+        requests: &[String],
         now: i64,
     ) -> Result<HashMap<String, Option<ActivityExecution>>, CoreError> {
         self.refresh_search()?;
@@ -825,18 +832,19 @@ impl Store {
     /// [`Store::executions`] from the index as it is.
     fn indexed_executions(
         &self,
-        requests: &[&str],
+        requests: &[String],
         now: i64,
     ) -> Result<HashMap<String, Option<ActivityExecution>>, CoreError> {
         let mut groups: HashMap<String, Vec<Facts>> = HashMap::new();
-        let mut wanted: Vec<&str> = requests.iter().copied().filter(|r| !r.is_empty()).collect();
+        let mut wanted: Vec<&str> = requests.iter().map(String::as_str).filter(|r| !r.is_empty()).collect();
         wanted.sort_unstable();
         wanted.dedup();
         let conn = self.read()?;
         for chunk in wanted.chunks(BATCH) {
             let marks = vec!["?"; chunk.len()].join(", ");
             let mut stmt = conn.prepare(&format!(
-                "SELECT r.request, a.seq, a.at, r.execution, a.outcome {JOINED} WHERE r.request IN ({marks})"
+                "SELECT r.request, a.seq, a.at, r.execution, a.outcome, r.result, r.unknown {JOINED} \
+                 WHERE r.request IN ({marks})"
             ))?;
             let rows = stmt.query_map(params_from_iter(chunk.iter()), |row| {
                 Ok((
@@ -846,6 +854,8 @@ impl Store {
                         at: row.get(2)?,
                         execution: row.get(3)?,
                         outcome: row.get(4)?,
+                        result: row.get(5)?,
+                        unknown: row.get(6)?,
                     },
                 ))
             })?;
