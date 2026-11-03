@@ -3,6 +3,7 @@ package dev.reins.android
 import android.app.Application
 import android.os.StrictMode
 import androidx.work.Configuration
+import dev.reins.android.platform.assistant.AssistantAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -37,6 +38,8 @@ class ReinsApp : Application(), Configuration.Provider {
             }
         }
         container.appScope.launch(Dispatchers.IO) { container.notifier.createChannels() }
+        // The Gemini switch, re-applied once indexing has had a chance to see the functions.
+        container.appScope.launch(Dispatchers.IO) { AssistantAccess.sync(this@ReinsApp, container.profile.id) }
         container.appScope.launch(Dispatchers.Default) { dev.reins.android.design.Fonts.warm() }
         // The tiles and widgets outside the app follow what waits and Autopilot's mode.
         container.appScope.launch {

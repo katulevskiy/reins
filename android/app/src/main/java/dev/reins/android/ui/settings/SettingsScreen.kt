@@ -89,7 +89,11 @@ import dev.reins.android.design.ButtonSize
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.HelpText
 import dev.reins.android.design.Pill
+import dev.reins.android.design.SwitchRow
+import dev.reins.android.platform.assistant.AssistantAccess
+import dev.reins.android.platform.assistant.AssistantStore
 import dev.reins.android.design.SignalButton
 import dev.reins.android.design.SignalDialog
 import dev.reins.android.design.hairlineBelow
@@ -97,6 +101,8 @@ import dev.reins.android.design.Appearance
 import dev.reins.android.ui.main.RootHeader
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.verticalScroll
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Settings (Reins Signal, iOS-Settings 01 / And-Core 05): only you and this phone. The account, then Devices, Sounds
@@ -179,15 +185,17 @@ fun SettingsScreen(
                     SetRow("Appearance", Glyph.Appearance, Modifier.testTag("openAppearance"), value = appearance.theme.label, onClick = onAppearance)
                     val dark = c.dark
                     val wall = appearance.wallpaper(dark)
+                    val gemini = AssistantAccess.isSupported(context)
                     SetRow(
                         "Wallpaper",
                         Glyph.Photo,
                         Modifier.testTag("openWallpaper"),
                         value = wall.image.label,
-                        divider = false,
+                        divider = !gemini,
                         leading = { WallpaperThumb(wall, dark, Modifier.size(32.dp), radius = 9.dp) },
                         onClick = onWallpaper,
                     )
+                    if (gemini) GeminiRow(context)
                 }
                 if (signedIn != null && hasRecoveryCode) {
                     SettingsGroup(header = "Security", glyph = Glyph.Shield) {
@@ -302,6 +310,40 @@ fun SetRow(
         value?.let { RText(it, RType.sans(15f), c.ink2, maxLines = 1) }
         if (chevron) GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
     }
+}
+
+/**
+ * Gemini, on Android 16 and later. The switch is the row; the (?) is its own button, so it does not toggle Gemini.
+ */
+@Composable
+private fun GeminiRow(context: Context) {
+    val app = context.applicationContext as dev.reins.android.ReinsApp
+    val profileId = app.container.profile.id
+    var on by remember { mutableStateOf(AssistantStore(app).enabled(profileId)) }
+    var help by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        SwitchRow(
+            "Gemini",
+            on,
+            { enabled ->
+                on = enabled
+                // The click stores the value before the coroutine runs, so a second click cannot be overwritten by the first.
+                AssistantStore(app).setEnabled(profileId, enabled)
+                app.container.appScope.launch(Dispatchers.IO) {
+                    AssistantAccess.sync(app, profileId)
+                }
+            },
+            modifier = Modifier.weight(1f),
+            glyph = Glyph.Autopilot,
+            tag = "geminiAccess",
+        )
+        HelpIcon(help, "Gemini") { help = it }
+    }
+    HelpText(
+        "Gemini can show what waits, deny, and lock down. Approving stays in Reins.",
+        help,
+        Modifier.padding(start = 44.dp, end = 8.dp, bottom = 8.dp),
+    )
 }
 
 /** How many notification channels Reins has (the row opens Android's page for them). */

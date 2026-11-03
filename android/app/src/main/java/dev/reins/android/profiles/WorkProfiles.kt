@@ -6,11 +6,15 @@ import android.content.Intent
 import dev.reins.android.MainActivity
 import dev.reins.android.core.MainSafeCore
 import dev.reins.android.platform.KeystoreKeyWrapper
+import dev.reins.android.platform.assistant.AssistantAccess
 import dev.reins.core.AccountProfile
 import dev.reins.core.ProfileKind
 import dev.reins.core.ProfileRegistry
 import dev.reins.core.ProfileRegistryInterface
 import dev.reins.core.ReinsCoreInterface
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The profiles on this phone (Decisions v2 O1, 06 §2): the Personal account and a Managed work profile per
@@ -155,6 +159,9 @@ object ProfileSwitch {
     /** [then]: an intent of the app's own, stamped for profile [id], to open once switched. */
     fun switchTo(activity: Activity, registry: ProfileRegistryInterface, id: String, then: Intent? = null) {
         registry.setActive(id)
+        // The process is about to exit onto [id]. Apply that profile's Gemini switch before the old one is left
+        // enabled. Bounded: the functions also check the switch on every call, and the next start syncs again.
+        runBlocking(Dispatchers.IO) { withTimeoutOrNull(2_000) { AssistantAccess.sync(activity.applicationContext, id) } }
         next = then
         restart(activity)
     }
