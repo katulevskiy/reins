@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.reins.android.ui.common.FileCard
+import dev.reins.android.ui.common.untrusted
 import dev.reins.core.BlobView
 
 /** "for 30 minutes", "for 1 hour", "for 1 h 30 min": how long the desktop app may keep secrets. */
@@ -25,6 +26,13 @@ fun leaseLabel(secs: ULong): String {
 /** The server of an SSH sign-in: its name when the desktop app knows it, else its host key. */
 fun sshTarget(host: String?, hostKey: String?): String =
     host?.trim()?.takeIf { it.isNotEmpty() } ?: hostKey?.trim()?.takeIf { it.isNotEmpty() } ?: "an unknown server"
+
+/** Where a git object is signed: "owner/repo · main" as the computer says; null when it named no repository. */
+fun gitSignWhere(g: dev.reins.core.GitSignView): String? {
+    val repo = g.repo?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val branch = g.branch?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() }
+    return if (branch == null) repo else "$repo · $branch"
+}
 
 // ---- a file the change uses -----------------------------------------------------------------------------------------
 

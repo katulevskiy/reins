@@ -30,6 +30,10 @@ pub(super) const CLASSES: &[ClassInfo] = &[
         id: "ssh",
         label: "SSH sign-ins",
     },
+    ClassInfo {
+        id: "signing",
+        label: "Signing commits and tags",
+    },
 ];
 
 pub(super) fn tools() -> Vec<ToolSpec> {

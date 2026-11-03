@@ -308,8 +308,8 @@ fun dangerTag(view: ApprovalView): DangerTag? = dangerTags(view).firstOrNull()
 
 /**
  * Every warning the request carries, most telling first: the guard rule it matched, a command this phone couldn't
- * read, a push that rewrites history (or that couldn't be checked), hidden characters, a destructive tool, and what
- * can't be undone. The field shows them all, in full.
+ * read, a push that rewrites history (or that couldn't be checked), hidden characters (in a push or a git object to
+ * sign), a destructive tool, and what can't be undone. The field shows them all, in full.
  */
 fun dangerTags(view: ApprovalView): List<DangerTag> = buildList {
     val ask = view.ask
@@ -331,6 +331,9 @@ fun dangerTags(view: ApprovalView): List<DangerTag> = buildList {
         if (push.refs.any { r -> r.commits.any { it.hiddenChars } || r.files.any { it.hiddenChars } }) {
             add(DangerTag("Hidden characters", "hiddenChars", "Some text in this push has invisible characters that can make code read unlike what it does. They show as �."))
         }
+    }
+    view.gitSign?.takeIf { it.hiddenChars }?.let { g ->
+        add(DangerTag("Hidden characters", "hiddenChars", "Some text in this ${if (g.kind == "tag") "tag" else "commit"} has invisible characters that can make it read unlike what it says. They show as �."))
     }
     val mcp = view.mcp
     if (mcp != null && mcp.destructive) {

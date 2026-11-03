@@ -236,6 +236,20 @@ class AskSentenceTest {
     }
 
     @Test
+    fun aGitSignatureNamesTheRepositoryAndWhatItSigns() {
+        val s = askSentence(TestData.label("ssh", "secrets", "Sign a git commit in", "octo/app", code = true))
+        assertEquals("Sign a git commit in octo/app", s.text)
+        assertEquals("octo/app", s.target)
+        assertEquals("SSH · Sign", s.kind)
+        assertEquals("Sign a git tag", askSentence(TestData.label("ssh", "secrets", "Sign a git tag", "", code = false)).text)
+        val view = askSentence(TestData.gitSignView())
+        assertEquals("Sign a git commit in octo/app", view.text)
+        assertEquals("fix: keep the session on refresh", view.details)
+        assertEquals("SSH · Sign", view.kind)
+        assertEquals("Signed a git commit", pastTense("Sign a git commit"))
+    }
+
+    @Test
     fun aPurchaseIsAtTheStoresDomainWithTheAmountRoman() {
         val s = askSentence(TestData.purchaseView())
         assertEquals("Pay $34.97 at amazon.com", s.text)

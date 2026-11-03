@@ -91,6 +91,9 @@ fn floors(view: &ApprovalView) -> Vec<(&'static str, bool)> {
     if view.ssh.is_some() {
         out.push(("SSH sign-ins are only ever approved by you", false));
     }
+    if view.git_sign.is_some() {
+        out.push(("commits and tags are only ever signed by you", false));
+    }
     if view.purchase.is_some() || view.service == reins_proto::connector::PAYMENTS && view.action == "write" {
         out.push(("purchases are only ever approved by you, or within a spend limit you set", false));
     }

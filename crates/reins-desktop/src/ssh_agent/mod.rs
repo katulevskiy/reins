@@ -5,11 +5,17 @@
 //! talking to (its host key, checked against the key exchange signature), and `~/.ssh/known_hosts` its name when the
 //! entry is not hashed; the phone shows both. While the phone decides, the ssh process is told so on its stderr.
 //!
+//!
+//! `reins` as git's signing program (`gpg.ssh.program`, see [`git_sign`]) hands the agent a whole commit or tag in a
+//! Reins extension message ([`GIT_SIGN_EXTENSION`]); the phone shows it, signs it (SSHSIG, namespace `git`) with
+//! `vault_git_sign`, and the signature is checked here before it goes back.
+//!
 //! On Windows the agent listens on a named pipe instead (`\\.\pipe\reins-ssh-agent-<id>`, as Windows' own OpenSSH
 //! agent does on `\\.\pipe\openssh-ssh-agent`). It is created as the first instance of its name (no other program can
 //! have taken the name before), refuses remote clients, and keeps Windows' default access list for pipes: only this
 //! user, the administrators and SYSTEM may write to it, so no other user can send it a request.
 
+pub mod git_sign;
 pub mod keys;
 pub mod setup;
 pub mod wire;
@@ -32,6 +38,11 @@ use crate::phone::{PhoneLink, awaiting, teller, unavailable};
 
 pub const KEYS_TOOL: &str = "vault_ssh_keys";
 pub const SIGN_TOOL: &str = "vault_ssh_sign";
+/// The agent extension `reins -Y sign` uses: `string control token, string key blob, string namespace, string hash,
+/// string object, string repo, string branch, string ancestors` (a run of `string` commit objects); answered with `SUCCESS, string signature blob` or
+/// `FAILURE, string reason`. The control token (`control.token`, 0600 in the state folder) proves the caller runs on
+/// this computer as this user: a server the agent was forwarded to cannot read it.
+pub const GIT_SIGN_EXTENSION: &str = "git-sign@reins.dev";
 pub const SOCKET_NAME: &str = "ssh-agent.sock";
 /// How long the phone's key list is used before it is asked again.
 const KEYS_TTL: Duration = Duration::from_mins(5);
@@ -217,6 +228,8 @@ pub struct Agent {
     stats: Arc<crate::stats::Stats>,
     known_hosts: Vec<PathBuf>,
     keys: tokio::sync::Mutex<Option<(Instant, Vec<VaultKey>)>>,
+    /// The daemon's control token, which a git signing request must carry; none: git signing is refused.
+    token: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Agent {
@@ -227,7 +240,15 @@ impl Agent {
             stats,
             known_hosts: config.known_hosts_files(),
             keys: tokio::sync::Mutex::new(None),
+            token: None,
         }
+    }
+
+    /// Takes git signing requests that carry `token` (the daemon's control token).
+    #[must_use]
+    pub fn with_token(mut self, token: &str) -> Self {
+        self.token = Some(zeroize::Zeroizing::new(token.to_owned()));
+        self
     }
 
     fn tell(session: &Session) -> Tell {
@@ -288,6 +309,17 @@ impl Agent {
                     failure()
                 }
             },
+            EXTENSION if Reader::new(body).str() == Some(GIT_SIGN_EXTENSION) => {
+                match self.git_sign(body, session).await {
+                    Ok(reply) => reply,
+                    Err(r) => {
+                        log::info!("ssh agent: git signature refused: {}", r.message());
+                        let mut w = Writer::new();
+                        w.byte(FAILURE).string(r.message().as_bytes());
+                        w.buf
+                    }
+                }
+            }
             EXTENSION => Self::extension(body, session),
             _ => failure(),
         }
@@ -405,6 +437,149 @@ impl Agent {
         Ok(w.buf)
     }
 
+    /// Signs a git commit or tag on the phone ([`GIT_SIGN_EXTENSION`]).
+    async fn git_sign(&self, body: &[u8], session: &Session) -> Result<Vec<u8>, Refusal> {
+        use reins_proto::sshsig;
+        let mut r = Reader::new(body);
+        let _name = r.str();
+        let (
+            Some(token),
+            Some(blob),
+            Some(namespace),
+            Some(hash),
+            Some(object),
+            Some(repo),
+            Some(branch),
+            Some(packed),
+        ) = (r.string(), r.string(), r.str(), r.str(), r.string(), r.str(), r.str(), r.string())
+        else {
+            return Err(unavailable("Malformed git signing request."));
+        };
+        if !r.is_empty() {
+            return Err(unavailable("Malformed git signing request."));
+        }
+        // What the commit builds on, for the phone to check against history approved in the repository.
+        let mut ancestors = Vec::new();
+        let mut a = Reader::new(packed);
+        while !a.is_empty() {
+            let Some(one) = a.string() else {
+                return Err(unavailable("Malformed git signing request."));
+            };
+            ancestors.push(BASE64.encode(one));
+        }
+        if ancestors.len() > sshsig::MAX_ANCESTORS
+            || packed.len() > sshsig::MAX_ANCESTORS_BYTES + 4 * sshsig::MAX_ANCESTORS
+        {
+            return Err(unavailable("Too many ancestors in the git signing request."));
+        }
+        let expected = self.token.as_ref().map(|t| t.as_bytes());
+        if !expected.is_some_and(|t| constant_time_eq(t, token)) {
+            return Err(unavailable(
+                "Git signing is taken only from `reins` on this computer (the control token differs).",
+            ));
+        }
+        // ssh announces each server it talks to; a connection that did is an ssh client, maybe a server this agent
+        // was forwarded to (`ssh -A`), never `reins -Y sign` on this computer. A git signature is bound to no server,
+        // so it is never made for one.
+        if !session.binds.is_empty() {
+            return Err(unavailable("Git signing is refused through a forwarded agent."));
+        }
+        if namespace != sshsig::GIT_NAMESPACE {
+            return Err(unavailable("Your phone signs git commits and tags only (namespace `git`)."));
+        }
+        let hash = sshsig::Hash::parse(hash).ok_or_else(|| unavailable("The hash is sha512 or sha256."))?;
+        if object.len() > sshsig::MAX_OBJECT {
+            return Err(unavailable("The commit is too large for the phone to sign."));
+        }
+        let parsed = sshsig::parse_object(object)
+            .ok_or_else(|| unavailable("Only a git commit or an annotated tag can be signed on your phone."))?;
+        let tell = Self::tell(session);
+        let key = self
+            .keys(tell.clone())
+            .await?
+            .into_iter()
+            .find(|k| k.blob == blob)
+            .ok_or_else(|| unavailable("That key is not one of your phone's SSH keys."))?;
+        let label = |v: &str| {
+            let v: String = crate::journal::one_line(v.trim())
+                .chars()
+                .filter(|c| !c.is_control() && !sshsig::hidden_char(*c))
+                .collect();
+            (!v.is_empty()).then(|| v.chars().take(100).collect::<String>())
+        };
+        let (repo, branch) = (label(repo), label(branch));
+        let subject: String = parsed.subject.chars().take(80).collect();
+        let what = match parsed.kind {
+            sshsig::ObjectKind::Commit => format!("sign the commit \u{201c}{subject}\u{201d} with {}", key.name),
+            sshsig::ObjectKind::Tag => {
+                format!("sign the tag {} with {}", parsed.tag.as_deref().unwrap_or_default(), key.name)
+            }
+        };
+        let phone = self.phone.phone()?;
+        let object_b64 = BASE64.encode(object);
+        let entry = Entry::new(Kind::Ssh, &what)
+            .source(Some("git"))
+            .service(repo.as_deref())
+            .detail(Some(&format!("Key: {} ({})", key.name, key.fingerprint)));
+        let target = repo.clone().unwrap_or_else(|| "a repository".to_owned());
+        let answer = awaiting(
+            self.phone.journal(),
+            entry,
+            tell,
+            self.phone.timeout(),
+            phone.ask(
+                reins_proto::desktop::GIT_SIGN_TOOL,
+                None,
+                |_| {
+                    let mut args = json!({"key": key.fingerprint, "object_base64": object_b64, "hash": hash.name()});
+                    if let Some(r) = &repo {
+                        args["repo"] = json!(r);
+                    }
+                    if let Some(b) = &branch {
+                        args["branch"] = json!(b);
+                    }
+                    if !ancestors.is_empty() {
+                        args["ancestors"] = json!(ancestors);
+                    }
+                    args
+                },
+                "No answer from your phone in time. Approve it, then commit again.",
+            ),
+        )
+        .await
+        .inspect_err(|r| self.stats.record("git", &target, &format!("sign {}", crate::proxy::refusal_kind(r))))?;
+        self.stats.record("git", &target, "signed");
+        let sig: SshSignature = phone.open(&answer.data)?;
+        if sig.nonce != answer.nonce {
+            return Err(unavailable("The phone's answer is for another request (the nonce differs); refused."));
+        }
+        let raw = BASE64
+            .decode(sig.signature_base64.trim().as_bytes())
+            .or_else(|_| BASE64URL_NOPAD.decode(sig.signature_base64.trim().as_bytes()))
+            .map_err(|_| unavailable("The phone's signature is malformed; refused."))?;
+        // SSHSIG signs with rsa-sha2-512 for an RSA key, else the key's own algorithm.
+        let kind = keys::key_type(&key.blob).unwrap_or_default();
+        if keys::signature_type(&raw) != Some(keys::signature_algorithm(kind, 4)) {
+            return Err(unavailable("The phone signed with another algorithm than git signing uses; refused."));
+        }
+        let data = sshsig::signed_data(namespace, hash, object);
+        if keys::verify(&key.blob, &data, &raw) != Verified::Good {
+            return Err(unavailable("The phone's signature does not verify; refused."));
+        }
+        log::info!(
+            "ssh agent: signed a git {} with {}",
+            if parsed.tag.is_some() {
+                "tag"
+            } else {
+                "commit"
+            },
+            key.fingerprint
+        );
+        let mut w = Writer::new();
+        w.byte(SUCCESS).string(&raw);
+        Ok(w.buf)
+    }
+
     fn extension(body: &[u8], session: &mut Session) -> Vec<u8> {
         let mut r = Reader::new(body);
         if r.str() != Some(SESSION_BIND) {
@@ -426,6 +601,10 @@ impl Agent {
         });
         vec![SUCCESS]
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Writes `line` to the stderr of process `pid` when it runs as this user (Linux; elsewhere nothing). Blocking.
@@ -621,12 +800,13 @@ pub fn start(
     config: &SshConfig,
     phone: Arc<PhoneLink>,
     stats: Arc<crate::stats::Stats>,
+    token: &str,
 ) -> Option<SshAgent> {
     if !config.enabled {
         return None;
     }
     let path = socket_path(paths, config);
-    match SshAgent::bind(&path, Agent::new(phone, config, stats)) {
+    match SshAgent::bind(&path, Agent::new(phone, config, stats).with_token(token)) {
         Ok(a) => {
             log::info!("ssh agent on {}", path.display());
             Some(a)
@@ -752,6 +932,60 @@ mod tests {
         other.string(b"query");
         assert_eq!(Agent::extension(&other.buf, &mut session), [FAILURE]);
         assert_eq!(Agent::extension(b"", &mut session), [FAILURE]);
+    }
+
+    #[tokio::test]
+    async fn git_signing_is_refused_through_a_forwarded_agent_before_the_phone_is_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        let phone = Arc::new(PhoneLink::new(
+            crate::config::Mode::Reins,
+            paths,
+            Arc::new(crate::identity::Identity::generate()),
+            Duration::from_secs(1),
+        ));
+        let agent = Agent::new(phone, &SshConfig::default(), Arc::default()).with_token("tok");
+        let object =
+            b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@x> 1 +0000\ncommitter A <a@x> 1 +0000\n\nx\n";
+        let mut w = Writer::new();
+        w.byte(EXTENSION)
+            .string(GIT_SIGN_EXTENSION.as_bytes())
+            .string(b"tok")
+            .string(b"key")
+            .string(b"git")
+            .string(b"sha512")
+            .string(object)
+            .string(b"me/app")
+            .string(b"main")
+            .string(b"");
+        let mut forwarded = Session {
+            binds: vec![Bind {
+                host_key: b"hk".to_vec(),
+                session_id: b"sid".to_vec(),
+            }],
+            ..Session::default()
+        };
+        let reply = agent.handle(&w.buf, &mut forwarded).await;
+        let mut r = Reader::new(&reply);
+        assert_eq!(r.byte(), Some(FAILURE));
+        assert!(r.str().unwrap().contains("forwarded"));
+        // Anything but `git` is refused too (on this computer, before the phone).
+        let ask = |token: &[u8], namespace: &[u8]| {
+            let mut m = Writer::new();
+            m.byte(EXTENSION).string(GIT_SIGN_EXTENSION.as_bytes()).string(token).string(b"key").string(namespace);
+            m.string(b"sha512").string(object).string(b"").string(b"").string(b"");
+            m.buf
+        };
+        let reply = agent.handle(&ask(b"tok", b"file"), &mut Session::default()).await;
+        assert!(String::from_utf8_lossy(&reply).contains("namespace `git`"));
+        // Without the control token (anything that is not `reins` on this computer): refused.
+        for token in [&b""[..], b"tok2", b"to"] {
+            let reply = agent.handle(&ask(token, b"git"), &mut Session::default()).await;
+            assert!(String::from_utf8_lossy(&reply).contains("control token"), "{token:?}");
+        }
+        let untokened = Agent::new(Arc::clone(&agent.phone), &SshConfig::default(), Arc::default());
+        let reply = untokened.handle(&ask(b"", b"git"), &mut Session::default()).await;
+        assert!(String::from_utf8_lossy(&reply).contains("control token"));
     }
 
     #[test]

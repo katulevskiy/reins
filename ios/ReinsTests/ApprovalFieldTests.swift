@@ -182,6 +182,15 @@ final class ApprovalFieldTests: XCTestCase {
         XCTAssertFalse(lines(ssh(host: "build.example.com", hostKey: "k")).contains { $0.id == "unknownHost" })
     }
 
+    func testAGitSignatureForAnUnknownRepository() {
+        let unknown = lines(T.gitSignView(repo: nil, branch: nil))
+        XCTAssertEqual(line(unknown, "unknownRepo")?.text, "Unknown repository")
+        XCTAssertEqual(line(unknown, "unknownRepo")?.tone, .amber)
+        XCTAssertEqual(line(unknown, "alwaysAsks")?.text, "Always asks · it signs a commit")
+        XCTAssertFalse(lines(T.gitSignView()).contains { $0.id == "unknownRepo" || $0.id == "alwaysAsks" })
+        XCTAssertEqual(line(lines(T.gitSignView(hiddenChars: true)), "hiddenChars")?.text, "Always asks · hidden characters")
+    }
+
     func testWhyItIsAskedEveryTimeWhenNoRedLineSaysSo() {
         XCTAssertEqual(line(lines(purchase()), "alwaysAsks")?.text, "Always asks · money can't come back")
         var printed = T.view("e1", kind: .write, service: "secrets", op: "env_release", action: "write")

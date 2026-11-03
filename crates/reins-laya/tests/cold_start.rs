@@ -143,6 +143,7 @@ fn view_of(c: &Value) -> ApprovalView {
         ask: None,
         secrets: None,
         ssh: None,
+        git_sign: None,
         headline: String::new(),
         quick: None,
         purchase: None,

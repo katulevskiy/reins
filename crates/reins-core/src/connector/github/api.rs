@@ -375,6 +375,7 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
         secrets: None,
         default_branch: moves_a_branch,
         image: None,
+        git_lineage: None,
     })
 }
 

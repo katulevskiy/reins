@@ -6,7 +6,7 @@ service device_contacts | Phone contacts |
 service sms | Text messages | 
 service gmail | Gmail | organize=Archive, labels, read, star and spam; trash=Move to Trash and back; labels=Create, rename and delete labels; drafts=Drafts; settings=Filters and vacation reply | scopes=https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/gmail.settings.basic
 service github | GitHub | issues=Issues and comments; pulls=Pull requests and reviews; code=Commits, files and branches; releases=Releases and tags; actions=Workflow runs and variables; settings=Repository settings; account=Stars, gists and notifications
-service vault | Password vault | items=Create and edit items; organize=Folders, favorites, trash and archive; sends=Sends; secrets=Secrets used on the computer; ssh=SSH sign-ins
+service vault | Password vault | items=Create and edit items; organize=Folders, favorites, trash and archive; sends=Sends; secrets=Secrets used on the computer; ssh=SSH sign-ins; signing=Signing commits and tags
 service desktop | Desktop app | 
 service gitlab | GitLab | code=Commits and branches; releases=Tags
 service codeberg | Codeberg | code=Commits and branches; releases=Tags
@@ -293,6 +293,7 @@ tool vault_secrets_list | vault | secrets_list | Write | class=secrets | once=fa
 tool vault_secret_release | vault | secret_release | Write | class=secrets | once=false | desktop=true | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 0eb6320f31991439
 tool vault_ssh_keys | vault | ssh_keys | Read | class= | once=false | desktop=true | check=false | resource=- | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true} | 52a5d5a48376cc50
 tool vault_ssh_sign | vault | ssh_sign | Write | class=ssh | once=false | desktop=true | check=false | resource=key | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 784e6810c5b3c020
+tool vault_git_sign | vault | git_sign | Write | class=signing | once=false | desktop=true | check=false | resource=key | {"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | cf96c253306a07da
 tool vault_phone_key | vault | phone_key | Write | class= | once=true | desktop=true | check=false | resource=- | {"destructiveHint":true,"idempotentHint":false,"openWorldHint":false,"readOnlyHint":false} | 187c7dffb66d3548
 tool vault_secret_store | vault | secret_store | Write | class=items | once=true | desktop=true | check=false | resource=name | {"destructiveHint":true,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | c3abe78318171c8c
 tool vault_names | vault | names | Write | class= | once=true | desktop=true | check=false | resource=- | {"destructiveHint":true,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":false} | 13100d89a9a3f177

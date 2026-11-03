@@ -817,6 +817,10 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             (ToolCall::Connector(call), Some(p)) => crate::connector::vault::ssh_sign_view(call, p),
             _ => None,
         },
+        git_sign: match (&parked.request.call, held.and_then(|h| h.preview.as_ref())) {
+            (ToolCall::Connector(call), Some(p)) => crate::connector::vault::git_sign_view(call, p),
+            _ => None,
+        },
         mcp: crate::mcp::flow::call_view(parked),
         blob: held.and_then(|h| h.preview.as_ref()).and_then(|p| crate::blob::write_file_view(p, &parked.label())),
         headline: String::new(),
@@ -1494,6 +1498,7 @@ pub fn synced_push_approval_view(r: &AuditRecord, git: GitPushView) -> ApprovalV
         ask: None,
         secrets: None,
         ssh: None,
+        git_sign: None,
         headline: String::new(),
         quick: None,
         purchase: None,

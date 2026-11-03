@@ -382,6 +382,14 @@ impl Engine {
             let once = spec.is_some_and(|s| s.once_only) || preview.once_only;
             // A release of secrets is covered only by a permission bound to everything it is about.
             let mut granted_command = None;
+            // A commit to sign in a named repository: a permission for that repository covers it only when it builds
+            // on history the user approved there; else only one for any repository can.
+            let resource = match &preview.git_lineage {
+                Some(l) if !crate::connector::vault::lineage_known(&self.store, &preview.resource, &l.reaches)? => {
+                    format!("{}/#unverified", l.any)
+                }
+                _ => preview.resource.clone(),
+            };
             // A change that is asked for every time never looks at the permissions.
             let covered = if once || !self.authorization_automatic(&request)? {
                 BTreeMap::new()
@@ -405,14 +413,14 @@ impl Engine {
                     "write",
                     &class,
                     &call.op,
-                    std::slice::from_ref(&preview.resource),
+                    std::slice::from_ref(&resource),
                     true,
                     // Never one asked for over MCP for a change to the default branch, a protected one or `.github/`.
                     views::asked_grant_may_cover(call, preview.default_branch),
                     now,
                 )?
             };
-            if let Some(grant) = covered.get(&preview.resource) {
+            if let Some(grant) = covered.get(&resource) {
                 let attempt = match self
                     .perform_write(
                         &request,
@@ -1004,6 +1012,21 @@ impl Engine {
         } else {
             connector.perform_approved(account, call, preview).await
         };
+        // A signature made in a repository becomes its approved history, but only when the user approved it, or it
+        // built on that history already: never one a permission for any repository (or Autopilot) let through, which
+        // would otherwise vouch for whatever history claimed the name.
+        if result.is_ok()
+            && let Some(lineage) = &preview.git_lineage
+        {
+            let vouched = matches!(source, AuthorizationSource::OwnerReview | AuthorizationSource::TicketCollect)
+                || crate::connector::vault::lineage_known(&self.store, &preview.resource, &lineage.reaches)
+                    .unwrap_or(false);
+            if vouched
+                && let Err(e) = crate::connector::vault::lineage_record(&self.store, &preview.resource, &lineage.record)
+            {
+                log::warn!("git history not kept: {e}");
+            }
+        }
         let disclosure_error = self.authorization_execute(request, source).err();
         // Provider errors may contain content too; suppress them after a late policy restriction.
         let result = match (result, disclosure_error.as_ref()) {

@@ -276,7 +276,7 @@ impl Daemon {
         let revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
             tokio::join!(revoked, nets, tickets, policy, folders);
         });
-        let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
+        let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts), &token);
         let overview = {
             let started_at = crate::now_unix();
             let api = Arc::clone(&api);

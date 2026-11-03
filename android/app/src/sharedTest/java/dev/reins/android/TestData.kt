@@ -42,6 +42,7 @@ import dev.reins.core.PendingKind
 import dev.reins.core.ResourceView
 import dev.reins.core.SecretReleaseView
 import dev.reins.core.SshSignView
+import dev.reins.core.GitSignView
 import dev.reins.core.VaultField
 import dev.reins.core.VaultItemDetail
 import dev.reins.core.VaultItemKind
@@ -867,6 +868,31 @@ object TestData {
         preview = listOf("Sign in to build.example.com"), opTitle = "Sign in to a server with SSH", action = "write",
         `class` = "ssh", classes = emptyList(),
         ssh = SshSignView("Deploy key", "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", host, hostKey),
+    )
+
+    fun gitSign(
+        kind: String = "commit",
+        repo: String? = "octo/app",
+        branch: String? = "main",
+        tag: String? = null,
+        subject: String = "fix: keep the session on refresh",
+        body: String = "The token was dropped when the app came back.\n\nCloses #12.",
+        committer: String? = null,
+        parents: UInt = 1u,
+        hiddenChars: Boolean = false,
+    ) = GitSignView(
+        kind = kind, keyName = "Signing key", keyFingerprint = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8",
+        repo = repo, branch = branch, tag = tag, subject = subject, body = body, author = "Ada Lovelace <ada@example.com>",
+        committer = committer, date = 1_767_225_600L, parents = parents, targetShort = "4b825dc", hiddenChars = hiddenChars,
+    )
+
+    fun gitSignView(sign: GitSignView = gitSign()) = writeView().copy(
+        requestId = "req46", connectionLabel = "M2A", service = "vault", account = "me@example.com",
+        op = "git_sign", resources = listOf(ResourceView("SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", "Signing key", false)),
+        preview = listOf("Sign the commit “${sign.subject}” with Signing key", "In octo/app on main", "By Ada Lovelace <ada@example.com>"),
+        opTitle = "Sign a git commit", action = "write", `class` = "signing", classes = emptyList(), gitSign = sign,
+        // As the core: remembered per repository, so one with no repository named is never remembered.
+        noStanding = sign.repo.isNullOrBlank(),
     )
 
     // ---- Autopilot ------------------------------------------------------------------------------------------------

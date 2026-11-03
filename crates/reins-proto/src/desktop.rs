@@ -531,7 +531,10 @@ impl std::fmt::Debug for SecretGrant {
     }
 }
 
-/// What the phone seals to the desktop app for `vault_ssh_sign`: the SSH signature blob (`string alg, string sig`).
+/// The tool that signs a git commit or tag on the phone (`reins` as git's `gpg.ssh.program`).
+pub const GIT_SIGN_TOOL: &str = "vault_git_sign";
+
+/// What the phone seals to the desktop app for `vault_ssh_sign` and `vault_git_sign`: the SSH signature blob (`string alg, string sig`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshSignature {
     pub v: u32,

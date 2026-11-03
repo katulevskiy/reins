@@ -60,6 +60,7 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.design.pane
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.formatDate
+import dev.reins.android.ui.common.formatTime
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.mcp.mcpHost
 import dev.reins.core.ApprovalKind
@@ -93,6 +94,7 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
                     view.ask != null -> AskFacts(view.ask!!, LocalApprovalRecord.current?.label ?: viewModel.pendingLabel(), LocalApprovalRecord.current?.cwd)
                     view.secrets != null -> SecretsFacts(view.secrets!!)
                     view.ssh != null -> SshFacts(view.ssh!!)
+                    view.gitSign != null -> GitSignFacts(view.gitSign!!)
                     else -> WriteFacts(view)
                 }
                 view.blob?.let { AttachedFileSection(it) }
@@ -634,6 +636,36 @@ private fun SshFacts(ssh: dev.reins.core.SshSignView) {
             add { FactRow("Key", untrusted(ssh.keyName)) }
             add { MonoBlock(untrusted(ssh.keyFingerprint), "sshKey") }
             ssh.hostKey?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Host key", it, mono = true, valueTag = "sshHostKey", maxLines = 3) } }
+        },
+    )
+}
+
+@Composable
+private fun GitSignFacts(g: dev.reins.core.GitSignView) {
+    val nav = LocalApprovalNav.current
+    val c = LocalColors.current
+    val tag = g.kind == "tag"
+    FactGroup(
+        tag = "gitSign",
+        rows = buildList<@Composable () -> Unit> {
+            gitSignWhere(g)?.let { add { FactRow("Repo", it, mono = true, valueTag = "gitSignRepo") } }
+            if (tag) g.tag?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Tag", it, mono = true, valueTag = "gitSignTag") } }
+            untrusted(g.subject).takeIf { it.isNotBlank() }?.let {
+                add { FactRow(if (tag) "Message" else "Commit", it, valueTag = "gitSignSubject", maxLines = 3) }
+            }
+            untrusted(g.body).takeIf { it.isNotBlank() }?.let { body ->
+                add {
+                    DrillRow("More", "gitSignBody", { nav.push(ApprovalPage.Text("Message", body, mono = false, tag = "gitSignBodyText")) }) {
+                        RText(body.lineSequence().first { it.isNotBlank() }, RType.sans(13f), c.tertiary, maxLines = 1)
+                    }
+                }
+            }
+            add { FactRow(if (tag) "Tagger" else "Author", untrusted(g.author), valueTag = "gitSignAuthor", maxLines = 2) }
+            g.committer?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Committer", it, valueTag = "gitSignCommitter", maxLines = 2) } }
+            if (g.date > 0) add { FactRow("Date", formatTime(g.date), valueTag = "gitSignDate") }
+            if (!tag && g.parents >= 2u) add { FactRow("Merge", "${g.parents} parents", valueTag = "gitSignMerge") }
+            add { FactRow("Key", untrusted(g.keyName)) }
+            add { MonoBlock(untrusted(g.keyFingerprint), "gitSignKey") }
         },
     )
 }

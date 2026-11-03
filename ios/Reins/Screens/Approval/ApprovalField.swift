@@ -44,7 +44,7 @@ struct FieldLine: Equatable, Identifiable {
 enum FieldLines {
     /// In this order: each danger tag (the guard rule, the computer's own rule, a command this phone couldn't read, a
     /// push that rewrites history or wasn't checked, hidden characters, the default branch, a destructive tool, what
-    /// can't be undone); an SSH server with no name; why it is asked every time, when no red line says so; the first
+    /// can't be undone); an SSH server with no name; a signature for an unknown repository; why it is asked every time, when no red line says so; the first
     /// time this AI asks for this; the risk Overnight's model saw (two lines; its word only once the reason went to the
     /// facts), and that it held it.
     static func of(_ view: ApprovalView, suggestion: SuggestionView?, risk: RiskView?, riskInFacts: Bool = false) -> [FieldLine] {
@@ -58,6 +58,9 @@ enum FieldLines {
         if let ssh = view.ssh, (ssh.host ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
             let keyed = !(ssh.hostKey ?? "").trimmingCharacters(in: .whitespaces).isEmpty
             lines.append(FieldLine(id: "unknownHost", text: keyed ? "Server known only by its key" : "Unknown server", tone: .amber))
+        }
+        if let g = view.gitSign, (g.repo ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.append(FieldLine(id: "unknownRepo", text: "Unknown repository", tone: .amber))
         }
         if !tags.contains(where: \.destructive) {
             if ApprovalWords.mailPermissionSettings(view) { lines.append(FieldLine(id: "alwaysAsks", text: "This approval is once only. Manage ongoing access in Trust.", tone: .plain)) }
@@ -92,6 +95,7 @@ enum FieldLines {
             return "this command can't be remembered"
         }
         if view.ssh != nil { return "it signs in to a server" }
+        if view.gitSign != nil { return "it signs a commit" }
         if view.service == "vault" { return "it hands over a password" }
         return "it's never remembered"
     }

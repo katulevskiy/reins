@@ -5,7 +5,7 @@ use crate::connector::{
     ConnectorCall, Effect, Param, ToolSpec, VAULT, bool_p, choice_p, int_p, json_p, list_p, str_p, text_p, tool,
 };
 use crate::desktop::{
-    ENV_RELEASE_TOOL, MAX_ARG, MAX_ARGS, MAX_ENV_VARS, MAX_STORE_ENVS, MAX_STORE_SSH, MAX_STORE_TOKENS,
+    ENV_RELEASE_TOOL, GIT_SIGN_TOOL, MAX_ARG, MAX_ARGS, MAX_ENV_VARS, MAX_STORE_ENVS, MAX_STORE_SSH, MAX_STORE_TOKENS,
     SECRETS_LIST_TOOL, SECRETS_STORE_TOOL,
 };
 
@@ -181,6 +181,33 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             Some("key"),
         )
         .in_class("ssh")
+        .desktop(),
+        tool(
+            GIT_SIGN_TOOL,
+            VAULT,
+            "git_sign",
+            Effect::Write,
+            "Sign a git commit or tag",
+            "Sign one git commit or annotated tag with a vault SSH key, on the phone (git's SSH signing, namespace \
+             `git`). The phone gets the whole object, shows what it says and hashes it itself.",
+            vec![
+                str_p("key", 100, true, "The key's SHA256 fingerprint (`SHA256:…`)."),
+                text_p("object_base64", 65_536, true, "The commit or tag git asks to sign, exactly, base64."),
+                choice_p("hash", &["sha512", "sha256"], false, "The message hash (default sha512)."),
+                str_p("repo", 100, false, "The repository, as the desktop app names it (owner/name or folder)."),
+                str_p("branch", 100, false, "The branch checked out, when there is one."),
+                list_p(
+                    "ancestors",
+                    12,
+                    65_536,
+                    "Commits the object builds on (its parents, then theirs), each exactly as git stores it, base64.",
+                ),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            Some("key"),
+        )
+        .in_class("signing")
         .desktop(),
         tool(
             "vault_phone_key",

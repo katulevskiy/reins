@@ -33,6 +33,8 @@ enum class Badge { Pen, Search, Read, List, Send, Trash, Shield, People, Key, Te
 fun destructive(view: ApprovalView): Boolean {
     // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
     view.ask?.let { return it.destructive }
+    // A signature undoes nothing: only hidden characters in what it signs make it red (and held).
+    view.gitSign?.let { return it.hiddenChars }
     return view.noStanding && view.kind == ApprovalKind.WRITE && view.purchase == null && !isSecretsMove(view)
 }
 
@@ -60,7 +62,7 @@ fun badge(view: ApprovalView): Badge = when {
     destructive(view) && deletes(view) -> Badge.Trash
     view.ask != null -> Badge.Question
     view.secrets != null || isSecretsMove(view) -> Badge.Key
-    view.ssh != null -> Badge.Terminal
+    view.ssh != null || view.gitSign != null -> Badge.Terminal
     view.purchase != null -> Badge.Cart
     view.kind == ApprovalKind.GRANT -> Badge.Shield
     view.kind == ApprovalKind.ACCOUNTS -> Badge.People
@@ -139,6 +141,7 @@ fun heroSentence(view: ApprovalView): List<Span> {
             val t = view.tokenStore!!
             listOf(Span("Wants to save a\n"), Span("${serviceName(t.service)} token", true))
         }
+        view.gitSign != null -> gitSignHero(view.gitSign!!, wants)
         view.ssh != null -> {
             val s = view.ssh!!
             listOf(wants, Span("sign in", true), Span(" to\n"), Span(untrusted(sshTarget(s.host, s.hostKey)), true))
@@ -226,6 +229,14 @@ fun likeThisOn(view: ApprovalView, draft: ApprovalDraft): Boolean =
 /** This approval is one-time; ongoing Gmail access belongs to the account permission editor. */
 fun mailPermissionSettings(view: ApprovalView): Boolean = view.noStanding && view.service == "gmail" &&
     view.kind in listOf(ApprovalKind.SEARCH, ApprovalKind.READ, ApprovalKind.SEND)
+
+/** "Wants to **sign the commit**\n**fix: x**" (a tag: its name); without a subject, just what it signs. */
+internal fun gitSignHero(g: dev.reins.core.GitSignView, wants: Span): List<Span> {
+    val tag = g.kind == "tag"
+    val what = untrusted(if (tag) g.tag.orEmpty() else g.subject).trim()
+    return if (what.isEmpty()) listOf(wants, Span(if (tag) "sign a tag" else "sign a commit", true))
+    else listOf(wants, Span(if (tag) "sign the tag" else "sign the commit", true), Span("\n"), Span(what, true))
+}
 
 fun rememberLocked(view: ApprovalView, draft: ApprovalDraft = ApprovalDraft()): Boolean =
     view.noStanding || view.purchase != null || (view.envRelease != null && !envRememberable(view, draft))

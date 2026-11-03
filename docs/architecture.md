@@ -348,10 +348,41 @@ phone sees only the summary.
 ### Other desktop tools
 
 `reins ask` (`desktop_ask`), `reins run` and the API proxy (`vault_secret_release`), the SSH agent
-(`vault_ssh_keys`, `vault_ssh_sign`) and `reins vault add`/`list` (`vault_phone_key`, `vault_secret_store`,
+(`vault_ssh_keys`, `vault_ssh_sign`), git commit and tag signing (`vault_git_sign`, see below) and `reins vault add`/`list` (`vault_phone_key`, `vault_secret_store`,
 `vault_names`) use the same path. Each answer is sealed to the pinned key and echoes the
 request's nonce. GitLab, Codeberg and Bitbucket use `<service>_git_fetch`, `_push` and `_tag_push`. Their pushes are
 analysed from the pack alone, without the host's API.
+
+### Signing git commits and tags
+
+`reins ssh git setup` makes `reins` git's `gpg.ssh.program` (with `gpg.format = ssh` and the phone's key as
+`user.signingkey`). git runs `reins -Y sign -n git -f <key> <file>` as it would run `ssh-keygen`. When the key is one
+the daemon's SSH agent lists, `reins` sends the whole commit or tag to the agent (extension `git-sign@reins.dev`), and
+the agent asks the phone with `vault_git_sign`. The phone parses the object: only a commit or an annotated tag
+without a signature passes. It shows the subject, author, repository and branch, hashes the object itself, and signs
+SSHSIG's signed data (namespace `git`, `reins_proto::sshsig`). The agent checks the nonce and the signature before
+`reins` writes ssh-keygen's armor to `<file>.sig`. Because SSHSIG data starts with its own magic, such a signature can
+never pass as an SSH login, and a login request is never signed by `vault_git_sign`. Everything else (`-Y verify`,
+another key, the agent turned off) goes to the real `ssh-keygen` unchanged. A git signing request carries the daemon's
+control token (`control.token`, 0600 in the state folder), so only `reins` on this computer can make one: a server the
+agent was forwarded to (`ssh -A`) cannot read it, and a connection that announced an SSH server (`session-bind`) is
+refused as well. Control characters in the object (but newlines and tabs) count as hidden characters. A standing
+permission covers one key in one repository (`<fp>#git/<owner>/<name>`; a folder without a remote is
+`<fp>#git/local:<folder>`), or any repository (`<fp>#git`). An object from an unnamed repository is asked for every
+time.
+
+A repository's name is only what the computer says, so a permission for one repository is also bound to its history.
+`reins` sends, with the object, up to 12 of the commits it builds on (its parents, then theirs), exactly as git stores
+them. The phone follows them by hash only (an ancestor counts when its git id is a parent already reached) and takes from
+each signed one what its signature was made over (`reins_proto::sshsig::lineage`). A parent's id alone proves nothing:
+anyone can name a commit as a parent. The phone keeps, per repository (sealed, under `git-lineage.<hash of the
+resource>` in `meta`, the newest 2,000), what it signed there, but only for a signature the user approved, or one that
+already built on that history: never one a permission for any repository, or Autopilot, let through. The repository's
+permission covers a new object only when it builds on a commit the phone signed there (or tags one). Anything else
+(unrelated history that only claims the name, an ancestor that does not hash to the parent it stands for, a teammate's
+history longer than what is sent) is asked again, and approving it makes it known in turn. The permission for any
+repository ignores history. Autopilot's Auto and Overnight never sign on the model (a floor, as for SSH sign-ins);
+Bypass still approves everything.
 
 ### Large files
 

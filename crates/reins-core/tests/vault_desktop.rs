@@ -528,3 +528,214 @@ async fn only_sign_ins_with_the_named_key_are_signed() {
     }
     assert_eq!(desk.waiting().await.len(), 0);
 }
+
+// ---- git commits and tags ---------------------------------------------------------------------------------------
+
+const COMMIT: &str = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nparent 1b36b5df0123456789abcdef0123456789abcdef\n\
+author Ada <ada@example.com> 1700000000 +0100\ncommitter Ada <ada@example.com> 1700000000 +0100\n\n\
+fix: sign on the phone\n\nThe body.\n";
+
+fn git_call(desk: &Desk, id: &str, key: &Key, object: &[u8], repo: Option<&str>) -> Value {
+    let mut args = json!({"key": key.fingerprint, "object_base64": BASE64.encode(object),
+        "client_key": desk.public(), "nonce": format!("nonce-{id}")});
+    if let Some(r) = repo {
+        args["repo"] = json!(r);
+        args["branch"] = json!("main");
+    }
+    call(id, DESK, "vault", "git_sign", &args)
+}
+
+#[tokio::test]
+async fn commits_are_signed_as_ssh_keygen_signs_them_for_every_kind_of_key() {
+    let desk = desk().await;
+    desk.pair().await;
+    let data = reins_proto::sshsig::signed_data("git", reins_proto::sshsig::Hash::Sha512, COMMIT.as_bytes());
+    for (id, key, alg) in [
+        ("g1", &ED, "ssh-ed25519"),
+        ("g2", &RSA, "rsa-sha2-512"),
+        ("g3", &P256, "ecdsa-sha2-nistp256"),
+        ("g4", &P384, "ecdsa-sha2-nistp384"),
+    ] {
+        desk.send(&[git_call(&desk, id, key, COMMIT.as_bytes(), Some("katulevskiy/reins"))]).await;
+        let view = desk.core.approval_view(id.to_owned()).await.unwrap();
+        let git = view.git_sign.clone().expect("the commit");
+        assert_eq!(
+            (git.kind.as_str(), git.key_name.as_str(), git.key_fingerprint.as_str()),
+            ("commit", key.name, key.fingerprint)
+        );
+        assert_eq!((git.repo.as_deref(), git.branch.as_deref()), (Some("katulevskiy/reins"), Some("main")));
+        assert_eq!((git.subject.as_str(), git.body.as_str()), ("fix: sign on the phone", "The body.\n"));
+        assert_eq!((git.author.as_str(), git.date, git.parents), ("Ada <ada@example.com>", 1_700_000_000, 1));
+        assert_eq!((git.target_short.as_str(), git.hidden_chars, git.committer), ("4b825dc", false, None));
+        assert!(view.ssh.is_none());
+        assert_eq!(view.class, "signing");
+        // Autopilot's Auto and Overnight never sign on the model.
+        assert_eq!(
+            reins_core::autopilot::gates::request_floor(&view),
+            Some("commits and tags are only ever signed by you")
+        );
+        assert!(!reins_core::autopilot::gates::overnight_weighs(&view));
+        assert_eq!(
+            view.preview,
+            [
+                format!("Sign the commit \u{201c}fix: sign on the phone\u{201d} with {}", key.name),
+                "In katulevskiy/reins on main, as the computer names them".to_owned(),
+                "By Ada <ada@example.com>".to_owned(),
+            ]
+        );
+        desk.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+        let out = desk.data(id).await;
+        assert_eq!(out.as_object().unwrap().len(), 1, "only the sealed signature");
+        let signed: SshSignature = desk.open(&out["sealed"]);
+        assert_eq!(signed.nonce, format!("nonce-{id}"));
+        verify(key, &data, &BASE64.decode(signed.signature_base64.as_bytes()).unwrap(), alg);
+    }
+    no_secrets("git signing", &desk.everything_shown(&[]).await);
+}
+
+/// A commit on top of `parent`, with `subject`.
+fn commit_on(parent: &str, subject: &str) -> String {
+    format!(
+        "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nparent {parent}\n\
+author Ada <ada@example.com> 1700000000 +0100\ncommitter Ada <ada@example.com> 1700000000 +0100\n\n{subject}\n"
+    )
+}
+
+/// The commit as git stores it once signed (`gpgsig` after the other headers), with the phone's signature.
+async fn signed_commit(desk: &Desk, id: &str, key: &Key, object: &str) -> String {
+    let signed: SshSignature = desk.open(&desk.data(id).await["sealed"]);
+    let sig = BASE64.decode(signed.signature_base64.as_bytes()).unwrap();
+    let armor = reins_proto::sshsig::armor(&key.blob(), "git", reins_proto::sshsig::Hash::Sha512, &sig);
+    let (head, message) = object.split_once("\n\n").unwrap();
+    let header = armor.trim_end().replace('\n', "\n ");
+    format!("{head}\ngpgsig {header}\n\n{message}")
+}
+
+fn git_call_with(desk: &Desk, id: &str, object: &str, repo: Option<&str>, ancestors: &[&str]) -> Value {
+    let mut c = git_call(desk, id, &ED, object.as_bytes(), repo);
+    c["call"]["args"]["ancestors"] = json!(ancestors.iter().map(|a| BASE64.encode(a.as_bytes())).collect::<Vec<_>>());
+    c
+}
+
+#[tokio::test]
+async fn a_repository_permission_covers_only_commits_on_history_approved_there() {
+    let desk = desk().await;
+    desk.pair().await;
+    let base = "1b36b5df0123456789abcdef0123456789abcdef";
+    let c1 = commit_on(base, "one");
+    desk.send(&[git_call_with(&desk, "g1", &c1, Some("Me/App"), &[])]).await;
+    let view = desk.core.approval_view("g1".to_owned()).await.unwrap();
+    let resources: Vec<_> = view.resources.iter().map(|r| (r.id.clone(), r.label.as_str(), r.wider)).collect();
+    let in_app = format!("{}#git/me/app", ED.fingerprint);
+    assert_eq!(
+        resources,
+        [
+            (in_app.clone(), "Ed key for Me/App", false),
+            (format!("{}#git", ED.fingerprint), "Ed key for any repository", true)
+        ]
+    );
+    desk.core.approve("g1".to_owned(), choice(&[], standing(&[in_app.as_str()], &["signing"]))).await.unwrap();
+    desk.data("g1").await;
+    let c1_signed = signed_commit(&desk, "g1", &ED, &c1).await;
+    let id1 = reins_proto::sshsig::commit_id(c1_signed.as_bytes(), false);
+
+    let app_grant = desk.core.grants().await.unwrap()[0].id.clone();
+
+    // On top of the commit the phone signed there (the computer shows it, and it hashes to the parent named).
+    let c2 = commit_on(&id1, "two");
+    desk.send(&[git_call_with(&desk, "g2", &c2, Some("me/app"), &[&c1_signed])]).await;
+    let c2_signed = signed_commit(&desk, "g2", &ED, &c2).await;
+    // Two steps up, through a teammate's unsigned commit: the signed one comes along behind it.
+    let id2 = reins_proto::sshsig::commit_id(c2_signed.as_bytes(), false);
+    let teammate = commit_on(&id2, "by a teammate");
+    let id_t = reins_proto::sshsig::commit_id(teammate.as_bytes(), false);
+    desk.send(&[git_call_with(&desk, "g3", &commit_on(&id_t, "three"), Some("me/app"), &[&teammate, &c2_signed])])
+        .await;
+    desk.data("g3").await;
+    // A tag of a commit signed there, which comes along.
+    let tag = format!("object {id1}\ntype commit\ntag v1.0\ntagger Ada <ada@example.com> 1700000000 +0100\n\nv1.0\n");
+    desk.send(&[git_call_with(&desk, "g4", &tag, Some("me/app"), &[&c1_signed])]).await;
+    desk.data("g4").await;
+
+    let unknown = "ffffffffffffffffffffffffffffffffffffffff";
+    let forged = commit_on(&id1, "forged").replace(&id1, unknown);
+    desk.send(&[
+        // Unrelated history that only says it is me/app.
+        git_call_with(&desk, "g5", &commit_on(unknown, "elsewhere"), Some("me/app"), &[]),
+        // Naming as parent what an approved commit was made on proves nothing by itself.
+        git_call_with(&desk, "g12", &commit_on(base, "on an old parent"), Some("me/app"), &[]),
+        // An ancestor that does not hash to the parent named is no proof.
+        git_call_with(&desk, "g6", &forged, Some("me/app"), &[&c1_signed]),
+        // The same history in another repository: that one has no permission.
+        git_call_with(&desk, "g7", &c2, Some("me/other"), &[&c1_signed]),
+        git_call_with(&desk, "g8", &c2, None, &[&c1_signed]),
+        // A folder called `me` is not the owner `me`.
+        git_call_with(&desk, "g9", &c2, Some("me"), &[]),
+    ])
+    .await;
+    assert_eq!(desk.waiting().await, ["g12", "g5", "g6", "g7", "g8", "g9"]);
+    let folder = desk.core.approval_view("g9".to_owned()).await.unwrap();
+    assert_eq!(folder.resources[0].id, format!("{}#git/local:me", ED.fingerprint));
+    assert!(desk.core.approval_view("g8".to_owned()).await.unwrap().no_standing);
+
+    // Approving the unrelated commit there makes it known: the next one on top of it is covered.
+    let c5 = commit_on(unknown, "elsewhere");
+    desk.core.approve("g5".to_owned(), choice(&[], None)).await.unwrap();
+    let c5_signed = signed_commit(&desk, "g5", &ED, &c5).await;
+    let id5 = reins_proto::sshsig::commit_id(c5_signed.as_bytes(), false);
+    desk.send(&[git_call_with(&desk, "g10", &commit_on(&id5, "now known"), Some("me/app"), &[&c5_signed])]).await;
+    desk.data("g10").await;
+
+    // The permission for any repository covers every history, but what it lets through vouches for no repository.
+    let any = format!("{}#git", ED.fingerprint);
+    desk.core.approve("g7".to_owned(), choice(&[], standing(&[any.as_str()], &["signing"]))).await.unwrap();
+    desk.data("g7").await;
+    let stray = commit_on("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "stray");
+    desk.send(&[git_call_with(&desk, "g11", &stray, Some("me/app"), &[])]).await;
+    let stray_signed = signed_commit(&desk, "g11", &ED, &stray).await;
+    let stray_id = reins_proto::sshsig::commit_id(stray_signed.as_bytes(), false);
+    for g in desk.core.grants().await.unwrap() {
+        if g.id != app_grant {
+            desk.core.revoke_grant(g.id).await.unwrap();
+        }
+    }
+    desk.send(&[git_call_with(&desk, "g13", &commit_on(&stray_id, "on the stray"), Some("me/app"), &[&stray_signed])])
+        .await;
+    assert!(desk.waiting().await.contains(&"g13".to_owned()), "me/app's permission does not cover it");
+    // Neither is an SSH sign-in permission.
+    let data = userauth(&ED.blob(), "ssh-ed25519", None);
+    desk.send(&[sign_call(&desk, "s1", &ED, 0, Some("github.com"), &data)]).await;
+    assert!(desk.waiting().await.contains(&"s1".to_owned()));
+}
+
+#[tokio::test]
+async fn only_commits_and_tags_are_signed_and_never_a_sign_in() {
+    let desk = desk().await;
+    desk.pair().await;
+    let signed = format!("{}\ngpgsig x\n\nmsg\n", COMMIT.split_once("\n\n").unwrap().0);
+    let mut unknown_key = git_call(&desk, "g5", &ED, COMMIT.as_bytes(), None);
+    unknown_key["call"]["args"]["key"] = json!("SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    let mut bad_repo = git_call(&desk, "g6", &ED, COMMIT.as_bytes(), None);
+    bad_repo["call"]["args"]["repo"] = json!("me/app\u{202e}");
+    desk.send(&[
+        git_call(&desk, "g1", &ED, &userauth(&ED.blob(), "ssh-ed25519", None), None),
+        git_call(&desk, "g2", &ED, b"release v1.2.3\n", None),
+        git_call(&desk, "g3", &ED, b"SSHSIG\0\0\0\x01anything", None),
+        git_call(&desk, "g4", &ED, signed.as_bytes(), None),
+        unknown_key,
+        bad_repo,
+    ])
+    .await;
+    for (id, says) in [
+        ("g1", "Only a git commit"),
+        ("g2", "Only a git commit"),
+        ("g3", "Only a git commit"),
+        ("g4", "Only a git commit"),
+        ("g5", "No SSH key"),
+        ("g6", "`repo`"),
+    ] {
+        let message = desk.error(id).await;
+        assert!(message.contains(says), "{id}: {message}");
+    }
+    assert_eq!(desk.waiting().await.len(), 0);
+}

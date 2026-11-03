@@ -487,6 +487,10 @@ pub struct ApprovalView {
     /// Overnight always ask for it.
     #[uniffi(default)]
     pub targets_default_branch: bool,
+    /// A git commit or tag the computer asks the phone to sign with a vault SSH key (`reins` as git's signing
+    /// program): what the object says.
+    #[uniffi(default)]
+    pub git_sign: Option<GitSignView>,
 }
 
 /// One command a permission for secrets can cover, as the approval offers it.
@@ -717,6 +721,39 @@ pub struct SshSignView {
     pub host: Option<String>,
     /// The server's host key fingerprint, when known.
     pub host_key: Option<String>,
+}
+
+/// A git commit or annotated tag to sign with a vault SSH key. Everything but `repo` and `branch` is read by the phone
+/// from the object it signs; those two are what the computer says.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct GitSignView {
+    /// "commit" | "tag"
+    pub kind: String,
+    pub key_name: String,
+    /// `SHA256:…`
+    pub key_fingerprint: String,
+    /// The repository, as the computer names it (owner/name, or its folder's name).
+    pub repo: Option<String>,
+    /// The branch checked out, as the computer says.
+    pub branch: Option<String>,
+    /// A tag's name.
+    pub tag: Option<String>,
+    /// The message's first line.
+    pub subject: String,
+    /// The rest of the message, cut to 2,000 characters.
+    pub body: String,
+    /// "Name <email>" of the author (or the tagger).
+    pub author: String,
+    /// The committer, when it is not the author.
+    pub committer: Option<String>,
+    /// Unix seconds; 0 when not known.
+    pub date: i64,
+    /// How many parents a commit has (2 or more: a merge).
+    pub parents: u32,
+    /// A commit's tree, or the object a tag points at: the first 7 hex digits.
+    pub target_short: String,
+    /// Characters that change how the text reads without being seen (bidi controls, zero-width): show a warning.
+    pub hidden_chars: bool,
 }
 
 /// A push as the desktop app worked it out from the bytes git sent; the approval is bound to exactly those bytes.
