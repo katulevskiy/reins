@@ -1024,7 +1024,7 @@ jobs:
       # No prefix fallback: these libraries must match the exact native sources/configuration.
       # Version, build ID and signing only enter the later APK packaging job.
       # This workflow is not in the key (any edit to it would miss): bump the v2 when this job's build changes.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: native
         with:
           path: native
@@ -1041,7 +1041,7 @@ jobs:
         with:
           shared-key: linux-server-core
           save-if: false
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         id: cargo-ndk
         if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
         with:
@@ -1059,7 +1059,7 @@ jobs:
             echo "::warning::sdkmanager could not install ndk;${ndk} (attempt $attempt); trying again"
             sleep $(( attempt * 20 ))
           done
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: >-
           steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
           github.ref == 'refs/heads/main'
@@ -1071,7 +1071,7 @@ jobs:
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native"
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: steps.native.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with:
           path: native
@@ -1108,7 +1108,7 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
