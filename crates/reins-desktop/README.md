@@ -197,7 +197,7 @@ checks them. It keeps what was there before (1Password's `op-ssh-sign`, say), an
 `reins uninstall`) puts that back. A setting you changed since is left alone. `reins ssh git status` shows the state.
 For each `git commit -S` or `git tag -s`, your phone shows the commit's subject, author, repository and branch, and
 signs it. It hashes the commit itself, so it signs exactly what it shows. "Remember for this repository" covers
-commits on top of history you approved there (checked by hash, so another repository that only takes its name is
+commits on top of one your phone signed there (checked by hash, so another repository that only takes its name is
 asked again); "any repository" covers every commit with that key. The terminal shows "approve signing on your
 phone…" while you decide. Verifying, and keys that are not on your phone, go to `ssh-keygen` as before. Add the key to
 GitHub as a *signing* key for the Verified badge.

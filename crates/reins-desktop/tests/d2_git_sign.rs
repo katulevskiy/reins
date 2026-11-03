@@ -174,7 +174,6 @@ async fn a_commit_and_a_tag_are_signed_on_the_phone_and_git_verifies_them() {
         .collect();
     let parsed = reins_proto::sshsig::parse_object(&object).unwrap();
     let reaches = reins_proto::sshsig::lineage(&parsed, &ancestors);
-    assert!(reaches.contains(&format!("id:{head}")), "{reaches:?}");
     assert!(reaches.contains(&format!("sig:{}", reins_proto::sshsig::signed_digest(&first_object))), "{reaches:?}");
 }
 

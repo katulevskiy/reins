@@ -119,9 +119,9 @@ pub struct Preview {
 /// What a git object to sign builds on, by hash, and what signing it adds to its repository's known history.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitLineage {
-    /// `id:<commit>` and `sig:<sha256>` it reaches ([`reins_proto::sshsig::lineage`]).
+    /// `sig:<sha256>` of the signed commits it provably builds on ([`reins_proto::sshsig::lineage`]).
     pub reaches: Vec<String>,
-    /// Kept when it is signed: what was signed (`sig:`) and what it was signed on top of (`id:`).
+    /// Kept when it is signed: `sig:<sha256>` of what was signed.
     pub record: Vec<String>,
     /// The permission for any repository (`<fingerprint>#git`), which covers it whatever its history.
     pub any: String,

@@ -15,8 +15,9 @@
 //!   hashes it itself and signs that, so "Sign the commit <subject>" is exactly what happens; the signature cannot be
 //!   used as an SSH sign-in (and a sign-in is never signed here). Permissions: `<fingerprint>#git/<owner>/<name>` (a
 //!   repository known only by its folder: `<fingerprint>#git/local:<folder>`), within `<fingerprint>#git`; an object
-//!   from a repository nobody named is asked for every time. The repository and branch are what the computer says:
-//!   nothing signed holds them.
+//!   from a repository nobody named is asked for every time. The repository and branch are what the computer says, so
+//!   a repository's permission also needs the object to build on a commit this phone signed there (by hash; see
+//!   `lineage_known`), kept only from signatures the user approved or that history already covered.
 
 use data_encoding::{BASE64, BASE64_NOPAD};
 use reins_proto::connector::{ConnectorCall, VAULT};
@@ -881,16 +882,10 @@ fn ancestors_arg(call: &ConnectorCall) -> Result<Vec<Vec<u8>>, CoreError> {
     Ok(decoded)
 }
 
-/// What signing `sign` adds to its repository's known history: the object signed, and what it builds on directly.
+/// What signing `sign` adds to its repository's known history: what was signed. (Only what the phone signed counts:
+/// a commit named as a parent proves nothing by itself.)
 fn lineage_record_of(sign: &GitSign) -> Vec<String> {
-    let mut out = vec![format!("sig:{}", reins_proto::sshsig::signed_digest(&sign.object))];
-    match sign.parsed.kind {
-        reins_proto::sshsig::ObjectKind::Commit => {
-            out.extend(sign.parsed.parent_ids.iter().map(|p| format!("id:{p}")));
-        }
-        reins_proto::sshsig::ObjectKind::Tag => out.push(format!("id:{}", sign.parsed.target)),
-    }
-    out
+    vec![format!("sig:{}", reins_proto::sshsig::signed_digest(&sign.object))]
 }
 
 /// How many entries of history are kept per repository (newest).

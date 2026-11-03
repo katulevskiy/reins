@@ -343,10 +343,10 @@ fn header_parents(commit: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// What an object to sign is known to build on, by hash: `id:<hex>` for every commit it reaches (its parents, or a
-/// tag's object, then the parents of each ancestor whose id is one of those) and `sig:<sha256>` for every ancestor
-/// signed (what that signature was made over). An ancestor that is not reached is ignored, so the computer can only
-/// make the list shorter, never longer than the history really is.
+/// What an object to sign provably builds on that a phone signed: `sig:<sha256>` of what each signed ancestor's
+/// signature was made over. The ancestors are followed by hash only, from the object's parents (or a tag's object): an
+/// ancestor counts when its git id is one already reached, so the computer can leave history out but never add any.
+/// The parents' ids alone prove nothing (anyone can name a commit as a parent); what the phone signed itself does.
 #[must_use]
 pub fn lineage(object: &GitObject, ancestors: &[Vec<u8>]) -> Vec<String> {
     let mut ids: Vec<String> = match object.kind {
@@ -382,7 +382,7 @@ pub fn lineage(object: &GitObject, ancestors: &[Vec<u8>]) -> Vec<String> {
             break;
         }
     }
-    ids.into_iter().map(|i| format!("id:{i}")).chain(signed).collect()
+    signed
 }
 
 #[cfg(test)]
@@ -429,13 +429,11 @@ mod tests {
             format!("tree {TREE}\nparent {pid}\nauthor Ada <a@x> 1 +0000\ncommitter Ada <a@x> 1 +0000\n\ntwo\n");
         let c = parse_object(child.as_bytes()).unwrap();
         let known = lineage(&c, &[parent_signed.into_bytes(), b"tree unrelated\n\nx\n".to_vec()]);
-        assert_eq!(
-            known,
-            [format!("id:{pid}"), format!("id:{PARENT}"), format!("sig:{}", signed_digest(parent_unsigned.as_bytes()))]
-        );
-        // An ancestor that is not the parent named adds nothing.
+        assert_eq!(known, [format!("sig:{}", signed_digest(parent_unsigned.as_bytes()))]);
+        // An ancestor that is not the parent named adds nothing, and naming a parent proves nothing by itself.
         let other = commit("gpgsig x\n y\n", "other\n");
-        assert_eq!(lineage(&c, &[other.into_bytes()]), [format!("id:{pid}")]);
+        assert!(lineage(&c, &[other.into_bytes()]).is_empty());
+        assert!(lineage(&c, &[]).is_empty());
     }
 
     #[test]

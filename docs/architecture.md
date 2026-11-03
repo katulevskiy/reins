@@ -373,14 +373,16 @@ time.
 
 A repository's name is only what the computer says, so a permission for one repository is also bound to its history.
 `reins` sends, with the object, up to 12 of the commits it builds on (its parents, then theirs), exactly as git stores
-them. The phone follows them by hash only: an ancestor counts when its git id is a parent already reached, and a
-signed one also yields what its signature was made over (`reins_proto::sshsig::lineage`). After each signature in a
-repository, the phone keeps (sealed, under `git-lineage.<hash of the resource>` in `meta`, the newest 2,000) what it
-signed and what that built on directly. The repository's permission covers a new object only when what it reaches meets
-that history: a commit on top of one the phone signed or approved there, or a tag of one. Anything else (unrelated
-history that only claims the name, an ancestor that does not hash to the parent it stands for) is asked again, and
-approving it makes its history known in turn. The permission for any repository ignores history. Autopilot's Auto and
-Overnight never sign on the model (a floor, as for SSH sign-ins); Bypass still approves everything.
+them. The phone follows them by hash only (an ancestor counts when its git id is a parent already reached) and takes from
+each signed one what its signature was made over (`reins_proto::sshsig::lineage`). A parent's id alone proves nothing:
+anyone can name a commit as a parent. The phone keeps, per repository (sealed, under `git-lineage.<hash of the
+resource>` in `meta`, the newest 2,000), what it signed there, but only for a signature the user approved, or one that
+already built on that history: never one a permission for any repository, or Autopilot, let through. The repository's
+permission covers a new object only when it builds on a commit the phone signed there (or tags one). Anything else
+(unrelated history that only claims the name, an ancestor that does not hash to the parent it stands for, a teammate's
+history longer than what is sent) is asked again, and approving it makes it known in turn. The permission for any
+repository ignores history. Autopilot's Auto and Overnight never sign on the model (a floor, as for SSH sign-ins);
+Bypass still approves everything.
 
 ### Large files
 

@@ -1012,12 +1012,20 @@ impl Engine {
         } else {
             connector.perform_approved(account, call, preview).await
         };
-        // A signature made in a repository: what it signed and built on is that repository's approved history now.
+        // A signature made in a repository becomes its approved history, but only when the user approved it, or it
+        // built on that history already: never one a permission for any repository (or Autopilot) let through, which
+        // would otherwise vouch for whatever history claimed the name.
         if result.is_ok()
             && let Some(lineage) = &preview.git_lineage
-            && let Err(e) = crate::connector::vault::lineage_record(&self.store, &preview.resource, &lineage.record)
         {
-            log::warn!("git history not kept: {e}");
+            let vouched = matches!(source, AuthorizationSource::OwnerReview | AuthorizationSource::TicketCollect)
+                || crate::connector::vault::lineage_known(&self.store, &preview.resource, &lineage.reaches)
+                    .unwrap_or(false);
+            if vouched
+                && let Err(e) = crate::connector::vault::lineage_record(&self.store, &preview.resource, &lineage.record)
+            {
+                log::warn!("git history not kept: {e}");
+            }
         }
         let disclosure_error = self.authorization_execute(request, source).err();
         // Provider errors may contain content too; suppress them after a late policy restriction.
