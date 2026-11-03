@@ -1486,7 +1486,7 @@ impl Engine {
         Ok(())
     }
 
-    /// The newest `limit` rows, one per request: execution records are folded into their request's rows
+    /// The newest `limit` rows, one per request: execution records are folded into their attempt's rows
     /// (`store::audit_fold`), read from twice as many entries so that folding seldom leaves the list short.
     pub fn activity(&self, limit: u32) -> Result<Vec<ActivityEntry>, CoreError> {
         let limit = limit.clamp(1, 500);
@@ -1515,8 +1515,9 @@ impl Engine {
         let mut entry = views::activity_entry(&r);
         self.names().entry(&mut entry);
         entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
-        if let Some(request) = crate::store::audit_fold::request_of(&r) {
-            entry.execution = self.store.executions(&[request], unix_now())?.remove(request).flatten();
+        if let Some(attempt) = crate::store::audit_fold::group_of(&r) {
+            entry.execution =
+                self.store.executions(std::slice::from_ref(&attempt), unix_now())?.remove(&attempt).flatten();
         }
         Ok(Some(entry))
     }
