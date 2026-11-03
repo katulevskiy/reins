@@ -275,7 +275,8 @@ pub fn parse_object(bytes: &[u8]) -> Option<GitObject> {
         return None;
     }
     (out.subject, out.body) = subject_and_body(message);
-    out.hidden_chars = text.chars().any(hidden_char);
+    // Control characters (but a newline or a tab) can move or hide text in a terminal or a label, too.
+    out.hidden_chars = text.chars().any(|c| hidden_char(c) || (c.is_control() && !matches!(c, '\n' | '\t')));
     Some(out)
 }
 
@@ -343,6 +344,10 @@ mod tests {
             assert!(hidden_char(hidden), "{hidden:?}");
         }
         assert!(!hidden_char('a') && !hidden_char('\u{fe0f}'));
+        for control in ["fix\u{1b}[2Kok\n", "fix\rok\n", "fix\u{85}\n"] {
+            assert!(parse_object(commit("", control).as_bytes()).unwrap().hidden_chars, "{control:?}");
+        }
+        assert!(!parse_object(commit("", "fix\n\n\tindented\n").as_bytes()).unwrap().hidden_chars);
     }
 
     #[test]

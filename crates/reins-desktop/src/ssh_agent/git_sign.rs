@@ -158,11 +158,16 @@ fn identities(stream: &mut dyn Duplex) -> std::io::Result<Vec<(Vec<u8>, String)>
         .collect()
 }
 
-/// Where the daemon's agent listens, unless it is turned off.
-fn agent_socket() -> Option<PathBuf> {
+/// Where the daemon's agent listens (unless it is turned off), and its control token, which a git signing request
+/// carries.
+fn agent_socket() -> Option<(PathBuf, zeroize::Zeroizing<String>)> {
     let paths = Paths::from_env().ok()?;
     let config = Config::load(&paths).ok()?;
-    config.ssh.enabled.then(|| super::socket_path(&paths, &config.ssh))
+    let token = std::fs::read_to_string(paths.control_token_file()).ok()?;
+    config
+        .ssh
+        .enabled
+        .then(|| (super::socket_path(&paths, &config.ssh), zeroize::Zeroizing::new(token.trim().to_owned())))
 }
 
 /// What the computer says about the repository the signing is for: its `owner/name` (from `origin`), else its
@@ -252,6 +257,7 @@ fn tell_terminal(line: &str) {
 /// The phone's signature blob for `object`, or why not.
 fn sign_object(
     stream: &mut dyn Duplex,
+    token: &str,
     key: &[u8],
     namespace: &str,
     hash: sshsig::Hash,
@@ -261,6 +267,7 @@ fn sign_object(
     let mut w = Writer::new();
     w.byte(EXTENSION)
         .string(GIT_SIGN_EXTENSION.as_bytes())
+        .string(token.as_bytes())
         .string(key)
         .string(namespace.as_bytes())
         .string(hash.name().as_bytes())
@@ -314,7 +321,7 @@ pub fn main(args: &[OsString]) -> ExitCode {
     let Some(blob) = key_blob(key_file) else {
         return hand_over(rest);
     };
-    let Some(socket) = agent_socket() else {
+    let Some((socket, token)) = agent_socket() else {
         return hand_over(rest);
     };
     let Ok(mut stream) = connect(&socket) else {
@@ -345,7 +352,7 @@ pub fn main(args: &[OsString]) -> ExitCode {
         let parsed = sshsig::parse_object(object)
             .ok_or("your phone signs git commits and annotated tags only, and this is neither")?;
         let place = place(parsed.kind == sshsig::ObjectKind::Tag);
-        let signature = sign_object(stream, &blob, namespace, hash, object, &place)?;
+        let signature = sign_object(stream, &token, &blob, namespace, hash, object, &place)?;
         Ok(sshsig::armor(&blob, namespace, hash, &signature))
     };
     let stdin = sign.files.iter().any(|f| f.as_os_str() == OsStr::new("-"));

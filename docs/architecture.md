@@ -363,8 +363,10 @@ without a signature passes. It shows the subject, author, repository and branch,
 SSHSIG's signed data (namespace `git`, `reins_proto::sshsig`). The agent checks the nonce and the signature before
 `reins` writes ssh-keygen's armor to `<file>.sig`. Because SSHSIG data starts with its own magic, such a signature can
 never pass as an SSH login, and a login request is never signed by `vault_git_sign`. Everything else (`-Y verify`,
-another key, the agent turned off) goes to the real `ssh-keygen` unchanged. The agent refuses git signing on a
-connection that announced an SSH server (`session-bind`), so a forwarded agent (`ssh -A`) cannot get one. A standing
+another key, the agent turned off) goes to the real `ssh-keygen` unchanged. A git signing request carries the daemon's
+control token (`control.token`, 0600 in the state folder), so only `reins` on this computer can make one: a server the
+agent was forwarded to (`ssh -A`) cannot read it, and a connection that announced an SSH server (`session-bind`) is
+refused as well. Control characters in the object (but newlines and tabs) count as hidden characters. A standing
 permission covers one key in one repository (`<fp>#git/<owner>/<name>`; a folder without a remote is
 `<fp>#git/local:<folder>`), within `<fp>#git` for any repository. An object from an unnamed repository is asked for every
 time. The repository and branch are what the computer says; nothing signed holds them, so a repository permission

@@ -38,8 +38,10 @@ use crate::phone::{PhoneLink, awaiting, teller, unavailable};
 
 pub const KEYS_TOOL: &str = "vault_ssh_keys";
 pub const SIGN_TOOL: &str = "vault_ssh_sign";
-/// The agent extension `reins -Y sign` uses: `string key blob, string namespace, string hash, string object,
-/// string repo, string branch`; answered with `SUCCESS, string signature blob` or `FAILURE, string reason`.
+/// The agent extension `reins -Y sign` uses: `string control token, string key blob, string namespace, string hash,
+/// string object, string repo, string branch`; answered with `SUCCESS, string signature blob` or
+/// `FAILURE, string reason`. The control token (`control.token`, 0600 in the state folder) proves the caller runs on
+/// this computer as this user: a server the agent was forwarded to cannot read it.
 pub const GIT_SIGN_EXTENSION: &str = "git-sign@reins.dev";
 pub const SOCKET_NAME: &str = "ssh-agent.sock";
 /// How long the phone's key list is used before it is asked again.
@@ -226,6 +228,8 @@ pub struct Agent {
     stats: Arc<crate::stats::Stats>,
     known_hosts: Vec<PathBuf>,
     keys: tokio::sync::Mutex<Option<(Instant, Vec<VaultKey>)>>,
+    /// The daemon's control token, which a git signing request must carry; none: git signing is refused.
+    token: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Agent {
@@ -236,7 +240,15 @@ impl Agent {
             stats,
             known_hosts: config.known_hosts_files(),
             keys: tokio::sync::Mutex::new(None),
+            token: None,
         }
+    }
+
+    /// Takes git signing requests that carry `token` (the daemon's control token).
+    #[must_use]
+    pub fn with_token(mut self, token: &str) -> Self {
+        self.token = Some(zeroize::Zeroizing::new(token.to_owned()));
+        self
     }
 
     fn tell(session: &Session) -> Tell {
@@ -430,13 +442,19 @@ impl Agent {
         use reins_proto::sshsig;
         let mut r = Reader::new(body);
         let _name = r.str();
-        let (Some(blob), Some(namespace), Some(hash), Some(object), Some(repo), Some(branch)) =
-            (r.string(), r.str(), r.str(), r.string(), r.str(), r.str())
+        let (Some(token), Some(blob), Some(namespace), Some(hash), Some(object), Some(repo), Some(branch)) =
+            (r.string(), r.string(), r.str(), r.str(), r.string(), r.str(), r.str())
         else {
             return Err(unavailable("Malformed git signing request."));
         };
         if !r.is_empty() {
             return Err(unavailable("Malformed git signing request."));
+        }
+        let expected = self.token.as_ref().map(|t| t.as_bytes());
+        if !expected.is_some_and(|t| constant_time_eq(t, token)) {
+            return Err(unavailable(
+                "Git signing is taken only from `reins` on this computer (the control token differs).",
+            ));
         }
         // ssh announces each server it talks to; a connection that did is an ssh client, maybe a server this agent
         // was forwarded to (`ssh -A`), never `reins -Y sign` on this computer. A git signature is bound to no server,
@@ -558,6 +576,10 @@ impl Agent {
         });
         vec![SUCCESS]
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Writes `line` to the stderr of process `pid` when it runs as this user (Linux; elsewhere nothing). Blocking.
@@ -753,12 +775,13 @@ pub fn start(
     config: &SshConfig,
     phone: Arc<PhoneLink>,
     stats: Arc<crate::stats::Stats>,
+    token: &str,
 ) -> Option<SshAgent> {
     if !config.enabled {
         return None;
     }
     let path = socket_path(paths, config);
-    match SshAgent::bind(&path, Agent::new(phone, config, stats)) {
+    match SshAgent::bind(&path, Agent::new(phone, config, stats).with_token(token)) {
         Ok(a) => {
             log::info!("ssh agent on {}", path.display());
             Some(a)
@@ -896,12 +919,13 @@ mod tests {
             Arc::new(crate::identity::Identity::generate()),
             Duration::from_secs(1),
         ));
-        let agent = Agent::new(phone, &SshConfig::default(), Arc::default());
+        let agent = Agent::new(phone, &SshConfig::default(), Arc::default()).with_token("tok");
         let object =
             b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@x> 1 +0000\ncommitter A <a@x> 1 +0000\n\nx\n";
         let mut w = Writer::new();
         w.byte(EXTENSION)
             .string(GIT_SIGN_EXTENSION.as_bytes())
+            .string(b"tok")
             .string(b"key")
             .string(b"git")
             .string(b"sha512")
@@ -920,11 +944,22 @@ mod tests {
         assert_eq!(r.byte(), Some(FAILURE));
         assert!(r.str().unwrap().contains("forwarded"));
         // Anything but `git` is refused too (on this computer, before the phone).
-        let mut other = Writer::new();
-        other.byte(EXTENSION).string(GIT_SIGN_EXTENSION.as_bytes()).string(b"key").string(b"file").string(b"sha512");
-        other.string(object).string(b"").string(b"");
-        let reply = agent.handle(&other.buf, &mut Session::default()).await;
+        let ask = |token: &[u8], namespace: &[u8]| {
+            let mut m = Writer::new();
+            m.byte(EXTENSION).string(GIT_SIGN_EXTENSION.as_bytes()).string(token).string(b"key").string(namespace);
+            m.string(b"sha512").string(object).string(b"").string(b"");
+            m.buf
+        };
+        let reply = agent.handle(&ask(b"tok", b"file"), &mut Session::default()).await;
         assert!(String::from_utf8_lossy(&reply).contains("namespace `git`"));
+        // Without the control token (anything that is not `reins` on this computer): refused.
+        for token in [&b""[..], b"tok2", b"to"] {
+            let reply = agent.handle(&ask(token, b"git"), &mut Session::default()).await;
+            assert!(String::from_utf8_lossy(&reply).contains("control token"), "{token:?}");
+        }
+        let untokened = Agent::new(Arc::clone(&agent.phone), &SshConfig::default(), Arc::default());
+        let reply = untokened.handle(&ask(b"", b"git"), &mut Session::default()).await;
+        assert!(String::from_utf8_lossy(&reply).contains("control token"));
     }
 
     #[test]
