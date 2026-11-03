@@ -94,8 +94,9 @@ pub use types::{
     PendingKind, QuickApproval, ReasonCode, ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{
-    ActivityConnection, ActivityCursor, ActivityDecider, ActivityFacets, ActivityField, ActivityHighlight, ActivityHit,
-    ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityExecution, ActivityFacets, ActivityField,
+    ActivityHighlight, ActivityHit, ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
+    ExecutionState,
 };
 pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,

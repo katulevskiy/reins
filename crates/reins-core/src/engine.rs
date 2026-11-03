@@ -1486,30 +1486,39 @@ impl Engine {
         Ok(())
     }
 
+    /// The newest `limit` rows, one per request: execution records are folded into their request's rows
+    /// (`store::audit_fold`), read from twice as many entries so that folding seldom leaves the list short.
     pub fn activity(&self, limit: u32) -> Result<Vec<ActivityEntry>, CoreError> {
+        let limit = limit.clamp(1, 500);
         let names = self.names();
-        Ok(self
-            .store
-            .activity(limit.clamp(1, 500))?
-            .iter()
-            .map(|r| {
-                let mut entry = views::activity_entry(r);
+        let records = self.store.activity(limit.saturating_mul(2))?;
+        Ok(crate::store::audit_fold::fold(records, unix_now())
+            .into_iter()
+            .take(limit as usize)
+            .map(|(r, execution)| {
+                let mut entry = views::activity_entry(&r);
                 names.entry(&mut entry);
                 entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
+                entry.execution = execution;
                 entry
             })
             .collect())
     }
 
     /// One entry by its id, however far back: `activity` reads only the newest, while the days and search reach the
-    /// whole history. `None` when this device has no such entry (pruned, or never logged here).
+    /// whole history. `None` when this device has no such entry (pruned, or never logged here). Its request's
+    /// execution is read from every entry of the request this device holds.
     pub fn activity_entry(&self, entry_id: i64) -> Result<Option<ActivityEntry>, CoreError> {
-        Ok(self.store.audit_entry(entry_id)?.map(|r| {
-            let mut entry = views::activity_entry(&r);
-            self.names().entry(&mut entry);
-            entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
-            entry
-        }))
+        let Some(r) = self.store.audit_entry(entry_id)? else {
+            return Ok(None);
+        };
+        let mut entry = views::activity_entry(&r);
+        self.names().entry(&mut entry);
+        entry.hold = self.hold_of(&entry, r.info.hold.as_deref());
+        if let Some(request) = crate::store::audit_fold::request_of(&r) {
+            entry.execution = self.store.executions(&[request], unix_now())?.remove(request).flatten();
+        }
+        Ok(Some(entry))
     }
 
     /// One page of the entries matching `query`, newest first, after `after` (see `store::audit_search`).
@@ -1519,7 +1528,7 @@ impl Engine {
         after: Option<crate::types::ActivityCursor>,
         limit: u32,
     ) -> Result<crate::types::ActivityPage, CoreError> {
-        let page = self.store.search_activity(query, after, limit)?;
+        let page = self.store.search_activity(query, after, limit, unix_now())?;
         let names = self.names();
         Ok(crate::types::ActivityPage {
             hits: page
@@ -1529,6 +1538,7 @@ impl Engine {
                     let mut entry = views::activity_entry(&f.record);
                     names.entry(&mut entry);
                     entry.hold = self.hold_of(&entry, f.record.info.hold.as_deref());
+                    entry.execution = f.execution;
                     crate::types::ActivityHit {
                         entry,
                         snippet: f.snippet,
@@ -1546,7 +1556,7 @@ impl Engine {
         &self,
         query: &crate::types::ActivityQuery,
     ) -> Result<Vec<crate::types::ActivityStamp>, CoreError> {
-        self.store.activity_stamps(query)
+        self.store.activity_stamps(query, unix_now())
     }
 
     /// The integrations, kinds and connections the Activity holds, for the filters.

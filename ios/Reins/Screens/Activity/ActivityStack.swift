@@ -10,7 +10,7 @@ enum ActivityText {
 
     /// An entry that went through (not denied, not failed) reads in the past. A held email ("held") has not gone yet,
     /// and "undone" and "not_sent" never went.
-    static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
+    static func done(_ entry: ActivityEntry) -> Bool { AskTense.of(entry) == .done }
 
     /// The kind label WaitingInbox shows on a batch card: "Gmail · Send" (set in mono capitals), from the core's provider
     /// and action.

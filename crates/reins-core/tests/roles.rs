@@ -17,7 +17,8 @@ use reins_core::permission_types::{
     PermissionScopeKind, PermissionScopeSelection,
 };
 use reins_core::{
-    CoreConfig, CoreError, EnrollProgress, GoogleTokenProvider, HandoverProgress, Notifier, PhoneRole, ReinsCore,
+    ActivityEntry, CoreConfig, CoreError, EnrollProgress, ExecutionState, GoogleTokenProvider, HandoverProgress,
+    Notifier, PhoneRole, ReinsCore,
 };
 use reins_proto::answer::{AnswerKind, SignedAnswer, answer_message};
 use reins_proto::canon::parse_sig;
@@ -3158,19 +3159,25 @@ async fn verified_account_and_temporary_permissions_stamp_actual_gmail_results_a
         } else {
             "account_permission"
         };
-        let entries = core.activity(100).await.unwrap();
-        for (id, outcome) in [
-            ("actor-send", "sent"),
-            ("actor-read", "released"),
-            ("actor-unknown", "unknown"),
-            ("actor-withheld", "succeeded_withheld"),
+        // One row per request: its execution records are folded into it, and read back as its evidence.
+        let rows = core.activity(100).await.unwrap();
+        let mut entries = rows.clone();
+        for record in rows.iter().flat_map(|row| row.execution.iter().flat_map(|e| e.records.clone())) {
+            entries.push(core.activity_entry(record).await.unwrap().unwrap());
+        }
+        for (id, outcome, state) in [
+            ("actor-send", "sent", ExecutionState::Done),
+            ("actor-read", "released", ExecutionState::Done),
+            ("actor-unknown", "unknown", ExecutionState::Unknown),
+            ("actor-withheld", "succeeded_withheld", ExecutionState::Withheld),
         ] {
-            let matching: Vec<_> = entries
-                .iter()
-                .filter(|entry| {
-                    engine.activity_authorization(entry.id).unwrap().is_some_and(|trace| trace.request_id == id)
-                })
-                .collect();
+            let of = |entry: &&ActivityEntry| {
+                engine.activity_authorization(entry.id).unwrap().is_some_and(|trace| trace.request_id == id)
+            };
+            let shown: Vec<_> = rows.iter().filter(of).collect();
+            assert!(shown.iter().all(|row| row.action != "execute"), "{id}: never a row of its own: {shown:?}");
+            assert!(shown.iter().all(|row| row.execution.as_ref().map(|e| e.state) == Some(state)), "{id}: {shown:?}");
+            let matching: Vec<_> = entries.iter().filter(of).collect();
             assert!(matching.iter().any(|entry| entry.outcome == "started"), "{id} needs a stamped attempt");
             assert!(
                 matching.iter().any(|entry| entry.action != "execute" && entry.outcome == outcome),

@@ -184,7 +184,7 @@ fun ActivityDetailScreen(
             onDone = onBack,
             record = ApprovalRecord(
                 header = {
-                    DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd), onHold, onHoldDue)
+                    DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry), label = entry.label, cwd = entry.request?.cwd), onHold, onHoldDue)
                 },
                 below = {
                   androidx.compose.runtime.CompositionLocalProvider(dev.reins.android.ui.settings.LocalRaisedGroups provides true) {
@@ -321,7 +321,7 @@ private fun EntryDock(correctable: Boolean, thanked: Boolean, busy: Boolean, err
 /** The glyph beside how an entry ended on its field: from its own outcome, never a tick for one that was refused. */
 internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
     entry.outcome == "denied" -> if (entry.decidedBy == "lockdown") Glyph.Lock else Glyph.CircleClose
-    dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done -> Glyph.CircleCheck
+    dev.reins.android.ui.common.entryTense(entry) == dev.reins.android.ui.common.Tense.Done -> Glyph.CircleCheck
     else -> Glyph.CircleAlert
 }
 
@@ -476,9 +476,9 @@ private fun OutcomeLine(entry: ActivityEntry) {
         Outcome.Auto, Outcome.Grant, Outcome.Permission -> c.violet
         Outcome.Overnight -> c.kindNight
         Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
-        Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld, Outcome.NotSent -> c.warning
+        Outcome.Failed, Outcome.Lockdown, Outcome.Unknown, Outcome.Withheld, Outcome.NotSent -> c.warning
         Outcome.Held -> c.violet
-        Outcome.Approved, Outcome.Undone -> c.ink2
+        Outcome.Approved, Outcome.Undone, Outcome.Pending -> c.ink2
     }
     // Activity 06: how it ended as a pill in its colour, with who decided as its mark.
     val glyph = when (entry.decidedBy) {
@@ -513,7 +513,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
         if (info.messages.isNotEmpty()) {
             val noun = if (entry.op.isNotEmpty()) "Items" else "Emails"
             ValueRow(
-                if (denied) "$noun not shared" else if (dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done) "$noun shared" else "$noun requested",
+                if (denied) "$noun not shared" else if (dev.reins.android.ui.common.entryTense(entry) == dev.reins.android.ui.common.Tense.Done) "$noun shared" else "$noun requested",
                 Modifier.testTag("emailsShared"),
                 value = info.messages.size.toString(),
                 open = messagesOpen,
@@ -522,7 +522,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
         }
         if (info.accounts.isNotEmpty()) {
             ValueRow(
-                if (denied) "Accounts not shared" else if (dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done) "Accounts shared" else "Accounts requested",
+                if (denied) "Accounts not shared" else if (dev.reins.android.ui.common.entryTense(entry) == dev.reins.android.ui.common.Tense.Done) "Accounts shared" else "Accounts requested",
                 Modifier.testTag("accountsShared"),
                 value = info.accounts.size.toString(),
                 open = accountsOpen,
@@ -596,7 +596,7 @@ private fun DecisionDetails(
     val note = entry.autopilot
     if (note != null && (note.reason.isNotBlank() || note.neighbours.isNotEmpty() || note.pApprove > 0f || note.pDeny > 0f)) {
         val title = when {
-            entry.outcome in setOf("started", "unknown", "succeeded_withheld", "error") -> "What Autopilot thought"
+            entry.outcome == "error" || outcomeOf(entry) in setOf(Outcome.Pending, Outcome.Unknown, Outcome.Withheld) -> "What Autopilot thought"
             entry.decidedBy == "autopilot" && entry.outcome == "denied" -> "Why Autopilot denied it"
             entry.decidedBy == "autopilot" -> "Why Autopilot allowed it"
             else -> "What Autopilot thought"

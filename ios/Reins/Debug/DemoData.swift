@@ -720,12 +720,12 @@ enum DemoData {
         _ id: Int64, at: Int64, conn: String = "c1", label: String = "Claude", action: String, outcome: String, detail: String,
         grantId: String? = nil, service: String = "gmail", account: String? = "me@gmail.com", count: UInt32 = 1,
         info: ActivityInfo = info(), op: String = "", opTitle: String = "", decidedBy: String = "", autopilot: AutopilotNote? = nil,
-        requestLabel: RequestLabel? = nil, request: ActivityRequest? = nil
+        requestLabel: RequestLabel? = nil, request: ActivityRequest? = nil, execution: ActivityExecution? = nil
     ) -> ActivityEntry {
         ActivityEntry(
             id: id, at: at, connectionId: conn, connectionLabel: label, action: action, outcome: outcome, detail: detail,
             grantId: grantId, service: service, account: account, count: count, info: info, op: op, opTitle: opTitle,
-            decidedBy: decidedBy, autopilot: autopilot, label: requestLabel, request: request
+            decidedBy: decidedBy, autopilot: autopilot, label: requestLabel, request: request, execution: execution
         )
     }
 

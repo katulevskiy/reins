@@ -8,6 +8,7 @@
 
 mod accounts;
 mod audit;
+pub(crate) mod audit_fold;
 mod audit_push;
 mod audit_search;
 pub(crate) mod authorization;
@@ -42,6 +43,7 @@ pub use accounts::StoredAccount;
 pub use audit::{
     AUDIT_RETENTION, AuditAutopilot, AuditEmail, AuditInfo, AuditMessage, AuditRecord, AuditRequest, DETAIL_UNAVAILABLE,
 };
+pub use audit_fold::EXECUTION_UNKNOWN_AFTER;
 pub use audit_push::{AuditPush, SYNCED_PUSH_MAX, SYNCED_PUSH_TARGET, has_diffs};
 pub use audit_search::{MAX_INDEXED, PAGE_MAX, STAMPS_MAX};
 pub use authorization::AuthorizationState;

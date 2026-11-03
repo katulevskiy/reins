@@ -676,7 +676,12 @@ object TestData {
         service: String = "gmail",
         op: String = "",
         hold: dev.reins.core.ActivityHold? = null,
-    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, service, "me@gmail.com", count, info, op, opTitle, decidedBy, autopilot, label, request, hold)
+        execution: dev.reins.core.ActivityExecution? = null,
+    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, service, "me@gmail.com", count, info, op, opTitle, decidedBy, autopilot, label, request, hold, execution)
+
+    /** How a request's execution went, as the core folds its execution records into the row. */
+    fun execution(state: dev.reins.core.ExecutionState, records: List<Long> = emptyList(), startedAt: Long = 0) =
+        dev.reins.core.ActivityExecution(state, records, startedAt)
 
     /** What a request is, as the core labels it. */
     fun label(provider: String, action: String, lead: String, subject: String = "", code: Boolean = false, tail: String = "") =

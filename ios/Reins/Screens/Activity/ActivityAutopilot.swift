@@ -84,11 +84,11 @@ enum EntryOutcome {
     }
 
     static func text(_ entry: ActivityEntry) -> String {
-        switch entry.outcome {
-        case "started": return "Awaiting outcome"
-        case "unknown": return "Outcome unknown · do not repeat"
-        case "succeeded_withheld": return "Completed; response withheld · do not repeat"
-        case "error": return "Failed"
+        switch EntryText.mark(entry) {
+        case .pending: return "In progress"
+        case .unknown: return "Outcome unknown · do not repeat"
+        case .withheld: return "Completed; response withheld · do not repeat"
+        case .failed where entry.outcome == "error": return "Failed"
         default: break
         }
         // A held email has not gone (08 R10), whoever approved it.
@@ -124,7 +124,8 @@ enum EntryOutcome {
         case .lockdown: "lock.fill"
         case .grant, .permission: "key.horizontal"
         case .denied: "xmark"
-        case .failed, .started, .unknown, .withheld, .notSent: "exclamationmark.triangle"
+        case .failed, .unknown, .withheld, .notSent: "exclamationmark.triangle"
+        case .pending: "ellipsis"
         case .approved: "checkmark"
         case .held: "paperplane"
         case .undone: "arrow.uturn.backward"
@@ -136,17 +137,17 @@ enum EntryOutcome {
         case .auto, .grant, .permission: Palette.violet
         case .overnight: Palette.violet
         case .bypass, .denied: Palette.danger
-        case .lockdown, .failed, .started, .unknown, .withheld, .notSent: Palette.warning
+        case .lockdown, .failed, .unknown, .withheld, .notSent: Palette.warning
         case .approved: Palette.success
         case .held: Palette.violet
-        case .undone: Palette.ink2
+        case .undone, .pending: Palette.ink2
         }
     }
 
     /// The row that opens Autopilot's reasons: "Why Autopilot allowed it", "Why Autopilot denied it", "What Autopilot
     /// suggested".
     static func whyTitle(_ entry: ActivityEntry) -> String {
-        if ["started", "unknown", "succeeded_withheld", "error"].contains(entry.outcome) { return "What Autopilot suggested" }
+        if entry.outcome == "error" || [.pending, .unknown, .withheld].contains(EntryText.mark(entry)) { return "What Autopilot suggested" }
         return
         switch entry.decidedBy {
         case "autopilot", "overnight": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"

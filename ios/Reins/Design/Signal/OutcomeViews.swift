@@ -11,6 +11,8 @@ enum Outcome: Equatable {
     /// A held email (08 R10): "Sending" while its hold runs, "Held" after; undone; not sent (too late, "Still send?").
     case held(word: String)
     case undone, notSent
+    /// Being carried out, with no result yet: a quiet mark, never a warning.
+    case pending
     case none
 
     /// What VoiceOver reads for it.
@@ -29,6 +31,7 @@ enum Outcome: Equatable {
         case let .held(word): word
         case .undone: "Undone; not sent"
         case .notSent: "Not sent"
+        case .pending: "In progress"
         case .none: ""
         }
     }
@@ -55,6 +58,7 @@ struct OutcomeMark: View {
             case let .held(word): Pill(word, tone: .violet, symbol: "paperplane")
             case .undone: Pill("Undone", tone: .neutral, symbol: "arrow.uturn.backward")
             case .notSent: Pill("Not sent", tone: .warning, glyph: .circleAlert)
+            case .pending: GlyphIcon(.more, size: 16).foregroundStyle(Palette.ink2)
             case .none: EmptyView()
             }
         }

@@ -157,7 +157,7 @@ fun OutcomeMark(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.Approved -> Icon(Icons.Rounded.CheckCircle, "Approved", modifier.size(19.dp), tint = c.success)
         Outcome.Denied -> Icon(Icons.Rounded.Cancel, "Denied", modifier.size(19.dp), tint = c.danger)
         Outcome.Failed -> Icon(Icons.Rounded.Warning, "Failed", modifier.size(18.dp), tint = c.warning)
-        Outcome.Started -> Marker(Icons.Rounded.Warning, "Awaiting outcome", c.warning, modifier.clearAndSetSemantics { contentDescription = "Attempted; awaiting outcome" })
+        Outcome.Pending -> Icon(dev.reins.android.design.Glyph.More.vector, "In progress", modifier.size(18.dp), tint = c.tertiary)
         Outcome.Unknown -> Marker(Icons.Rounded.Warning, "Outcome unknown", c.warning, modifier.clearAndSetSemantics { contentDescription = "Outcome unknown; do not repeat" })
         Outcome.Withheld -> Marker(Icons.Rounded.Warning, "Response withheld", c.warning, modifier.clearAndSetSemantics { contentDescription = "Completed; response withheld; do not repeat" })
         Outcome.Auto -> Marker(Icons.Rounded.Bolt, "Auto", c.accent, modifier)

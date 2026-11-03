@@ -47,7 +47,7 @@ fun daysOf(stamps: List<ActivityStamp>, zone: ZoneId = ZoneId.systemDefault()): 
 
 /** The entries (newest first) by local day, as [daysOf] counts stamps: until the core's stamps are read. */
 fun daysOfEntries(entries: List<ActivityEntry>, zone: ZoneId = ZoneId.systemDefault()): List<DayCount> =
-    countDays(entries.map { Triple(localDay(it.at, zone), outcomeKind(it.outcome), deciderKind(it.decidedBy)) })
+    countDays(entries.map { Triple(localDay(it.at, zone), outcomeKind(it), deciderKind(it.decidedBy)) })
 
 /** Each day's count: all, denied, failed, and what Autopilot decided (counted once, under ⚡, whatever it decided). */
 private fun countDays(items: List<Triple<Long, ActivityOutcome, ActivityDecider>>): List<DayCount> {
@@ -65,7 +65,13 @@ private fun countDays(items: List<Triple<Long, ActivityOutcome, ActivityDecider>
     return days.entries.map { (day, n) -> DayCount(day, n[0], n[1], n[2], n[3]) }.sortedByDescending { it.day }
 }
 
-/** An entry's outcome as the core's filters read it. */
+/** An entry's outcome as the core's filters read it: one whose execution is unknown needs attention, however it ended. */
+fun outcomeKind(entry: ActivityEntry): ActivityOutcome {
+    val kind = outcomeKind(entry.outcome)
+    return if (kind != ActivityOutcome.DENIED && entry.execution?.state == dev.reins.core.ExecutionState.UNKNOWN) ActivityOutcome.FAILED else kind
+}
+
+/** An outcome as the core's filters read it. */
 fun outcomeKind(outcome: String): ActivityOutcome = when (outcome) {
     // An undone send counts as denied, one not sent needs attention; a held one is approved (as the core groups them).
     "denied", "undone" -> ActivityOutcome.DENIED

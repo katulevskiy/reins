@@ -353,9 +353,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun uncertainExecutionOutcomes() {
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
-        core.activity = listOf("unknown", "succeeded_withheld", "started").mapIndexed { index, status ->
+        val unknown = TestData.execution(dev.reins.core.ExecutionState.UNKNOWN, listOf(9L))
+        val running = TestData.execution(dev.reins.core.ExecutionState.PENDING, listOf(3L))
+        core.activity = listOf("sent" to unknown, "succeeded_withheld" to null, "started" to running).mapIndexed { index, (status, execution) ->
             TestData.entry((index + 1).toLong(), "send", status, 1u, now - (index + 1) * 60,
-                decidedBy = "autopilot", grantId = "g1", label = TestData.label("gmail", "send", "Send an email to", "friend@example.com"))
+                decidedBy = "autopilot", grantId = "g1", label = TestData.label("gmail", "send", "Send an email to", "friend@example.com"),
+                execution = execution)
         }
         launch(); await("entry:1")
         shoot("activity-uncertain-outcomes")

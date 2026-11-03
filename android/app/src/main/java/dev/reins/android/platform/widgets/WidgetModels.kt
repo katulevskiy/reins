@@ -93,7 +93,7 @@ data class LatestWidgetModel(val rows: List<Row>) {
         val provider: String,
         val actionKey: String,
         val time: String,
-        /** True allowed, false refused, null neither (started, unknown). */
+        /** True allowed, false refused, null neither (in progress, unknown). */
         val allowed: Boolean?,
     )
 }
@@ -112,7 +112,7 @@ fun latestWidgetModel(activity: List<ActivityEntry>, nowSeconds: Long): LatestWi
                 allowed = when (outcomeOf(entry)) {
                     Outcome.Approved, Outcome.Auto, Outcome.Overnight, Outcome.Grant, Outcome.Permission, Outcome.Bypass, Outcome.Withheld, Outcome.Held -> true
                     Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Lockdown, Outcome.Failed, Outcome.Undone, Outcome.NotSent -> false
-                    Outcome.Started, Outcome.Unknown -> null
+                    Outcome.Pending, Outcome.Unknown -> null
                 },
             )
         },

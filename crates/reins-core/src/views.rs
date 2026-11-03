@@ -1457,6 +1457,7 @@ pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
             }
         },
         hold: None,
+        execution: None,
     }
 }
 

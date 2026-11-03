@@ -3,6 +3,8 @@ use crate::store::audit_push::tests::{push_call, summary};
 use crate::store::tests::{audit_record, open};
 use crate::store::{AuditEmail, AuditInfo, AuditMessage, AuditPush, AuditRequest};
 
+/// When the searches run: long after every entry here.
+const NOW: i64 = 2_000_000_000;
 const SHA: &str = "3f9c2d1e8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e";
 
 fn query(text: &str) -> ActivityQuery {
@@ -13,7 +15,7 @@ fn query(text: &str) -> ActivityQuery {
 }
 
 fn ids(store: &Store, q: &ActivityQuery) -> Vec<i64> {
-    store.search_activity(q, None, PAGE_MAX).unwrap().found.iter().map(|f| f.record.seq).collect()
+    store.search_activity(q, None, PAGE_MAX, NOW).unwrap().found.iter().map(|f| f.record.seq).collect()
 }
 
 fn parked(call: Value) -> ParkedRequest {
@@ -157,18 +159,18 @@ fn each_kind_of_field_is_found_with_where_it_matched() {
         ("create_issue", tool, Some(ActivityField::Request)),
     ];
     for (text, want, field) in cases {
-        let page = store.search_activity(&query(text), None, 50).unwrap();
+        let page = store.search_activity(&query(text), None, 50, NOW).unwrap();
         assert_eq!(page.found.iter().map(|f| f.record.seq).collect::<Vec<_>>(), [want], "{text}");
         let snippet = page.found[0].snippet.as_ref();
         assert_eq!(snippet.map(|s| s.field), field, "{text}");
         assert!(snippet.is_none_or(|s| !shown(s).1.is_empty()), "{text}: something set apart");
     }
     // A whole address is set apart as one piece; a URL argument of the tool is found too.
-    let page = store.search_activity(&query("billing@stripe.example"), None, 50).unwrap();
+    let page = store.search_activity(&query("billing@stripe.example"), None, 50, NOW).unwrap();
     assert_eq!(shown(page.found[0].snippet.as_ref().unwrap()).1, ["Stripe", "billing@stripe.example"]);
     assert_eq!(ids(&store, &query("linear.example")), [tool]);
     // The agent and the connection: on the row already, so no snippet.
-    let page = store.search_activity(&query("thinkpad"), None, 50).unwrap();
+    let page = store.search_activity(&query("thinkpad"), None, 50, NOW).unwrap();
     assert_eq!(page.found.len(), 3);
     assert!(page.found.iter().all(|f| f.snippet.is_none()));
     assert_eq!(ids(&store, &query("claude code")).len(), 2, "the tool call kept no agent");
@@ -267,7 +269,7 @@ fn filters_combine_with_each_other_and_with_words() {
         .is_empty()
     );
 
-    let stamps = store.activity_stamps(&ActivityQuery::default()).unwrap();
+    let stamps = store.activity_stamps(&ActivityQuery::default(), NOW).unwrap();
     assert_eq!(stamps.len(), 5);
     assert_eq!((stamps[1].outcome, stamps[1].decider), (ActivityOutcome::Failed, ActivityDecider::Autopilot));
     assert_eq!((stamps[4].outcome, stamps[4].decider), (ActivityOutcome::Denied, ActivityDecider::You));
@@ -290,7 +292,7 @@ fn pages_follow_each_other_without_gaps_or_repeats() {
     let mut after = None;
     let mut pages = 0;
     loop {
-        let page = store.search_activity(&query("report"), after, 50).unwrap();
+        let page = store.search_activity(&query("report"), after, 50, NOW).unwrap();
         assert_eq!(page.total, 120);
         pages += 1;
         seen.extend(page.found.iter().map(|f| (f.record.at, f.record.seq)));
@@ -306,8 +308,8 @@ fn pages_follow_each_other_without_gaps_or_repeats() {
     sorted.dedup();
     assert_eq!(seen, sorted, "newest first, each once");
     // A limit is bounded either way.
-    assert_eq!(store.search_activity(&query("report"), None, 0).unwrap().found.len(), 1);
-    assert_eq!(store.search_activity(&query("report"), None, 10_000).unwrap().found.len(), 120);
+    assert_eq!(store.search_activity(&query("report"), None, 0, NOW).unwrap().found.len(), 1);
+    assert_eq!(store.search_activity(&query("report"), None, 10_000, NOW).unwrap().found.len(), 120);
 }
 
 #[test]
@@ -323,7 +325,7 @@ fn hidden_characters_neither_hide_nor_fake_a_match() {
     assert_eq!(ids(&store, &query("se\u{200B}cure")), [seq]);
     assert_eq!(ids(&store, &query("\u{202E}visit")), [seq]);
     for text in ["pay", "pal", "moc", "secure", "login", "today"] {
-        let page = store.search_activity(&query(text), None, 10).unwrap();
+        let page = store.search_activity(&query(text), None, 10, NOW).unwrap();
         assert_eq!(page.found.len(), 1, "{text}");
         let snippet = page.found[0].snippet.as_ref().unwrap();
         let (whole, lit) = shown(snippet);
@@ -334,7 +336,7 @@ fn hidden_characters_neither_hide_nor_fake_a_match() {
         assert!(clean(body).contains(whole.trim_matches('…')), "{whole:?}");
     }
     // A query that is only hidden characters or punctuation searches nothing: everything is listed, nothing set apart.
-    let page = store.search_activity(&query("\u{200B}\u{202E} @@"), None, 10).unwrap();
+    let page = store.search_activity(&query("\u{200B}\u{202E} @@"), None, 10, NOW).unwrap();
     assert_eq!((page.found.len(), page.terms.len()), (1, 0));
     assert!(page.found[0].snippet.is_none());
     // FTS5 syntax in a query is only words.
@@ -373,8 +375,8 @@ fn the_index_follows_the_entries_and_is_never_persisted() {
     let sealed = std::fs::read(dir.path().join("reins.sealed")).unwrap();
     // Searching writes nothing: the data is unchanged, the sealed copy too.
     for _ in 0..3 {
-        store.search_activity(&query("marmalade"), None, 10).unwrap();
-        store.activity_stamps(&query("marmalade")).unwrap();
+        store.search_activity(&query("marmalade"), None, 10, NOW).unwrap();
+        store.activity_stamps(&query("marmalade"), NOW).unwrap();
     }
     assert_eq!(store.write_count(), writes);
     assert_eq!(std::fs::read(dir.path().join("reins.sealed")).unwrap(), sealed);
@@ -485,19 +487,19 @@ fn ten_thousand_entries_stay_quick() {
         tx.commit().unwrap();
     }
     let started = std::time::Instant::now();
-    let page = store.search_activity(&query("invoice"), None, 50).unwrap();
+    let page = store.search_activity(&query("invoice"), None, 50, NOW).unwrap();
     let built = started.elapsed();
     assert_eq!(page.total, 1_250);
     assert_eq!(page.found.len(), 50);
     let started = std::time::Instant::now();
     let mut after = page.next;
     for _ in 0..5 {
-        let page = store.search_activity(&query("lantern harbor"), after, 50).unwrap();
+        let page = store.search_activity(&query("lantern harbor"), after, 50, NOW).unwrap();
         after = page.next;
     }
-    let one = store.search_activity(&query("t9999"), None, 50).unwrap();
+    let one = store.search_activity(&query("t9999"), None, 50, NOW).unwrap();
     assert_eq!(one.found.len(), 1);
-    let stamps = store.activity_stamps(&ActivityQuery::default()).unwrap();
+    let stamps = store.activity_stamps(&ActivityQuery::default(), NOW).unwrap();
     assert_eq!(stamps.len(), 10_000);
     let searched = started.elapsed();
     eprintln!("10k entries: index built and first page in {built:?}; 7 more searches in {searched:?}");
@@ -526,4 +528,60 @@ fn ambiguous_and_withheld_execution_states_need_attention_and_are_not_approved()
         ..ActivityQuery::default()
     };
     assert_eq!(ids(&store, &approved).len(), 1);
+}
+
+/// Execution records are never rows of their own in search, its filters or the day counts: each folds into its
+/// request's row, which tells how the execution went, and one whose outcome is unknown needs attention.
+#[test]
+fn execution_records_fold_into_their_request_everywhere_search_reads() {
+    use crate::store::audit_fold::tests::{attempt, decision};
+    use crate::types::ExecutionState;
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let add = |r: AuditRecord| store.append_audit(&r).unwrap();
+    add(attempt("a", "started", 100));
+    let done = add(decision("a", "sent", 101));
+    add(attempt("b", "started", 200));
+    let ambiguous = add(decision("b", "released", 201));
+    add(attempt("b", "unknown", 202));
+    let lost = add(attempt("d", "started", 300));
+    let running = add(attempt("c", "started", NOW - 10));
+
+    assert_eq!(ids(&store, &ActivityQuery::default()), [running, lost, ambiguous, done], "one row per request");
+    let page = store.search_activity(&ActivityQuery::default(), None, 50, NOW).unwrap();
+    assert_eq!(page.total, 4);
+    let states: Vec<_> = page.found.iter().map(|f| f.execution.as_ref().map(|e| e.state)).collect();
+    assert_eq!(
+        states,
+        [
+            Some(ExecutionState::Pending),
+            Some(ExecutionState::Unknown),
+            Some(ExecutionState::Unknown),
+            Some(ExecutionState::Done)
+        ]
+    );
+    assert_eq!(page.found[2].execution.as_ref().unwrap().records, [ambiguous - 1, ambiguous + 1]);
+    let only = |outcome| ActivityQuery {
+        outcomes: vec![outcome],
+        ..ActivityQuery::default()
+    };
+    assert_eq!(ids(&store, &only(ActivityOutcome::Failed)), [running, lost, ambiguous]);
+    assert_eq!(ids(&store, &only(ActivityOutcome::Approved)), [done], "an unknown execution is not approved");
+    assert!(ids(&store, &only(ActivityOutcome::Denied)).is_empty());
+    // Five minutes on, a start with no result is unknown.
+    let later = store.search_activity(&ActivityQuery::default(), None, 1, NOW + 600).unwrap();
+    assert_eq!(later.found[0].execution.as_ref().map(|e| e.state), Some(ExecutionState::Unknown));
+    let stamps = store.activity_stamps(&ActivityQuery::default(), NOW).unwrap();
+    assert_eq!(stamps.iter().map(|s| s.id).collect::<Vec<_>>(), [running, lost, ambiguous, done]);
+    assert_eq!(
+        stamps.iter().map(|s| s.outcome).collect::<Vec<_>>(),
+        [ActivityOutcome::Failed, ActivityOutcome::Failed, ActivityOutcome::Failed, ActivityOutcome::Approved]
+    );
+    assert!(!store.activity_facets().unwrap().actions.iter().any(|a| a == "execute"));
+    // The log itself is as it was: every record is still there, and the executions read from it.
+    assert_eq!(store.activity(50).unwrap().len(), 7);
+    let executions = store.executions(&["a", "b", "zzz"], NOW).unwrap();
+    assert_eq!(executions["a"].as_ref().map(|e| e.state), Some(ExecutionState::Done));
+    assert_eq!(executions["b"].as_ref().map(|e| e.state), Some(ExecutionState::Unknown));
+    assert!(!executions.contains_key("zzz"));
 }

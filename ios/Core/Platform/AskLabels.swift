@@ -84,6 +84,9 @@ enum AskTense: Equatable {
 
     /// Done only when it was carried out; anything else says what was asked, never "ran" or "sent".
     static func of(outcome: String) -> AskTense { ["released", "sent", "granted"].contains(outcome) ? .done : .refused }
+
+    /// An entry's tense: one whose execution may or may not have happened says what was asked, too.
+    static func of(_ e: ActivityEntry) -> AskTense { e.execution?.state == .unknown ? .refused : of(outcome: e.outcome) }
 }
 
 enum AskLabels {
@@ -192,7 +195,7 @@ enum AskLabels {
 
     /// A decided entry, told as it ended.
     static func entry(_ e: ActivityEntry, field: FieldKind?, who: String? = nil) -> AskLine {
-        let tense = AskTense.of(outcome: e.outcome)
+        let tense = AskTense.of(e)
         if let label = e.label {
             let request = e.request
             return line(label, field: field, tense: tense, who: who, cwd: request.flatMap { $0.cwd.isEmpty ? nil : $0.cwd }, git: request?.git)

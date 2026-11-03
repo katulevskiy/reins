@@ -11,11 +11,40 @@ final class ActivityOutcomeSafetyTests: XCTestCase {
                 XCTAssertEqual(ActivityDays.stamp(entry).outcome, .failed)
                 XCTAssertFalse(EntryOutcome.text(entry).contains("Allowed"))
                 XCTAssertFalse([EntryText.Mark.approved, .auto, .grant, .permission].contains(EntryText.mark(entry)))
-                XCTAssertEqual(EntryOutcome.symbol(entry), "exclamationmark.triangle")
+                XCTAssertEqual(EntryOutcome.symbol(entry), status == "started" ? "ellipsis" : "exclamationmark.triangle")
                 XCTAssertEqual(EntryOutcome.whyTitle(entry), "What Autopilot suggested")
-                if status != "started" { XCTAssertTrue(EntryOutcome.text(entry).contains("do not repeat")) }
+                if status == "started" {
+                    XCTAssertEqual(EntryOutcome.text(entry), "In progress")
+                } else {
+                    XCTAssertTrue(EntryOutcome.text(entry).contains("do not repeat"))
+                }
             }
         }
+    }
+    func testAFoldedExecutionTellsOnItsDecisionRowOnlyWhenSomethingIsWrong() {
+        func decided(_ state: ExecutionState) -> ActivityEntry {
+            DemoData.entry(
+                1, at: 0, action: "write", outcome: "sent", detail: "", service: "desktop", op: "ssh", decidedBy: "bypass",
+                execution: ActivityExecution(state: state, records: [0], startedAt: 0)
+            )
+        }
+        XCTAssertEqual(EntryText.mark(decided(.done)), .bypass, "fine: no extra tag")
+        XCTAssertEqual(EntryOutcome.text(decided(.done)), "Allowed during a bypass")
+        XCTAssertTrue(ActivityText.done(decided(.done)))
+        XCTAssertEqual(ActivityDays.stamp(decided(.done)).outcome, .approved)
+        let unknown = decided(.unknown)
+        XCTAssertEqual(EntryText.mark(unknown), .unknown)
+        XCTAssertEqual(EntryOutcome.text(unknown), "Outcome unknown · do not repeat")
+        XCTAssertEqual(ActivityDays.stamp(unknown).outcome, .failed)
+        XCTAssertFalse(ActivityText.done(unknown), "never says it ran")
+        XCTAssertEqual(EntryText.mark(decided(.withheld)), .withheld)
+        XCTAssertEqual(EntryText.mark(decided(.pending)), .bypass)
+        let running = DemoData.entry(
+            2, at: 0, action: "execute", outcome: "started", detail: "",
+            execution: ActivityExecution(state: .pending, records: [2], startedAt: 0)
+        )
+        XCTAssertEqual(EntryRowText.outcome(running), .pending)
+        XCTAssertEqual(EntryMark.spoken(.pending), "In progress")
     }
     func testExplicitPermissionsHaveTheirOwnAttributionWithoutLearnedConfidence() {
         for (actor, name) in [("account_permission", "account permission"), ("temporary_permission", "temporary permission")] {
