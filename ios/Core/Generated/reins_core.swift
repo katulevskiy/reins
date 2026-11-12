@@ -3418,6 +3418,14 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func enrollView(id: String) async throws  -> EnrollView
     
     /**
+     * Exports the decision history kept on this device as a file's contents (nothing is sent anywhere): every entry
+     * matching `query` (`None`: all of them), newest first, with no page limit. Metadata only: no message or email
+     * bodies, subjects, queries or full requests (see `activity_export`). Reads and formats thousands of entries, so
+     * call it off the main thread (like every method here); the app saves `contents` under `file_name`.
+     */
+    func exportActivity(format: ActivityExportFormat, query: ActivityQuery?) async throws  -> ActivityExport
+    
+    /**
      * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
      */
     func extendGrant(grantId: String, durationSecs: UInt64) async throws 
@@ -5795,6 +5803,28 @@ open func enrollView(id: String)async throws  -> EnrollView  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeEnrollView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Exports the decision history kept on this device as a file's contents (nothing is sent anywhere): every entry
+     * matching `query` (`None`: all of them), newest first, with no page limit. Metadata only: no message or email
+     * bodies, subjects, queries or full requests (see `activity_export`). Reads and formats thousands of entries, so
+     * call it off the main thread (like every method here); the app saves `contents` under `file_name`.
+     */
+open func exportActivity(format: ActivityExportFormat, query: ActivityQuery?)async throws  -> ActivityExport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_export_activity(
+                        self.uniffiCloneHandle(),FfiConverterTypeActivityExportFormat_lower(format),FfiConverterOptionTypeActivityQuery.lower(query)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeActivityExport_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -10132,6 +10162,95 @@ public func FfiConverterTypeActivityExecution_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeActivityExecution_lower(_ value: ActivityExecution) -> RustBuffer {
     return FfiConverterTypeActivityExecution.lower(value)
+}
+
+
+/**
+ * An exported decision history, ready to be saved as a file by the app.
+ */
+public struct ActivityExport: Equatable, Hashable {
+    /**
+     * A suggested file name, `reins-decisions-YYYY-MM-DD.csv` / `.json` (the date in UTC).
+     */
+    public var fileName: String
+    /**
+     * `text/csv` or `application/json`.
+     */
+    public var mimeType: String
+    /**
+     * The whole file, UTF-8 text.
+     */
+    public var contents: String
+    /**
+     * How many entries it holds.
+     */
+    public var entries: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A suggested file name, `reins-decisions-YYYY-MM-DD.csv` / `.json` (the date in UTC).
+         */fileName: String, 
+        /**
+         * `text/csv` or `application/json`.
+         */mimeType: String, 
+        /**
+         * The whole file, UTF-8 text.
+         */contents: String, 
+        /**
+         * How many entries it holds.
+         */entries: UInt32) {
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.contents = contents
+        self.entries = entries
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityExport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityExport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityExport {
+        return
+            try ActivityExport(
+                fileName: FfiConverterString.read(from: &buf), 
+                mimeType: FfiConverterString.read(from: &buf), 
+                contents: FfiConverterString.read(from: &buf), 
+                entries: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityExport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fileName, into: &buf)
+        FfiConverterString.write(value.mimeType, into: &buf)
+        FfiConverterString.write(value.contents, into: &buf)
+        FfiConverterUInt32.write(value.entries, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExport_lift(_ buf: RustBuffer) throws -> ActivityExport {
+    return try FfiConverterTypeActivityExport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExport_lower(_ value: ActivityExport) -> RustBuffer {
+    return FfiConverterTypeActivityExport.lower(value)
 }
 
 
@@ -25542,6 +25661,81 @@ public func FfiConverterTypeActivityDecider_lower(_ value: ActivityDecider) -> R
 
 
 /**
+ * The file format of an exported decision history (`export_activity`).
+ */
+
+public enum ActivityExportFormat: Equatable, Hashable {
+    
+    /**
+     * RFC 4180 CSV for spreadsheets: a header row, one row per entry.
+     */
+    case csv
+    /**
+     * Pretty-printed JSON, versioned (`format: "reins.decision-history"`).
+     */
+    case json
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityExportFormat: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityExportFormat: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityExportFormat
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityExportFormat {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .csv
+        
+        case 2: return .json
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityExportFormat, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .csv:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .json:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExportFormat_lift(_ buf: RustBuffer) throws -> ActivityExportFormat {
+    return try FfiConverterTypeActivityExportFormat.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityExportFormat_lower(_ value: ActivityExportFormat) -> RustBuffer {
+    return FfiConverterTypeActivityExportFormat.lower(value)
+}
+
+
+
+/**
  * What part of an entry a snippet comes from.
  */
 
@@ -30822,6 +31016,30 @@ fileprivate struct FfiConverterOptionTypeActivityPush: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityQuery: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityQuery?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityQuery.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityQuery.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeActivityRequest: FfiConverterRustBuffer {
     typealias SwiftType = ActivityRequest?
 
@@ -34451,6 +34669,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_enroll_view() != 13516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_export_activity() != 15687) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_extend_grant() != 25710) {

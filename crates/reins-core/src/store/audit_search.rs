@@ -467,7 +467,7 @@ pub(crate) fn snippet(fields: &[(ActivityField, String)], terms: &[String]) -> O
 }
 
 /// How an entry ended, as the filters group it; `doubt` when its request's execution is unknown ([`doubt`]).
-fn outcome_of(outcome: &str, doubt: bool) -> ActivityOutcome {
+pub(crate) fn outcome_of(outcome: &str, doubt: bool) -> ActivityOutcome {
     match outcome {
         "denied" | "undone" => ActivityOutcome::Denied,
         o if doubt || FAILED.contains(&o) => ActivityOutcome::Failed,

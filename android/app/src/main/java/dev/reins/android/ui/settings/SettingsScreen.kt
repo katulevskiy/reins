@@ -5,6 +5,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -82,6 +84,7 @@ import dev.reins.android.ui.common.ReinsLinks
 import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.signin.AccountRules
+import dev.reins.core.ActivityExportFormat
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ConnectionView
 
@@ -139,6 +142,25 @@ fun SettingsScreen(
     val devices by viewModel.devices.collectAsStateWithLifecycle()
     val appearance by Appearance.state(context)
     var confirmSignOut by remember { mutableStateOf(false) }
+    val exportChoice by viewModel.exportChoice.collectAsStateWithLifecycle()
+    val pendingExport by viewModel.pendingExport.collectAsStateWithLifecycle()
+    // A save picker's type is fixed when it is made: one for each format.
+    val saveCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri == null) viewModel.exportCancelled() else viewModel.exportTo(uri, context.contentResolver)
+    }
+    val saveJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) viewModel.exportCancelled() else viewModel.exportTo(uri, context.contentResolver)
+    }
+    LaunchedEffect(pendingExport) {
+        val held = pendingExport ?: return@LaunchedEffect
+        if (held.launched) return@LaunchedEffect
+        viewModel.exportPickerLaunched()
+        try {
+            (if (held.format == ActivityExportFormat.CSV) saveCsv else saveJson).launch(held.export.fileName)
+        } catch (_: android.content.ActivityNotFoundException) {
+            viewModel.exportCancelled() // no document provider on this phone: nothing to save to
+        }
+    }
     LaunchedEffect(session) {
         viewModel.checkRecoveryCode()
         viewModel.countDevices()
@@ -184,10 +206,20 @@ fun SettingsScreen(
                         Glyph.Photo,
                         Modifier.testTag("openWallpaper"),
                         value = wall.image.label,
-                        divider = false,
+                        divider = signedIn != null,
                         leading = { WallpaperThumb(wall, dark, Modifier.size(32.dp), radius = 9.dp) },
                         onClick = onWallpaper,
                     )
+                    if (signedIn != null) {
+                        SetRow(
+                            ActivityExportText.ROW_TITLE,
+                            Glyph.Download,
+                            Modifier.testTag("exportDecisionsRow"),
+                            subtitle = ActivityExportText.ROW_SUBTITLE,
+                            divider = false,
+                            onClick = viewModel::openExportChoice,
+                        )
+                    }
                 }
                 if (signedIn != null && hasRecoveryCode) {
                     SettingsGroup(header = "Security", glyph = Glyph.Shield) {
@@ -227,6 +259,21 @@ fun SettingsScreen(
                 }
             }
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
+        }
+        BottomSheet(exportChoice, ActivityExportText.ROW_TITLE, onClose = viewModel::closeExportChoice, tag = "exportSheet") {
+            Column(Modifier.padding(start = 22.dp, end = 22.dp, top = 2.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RText(ActivityExportText.SHEET_BODY, RType.body, c.ink2, Modifier.testTag("exportBody"))
+                Spacer(Modifier.height(4.dp))
+                SignalButton(
+                    ActivityExportText.CSV_LABEL,
+                    Modifier.fillMaxWidth().testTag("exportCsv"),
+                ) { viewModel.export(ActivityExportFormat.CSV, authenticator) }
+                SignalButton(
+                    ActivityExportText.JSON_LABEL,
+                    Modifier.fillMaxWidth().testTag("exportJson"),
+                ) { viewModel.export(ActivityExportFormat.JSON, authenticator) }
+                SignalButton("Cancel", Modifier.fillMaxWidth().testTag("exportCancel"), style = ButtonStyle.Outline, onClick = viewModel::closeExportChoice)
+            }
         }
     }
 
@@ -273,6 +320,8 @@ fun SetRow(
     glyph: Glyph,
     modifier: Modifier = Modifier,
     value: String? = null,
+    /** A second line under the title, in ink-2. */
+    subtitle: String? = null,
     destructive: Boolean = false,
     chevron: Boolean = true,
     divider: Boolean = true,
@@ -298,7 +347,14 @@ fun SetRow(
                 contentAlignment = Alignment.Center,
             ) { GlyphIcon(glyph, if (destructive) c.danger else c.ink2, size = 18.dp) }
         }
-        RText(title, RType.row, if (destructive) c.danger else c.ink, Modifier.weight(1f), maxLines = 1)
+        if (subtitle == null) {
+            RText(title, RType.row, if (destructive) c.danger else c.ink, Modifier.weight(1f), maxLines = 1)
+        } else {
+            Column(Modifier.weight(1f)) {
+                RText(title, RType.row, c.ink, maxLines = 1)
+                RText(subtitle, RType.meta, c.inkMeta, maxLines = 2)
+            }
+        }
         value?.let { RText(it, RType.sans(15f), c.ink2, maxLines = 1) }
         if (chevron) GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
     }

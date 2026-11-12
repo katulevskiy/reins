@@ -620,3 +620,29 @@ fn search_closes_an_attempt_only_by_its_own_result_and_never_across_attempts() {
         [ActivityOutcome::Failed, ActivityOutcome::Approved, ActivityOutcome::Failed]
     );
 }
+
+#[test]
+fn paging_by_cursor_reaches_every_entry_beyond_one_page() {
+    // What `export_activity` does: page after page until `next` is empty, with no cap on the total.
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let total = i64::from(PAGE_MAX) * 2 + 50;
+    for at in 1..=total {
+        store
+            .append_audit(&AuditRecord {
+                at,
+                ..audit_record()
+            })
+            .unwrap();
+    }
+    let (mut seen, mut after) = (Vec::new(), None);
+    loop {
+        let page = store.search_activity(&ActivityQuery::default(), after, PAGE_MAX, NOW).unwrap();
+        seen.extend(page.found.iter().map(|f| f.record.at));
+        match page.next {
+            Some(next) => after = Some(next),
+            None => break,
+        }
+    }
+    assert_eq!(seen, (1..=total).rev().collect::<Vec<_>>(), "all of them, newest first");
+}

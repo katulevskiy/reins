@@ -252,6 +252,22 @@ class FakeCore : ReinsCoreInterface {
             dev.reins.core.ActivityStamp(it.id, it.at, dev.reins.android.ui.activity.outcomeKind(it.outcome), dev.reins.android.ui.activity.deciderKind(it.decidedBy))
         }
 
+    /** Every `exportActivity` call, in order: the format and the query it got. */
+    val exportRequests = CopyOnWriteArrayList<Pair<ActivityExportFormat, dev.reins.core.ActivityQuery?>>()
+
+    /** What `exportActivity` throws instead of exporting, when set. */
+    @Volatile var exportError: Throwable? = null
+
+    override suspend fun exportActivity(format: ActivityExportFormat, query: dev.reins.core.ActivityQuery?): ActivityExport {
+        exportRequests += format to query
+        exportError?.let { throw it }
+        // No query: the whole history, newest first (and not counted among the searches the Activity list made).
+        val all = if (query == null) activity.sortedByDescending { it.at } else matching(query).sortedByDescending { it.at }
+        val csv = format == ActivityExportFormat.CSV
+        val body = if (csv) all.joinToString("") { "${it.id},${it.service},${it.action}\r\n" } else all.joinToString(",", "[", "]") { "${it.id}" }
+        return ActivityExport(if (csv) "reins-decisions.csv" else "reins-decisions.json", if (csv) "text/csv" else "application/json", (if (csv) "id,service,action\r\n" else "") + body, all.size.toUInt())
+    }
+
     override suspend fun activityFacets(): dev.reins.core.ActivityFacets {
         val newest = activity.sortedByDescending { it.at }
         return dev.reins.core.ActivityFacets(

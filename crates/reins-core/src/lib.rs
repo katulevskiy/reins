@@ -12,6 +12,7 @@ uniffi::setup_scaffolding!();
 pub mod account;
 mod account_runtime;
 mod account_sync;
+pub mod activity_export;
 pub mod api;
 pub mod approval;
 pub mod authorization;
@@ -94,9 +95,9 @@ pub use types::{
     PendingKind, QuickApproval, ReasonCode, ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{
-    ActivityConnection, ActivityCursor, ActivityDecider, ActivityExecution, ActivityFacets, ActivityField,
-    ActivityHighlight, ActivityHit, ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
-    ExecutionState,
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityExecution, ActivityExport, ActivityExportFormat,
+    ActivityFacets, ActivityField, ActivityHighlight, ActivityHit, ActivityOutcome, ActivityPage, ActivityQuery,
+    ActivitySnippet, ActivityStamp, ExecutionState,
 };
 pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,

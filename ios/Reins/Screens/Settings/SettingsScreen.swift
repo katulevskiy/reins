@@ -3,8 +3,8 @@ import UIKit
 
 /// The Settings tab (the Settings board, 01), a standard page like the other tab roots: the title, who is signed in
 /// (whether this phone approves and is alerted, with the one fix when something is off; Copy puts the server address on
-/// the clipboard), this phone (Devices, Sounds, Appearance, Wallpaper), security, the tour and the version, then Sign
-/// out and Delete account. What is connected lives on Connections, Autopilot on Trust.
+/// the clipboard), this phone (Devices, Sounds, Appearance, Wallpaper), security, data (export), the tour and the version,
+/// then Sign out and Delete account. What is connected lives on Connections, Autopilot on Trust.
 ///
 /// Each group is its own small view, so each redraws only what changed.
 struct SettingsScreen: View {
@@ -21,6 +21,7 @@ struct SettingsScreen: View {
                 PagesGroup()
                 CirclesGroup()
                 SecurityGroup()
+                DataGroup()
                 AboutGroup()
                 SessionGroup()
                 FooterSection()
@@ -414,6 +415,22 @@ private struct VaultPasskeysRow: View {
             spokenValue: SettingsText.passkeysSummary(count)
         ) { model.show(.vaultPasskeys) }
         .task { count = try? await model.core.vaultPasskeys().count }
+    }
+}
+
+// MARK: Data
+
+/// Export of this phone's decision history (the Activity list) as a file.
+private struct DataGroup: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if case .signedIn = model.session {
+            SectionHeader("Data", glyph: .database)
+            RaisedGroup {
+                ExportDecisionHistoryRow()
+            }
+        }
     }
 }
 
