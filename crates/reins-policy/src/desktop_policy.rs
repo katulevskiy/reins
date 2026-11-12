@@ -585,6 +585,27 @@ pub fn clamp_scratch(
     out
 }
 
+/// A computer's own `[auto]` on top of the phone's `snapshot`, stricter only: a local fact counts where the phone has
+/// one for the same owner, repository or host and the local zone is stricter; a local matrix that isn't the default
+/// tightens cell by cell. Used by the computer with a fresh snapshot ([`effective`]) and by the phone when it decides
+/// a computer's hook question for it (`crate::desktop_reading`).
+pub fn tighten_with_local(snapshot: &mut Snapshot, facts: &Facts, matrix: &Matrix) {
+    for kind in [FactKind::Owner, FactKind::Repo, FactKind::Host] {
+        let mine = fact_map(facts, kind).clone();
+        let signed = fact_map_mut(&mut snapshot.facts, kind);
+        for (k, z) in mine {
+            if let Some(s) = signed.get_mut(&k)
+                && z > *s
+            {
+                *s = z;
+            }
+        }
+    }
+    if *matrix != Matrix::default() {
+        snapshot.matrix = snapshot.matrix.stricter(matrix);
+    }
+}
+
 /// What this computer decides with at `now`: the snapshot (already checked), the tightenings newer than it (already
 /// checked), the local configuration (stricter only) and the uses of budgeted tasks spent here.
 #[must_use]
@@ -612,21 +633,7 @@ pub fn effective(
         },
     };
     if let Some(p) = policy {
-        // Local facts: only where the signed fact exists and the local zone is stricter.
-        for kind in [FactKind::Owner, FactKind::Repo, FactKind::Host] {
-            let mine = fact_map(local.facts, kind).clone();
-            let signed = fact_map_mut(&mut snapshot.facts, kind);
-            for (k, z) in mine {
-                if let Some(s) = signed.get_mut(&k)
-                    && z > *s
-                {
-                    *s = z;
-                }
-            }
-        }
-        if *local.matrix != Matrix::default() {
-            snapshot.matrix = snapshot.matrix.stricter(local.matrix);
-        }
+        tighten_with_local(&mut snapshot, local.facts, local.matrix);
         snapshot.facts.github_ids.clone_from(&p.github_ids);
     }
     for t in &live {

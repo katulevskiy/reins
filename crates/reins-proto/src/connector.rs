@@ -37,8 +37,8 @@ pub const MAX_ACCOUNT_LEN: usize = 100;
 mod desktop;
 pub mod tasks;
 pub use desktop::{
-    AUTOPILOT_CORRECT_OP, AUTOPILOT_MODE_OP, AUTOPILOT_MODES, MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS,
-    SESSION_END_OP, SESSION_OP, TOKEN_HOSTS, TOKEN_STORE_OP,
+    ASK_READING_MAX, AUTOPILOT_CORRECT_OP, AUTOPILOT_MODE_OP, AUTOPILOT_MODES, MAX_SESSION_ITEMS, MAX_SESSION_SECS,
+    MIN_SESSION_SECS, SESSION_END_OP, SESSION_OP, TOKEN_HOSTS, TOKEN_STORE_OP,
 };
 mod github;
 pub mod gmail;
@@ -1022,6 +1022,18 @@ mod tests {
         assert!(ask.parse(&long).unwrap_err().contains("characters"));
         let too_much = json!({"question": "q", "detail": "é".repeat(8_001), "client_key": key, "nonce": "n"});
         assert!(ask.parse(&too_much).unwrap_err().contains("8000 characters"));
+    }
+
+    #[test]
+    fn a_hooks_reading_is_optional_and_bounded() {
+        let ask = spec_for_tool("desktop_ask").unwrap();
+        let key = "k".repeat(43);
+        let with = |reading: &str| json!({"question": "q", "reading": reading, "client_key": key, "nonce": "n"});
+        let (call, _) = ask.parse(&with("{\"v\":1}")).unwrap();
+        assert_eq!(call.str_arg("reading"), Some("{\"v\":1}"), "relayed as it was sent");
+        ask.parse(&with(&"x".repeat(ASK_READING_MAX))).unwrap();
+        assert!(ask.parse(&with(&"x".repeat(ASK_READING_MAX + 1))).is_err());
+        assert!(ask.parse(&json!({"question": "q", "reading": {"v": 1}, "client_key": key, "nonce": "n"})).is_err());
     }
 
     #[test]
