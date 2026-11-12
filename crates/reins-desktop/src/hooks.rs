@@ -944,9 +944,11 @@ pub async fn run(
         (Some(s), Harness::ClaudeCode, Event::PreToolUse | Event::UserPromptSubmit | Event::Stop) => news(paths, s),
         _ => Vec::new(),
     };
-    // For a push, what the repository says of its branch (read from its files, never by running git).
+    // For a command that names git (or a push), what the repository says of its branch and its default branch (read
+    // from its files, never by running git): the engine needs the default for `git branch -D` as for a push. A
+    // question still reports them only for a push to origin (`question_text`).
     let head = match (&call.action, &call.cwd) {
-        (Action::Command(c), Some(cwd)) if c.contains("push") => git_head(Path::new(cwd)),
+        (Action::Command(c), Some(cwd)) if c.contains("push") || c.contains("git") => git_head(Path::new(cwd)),
         _ => None,
     };
     let kind = match call.action {
