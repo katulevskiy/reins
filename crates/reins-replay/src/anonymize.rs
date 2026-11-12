@@ -402,6 +402,7 @@ pub fn import_with(
             repo: None,
             push: None,
             branch: None,
+            no_default_branch: false,
             tool: None,
             args: None,
             original: Original {
