@@ -15,6 +15,7 @@ pub mod control;
 pub mod daemon;
 pub mod doctor;
 pub mod folders;
+pub mod folders_cli;
 pub mod git;
 pub mod guard;
 pub mod harden;

@@ -189,6 +189,16 @@ enum Cmd {
         #[command(subcommand)]
         action: NetCmd,
     },
+    #[command(display_order = 17)]
+    /// The folders your AI tools work in here, and the scratch folders where deleting is not asked about.
+    ///
+    /// `reins folders` lists them and what Reins suggests; `reins folders add <path>` adds a work folder,
+    /// `reins folders temp <path>` a temp folder of your own (`/tmp` and the other system temp folders are always
+    /// scratch).
+    Folders {
+        #[command(subcommand)]
+        action: Option<reins_desktop::folders_cli::FoldersCmd>,
+    },
     #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
@@ -693,6 +703,14 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             action,
         } => {
             for line in reins_desktop::secrets_cmd::run(&action, &paths, &config).await? {
+                out!("{line}");
+            }
+            Ok(())
+        }
+        Cmd::Folders {
+            action,
+        } => {
+            for line in reins_desktop::folders_cli::run(action.as_ref(), &paths, &config)? {
                 out!("{line}");
             }
             Ok(())
