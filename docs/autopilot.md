@@ -198,6 +198,41 @@ safety.
 
 Autopilot approves **once**. It never creates a standing permission and never ticks "remember".
 
+## Commands on your computers
+
+A computer decides most of an AI's commands itself, with a copy of your Auto rules that your phone signs for it
+([security model](security-model.md)). What it reads of a command, and where the command works, decides whether you
+are asked.
+
+- **Work folders and scratch folders.** Folders under a work folder (`~/Documents/dev`, `~/src`, `~/code` and
+  `~/projects` to start with) are your projects. In a **scratch folder** deleting loses nothing, so it is not asked
+  about: `/tmp`, `/var/tmp`, `/dev/shm` and `~/.cache` always are, and each computer can have its own, such as a temp
+  folder inside your projects:
+
+  ```
+  reins folders temp ~/Documents/dev/tmp    # a scratch folder of this computer
+  reins folders                             # what counts, what waits for your phone, what Reins suggests
+  ```
+
+  A folder inside a work folder your phone already signed counts at once. Any other shows as a card on the phone
+  (and under Settings › Computers › the computer › Folders) and counts once you confirm it there.
+- **Folders Reins suggests.** When you approved deletes of several different folders directly under one folder, that
+  computer suggests the folder as scratch, and its own `$TMPDIR` when that is not a standard one. A suggestion is a
+  card like any other folder's: nothing counts until you confirm it.
+- **Deleting a local branch** (`git branch -D feature/x`) is a change you can take back in your own repository, so
+  Auto takes it; a long-lived name (`main`, `master`, `release/…`), the repository's default branch, a pattern, or a
+  name that is not in the command still asks.
+- **When a computer's copy of your rules has run out.** That copy is good for ten minutes, and your phone renews it
+  only while it is awake. So after a pause, the first command comes to the phone, together with what the computer
+  read of it: what the command changes, and where. In Auto and Overnight, once Auto's setup is done, your matrix
+  decides it as that computer would have. What your rules allow is approved at once, without Autopilot's model and
+  without asking you, and Activity says "decided for Laptop, as its own copy of your rules had run out". What your
+  matrix asks about, you are asked about, with the matrix's reason. The phone never takes the computer's word for
+  folders or for how serious a command is: it places every path against the folders you confirmed for that computer
+  and works the level out itself. Reins's own files, secrets and payments are still always asked, a computer paired
+  less than ten minutes ago still waits, and Auto's rate limit still holds. In Manual, in Lockdown and before Auto's
+  setup nothing changes.
+
 ## Profiles
 
 A profile is a separate memory, adapter and set of unlocked kinds. **Personal** and **Work** are created on first use.

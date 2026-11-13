@@ -83,6 +83,12 @@ pub struct Case {
     /// The branch checked out where a command ran, when the import could tell (its worktree's reflog).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The repository the command ran in gives no default branch: it has no `refs/remotes/origin/HEAD` (made with
+    /// `git init`), or the desktop's strict reader refuses its git configuration (the `insteadOf` rules `reins git
+    /// setup` writes are enough). The desktop hook reads the default for every command that names git and hands the
+    /// engine what it found; a case replays that as the context's `default_branch`, or as none when this is set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_default_branch: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

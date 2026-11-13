@@ -36,6 +36,40 @@ pub fn is_default(branch: &str, known_default: Option<&str>) -> bool {
         || b.starts_with("release-")
 }
 
+/// Whether a branch that `git branch` deletes, renames or moves **in the local repository** is the default one.
+///
+/// Unlike [`default_of`], a name that is not a long-lived one is not the default when the repository's default is not
+/// known (no `refs/remotes/origin/HEAD`: a repository made with `git init`, or a configuration the hook's strict reader
+/// refuses, such as the `insteadOf` rules `reins git setup` writes). Why this is safe for a local ref and for nothing
+/// else:
+///
+/// - `git branch -D` removes one local ref and its reflog. No commit goes with it: each stays in the repository until
+///   `git gc` prunes it (by git's default, two weeks at the least), in `HEAD`'s reflog when it was ever checked out,
+///   and on the remote when it was pushed. Git refuses the branch checked out in any worktree. That is "lost, with a
+///   way back": L1.
+/// - What "the default branch" guards is the branch everyone builds on. On a remote, losing it reaches other people
+///   and cannot be taken back from here, so a push or a forge call with no default known still takes any name as the
+///   default ([`default_of`]). Locally the only loss is this computer's own unpushed commits, the same for any name.
+/// - The long-lived names (`main`, `master`, `release/*`…) and the default the hook did read still count, compared
+///   without regard to case: on a file system that ignores case, `git branch -D MAIN` deletes `main`.
+///
+/// Still not known (`None`): `-` and `@{-1}` (the branch checked out before, which may be the default), and a name
+/// that is not in the command when no default is known, unless git deletes it only when merged (`merged_only`: `-d`
+/// without `--force` refuses a branch that is not merged into its upstream, or into `HEAD` when it has none, so its
+/// commits stay on another branch whatever its name). With a default known, a name not in the command is taken as
+/// another branch, as before. A pattern may name the default.
+fn local_default(name: &Exp, known_default: Option<&str>, merged_only: bool) -> Option<bool> {
+    if !name.known() {
+        return (merged_only || known_default.is_some()).then_some(false);
+    }
+    let lower = name.text.to_ascii_lowercase();
+    if lower == "-" || lower.contains("@{") {
+        return None;
+    }
+    let default = known_default.map(str::to_ascii_lowercase);
+    Some(default_of(&lower, default.as_deref()).unwrap_or(false))
+}
+
 /// A push as the proxy saw it: each ref's old and new tips, fast-forward or not, the host's default branch.
 #[must_use]
 pub fn analyze_push(repo: &str, summary: &PushSummary) -> Analysis {
@@ -730,13 +764,20 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                 });
             }
         }
+        // Local refs only: whether one is the default branch is read by [`local_default`].
         "branch" => {
+            let known = w.ctx.default_branch.clone();
             let delete = flag(rest, &["-D", "-d", "--delete"]);
             if delete {
-                for b in ops {
-                    let name = b.text.clone();
+                // `-d` alone deletes only a branch that is merged; `-D` and `--force` any.
+                let merged_only = !flag(rest, &["-D", "-f", "--force"]);
+                // `-` is no option here: where git takes it, it is the branch checked out before.
+                let previous = rest.iter().find(|a| a.text == "-");
+                for b in ops.into_iter().chain(previous) {
+                    // As a person reads it: a name that is not in the command is `…`.
+                    let name = b.text.replace(super::shell::UNKNOWN, "\u{2026}");
                     w.note(b);
-                    let default = default_of(&name, w.ctx.default_branch.as_deref());
+                    let default = local_default(b, known.as_deref(), merged_only);
                     w.effect(Effect::GitRefDelete {
                         repo: String::new(),
                         refname: format!("refs/heads/{name}"),
@@ -744,18 +785,19 @@ fn local_change(w: &mut Walk<'_>, sub: &str, rest: &[Exp], worktree: &str) {
                     });
                 }
             } else if flag(rest, &["-m", "-M", "--move"]) {
+                // The old name goes, the branch and its reflog stay under the new one.
                 if let Some(old) = (ops.len() >= 2).then(|| ops[0]) {
                     w.effect(Effect::GitRefDelete {
                         repo: String::new(),
                         refname: format!("refs/heads/{}", old.text),
-                        default_branch: default_of(&old.text, w.ctx.default_branch.as_deref()),
+                        default_branch: local_default(old, known.as_deref(), false),
                     });
                 }
             } else if flag(rest, &["-f", "--force"])
                 && let Some(b) = ops.first()
             {
                 // Moves an existing branch: its old tip is in the reflog.
-                let default = default_of(&b.text, w.ctx.default_branch.as_deref());
+                let default = local_default(b, known.as_deref(), false);
                 w.effect(Effect::GitRefDelete {
                     repo: String::new(),
                     refname: format!("refs/heads/{}", b.text),

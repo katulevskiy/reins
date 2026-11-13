@@ -226,6 +226,10 @@ pub struct MatrixNote {
     /// history (02 §4). Kept only on the sealed suggestion (30 days), never copied into Activity or sent anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Box<super::preview::PreviewInput>>,
+    /// A computer's hook question, evaluated with the safety net that computer runs before the command
+    /// (`reins_policy::desktop_reading`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub netted: bool,
 }
 
 /// A stored profile with its id.

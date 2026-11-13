@@ -263,6 +263,33 @@ async fn only_desktop_tools_with_valid_arguments_are_relayed() {
     assert_eq!(pending["requests"], json!([]), "refused calls must not be relayed");
 }
 
+/// A hook's question may carry what the computer read of its command (`reading`, for the phone's own Auto rules): the
+/// server relays it as it was sent, and refuses one larger than the argument allows (the computer then asks without
+/// it, as it does with a server that doesn't know the argument).
+#[tokio::test]
+async fn a_hooks_reading_reaches_the_phone_as_sent_and_one_too_large_is_refused() {
+    let (server, phone, tokens) = paired().await;
+    let ask = |reading: &str| {
+        json!({"tool": "desktop_ask", "arguments": {"question": "Claude Code wants to run: ls",
+            "detail": "Command:\nls\n\nIn: /home/me/app", "reading": reading, "client_key": app_key(),
+            "nonce": "n-1"}, "account": null})
+    };
+    let reading = r#"{"v":1,"about":"0a","analysis":{"effects":[]},"home":"/home/me"}"#;
+    let call = ask(reading);
+    let app = post_call(&server, Some(&tokens.access), &call);
+    let ((status, _, body), request) = tokio::join!(app, answer_next(&phone, sealed_answer()));
+    assert_eq!((status, body["status"].as_str()), (StatusCode::OK, Some("answered")), "{body}");
+    assert_eq!(request["call"]["args"]["reading"], reading);
+    assert_eq!(request["call"]["args"]["detail"], "Command:\nls\n\nIn: /home/me/app");
+
+    let large = "x".repeat(reins_proto::connector::ASK_READING_MAX + 1);
+    let (status, _, body) = post_call(&server, Some(&tokens.access), &ask(&large)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_arguments")), "{body}");
+    assert!(body["message"].as_str().unwrap().contains("reading"), "{body}");
+    let (_, pending) = phone.get("/pending?wait=0").await;
+    assert_eq!(pending["requests"], json!([]), "a refused call is never relayed");
+}
+
 #[tokio::test]
 async fn mcp_never_lists_or_runs_desktop_tools() {
     let (server, phone, tokens) = paired().await;

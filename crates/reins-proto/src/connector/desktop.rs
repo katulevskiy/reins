@@ -26,6 +26,10 @@ pub const AUTOPILOT_MODES: &[&str] = &["manual", "auto", "lockdown", "stop"];
 /// teaching it to approve is asked.
 pub const AUTOPILOT_CORRECT_OP: &str = "autopilot_correct";
 
+/// The longest `reading` a `desktop_ask` carries (`reins_policy::desktop_reading::MAX_BYTES`: a reading is at most
+/// that many bytes, so never more characters).
+pub const ASK_READING_MAX: usize = 16 * 1024;
+
 /// The shortest and longest a work session may run.
 pub const MIN_SESSION_SECS: i64 = 15 * 60;
 pub const MAX_SESSION_SECS: i64 = 12 * 3_600;
@@ -115,6 +119,13 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                     400,
                     false,
                     "The safety net the desktop app applies if approved, one line per net (set by its hooks only).",
+                ),
+                text_p(
+                    "reading",
+                    ASK_READING_MAX,
+                    false,
+                    "What the desktop app read of the command a hook asks about (JSON, set by its hooks only): the \
+                     phone's own Auto rules may decide the question with it.",
                 ),
                 str_p(
                     "topic",

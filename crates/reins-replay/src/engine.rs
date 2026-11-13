@@ -85,7 +85,11 @@ pub fn engine_context(ctx: &Context, case: &Case) -> EngineContext {
         tracked: Vec::new(),
     };
     let mut c = EngineContext::new(case.cwd.as_deref().unwrap_or_default(), workspace);
-    c.default_branch.clone_from(&ctx.default_branch);
+    // What the desktop hook read of the repository (`reins_desktop::hooks::git_head`, for any command that names
+    // git): the corpus's default branch, unless the case's repository gives none.
+    if !case.no_default_branch {
+        c.default_branch.clone_from(&ctx.default_branch);
+    }
     c.branch.clone_from(&case.branch);
     for (k, v) in &ctx.env {
         c.env.entry(k.clone()).or_insert_with(|| v.clone());

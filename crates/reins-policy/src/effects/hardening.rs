@@ -163,8 +163,9 @@ fn git_defaults_and_worktrees() {
     assert!(a.level >= Level::L2, "a glob refspec may name the default: {a:?}");
     let a = analyze_command("git push --force origin feat/y", &c);
     assert!(a.level >= Level::L3, "default not known: taken as the default: {a:?}");
+    // A local branch is one ref of this repository: read by its name, whatever the remote's default is (below).
     let a = analyze_command("git branch -D feat/y", &c);
-    assert_eq!(a.level, Level::L3, "{a:?}");
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Full), "{a:?}");
     assert_eq!(
         analyze_tool("github_branch_delete", &serde_json::json!({"repo": "dkat/x", "branch": "feat/y"})).level,
         Level::L3
@@ -172,6 +173,98 @@ fn git_defaults_and_worktrees() {
     assert_eq!(level("git --work-tree=/home/me/other reset --hard"), Level::L3);
     assert_eq!(level("git switch --discard-changes main"), Level::L1);
     assert_eq!(level("git switch -f main"), Level::L1);
+}
+
+/// A context as the desktop hook has it when the repository records no default branch (no `refs/remotes/origin/HEAD`,
+/// or a configuration the hook's strict reader refuses): the tests' usual context sets one, which hid this.
+fn no_default() -> Context {
+    let mut c = ctx();
+    c.default_branch = None;
+    c
+}
+
+/// `git branch` on local refs with no default known: by the name. A long-lived name, a pattern and a name that is not
+/// in the command are still taken as the default; a push, a forge call and `update-ref` are read as before.
+#[test]
+fn local_branch_deletes_without_a_known_default() {
+    let c = no_default();
+    let read = |cmd: &str| analyze_command(cmd, &c);
+    for cmd in [
+        "git branch -D feature/x",
+        "git branch -d feature/x",
+        "git branch --delete feature/x",
+        "git branch -D feature/x fix/y",
+        "git branch -m feature/x feature/z",
+        "git branch -f feature/x HEAD~2",
+        "git branch -d -r origin/feature/x",
+        "git -C /home/me/Documents/dev/other branch -D feature/x",
+    ] {
+        let a = read(cmd);
+        assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Full), "{cmd}: {a:?}");
+        assert!(a.floor.is_empty() && !a.needs_human(), "{cmd}: {a:?}");
+    }
+    // `-d` is never read as worse than `-D`.
+    for name in ["feature/x", "main", "MAIN", "release/1.2", "\"$B\"", "'feat/*'", "@{-1}"] {
+        let (soft, hard) = (read(&format!("git branch -d {name}")), read(&format!("git branch -D {name}")));
+        assert!(soft.level <= hard.level, "{name}: {soft:?} vs {hard:?}");
+        assert!(soft.certainty <= hard.certainty, "{name}: {soft:?} vs {hard:?}");
+    }
+    // Hostile: every one of these is still for a person.
+    for cmd in [
+        "git branch -D main",
+        "git branch -d master",
+        "git branch -D MAIN",
+        "git branch -D Release/2.0",
+        "git branch -D feature/x main",
+        "git branch -D refs/heads/main",
+        "git -C /home/me/Documents/dev/other branch -D main",
+        "git branch -m main old-main",
+        "git branch -f main HEAD~5",
+        // A pattern, the branch checked out before, a name that is not in the command.
+        "git branch -D 'feat/*'",
+        "git branch -D @{-1}",
+        "git branch -D -",
+        "git branch -D \"$B\"",
+        "git branch -D $(cat names)",
+        "git branch --list | xargs git branch -D",
+        "git branch -m \"$B\" x",
+        // Not a local delete by `git branch`: the remote's default is not known, so any name may be it.
+        "git branch -D feature/x; git push origin :main",
+        "git branch -D feature/x; git push origin :feature/x",
+        "git push origin --delete feature/x",
+        "git push --force origin feature/x",
+        "git update-ref -d refs/heads/feature/x",
+    ] {
+        let a = read(cmd);
+        assert!(a.needs_human(), "{cmd}: {a:?}");
+        assert!(a.level == Level::L3 || a.certainty == Certainty::None, "{cmd}: {a:?}");
+    }
+    assert_eq!(
+        analyze_tool("github_branch_delete", &serde_json::json!({"repo": "dkat/x", "branch": "feature/x"})).level,
+        Level::L3,
+        "a forge's branch is not a local ref"
+    );
+    // `-d` without `--force` deletes only a branch whose commits another branch has: a name from elsewhere loses
+    // nothing. With `--force` it is `-D`.
+    let a = read("git branch --merged | grep -v main | xargs git branch -d");
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Partial), "{a:?}");
+    assert!(read("git branch --merged | xargs git branch -d --force").needs_human());
+    assert!(read("git branch --merged | xargs git branch -df").needs_human());
+}
+
+/// With the default the hook read, that name is protected as well, in any case; the long-lived names stay.
+#[test]
+fn local_branch_deletes_with_a_known_default() {
+    let mut c = ctx();
+    c.default_branch = Some("next".to_owned());
+    for cmd in ["git branch -D next", "git branch -D NEXT", "git branch -D main", "git branch -d Main"] {
+        assert_eq!(analyze_command(cmd, &c).level, Level::L3, "{cmd}");
+    }
+    let a = analyze_command("git branch -D feature/x", &c);
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Full), "{a:?}");
+    // As before: with a default known, a name that is not in the command is taken as another branch.
+    let a = analyze_command("git branch -D \"$B\"", &c);
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Partial), "{a:?}");
 }
 
 #[test]

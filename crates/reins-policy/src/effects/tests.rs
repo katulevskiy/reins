@@ -591,10 +591,18 @@ const MODELLED: &[&str] = &[
     "nc",
     "infisical",
     "op",
+    "timedatectl",
+    "findmnt",
+    "losetup",
+    "blkid",
+    "pdfunite",
+    "qpdf",
+    "codex",
 ];
 
 /// The modelled programs whose first word is a subcommand.
 const SUBCOMMANDS: &[&str] = &[
+    "timedatectl",
     "git",
     "gh",
     "npm",
@@ -632,6 +640,336 @@ proptest::proptest! {
             "{cmd}: {a:?}"
         );
     }
+}
+
+/// Whether a command is read in full as doing nothing: what only prints.
+fn prints_only(cmd: &str) -> bool {
+    let a = run(cmd);
+    a.level == Level::L0 && a.certainty == Certainty::Full && a.floor.is_empty()
+}
+
+/// Whether a command is not read (certainty `None`): always asked.
+fn unread(cmd: &str) -> bool {
+    let a = run(cmd);
+    a.certainty == Certainty::None && a.floor.contains(&Floor::Unreadable)
+}
+
+/// System tools that only look (the clock's settings, mounts, loop devices, block devices): their read-only forms
+/// are read in full; every form that changes something, and every option or word outside the model, is not read.
+#[test]
+fn system_lookups_are_read_and_their_changes_are_not() {
+    for cmd in [
+        "timedatectl",
+        "timedatectl status",
+        "timedatectl show -p Timezone --value",
+        "timedatectl show --property=Timezone --value 2>/dev/null",
+        "timedatectl show --property Timezone -a --no-pager",
+        "timedatectl list-timezones | grep -i pacific",
+        "timedatectl timesync-status",
+        "timedatectl show-timesync --all",
+        "timedatectl --version",
+        "SYSTEMD_PAGER= timedatectl status",
+        "PAGER=cat timedatectl status",
+        "findmnt",
+        "findmnt -no TARGET /dev/loop0",
+        "findmnt -no FSTYPE,OPTIONS /dev/loop0",
+        "findmnt --json --target /mnt/data",
+        "findmnt -T /mnt/data -o SOURCE,FSTYPE -n",
+        "findmnt -S LABEL=data /mnt/data",
+        "findmnt -t ext4,btrfs --df",
+        "findmnt --real -lo TARGET,SOURCE",
+        "losetup",
+        "losetup -a",
+        "losetup -l",
+        "losetup --list --json",
+        "losetup -ln -O NAME,BACK-FILE",
+        "losetup -j disk.img",
+        "losetup --associated=disk.img --noheadings",
+        "losetup /dev/loop0",
+        "sudo losetup -a",
+        "blkid",
+        "blkid /dev/sda1",
+        "blkid -o value -s UUID /dev/sda1",
+        "blkid -p /dev/loop0",
+        "blkid -L data",
+        "blkid --match-token TYPE=ext4 --output device",
+        "sudo blkid -o export /dev/nvme0n1p2",
+        "lsblk -o NAME,LABEL,MOUNTPOINTS /dev/sdb",
+    ] {
+        let a = run(cmd);
+        assert!(prints_only(cmd), "{cmd}: {a:?}");
+        assert!(a.effects.is_empty(), "{cmd}: {a:?}");
+    }
+    // A device named at run time is looked up, never opened: the value is what is not known.
+    let a = run("findmnt -no TARGET \"$dev\"");
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Partial), "{a:?}");
+    assert!(a.unresolved.iter().any(|u| u.contains("$dev")), "{a:?}");
+    for cmd in [
+        // The clock, changed; another computer; an option or a word the model does not know.
+        "timedatectl set-time '2030-01-01 00:00:00'",
+        "timedatectl set-timezone UTC",
+        "timedatectl set-ntp false",
+        "timedatectl set-local-rtc 1 --adjust-system-clock",
+        "timedatectl ntp-servers eth0 pool.example.com",
+        "timedatectl revert eth0",
+        "timedatectl -H root@host.example status",
+        "timedatectl --host=root@host.example show",
+        "timedatectl -M box status",
+        "timedatectl status set-ntp",
+        "timedatectl \"$cmd\"",
+        "timedatectl show $opts",
+        "timedatectl --prop=Timezone show",
+        // A table that is a file the line names; another process's; waiting.
+        "findmnt -F /home/me/.ssh/id_ed25519 -s",
+        "findmnt --tab-file=/home/me/.ssh/id_ed25519",
+        "findmnt --tab /home/me/.netrc",
+        "LIBMOUNT_FSTAB=/home/me/.netrc findmnt -s",
+        "findmnt -N 1",
+        "findmnt --poll",
+        "findmnt --verify",
+        "findmnt -$x /mnt",
+        "findmnt a b c",
+        // Loop devices, changed.
+        "losetup -d /dev/loop0",
+        "losetup -D",
+        "losetup --detach-all",
+        "losetup -f",
+        "losetup -f disk.img",
+        "losetup -fP --show disk.img",
+        "losetup --find --show disk.img",
+        "losetup /dev/loop0 disk.img",
+        "losetup -c /dev/loop0",
+        "losetup -o 512 /dev/loop0 disk.img",
+        "losetup --direct-io=on /dev/loop0",
+        "losetup \"$dev\"",
+        "losetup $args",
+        "losetup -l *",
+        "sudo losetup -d /dev/loop3",
+        // The cache, pointed at a file of the line's choosing, or edited.
+        "blkid -c /home/me/.bashrc",
+        "blkid --cache-file /home/me/.bashrc /dev/sda1",
+        "blkid -g",
+        "blkid -w /home/me/.bashrc",
+        "BLKID_FILE=/home/me/.bashrc blkid",
+        "BLKID_CONF=/tmp/x.conf blkid /dev/sda1",
+        "blkid \"$dev\"",
+    ] {
+        assert!(unread(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    // A pager the line names is a program the line runs.
+    assert_eq!(level("SYSTEMD_PAGER='rm -rf ~/Documents' timedatectl status"), Level::L3);
+    assert_eq!(level("PAGER='rm -rf ~/Documents' timedatectl list-timezones"), Level::L3);
+    assert!(unread("PAGER=\"$P\" timedatectl status"));
+    assert!(unread("LESSOPEN='|-rm -rf ~/Documents' timedatectl status"));
+    // The models are for the installed program: a file of the same name elsewhere, or found on a `PATH` the line set,
+    // may be anything.
+    for cmd in ["/usr/sbin/losetup -a", "/usr/bin/findmnt -no TARGET /dev/loop0", "sudo /sbin/blkid /dev/sda1"] {
+        assert!(prints_only(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    for cmd in [
+        "./losetup -a",
+        "bin/timedatectl status",
+        "/home/me/bin/findmnt",
+        "/usr/bin/../../home/me/bin/blkid",
+        "/usr/bin/x/losetup -a",
+        "PATH=/home/me/Documents/dev/tmp/bin:$PATH losetup -a",
+        "export PATH=\"$PWD/bin:$PATH\"; timedatectl status",
+        "env PATH=/tmp/bin findmnt",
+        "PATH=\"$X\" blkid",
+        "hash -p /home/me/Documents/dev/tmp/x losetup; losetup -a",
+        "losetup() { rm -rf ~/Documents; }; losetup -a",
+        "alias losetup='rm -rf ~/Documents'; losetup -a",
+    ] {
+        assert!(!prints_only(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    // Programs that do real things and have no model stay unread.
+    for cmd in [
+        "udisksctl loop-setup -r -f disk.iso --no-user-interaction",
+        "udisksctl mount -b /dev/loop0",
+        "docker ps",
+        "script -qc 'ls' /dev/null",
+        "mise which codex",
+        "mise exec -- codex --version",
+    ] {
+        assert!(unread(cmd), "{cmd}: {:?}", run(cmd));
+    }
+}
+
+/// `pdfunite` and `qpdf` in the forms that read their inputs and write one output; `codex` asked for its version.
+#[test]
+fn pdf_tools_read_their_inputs_and_write_one_output() {
+    let writes = |a: &Analysis| -> Vec<String> {
+        a.effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::FileWrite {
+                    path,
+                } => Some(path.path.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let a = run("pdfunite /tmp/merge/photos.pdf problem6.pdf hw2.pdf");
+    assert_eq!((a.level, a.certainty), (Level::L1, Certainty::Full), "a write in workspace source: {a:?}");
+    assert_eq!(writes(&a), vec!["/home/me/Documents/dev/app/hw2.pdf".to_owned()]);
+    let a = run("T=~/Documents/dev/tmp/merge && pdfunite \"$T/a.pdf\" b.pdf \"$T/out.pdf\"");
+    assert_eq!((a.level, a.certainty), (Level::L0, Certainty::Full), "scratch: {a:?}");
+    assert!(prints_only("pdfunite -v"), "{:?}", run("pdfunite -v"));
+    // Where it writes decides, as for `cp`; a secret source is a secret read.
+    assert_eq!(level("pdfunite a.pdf b.pdf /home/me/.bashrc"), Level::L3);
+    assert!(run("pdfunite /home/me/.ssh/id_ed25519 b.pdf out.pdf").floor.contains(&Floor::SecretRead));
+    assert!(unread("pdfunite --frobnicate a.pdf out.pdf"));
+    assert!(unread("pdfunite -x a.pdf out.pdf"));
+
+    for cmd in [
+        "qpdf --show-npages problem6.pdf",
+        "qpdf --check hw2.pdf",
+        "qpdf --show-encryption --no-warn hw2.pdf",
+        "qpdf --version",
+        "qpdf --help",
+    ] {
+        assert!(prints_only(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    let a = run("qpdf --linearize --object-streams=generate in.pdf target/out.pdf");
+    assert_eq!((a.level, a.certainty), (Level::L0, Certainty::Full), "{a:?}");
+    assert_eq!(writes(&a), vec!["/home/me/Documents/dev/app/target/out.pdf".to_owned()]);
+    assert_eq!(level("qpdf --decrypt in.pdf /home/me/.bashrc"), Level::L3);
+    assert!(run("qpdf --check /home/me/.ssh/id_ed25519").floor.contains(&Floor::SecretRead));
+    for cmd in [
+        // More arguments from a file; more inputs; many outputs; the input overwritten; words from elsewhere.
+        "qpdf @args.txt",
+        "qpdf in.pdf @args.txt",
+        "qpdf --empty --pages a.pdf b.pdf -- out.pdf",
+        "qpdf in.pdf --pages . 1-3 /home/me/.ssh/id_ed25519 -- out.pdf",
+        "qpdf --split-pages in.pdf /home/me/out-%d.pdf",
+        "qpdf --replace-input in.pdf",
+        "qpdf in.pdf --overlay /home/me/secret.pdf -- out.pdf",
+        "qpdf --job-json-file=job.json",
+        "qpdf --password-file=/home/me/.netrc --decrypt in.pdf out.pdf",
+        "qpdf --show-encryption-key in.pdf",
+        "qpdf --add-attachment /home/me/.netrc -- in.pdf out.pdf",
+        "qpdf --linearize in.pdf",
+        "qpdf --check in.pdf out.pdf",
+        "qpdf --linearise in.pdf out.pdf",
+        "qpdf -linearize in.pdf out.pdf",
+        "qpdf --rotate +90 in.pdf out.pdf",
+        "qpdf \"$f\" out.pdf",
+        "qpdf in.pdf *.pdf",
+        "qpdf in.pdf -",
+    ] {
+        assert!(unread(cmd), "{cmd}: {:?}", run(cmd));
+    }
+
+    // Codex is an agent: only its version and its usage are read.
+    for cmd in ["codex --version", "codex --version 2>&1 | head -1", "codex -V", "codex --help", "codex -h"] {
+        assert!(prints_only(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    for cmd in [
+        "codex",
+        "codex exec 'rm -rf ~'",
+        "codex --help exec",
+        "codex exec --help",
+        "codex --version --dangerously-bypass-approvals-and-sandbox 'do it'",
+        "codex \"$flag\"",
+        "codex app-server",
+        // No rule for programs in general: one with no model is not read, whatever it is asked.
+        "frobnicate --version",
+        "frobnicate --help",
+        // A file named codex is not Codex.
+        "./codex --version",
+        "PATH=/home/me/Documents/dev/tmp/bin:$PATH codex --version",
+        "./qpdf --show-npages a.pdf",
+        "bin/pdfunite a.pdf b.pdf",
+    ] {
+        assert!(!prints_only(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    assert!(unread("codex exec 'rm -rf ~'") && unread("frobnicate --version"));
+}
+
+/// `reins` itself: what only prints its own state or its usage is read; what changes Reins, or what it lets through,
+/// is not.
+#[test]
+fn reins_prints_its_own_state() {
+    for cmd in [
+        "reins",
+        "reins status",
+        "reins status --short",
+        "reins doctor",
+        "reins tickets",
+        "reins tickets 2>&1 | head -40",
+        "reins tickets --help",
+        "reins pending",
+        "reins net list",
+        "reins harness list",
+        "reins harness list claude-code",
+        "reins folders",
+        "reins folders list",
+        "reins --help",
+        "reins -h",
+        "reins --version",
+        "reins -V",
+        "reins help",
+        "reins help tickets",
+        "reins logout --help",
+        "reins folders add --help",
+        "reins harness add -h",
+        "reins net restore --help",
+        "reins secrets --help",
+    ] {
+        let a = run(cmd);
+        assert!(prints_only(cmd), "{cmd}: {a:?}");
+        assert!(a.effects.is_empty(), "{cmd}: {a:?}");
+    }
+    for cmd in [
+        "reins logout",
+        "reins login",
+        "reins uninstall --purge",
+        "reins tickets --trust-key",
+        "reins tickets --trust-key --help",
+        "reins tickets extra",
+        "reins tickets \"$flag\"",
+        "reins tickets $flags",
+        "reins approve 7",
+        "reins deny 7",
+        "reins pending --approve",
+        "reins folders add ~/Documents",
+        "reins folders remove ~/Documents/dev",
+        "reins folders temp /srv",
+        "reins folders list --add /",
+        "reins net restore 4f2a",
+        "reins net prune",
+        "reins net run --plan p --store s rm -rf x",
+        "reins net run --help",
+        "reins net list extra",
+        "reins harness add --all",
+        "reins harness remove codex",
+        "reins harness list ../x",
+        "reins pause",
+        "reins git unsetup",
+        "reins service uninstall",
+        "reins update",
+        "reins allow 12h",
+        "reins task start --help x",
+        "reins wait rt_abc",
+        "reins vault add name",
+        "reins zap --help",
+        "reins -h logout",
+        "reins logout -h now",
+        "reins a b c d --help",
+        // A file named reins is not Reins.
+        "./reins tickets",
+        "target/debug/reins pending",
+        "PATH=/home/me/Documents/dev/tmp/bin:$PATH reins tickets",
+    ] {
+        assert!(unread(cmd), "{cmd}: {:?}", run(cmd));
+    }
+    // What `reins run` runs is another program's words: `--help` there is not Reins's.
+    let a = run("reins run -- rm -rf ~/Documents --help");
+    assert_eq!(a.level, Level::L3, "{a:?}");
+    assert!(run("reins run --help").floor.contains(&Floor::SecretOut));
+    // Help on a command that hands out secrets or trust is read as that command.
+    assert!(run("reins secrets scan --help").floor.contains(&Floor::SecretRead));
+    assert!(run("reins payments-trust --help").floor.contains(&Floor::Permission));
 }
 
 /// The second security review: program models fail closed, wrappers keep their own effect.

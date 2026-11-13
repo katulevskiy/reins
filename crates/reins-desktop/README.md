@@ -324,6 +324,58 @@ The built-in rules come in groups the desktop app turns on and off one by one (`
 (cloud and cluster credentials) and `tokens` (`.netrc`, `.npmrc`, …). The desktop app writes its changes into
 `config.toml` keeping the rest of the file as it was.
 
+## Work folders and scratch folders
+
+What a delete or a write costs depends on where it lands. Reins reads every hook request against the folders where
+your AI tools' work is expected, `[workspace]` in `config.toml`:
+
+```toml
+[workspace]
+roots = ["~/Documents/dev", "~/src", "~/code", "~/projects"]   # the default
+scratch = ["~/Documents/dev/tmp"]                              # none by default
+```
+
+- **Work folders** (`roots`): each of their subfolders is a project. In a project, build output (`target/`,
+  `node_modules/`, …) can be made again and a file git tracks can be brought back; any other delete can't be undone.
+  The rest of your home folder is not where an agent is expected to delete anything.
+- **Scratch folders** (`scratch`): deleting in them loses nothing. With Auto on, that is decided on this computer
+  without a question. `/tmp`, `/var/tmp`, `/dev/shm` and `~/.cache` always are scratch. A `*` stands for one folder
+  name (`~/.claude/projects/*/memory`).
+
+So `rm -rf ~/Documents/dev/tmp/old-build` asks your phone ("Deletes 1 path in your projects (tmp/old-build) · Can't be
+undone") every time, until `~/Documents/dev/tmp` is a scratch folder. `reins folders` edits the two lists, keeping the
+rest of `config.toml` as it was:
+
+```sh
+reins folders                            # the folders, how each stands, and what Reins suggests
+reins folders add ~/work                 # a work folder (relative paths are read from where you are)
+reins folders temp ~/Documents/dev/tmp   # a temp folder of your own: a scratch folder (the same as add --scratch)
+reins folders remove ~/work
+```
+
+Your phone has the last word on which folders count. It signs them for this computer with your Auto rules: the four
+standard work folders, and every folder you confirmed there. A folder you add here counts at once when it is inside
+a work folder the phone signed (for a scratch folder: strictly inside one). Any other shows on the phone as a card,
+under Settings › Computers › this computer › Folders, with the path exactly as this computer resolves it (links
+followed), and counts once you confirm it there. `reins folders` says how each one stands: `counts`, `waiting for you
+to confirm it on your phone`, `refused: too broad`. The background service reads `config.toml` again every minute, so
+nothing needs a restart.
+
+Never accepted, here or on the phone: `/`, your home folder or anything above it, a folder of keys (`~/.ssh`,
+`~/.gnupg`, `~/.aws`, …), Reins's own files; and, as a scratch folder, a work folder or a folder holding one (its
+projects would become scratch). `reins folders remove` stops a folder counting at once, except a scratch folder you
+confirmed on the phone: that one is removed there, and the command says so.
+
+**Suggestions.** When you have approved, on your phone and within two weeks, at least three commands that each
+deleted something different directly in the same folder, Reins suggests that folder as a scratch folder: `reins
+folders` lists it with the command that accepts it, and your phone shows it as a card. So does the temp folder
+`$TMPDIR` names, when it is not one of the built-in ones. Nothing changes until you accept one. Only your own
+approvals count (not what Auto, Autopilot or a mode let through), a delete you denied in the folder stops it, and a
+command is read for what it does, not for what it says: `echo rm -rf …` suggests nothing. A work folder, a git
+repository and anything refused above is never suggested.
+
+An AI tool that runs `reins folders add` itself, or edits `config.toml`, is asked about like any other command.
+
 ## What it protects against
 
 - The agent never sees a token: it is added inside the daemon and kept in memory only (phone mode).

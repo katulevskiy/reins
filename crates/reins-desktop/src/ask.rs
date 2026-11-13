@@ -33,6 +33,10 @@ pub struct Question {
     /// The safety net a hook applies if this is approved (Decisions v2 P3), one line per net. Its own argument, set
     /// only by `reins hook` (never by `reins ask`, whose words are the agent's): the phone shows it read-only.
     pub net: Option<String>,
+    /// What a hook read of the command it asks about (`reins_policy::desktop_reading::Reading`, as JSON), so the
+    /// phone's own Auto rules can decide the question when this computer's copy of them ran out. Its own argument, set
+    /// only by `reins hook` for a tool use: `reins ask` has no way to give one.
+    pub reading: Option<String>,
 }
 
 /// The longest net the phone is told (the `net` argument's limit).
@@ -141,6 +145,7 @@ impl Question {
             detail,
             topic,
             net: None,
+            reading: None,
         })
     }
 
@@ -163,6 +168,8 @@ impl Question {
             detail: self.detail.as_deref().map(|d| shown(d, MAX_DETAIL)),
             topic: self.topic.as_deref().map(|t| shown(t, MAX_TOPIC)),
             net: self.net.as_deref().map(|n| shown(n, MAX_NET)),
+            // Not text for a person: it goes as it was made, or not at all.
+            reading: self.reading.clone(),
         }
     }
 
@@ -180,6 +187,9 @@ impl Question {
         }
         if let Some(n) = &sent.net {
             args["net"] = json!(cut(n, MAX_NET));
+        }
+        if let Some(r) = sent.reading.as_deref().filter(|r| r.len() <= reins_policy::desktop_reading::MAX_BYTES) {
+            args["reading"] = json!(r);
         }
         args
     }
@@ -431,6 +441,7 @@ pub fn test_question() -> Question {
         ),
         topic: None,
         net: None,
+        reading: None,
     }
 }
 
@@ -462,19 +473,22 @@ pub async fn ask_phone_ticketed(
     };
     let deadline = Instant::now() + timeout;
     let nonce = crate::server::random_token(16);
-    let args = q.arguments(&identity.public_key(), &nonce, ticketing.map(|t| t.digest));
+    let mut args = q.arguments(&identity.public_key(), &nonce, ticketing.map(|t| t.digest));
     let defer = ticketing.is_some_and(|t| t.defer);
     let late = || Ok(Answer::Unanswered(format!("No answer on your phone within {} s.", timeout.as_secs())));
     let mut first = tokio::time::timeout(timeout, client.call_with(ASK_TOOL, &args, None, Some(timeout), defer)).await;
-    // A server older than safety nets refuses the `net` argument: the question goes without it (the phone then
-    // shows no net; the netted command is still in the detail it approves).
-    if q.net.is_some() && matches!(&first, Ok(Err(e)) if e.to_string().contains("invalid_arguments")) {
-        let mut plain = args.clone();
-        if let Some(o) = plain.as_object_mut() {
-            o.remove("net");
+    // An older server refuses an argument it doesn't know. The question then goes without the hook's reading (the
+    // phone asks, as it did before readings), and if that isn't it, without the `net` argument too (a server older
+    // than safety nets: the phone then shows no net; the netted command is still in the detail it approves).
+    for unknown in ["reading", "net"] {
+        if !matches!(&first, Ok(Err(e)) if e.to_string().contains("invalid_arguments")) {
+            break;
+        }
+        if args.as_object_mut().and_then(|o| o.remove(unknown)).is_none() {
+            continue;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
-        first = tokio::time::timeout(remaining, client.call_with(ASK_TOOL, &plain, None, Some(remaining), defer)).await;
+        first = tokio::time::timeout(remaining, client.call_with(ASK_TOOL, &args, None, Some(remaining), defer)).await;
     }
     let mut answer = match first {
         Ok(Ok(a)) => a,
@@ -746,6 +760,21 @@ mod tests {
         assert_eq!(args, json!({"question": "q", "client_key": "k", "nonce": "n"}));
         let args = Question::new("q", None, None).unwrap().arguments("k", "n", Some("d"));
         assert_eq!(args["digest"], "d");
+    }
+
+    #[test]
+    fn a_reading_is_its_own_argument_and_never_made_from_words() {
+        // `reins ask` builds its question from words (the agent's): none of them makes a reading.
+        let asked = Question::new("May I deploy?", Some("reading: {\"v\":1}"), Some("reading")).unwrap();
+        assert_eq!(asked.reading, None);
+        assert!(asked.arguments("k", "n", None).get("reading").is_none());
+        // A hook's: sent as it was made, never cut or rewritten (the phone would not read a changed one).
+        let mut q = Question::new("q", Some("d\u{202e}"), None).unwrap();
+        q.reading = Some("{\"v\":1,\"about\":\"\u{202e}\"}".to_owned());
+        assert_eq!(q.arguments("k", "n", None)["reading"], json!(q.reading));
+        // Too large for the argument: the question goes without one.
+        q.reading = Some("x".repeat(reins_policy::desktop_reading::MAX_BYTES + 1));
+        assert!(q.arguments("k", "n", None).get("reading").is_none());
     }
 
     #[test]

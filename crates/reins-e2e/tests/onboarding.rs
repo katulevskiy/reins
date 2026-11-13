@@ -172,6 +172,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
         detail: None,
         topic: None,
         net: None,
+        reading: None,
     };
     let asked = reins_desktop::ask::ask_phone(&paths, &identity, &question, Duration::from_secs(60));
     let user = async {

@@ -86,8 +86,8 @@ pub struct DesktopPolicy {
     /// Folders where agents' work is expected (`~/Documents/dev`): local roots count only inside these.
     #[serde(default)]
     pub roots: Vec<String>,
-    /// Scratch folders the owner confirmed (deleting in them loses nothing): a local scratch folder counts only when it
-    /// is one of these, or strictly inside a root.
+    /// Scratch folders the owner confirmed (deleting in them loses nothing). Each counts on the computer, named in its
+    /// configuration or not; a local scratch folder counts only when it is one of these, or strictly inside a root.
     #[serde(default)]
     pub scratch: Vec<String>,
 }
@@ -136,6 +136,29 @@ struct Body {
     v: u32,
     #[serde(flatten)]
     message: PolicyMessage,
+    /// The format of the hook readings the signing phone takes (`crate::desktop_reading`); 0, or left out: none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    reading: u32,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde's signature")]
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// The format of the hook readings the phone that signed `body` takes (`crate::desktop_reading::FORMAT`); 0: none.
+///
+/// A phone re-checks every call it is relayed against its own description of the tool, and refuses one with an
+/// argument it doesn't know: a phone older than readings would refuse a hook's question that carries one. So a
+/// computer sends a reading only to a phone whose signed snapshot says it takes them. Only meaningful for a body whose
+/// signature was checked ([`open`]).
+#[must_use]
+pub fn reading_format(body: &str) -> u32 {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("reading").and_then(serde_json::Value::as_u64))
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
 }
 
 impl PolicyMessage {
@@ -173,12 +196,17 @@ pub fn signing_bytes(body: &str) -> Vec<u8> {
 }
 
 /// Signs `message` with `key` (the signer's public key, base64url) through `sign` (the bytes → a base64url
-/// signature).
+/// signature). A snapshot also says that its signer takes hook readings ([`reading_format`]): whoever signs with
+/// this code does.
 #[must_use]
 pub fn sign(message: &PolicyMessage, key: &str, sign: &dyn Fn(&[u8]) -> String) -> Signed {
     let body = serde_json::to_string(&Body {
         v: FORMAT,
         message: message.clone(),
+        reading: match message {
+            PolicyMessage::Snapshot(_) => crate::desktop_reading::FORMAT,
+            PolicyMessage::Tighten(_) => 0,
+        },
     })
     .unwrap_or_default();
     Signed {
@@ -545,9 +573,13 @@ fn keep(out: &mut Vec<String>, forms: &[String], counts: &dyn Fn(&str) -> bool) 
     }
 }
 
-/// The local scratch folders that count: one the phone signed as scratch (the same folder), or strictly inside a signed
-/// root (a scratch folder's deletes lose nothing, so a root itself, or anything above one, never is); refused ones
-/// never.
+/// The scratch folders that count: a local one the phone signed as scratch (the same folder), or strictly inside a
+/// signed root (a scratch folder's deletes lose nothing, so a root itself, or anything above one, never is); and
+/// every folder the phone signed as scratch, whether the configuration here names it or not (the owner confirmed it on
+/// the phone: a folder the computer only suggested is in no configuration). Refused ones never.
+///
+/// A signed folder the configuration doesn't name counts as signed only, and only while it is still that folder: one
+/// that resolves elsewhere now (an agent put a link in its place) doesn't count, in either form.
 #[must_use]
 pub fn clamp_scratch(
     roots: &[String],
@@ -556,6 +588,13 @@ pub fn clamp_scratch(
     home: &str,
     canonical: &BTreeMap<String, String>,
 ) -> Vec<String> {
+    let signed_only: Vec<String> = signed_scratch
+        .iter()
+        .filter(|s| !refused(s, home, canonical))
+        .map(|s| (s, normalize(s, "/", home)))
+        .filter(|(s, written)| canonical.get(*s).is_none_or(|c| c == written))
+        .map(|(_, written)| written)
+        .collect();
     let (roots, signed_scratch) = (signed_forms(roots, home, canonical), signed_forms(signed_scratch, home, canonical));
     let same = |a: &str, b: &str| desktop_folders::same(a, b, home);
     let mut out: Vec<String> = Vec::new();
@@ -566,7 +605,33 @@ pub fn clamp_scratch(
     for l in local.iter().filter(|l| !refused(l, home, canonical)) {
         keep(&mut out, &forms(l, home, canonical), &counts);
     }
+    for s in signed_only {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
     out
+}
+
+/// A computer's own `[auto]` on top of the phone's `snapshot`, stricter only: a local fact counts where the phone has
+/// one for the same owner, repository or host and the local zone is stricter; a local matrix that isn't the default
+/// tightens cell by cell. Used by the computer with a fresh snapshot ([`effective`]) and by the phone when it decides
+/// a computer's hook question for it (`crate::desktop_reading`).
+pub fn tighten_with_local(snapshot: &mut Snapshot, facts: &Facts, matrix: &Matrix) {
+    for kind in [FactKind::Owner, FactKind::Repo, FactKind::Host] {
+        let mine = fact_map(facts, kind).clone();
+        let signed = fact_map_mut(&mut snapshot.facts, kind);
+        for (k, z) in mine {
+            if let Some(s) = signed.get_mut(&k)
+                && z > *s
+            {
+                *s = z;
+            }
+        }
+    }
+    if *matrix != Matrix::default() {
+        snapshot.matrix = snapshot.matrix.stricter(matrix);
+    }
 }
 
 /// What this computer decides with at `now`: the snapshot (already checked), the tightenings newer than it (already
@@ -596,21 +661,7 @@ pub fn effective(
         },
     };
     if let Some(p) = policy {
-        // Local facts: only where the signed fact exists and the local zone is stricter.
-        for kind in [FactKind::Owner, FactKind::Repo, FactKind::Host] {
-            let mine = fact_map(local.facts, kind).clone();
-            let signed = fact_map_mut(&mut snapshot.facts, kind);
-            for (k, z) in mine {
-                if let Some(s) = signed.get_mut(&k)
-                    && z > *s
-                {
-                    *s = z;
-                }
-            }
-        }
-        if *local.matrix != Matrix::default() {
-            snapshot.matrix = snapshot.matrix.stricter(local.matrix);
-        }
+        tighten_with_local(&mut snapshot, local.facts, local.matrix);
         snapshot.facts.github_ids.clone_from(&p.github_ids);
     }
     for t in &live {
@@ -733,6 +784,32 @@ mod tests {
     fn signed_bytes_are_domain_separated() {
         assert!(signing_bytes("{}").starts_with(b"reins/desktop-policy/v1\n"));
         assert_ne!(signing_bytes("{}"), b"{}".to_vec());
+    }
+
+    #[test]
+    fn a_snapshot_says_whether_its_signer_takes_readings() {
+        let m = PolicyMessage::Snapshot(Box::new(policy(3, 1_000)));
+        let s = sign(&m, &phone_key(), &fake_sign);
+        assert_eq!(reading_format(&s.body), crate::desktop_reading::FORMAT);
+        // The mark stands beside the message: the message reads as it did, also for a build that doesn't know it.
+        assert_eq!(open(&s, Some(&phone_key()), &fake_verify).as_ref(), Ok(&m));
+        // A phone older than readings signs no mark: it would refuse a question that carries one.
+        let older = s.body.replace(",\"reading\":1", "");
+        assert_ne!(older, s.body);
+        assert_eq!(reading_format(&older), 0);
+        assert_eq!(serde_json::from_str::<Body>(&older).map(|b| b.message).ok().as_ref(), Some(&m));
+        // A tightening says nothing of it.
+        let tighten = PolicyMessage::Tighten(Tighten {
+            binding: policy(4, 1_000).binding,
+            tightening: Tightening {
+                lockdown: true,
+                ..Tightening::default()
+            },
+        });
+        assert_eq!(reading_format(&sign(&tighten, &phone_key(), &fake_sign).body), 0);
+        for odd in ["", "[]", "{\"reading\":\"1\"}", "{\"reading\":-1}", "{\"reading\":99999999999}"] {
+            assert_eq!(reading_format(odd), 0, "{odd}");
+        }
     }
 
     #[test]
@@ -957,6 +1034,71 @@ mod tests {
         p.scratch.clear();
         let e = effective(Some(&p), &[], &l, &BTreeMap::new(), 1_000);
         assert!(e.roots.is_empty() && e.scratch.is_empty(), "{e:?}");
+    }
+
+    /// A scratch folder the phone signed counts here even when no local configuration names it (the computer only
+    /// suggested it; the owner confirmed it on the phone). The local configuration alone still adds nothing.
+    #[test]
+    fn a_signed_scratch_folder_counts_without_a_local_entry() {
+        let mut p = policy(5, 1_000);
+        p.roots = vec!["~/Documents/dev".to_owned()];
+        p.scratch = vec!["/home/me/Documents/dev/tmp".to_owned(), "/home/me/Downloads/tmp".to_owned()];
+        let (none, m) = (Facts::default(), Matrix::default());
+        let e = effective(Some(&p), &[], &local(&none, &m, &[], &[]), &BTreeMap::new(), 1_000);
+        assert_eq!(e.scratch, ["/home/me/Documents/dev/tmp", "/home/me/Downloads/tmp"]);
+        let ctx = |e: &Effective| {
+            let mut ws = Workspace::standard("/home/me");
+            ws.scratch.clone_from(&e.scratch);
+            Context::new("/home/me/Documents/dev/app", ws)
+        };
+        assert_eq!(analyze_command("rm -rf ~/Documents/dev/tmp/old-build", &ctx(&e)).level, Level::L0);
+        assert_eq!(analyze_command("rm -rf ~/Documents/dev/other", &ctx(&e)).level, Level::L3);
+        // Not signed: a folder outside the signed roots that only the local configuration names never counts.
+        p.scratch.clear();
+        let unsigned = vec!["/home/me/Downloads/tmp".to_owned()];
+        let e = effective(Some(&p), &[], &local(&none, &m, &[], &unsigned), &BTreeMap::new(), 1_000);
+        assert!(e.scratch.is_empty(), "{:?}", e.scratch);
+        assert_eq!(analyze_command("rm -rf ~/Documents/dev/tmp/old-build", &ctx(&e)).level, Level::L3);
+    }
+
+    /// What an agent can do to a signed scratch folder that no local entry names: nothing that widens it.
+    #[test]
+    fn a_signed_scratch_folder_never_counts_as_something_else() {
+        let mut p = policy(5, 1_000);
+        p.roots = vec!["~/Documents/dev".to_owned()];
+        // The home folder, keys and a root's parent are refused though signed (a phone that signed them is wrong).
+        p.scratch = vec![
+            "/home/me/Documents/dev/tmp".to_owned(),
+            "/home/me".to_owned(),
+            "/home/me/.ssh".to_owned(),
+            "/".to_owned(),
+            "~/Documents/dev/tmp/../../../.ssh".to_owned(),
+        ];
+        let (none, m) = (Facts::default(), Matrix::default());
+        let e = effective(Some(&p), &[], &local(&none, &m, &[], &[]), &BTreeMap::new(), 1_000);
+        assert_eq!(e.scratch, ["/home/me/Documents/dev/tmp"]);
+        // An agent replaced the folder with a link: to the home folder (refused), or to another folder (it is no
+        // longer the folder the owner confirmed). Neither the name nor what it points to counts.
+        for target in ["/home/me", "/home/me/Pictures", "/home/me/Documents/dev/app"] {
+            let canonical = BTreeMap::from([("/home/me/Documents/dev/tmp".to_owned(), target.to_owned())]);
+            let l = Local {
+                canonical: &canonical,
+                ..local(&none, &m, &[], &[])
+            };
+            let e = effective(Some(&p), &[], &l, &BTreeMap::new(), 1_000);
+            assert!(e.scratch.is_empty(), "{target}: {:?}", e.scratch);
+        }
+        // Resolving to itself (the usual case), it counts once.
+        let canonical =
+            BTreeMap::from([("/home/me/Documents/dev/tmp".to_owned(), "/home/me/Documents/dev/tmp".to_owned())]);
+        let l = Local {
+            canonical: &canonical,
+            ..local(&none, &m, &[], &[])
+        };
+        assert_eq!(effective(Some(&p), &[], &l, &BTreeMap::new(), 1_000).scratch, ["/home/me/Documents/dev/tmp"]);
+        // Without a snapshot nothing signed is known: only the local list, as before.
+        let e = effective(None, &[], &local(&none, &m, &[], &[]), &BTreeMap::new(), 1_000);
+        assert!(e.scratch.is_empty());
     }
 
     #[test]

@@ -91,6 +91,8 @@ pub struct State {
     /// Send holds waiting (Undo deletes them), and the paths Undo was asked on.
     pub holds: HashSet<String>,
     pub undos: Vec<String>,
+    /// Arguments this server refuses as unknown, as an older server does with ones added since.
+    pub unknown_arguments: Vec<String>,
     access: HashSet<String>,
     refresh: HashSet<String>,
     sessions: HashSet<String>,
@@ -383,6 +385,10 @@ fn submit(s: &mut State, body: &[u8], defer: bool) -> Resp {
     if let Err(message) = spec.parse(&doc["arguments"]) {
         return json_resp(400, &json!({"error": "invalid_arguments", "message": message}));
     }
+    if let Some(unknown) = s.unknown_arguments.iter().find(|a| doc["arguments"].get(a.as_str()).is_some()) {
+        let message = format!("Unknown property `{unknown}`.");
+        return json_resp(400, &json!({"error": "invalid_arguments", "message": message}));
+    }
     s.calls.push(doc["arguments"].clone());
     s.tools.push(tool.clone());
     s.defers.push(defer);
@@ -647,22 +653,63 @@ impl SigningPhone {
         identity: &Identity,
         m: &reins_policy::desktop_policy::PolicyMessage,
     ) -> reins_desktop::policy::Applied {
-        use reins_policy::desktop_policy::{PolicyMessage, sign};
+        self.send_at(paths, identity, m, reins_desktop::now_unix())
+    }
+
+    /// [`SigningPhone::send`], picked up by the app at `now` (earlier than now: what it keeps has gone stale since).
+    pub fn send_at(
+        &self,
+        paths: &Paths,
+        identity: &Identity,
+        m: &reins_policy::desktop_policy::PolicyMessage,
+        now: i64,
+    ) -> reins_desktop::policy::Applied {
+        let signed = self.signed(m);
+        self.hand_over(paths, identity, m, &signed, now)
+    }
+
+    /// [`SigningPhone::send`] from a phone older than hook readings: its snapshot doesn't say it takes them.
+    pub fn send_as_older_phone(
+        &self,
+        paths: &Paths,
+        identity: &Identity,
+        m: &reins_policy::desktop_policy::PolicyMessage,
+    ) -> reins_desktop::policy::Applied {
+        let mut signed = self.signed(m);
+        signed.body = signed.body.replace(",\"reading\":1", "");
+        let bytes = reins_policy::desktop_policy::signing_bytes(&signed.body);
+        signed.sig = data_encoding::BASE64URL_NOPAD.encode(self.0.sign(&bytes).as_ref());
+        self.hand_over(paths, identity, m, &signed, reins_desktop::now_unix())
+    }
+
+    fn signed(&self, m: &reins_policy::desktop_policy::PolicyMessage) -> reins_policy::desktop_policy::Signed {
+        let sign = |b: &[u8]| data_encoding::BASE64URL_NOPAD.encode(self.0.sign(b).as_ref());
+        reins_policy::desktop_policy::sign(m, &self.key(), &sign)
+    }
+
+    fn hand_over(
+        &self,
+        paths: &Paths,
+        identity: &Identity,
+        m: &reins_policy::desktop_policy::PolicyMessage,
+        signed: &reins_policy::desktop_policy::Signed,
+        now: i64,
+    ) -> reins_desktop::policy::Applied {
+        use reins_policy::desktop_policy::PolicyMessage;
         use reins_proto::desktop::{MailedPolicy, PolicyKind, PolicyMail};
-        let signed = sign(m, &self.key(), &|b| data_encoding::BASE64URL_NOPAD.encode(self.0.sign(b).as_ref()));
         let item = MailedPolicy {
             version: m.version(),
             kind: match m {
                 PolicyMessage::Snapshot(_) => PolicyKind::Snapshot,
                 PolicyMessage::Tighten(_) => PolicyKind::Tighten,
             },
-            sealed: seal_to(&identity.public_key(), &serde_json::to_vec(&signed).unwrap()).unwrap(),
+            sealed: seal_to(&identity.public_key(), &serde_json::to_vec(signed).unwrap()).unwrap(),
         };
         let mail = PolicyMail {
             items: vec![item],
             signing_key: Some(self.key()),
         };
-        reins_desktop::policy::apply(paths, identity, &mail, reins_desktop::now_unix(), 0).unwrap()
+        reins_desktop::policy::apply(paths, identity, &mail, now, 0).unwrap()
     }
 
     /// A fresh Auto snapshot for the app at `paths`: dkat Mine, acme Work, the 01 §4 matrix, `roots` as signed.

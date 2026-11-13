@@ -329,6 +329,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         detail: Some("terraform apply -auto-approve".to_owned()),
         topic: Some("command:terraform apply".to_owned()),
         net: None,
+        reading: None,
     };
     // The third: a long command, cut to 300 characters with an ellipsis (more than 300 bytes), and a detail of
     // multi-byte text, both within the limits counted in characters.
@@ -607,6 +608,7 @@ async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
         detail: None,
         topic: None,
         net: None,
+        reading: None,
     };
     let entry = reins_desktop::journal::Entry::new(reins_desktop::journal::Kind::Ask, &q.question);
     let (answer, _) = with_phone_open(

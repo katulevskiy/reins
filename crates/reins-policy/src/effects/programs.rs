@@ -504,7 +504,8 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
     let lower = program.to_ascii_lowercase();
     let args = &words[1..];
     let runs_from_path = words[0].text.contains('/');
-    if let Some(out) = special(w, &lower, args) {
+    let installed = installed(w, &words[0].text);
+    if let Some(out) = special(w, &lower, args, installed) {
         return out;
     }
     // Programs whose options are closed: any option this model doesn't know makes the request unreadable. Wrappers'
@@ -1603,7 +1604,7 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
             }
             Input::Opaque(lower)
         }
-        "reins" => reins(w, args),
+        "reins" => reins(w, args, installed),
         "gpg" | "gpg2" => {
             if args.iter().any(|a| {
                 matches!(
@@ -1873,6 +1874,10 @@ pub(super) fn run(w: &mut Walk<'_>, words: &[Exp], input: Input) -> Input {
             output(&lower, args)
         }
         p if HARMLESS.contains(&p) => {
+            // `hash -p FILE NAME`: from then on NAME runs FILE, whatever program the name is read as.
+            if p == "hash" && short(args, 'p') {
+                w.lower(Certainty::None, "the file `hash -p` makes a command's name run");
+            }
             if matches!(p, "kill" | "pkill" | "killall") && args.iter().any(|a| a.text == "1" || a.text == "-1") {
                 w.effect(Effect::Infra {
                     target: "every process".to_owned(),
@@ -2003,10 +2008,206 @@ fn known_options(w: &mut Walk<'_>, program: &str, args: &[Exp], flags: &str, val
     ok
 }
 
+/// The options a closed model knows, each written out in full: short flags, short options with a value (attached, or
+/// the next word), long flags, and long options with a value (`--name=value`, or the next word).
+struct Closed {
+    flags: &'static str,
+    values: &'static str,
+    long: &'static [&'static str],
+    long_values: &'static [&'static str],
+    /// Operands and option values may be named at run time (`"$dev"`): the caller notes them. Off, a word that is not
+    /// in the command makes the form unread: it may be an option the model left out.
+    run_time_words: bool,
+}
+
+/// The operands of a command whose model is closed: `None` unless every word is an option `spec` knows, such an
+/// option's value, or an operand. An option is never taken by a prefix of its name (`--tab` may be `--tab-file`, which
+/// a model left out), and never when part of it is named at run time.
+fn closed_operands<'e>(args: &'e [Exp], spec: &Closed) -> Option<Vec<&'e Exp>> {
+    let written = |e: &Exp| spec.run_time_words || (e.known() && !e.glob);
+    // The value of an option that takes the next word: there, and written out where the model needs it to be.
+    let value = |k: &mut usize| -> Option<()> {
+        *k += 1;
+        args.get(*k - 1).filter(|v| written(v)).map(|_| ())
+    };
+    let mut operands = Vec::new();
+    let mut options = true;
+    let mut k = 0;
+    while let Some(a) = args.get(k) {
+        k += 1;
+        if !written(a) {
+            return None;
+        }
+        let t = a.text.as_str();
+        if !options || !t.starts_with('-') || t == "-" {
+            operands.push(a);
+            continue;
+        }
+        if t == "--" {
+            options = false;
+            continue;
+        }
+        if let Some(long) = t.strip_prefix("--") {
+            match long.split_once('=') {
+                Some((name, _)) if spec.long_values.contains(&name) => {}
+                None if spec.long.contains(&long) => {}
+                None if spec.long_values.contains(&long) => value(&mut k)?,
+                _ => return None,
+            }
+            continue;
+        }
+        let short = &t[1..];
+        for (i, c) in short.char_indices() {
+            if spec.values.contains(c) {
+                // The rest of the word, or the next word, is its value.
+                if i + c.len_utf8() == short.len() {
+                    value(&mut k)?;
+                }
+                break;
+            }
+            if !spec.flags.contains(c) {
+                return None;
+            }
+        }
+    }
+    Some(operands)
+}
+
+/// A command's words on one line, cut short: what names a form that is not read.
+fn form(args: &[Exp]) -> String {
+    let line = args.iter().map(|a| a.text.replace(UNKNOWN, "\u{2026}")).collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= 60 {
+        return line;
+    }
+    let mut cut: String = line.chars().take(59).collect();
+    cut.push('\u{2026}');
+    cut
+}
+
+/// The pager a systemd tool pipes its output into when it writes to a terminal: `$SYSTEMD_PAGER`, else `$PAGER`. One
+/// the line sets is a program the line runs: read as a command, as git's pager is. `less` runs `LESSOPEN` and
+/// `LESSCLOSE` as commands, so a line that sets either is not read.
+fn systemd_pager(w: &mut Walk<'_>) {
+    for var in ["SYSTEMD_PAGER", "PAGER"] {
+        match w.var_state(var) {
+            Some(Some(cmd)) if !matches!(cmd.as_str(), "" | "true" | ":" | "cat" | "less" | "more") => {
+                w.run_script(&cmd, Vec::new());
+            }
+            Some(None) => w.lower(Certainty::None, format!("the program ${var} names")),
+            _ => {}
+        }
+    }
+    if w.has_var_prefix("LESSOPEN") || w.has_var_prefix("LESSCLOSE") {
+        w.lower(Certainty::None, "a program the pager runs (LESSOPEN, LESSCLOSE)");
+    }
+}
+
+/// `qpdf`, in the two forms that are exactly "reads its input, writes its one output": looking at one file (page
+/// count, checks, what is in it), and rewriting one file into another with options that only change how the copy is
+/// written. qpdf runs no other program. Everything that names more files or takes its words from elsewhere is left
+/// out, and so is not read: `@file` (more arguments from a file), `--pages`, `--overlay`, `--underlay` and the
+/// attachment options (more inputs), `--split-pages` (many outputs), `--replace-input` (overwrites the input),
+/// `--job-json-file`, `--password-file`, `--encrypt`, and the options that print streams or keys.
+fn qpdf(w: &mut Walk<'_>, args: &[Exp]) -> bool {
+    const LOOKS: &[&str] = &[
+        "show-npages",
+        "check",
+        "check-linearization",
+        "show-linearization",
+        "show-encryption",
+        "is-encrypted",
+        "requires-password",
+        "show-xref",
+        "show-pages",
+        "with-images",
+        "list-attachments",
+    ];
+    const ALONE: &[&str] = &["version", "help", "copyright", "show-crypto"];
+    const QUIET: &[&str] = &["no-warn", "warning-exit-0", "verbose", "progress"];
+    const WRITES: &[&str] = &[
+        "linearize",
+        "decrypt",
+        "qdf",
+        "recompress-flate",
+        "deterministic-id",
+        "coalesce-contents",
+        "flatten-rotation",
+        "remove-restrictions",
+        "no-original-object-ids",
+        "newline-before-endstream",
+        "preserve-unreferenced",
+        "preserve-unreferenced-resources",
+    ];
+    // Options whose value is attached with `=` (qpdf takes no other form).
+    const WRITES_VALUE: &[&str] = &[
+        "object-streams",
+        "stream-data",
+        "compress-streams",
+        "decode-level",
+        "compression-level",
+        "normalize-content",
+        "rotate",
+        "min-version",
+        "force-version",
+        "flatten-annotations",
+        "remove-unreferenced-resources",
+    ];
+    let (mut looks, mut alone, mut writes) = (false, false, false);
+    let mut files: Vec<&Exp> = Vec::new();
+    for a in args {
+        // A word named at run time may be `@file` or an option left out here.
+        if !a.known() {
+            return false;
+        }
+        let t = a.text.as_str();
+        if let Some(option) = t.strip_prefix("--") {
+            match option.split_once('=') {
+                None if LOOKS.contains(&option) => looks = true,
+                None if ALONE.contains(&option) => alone = true,
+                None if WRITES.contains(&option) => writes = true,
+                None if QUIET.contains(&option) => {}
+                Some((name, _)) if WRITES_VALUE.contains(&name) => writes = true,
+                _ => return false,
+            }
+        } else if t.starts_with(['-', '@']) || a.glob {
+            // A one-dash option, `-` (standard output), `@file`, or names the shell fills in.
+            return false;
+        } else {
+            files.push(a);
+        }
+    }
+    match files.as_slice() {
+        [] if alone && !looks && !writes => {}
+        [input] if looks && !writes => w.read_file(input),
+        [input, output] if !looks && !alone => {
+            w.read_file(input);
+            let p = w.path(output);
+            w.write(p);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Whether `word` names the program the system installed: a bare name looked up on the `PATH` the agent's environment
+/// has, or a path straight into one of the system's own folders of programs. `./codex`, `~/bin/losetup` or a name
+/// found on a `PATH` the line set is a file of that name, which may be anything.
+///
+/// The models that read a form as only printing (the closed ones at the end of [`special`], and `reins`' own state)
+/// hold for the installed program only. The older models go by the name alone, as they always have.
+fn installed(w: &Walk<'_>, word: &str) -> bool {
+    const SYSTEM: &[&str] = &["/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/", "/usr/local/bin/", "/usr/local/sbin/"];
+    if word.contains('/') {
+        return SYSTEM.iter().any(|dir| word.strip_prefix(dir).is_some_and(|name| !name.contains('/')));
+    }
+    w.var_state("PATH") == w.ctx.env.get("PATH").map(|path| Some(path.clone()))
+}
+
 /// The few programs outside the file, git, network and build families that the recorded history needs, each closed:
-/// the forms it recognizes, and certainty `None` for anything else. `None`: not one of these.
+/// the forms it recognizes, and certainty `None` for anything else. `None`: not one of these. `installed`: see
+/// [`installed`].
 #[allow(clippy::too_many_lines, reason = "one arm per program")]
-fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
+fn special(w: &mut Walk<'_>, program: &str, args: &[Exp], installed: bool) -> Option<Input> {
     let words: Vec<&str> = args.iter().filter(|a| !a.text.starts_with('-')).map(|a| a.text.as_str()).collect();
     let first = words.first().copied().unwrap_or_default();
     match program {
@@ -2369,6 +2570,174 @@ fn special(w: &mut Walk<'_>, program: &str, args: &[Exp]) -> Option<Input> {
                     change: InfraChange::Apply,
                     local: has(args, "--user"),
                 });
+            }
+        }
+        // ---- closed models of forms that only look: for the installed program, not a file of its name.
+        "timedatectl" | "findmnt" | "losetup" | "blkid" | "pdfunite" | "qpdf" | "codex" if !installed => return None,
+        // The clock's settings, read: the commands that print them, on this computer (`-H` and `-M` reach another
+        // one). `set-time`, `set-timezone`, `set-ntp`, `set-local-rtc`, `ntp-servers` and `revert` change the clock
+        // for every program here: not read, as any option or word outside this list.
+        "timedatectl" => {
+            const SPEC: Closed = Closed {
+                flags: "ha",
+                values: "p",
+                long: &["help", "version", "no-pager", "no-ask-password", "all", "value", "monitor"],
+                long_values: &["property"],
+                run_time_words: false,
+            };
+            const READS: &[&str] = &["status", "show", "list-timezones", "timesync-status", "show-timesync"];
+            let reads = closed_operands(args, &SPEC).is_some_and(|ops| match ops.as_slice() {
+                [] => true,
+                [command] => READS.contains(&command.text.as_str()),
+                _ => false,
+            });
+            if reads {
+                systemd_pager(w);
+            } else {
+                unmodelled(w, program, &form(args));
+            }
+        }
+        // Looks a device or a folder up in the tables of mounted filesystems and prints the row: it mounts nothing
+        // and opens none of the paths it is given. Left out, so not read: `-F`/`--tab-file` and the `LIBMOUNT_*`
+        // variables (a file the line names is parsed as the table, and its rows printed), `-N` (another process's
+        // table), `-p` and `-w` (waits for changes), `-x` (checks the table against the disks).
+        "findmnt" => {
+            const SPEC: Closed = Closed {
+                flags: "smkAabCcDefiJlnPRrUuvyhV",
+                values: "dOoSTMt",
+                long: &[
+                    "fstab",
+                    "mtab",
+                    "kernel",
+                    "all",
+                    "ascii",
+                    "bytes",
+                    "nocanonicalize",
+                    "canonicalize",
+                    "df",
+                    "evaluate",
+                    "first-only",
+                    "invert",
+                    "json",
+                    "list",
+                    "noheadings",
+                    "output-all",
+                    "pairs",
+                    "pseudo",
+                    "shadowed",
+                    "submounts",
+                    "raw",
+                    "real",
+                    "tree",
+                    "uniq",
+                    "notruncate",
+                    "nofsroot",
+                    "shell",
+                    "verbose",
+                    "vfs-all",
+                    "help",
+                    "version",
+                ],
+                long_values: &["direction", "options", "output", "source", "target", "mountpoint", "types"],
+                run_time_words: true,
+            };
+            match closed_operands(args, &SPEC) {
+                Some(ops) if ops.len() <= 2 && !w.has_var_prefix("LIBMOUNT_") => {
+                    for a in args {
+                        w.note(a);
+                    }
+                }
+                _ => unmodelled(w, program, &form(args)),
+            }
+        }
+        // Loop devices, listed: every one, one, or those of a file (`-j`, whose file is only compared, never
+        // opened). Every other form changes them: `-d` and `-D` detach (what is mounted from one goes), `-f` takes a
+        // free device (and makes one when none is), `-c` resizes, and a device with a file sets one up. A word named
+        // at run time may be any of these.
+        "losetup" => {
+            const SPEC: Closed = Closed {
+                flags: "alJnvhV",
+                values: "jO",
+                long: &["all", "list", "json", "noheadings", "output-all", "raw", "verbose", "help", "version"],
+                long_values: &["associated", "output"],
+                run_time_words: false,
+            };
+            if closed_operands(args, &SPEC).is_none_or(|ops| ops.len() > 1) {
+                unmodelled(w, program, &form(args));
+            }
+        }
+        // Prints what is on a block device (its filesystem's type, label and ids): it reads the device's first
+        // blocks, or its own cache of them, and changes no device. It does keep that cache file up to date, the
+        // system's own (`/run/blkid/blkid.tab`). What points the cache elsewhere is a file the line overwrites, so it
+        // is left out, and not read: `-c`, `-g` (edits the cache), and the `BLKID_FILE` and `BLKID_CONF` variables.
+        "blkid" => {
+            const SPEC: Closed = Closed {
+                flags: "dklpiDhV",
+                values: "ostLUHSOun",
+                long: &[
+                    "no-encoding",
+                    "list-filesystems",
+                    "list-one",
+                    "probe",
+                    "info",
+                    "no-part-details",
+                    "help",
+                    "version",
+                ],
+                long_values: &[
+                    "output",
+                    "match-tag",
+                    "match-token",
+                    "label",
+                    "uuid",
+                    "hint",
+                    "size",
+                    "offset",
+                    "usages",
+                    "match-types",
+                ],
+                run_time_words: false,
+            };
+            if closed_operands(args, &SPEC).is_none() || w.has_var_prefix("BLKID_") {
+                unmodelled(w, program, &form(args));
+            }
+        }
+        // Poppler's `pdfunite SOURCE… DESTINATION`: reads its sources and writes the last word, like `cp`. Its only
+        // options print its version or its usage; it runs nothing.
+        "pdfunite" => {
+            const SPEC: Closed = Closed {
+                flags: "vh?",
+                values: "",
+                long: &["help"],
+                long_values: &[],
+                run_time_words: true,
+            };
+            match closed_operands(args, &SPEC).as_deref() {
+                Some([sources @ .., destination]) if !sources.is_empty() => {
+                    for s in sources {
+                        w.read_file(s);
+                    }
+                    let p = w.path(destination);
+                    w.write(p);
+                }
+                // Fewer than two files: it prints its usage.
+                Some(_) => {}
+                None => unmodelled(w, program, &form(args)),
+            }
+        }
+        "qpdf" => {
+            if !qpdf(w, args) {
+                unmodelled(w, program, &form(args));
+            }
+        }
+        // OpenAI's Codex is an agent: what it does in a session is not read. Asked only for its version or its usage,
+        // its argument parser prints that and exits before any session starts: no project is read, no model is
+        // called. Any other word, or one more, is the program with no model.
+        "codex" => {
+            let prints = matches!(args, [one] if one.known()
+                && matches!(one.text.as_str(), "--version" | "-V" | "--help" | "-h"));
+            if !prints {
+                return None;
             }
         }
         _ => return None,
@@ -4156,8 +4525,69 @@ fn ssh(w: &mut Walk<'_>, args: &[Exp], input: Input) -> Input {
     Input::Opaque("ssh".to_owned())
 }
 
-fn reins(w: &mut Walk<'_>, args: &[Exp]) -> Input {
+/// Forms of `reins` that only print what Reins knows of itself on this computer, none of it a secret (read from
+/// `reins-desktop`'s `main.rs` and `agents_cli.rs`); `words` are all in the command as written:
+///
+/// - `tickets`: the parked questions and pushes and where each stands, after a look at the Reins server (the look the
+///   daemon takes on its own every half minute: it collects only what the phone already approved). `--trust-key` pins
+///   a new phone key: not this form.
+/// - `pending`: the local approvals that wait (`approve` and `deny` answer them: not read).
+/// - `net list`: what the safety nets keep (`restore`, `prune` and `run` change it).
+/// - `harness list [NAME]`: which AI tools Reins is added to (`add` and `remove` edit their settings).
+/// - `folders`, `folders list`: the project and scratch folders (`add`, `remove` and `temp` edit the configuration).
+/// - `-h`, `-V`, and `--help` or `-h` after the name of a command (and its subcommand): the argument parser prints the
+///   usage and nothing runs. Only where the words before it are command names: after `run` (`reins run`, `reins net
+///   run`) the words are another program's, and `ask`, `hook`, `mcp` and `daemon` are not taken here either.
+fn reins_prints(words: &[&str]) -> bool {
+    // Every command whose words are its own (`payments-trust` is read before this, as a change of what is trusted).
+    const COMMANDS: &[&str] = &[
+        "setup",
+        "doctor",
+        "test",
+        "status",
+        "git",
+        "pending",
+        "approve",
+        "deny",
+        "login",
+        "logout",
+        "service",
+        "pause",
+        "resume",
+        "enable",
+        "disable",
+        "update",
+        "uninstall",
+        "allow",
+        "session",
+        "task",
+        "tickets",
+        "wait",
+        "harness",
+        "vault",
+        "secrets",
+        "net",
+        "ssh",
+        "folders",
+    ];
+    let name = |s: &str| {
+        s.starts_with(|c: char| c.is_ascii_lowercase()) && s.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+    };
+    match words {
+        ["-h" | "-V" | "tickets" | "pending" | "folders"] | ["net" | "harness" | "folders", "list"] => true,
+        ["harness", "list", harness] => name(harness),
+        [path @ .., "--help" | "-h"] => {
+            (1..=3).contains(&path.len()) && COMMANDS.contains(&path[0]) && path.iter().all(|p| name(p) && *p != "run")
+        }
+        _ => false,
+    }
+}
+
+fn reins(w: &mut Walk<'_>, args: &[Exp], installed: bool) -> Input {
     let sub: Vec<&str> = args.iter().map(|a| a.text.as_str()).take(2).collect();
+    let words: Vec<&str> = args.iter().map(|a| a.text.as_str()).collect();
+    // Only the installed program's words, all of them in the command as written.
+    let written = installed && args.iter().all(|a| a.known() && !a.glob);
     match sub.as_slice() {
         ["secrets", "scan" | "import" | "get", ..] => secret_to_agent(w, "secrets found on this computer"),
         ["payments-trust", ..] => w.effect(Effect::Permission {
@@ -4175,7 +4605,11 @@ fn reins(w: &mut Walk<'_>, args: &[Exp]) -> Input {
         }
         // A question for the owner, and Reins's own status.
         ["ask" | "status" | "version" | "--version" | "help" | "--help" | "doctor", ..] | [] => {}
-        [other, ..] => unmodelled(w, "reins", other),
+        // What only prints Reins's own state, or its usage.
+        _ if written && reins_prints(&words) => {}
+        // Everything else changes Reins or what it lets through (`logout`, `tickets --trust-key`, `folders add`,
+        // `approve`): not read, so it is asked.
+        _ => unmodelled(w, "reins", &form(args)),
     }
     Input::None
 }
