@@ -228,4 +228,14 @@ signing key, `TicketStore::see_signing_key`).
   requests 350, **27 asked (7.7%)**, the same as the phone's own engine; `unconfirmed_folders` (before the owner
   confirms) still gives 33 (9.4%). The e2e test `the_computer_proposes_its_folders_and_uses_the_ones_confirmed` covers
   propose, the card, confirm, the signed snapshot, a local decision, and remove.
+- **`reins folders` and suggested scratch folders (follow-up).** `[workspace]` had no command: `reins folders`
+  (`reins_desktop::folders_cli`) lists the roots and scratch folders with how each stands, and adds or removes one
+  (`reins folders temp <path>` for a temp folder of the owner's own). The computer also suggests scratch folders it
+  learned from the activity log (`reins_desktop::suggest`): a folder where the owner approved, on the phone and within
+  14 days, three commands deleting three different things, and the daemon's `$TMPDIR`. They travel beside the
+  configured folders (`FolderProposal::suggested_scratch`). The phone shows each as a card, also inside a signed root
+  (`reins_policy::desktop_folders::open_suggested`), and signs it as scratch once confirmed. The computer counts a
+  scratch folder the phone signed whether or not its configuration names it (`clamp_scratch`). The e2e test
+  `the_computer_suggests_a_scratch_folder_and_uses_it_once_confirmed` covers the log, the suggestion, the card,
+  confirm, a local decision with no local entry, and remove.
 

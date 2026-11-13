@@ -663,6 +663,21 @@ each folder that isn't signed yet as a question card, with the path exactly as t
 - **What's left:** the server could send a made-up proposal, as it could send any desktop request. It still needs the
   owner's check on the phone, with the exact path shown, and refused paths are never shown.
 
+Suggested scratch folders. With its proposal the computer may suggest scratch folders that are in no configuration
+(`suggested_scratch`). It derives them from its own activity log: a folder in which the owner approved, on the phone
+and within 14 days, at least three commands deleting three different things, each command read again by the
+consequence engine (what a command says in words counts for nothing), and the daemon's own `$TMPDIR`. A suggestion is
+only a proposal. No decision reads it, and unlike a configured scratch folder it doesn't count for lying inside a
+signed root. The phone shows it as a card with the exact path, and nothing counts until the owner confirms it there
+with the owner check. The phone then signs it as scratch, and the computer counts a scratch folder the phone signed
+whether or not its own configuration names it: as signed only, and not while a link stands in its place. Taking such a
+folder out of `config.toml` doesn't stop it; removing it on the phone does, at once. The refusals above apply, and a
+suggested folder that is a signed root, or holds one, is never shown. The activity log is a file an agent running as
+the user can write (a write outside the work folders, so Auto asks about it), so a forged log can at most make a card
+appear.
+`reins folders add` on the computer is the owner's other way to accept a suggestion; run by an agent, it is a command
+Reins has no model of, so it is asked about.
+
 What the computer's own settings can do: only tighten. A local fact counts only where it is stricter than the signed
 one, a local matrix cell only where stricter, a local workspace root only inside a signed root, a scratch folder only
 strictly inside one or signed. Where the signed policy decides, the built-in guard groups are labels, except those about Reins
