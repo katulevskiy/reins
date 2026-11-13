@@ -101,9 +101,12 @@ struct ExportDecisionHistoryRow: View {
                     model.notice = error.userMessage
                 }
                 clear()
-            },
-            onCancellation: { clear() }
+            }
         )
+        // Swiped away or cancelled: the sheet closes without onCompletion, so drop the held contents here too.
+        .onChange(of: saving) { _, shown in
+            if !shown { document = nil }
+        }
     }
 
     private func clear() {
