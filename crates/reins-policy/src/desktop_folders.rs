@@ -3,6 +3,9 @@
 //! ([`reins_proto::desktop::FolderProposal`]); the owner confirms each on the phone (a loosening: the owner check), and
 //! only then does it count on the computer. Removing one only tightens.
 //!
+//! A computer may also suggest scratch folders that are in none of its configuration ([`open_suggested`]). They are
+//! proposals like the others, with one difference: a suggested folder inside a signed root does not count already.
+//!
 //! A folder is refused, on the computer before it proposes it, on the phone before it shows or signs it, and on the
 //! computer again before it decides with it, when it is not an absolute canonical path, when it is as broad as a whole
 //! disk, the home folder or a folder above it (`/`, `~`, `/home/<user>`, `/Users/<user>`), or when it is or holds a
@@ -208,6 +211,50 @@ pub fn open(proposed: &[Folder], roots: &[String], scratch: &[String], home: &st
     out
 }
 
+/// The scratch folders a computer only suggests ([`reins_proto::desktop::FolderProposal::suggested_scratch`]: not in
+/// its `[workspace]`, learned there from what the owner approved) that the phone may show, in order, once each.
+///
+/// A suggested folder counts only once it is signed as scratch. Unlike a configured scratch folder, lying strictly
+/// inside a signed root is not enough: the computer counts such a folder because its own configuration names it, and a
+/// suggested one is named nowhere. So it is shown, and the owner confirms it like any other.
+///
+/// Left out: refused ones; one with a `*` part (a suggestion names one folder); one signed as scratch already, or
+/// inside a signed scratch folder; one that is a signed root or holds one (a root's projects are never scratch); and
+/// one the computer also proposes from its configuration (`proposed`: it is then shown, or counted, as that). Without
+/// the computer's home folder nothing is suggested: a `~` root could not be compared.
+#[must_use]
+pub fn open_suggested(
+    suggested: &[String],
+    proposed: &[Folder],
+    roots: &[String],
+    scratch: &[String],
+    home: &str,
+) -> Vec<Folder> {
+    let mut out: Vec<Folder> = Vec::new();
+    if home.is_empty() {
+        return out;
+    }
+    for path in suggested {
+        let covered = scratch.iter().any(|s| holds(&normalize(s, "/", home), path));
+        let over_a_root = roots.iter().any(|r| inside(path, r, home));
+        let configured = proposed.iter().any(|f| f.kind == FolderKind::Scratch && same(&f.path, path, home));
+        let f = Folder {
+            path: path.clone(),
+            kind: FolderKind::Scratch,
+        };
+        if refusal(path, home).is_none()
+            && !parts(path).iter().any(|p| is_glob(p))
+            && !covered
+            && !over_a_root
+            && !configured
+            && !out.contains(&f)
+        {
+            out.push(f);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,6 +364,63 @@ mod tests {
             [scratch("/home/me/.claude/projects/*/memory"), scratch("/home/me/.zeron/uploads"), root("/mnt/data/dev")]
         );
         assert_eq!(open(&proposed, &roots, &signed_scratch, HOME).len(), 2);
+    }
+
+    /// A folder the computer only suggests is a card until it is signed as scratch, wherever it lies.
+    #[test]
+    fn a_suggested_folder_inside_a_root_is_still_open() {
+        let roots = vec!["~/Documents/dev".to_owned(), "/mnt/data/dev".to_owned()];
+        let tmp = "/home/me/Documents/dev/tmp".to_owned();
+        // The same folder from the configuration counts already (the computer counts it too); suggested, it doesn't.
+        assert!(counted(&scratch(&tmp), &roots, &[], HOME));
+        assert_eq!(open_suggested(std::slice::from_ref(&tmp), &[], &roots, &[], HOME), [scratch(&tmp)]);
+        // Signed as scratch: counted. So is a folder inside a signed scratch folder (a `*` part matches one part).
+        assert!(open_suggested(std::slice::from_ref(&tmp), &[], &roots, std::slice::from_ref(&tmp), HOME).is_empty());
+        let signed = vec!["~/Documents/dev/tmp".to_owned(), "/home/me/.claude/projects/*/memory".to_owned()];
+        let inside_signed =
+            vec!["/home/me/Documents/dev/tmp/build".to_owned(), "/home/me/.claude/projects/app/memory".to_owned()];
+        assert!(open_suggested(&inside_signed, &[], &roots, &signed, HOME).is_empty());
+        // The computer also has it in its configuration: that proposal stands, not the suggestion.
+        assert!(open_suggested(std::slice::from_ref(&tmp), &[scratch(&tmp)], &roots, &[], HOME).is_empty());
+        assert_eq!(
+            open_suggested(std::slice::from_ref(&tmp), &[root(&tmp)], &roots, &[], HOME),
+            [scratch(&tmp)],
+            "a root of the same name is another proposal"
+        );
+    }
+
+    /// What a lying or confused computer may suggest: never shown.
+    #[test]
+    fn hostile_suggestions_are_never_open() {
+        let roots = vec!["~/Documents/dev".to_owned(), "/mnt/data/dev".to_owned()];
+        let hostile: Vec<String> = [
+            // Too broad, keys, Reins' own state, not canonical.
+            "/",
+            "/home/me",
+            "/home/me/.ssh",
+            "/home/me/.config/reins",
+            "~/Documents/dev/tmp",
+            "/home/me/Documents/dev/tmp/",
+            "/home/me/Documents/dev/../../.ssh",
+            // A signed root, or a folder holding one: its projects would become scratch.
+            "/home/me/Documents/dev",
+            "/home/me/Documents",
+            "/mnt/data/dev",
+            // A pattern: a suggestion names one folder.
+            "/home/me/Documents/dev/*",
+            "/home/me/Documents/dev/*/tmp",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert!(open_suggested(&hostile, &[], &roots, &[], HOME).is_empty());
+        // Once each, in order, the fine ones kept.
+        let mixed: Vec<String> =
+            ["/home/me/Documents", "/home/me/Downloads/tmp", "/", "/home/me/Downloads/tmp"].map(str::to_owned).to_vec();
+        assert_eq!(open_suggested(&mixed, &[], &roots, &[], HOME), [scratch("/home/me/Downloads/tmp")]);
+        // Not knowing the computer's home, a `~` root can't be compared with a suggestion: none is shown.
+        assert!(
+            open_suggested(&["/home/me/Documents".to_owned(), "/work/tmp".to_owned()], &[], &roots, &[], "").is_empty()
+        );
     }
 
     #[test]
