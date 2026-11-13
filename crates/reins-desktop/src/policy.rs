@@ -458,10 +458,21 @@ pub fn reading_folders(paths: &Paths, config: &Config) -> Option<(Vec<String>, V
         }
         out
     };
-    Some((
-        counted(&config.workspace.roots, &|f| counts_as_root(f, &signed)),
-        counted(&config.workspace.scratch, &|f| counts_as_scratch(f, &signed)),
-    ))
+    let mut scratch_counted = counted(&config.workspace.scratch, &|f| counts_as_scratch(f, &signed));
+    // A scratch folder the phone signed counts whether the configuration here names it or not, as with a fresh copy
+    // (`reins_policy::desktop_policy::clamp_scratch`: the owner confirmed it on the phone, and a folder this computer
+    // only suggested is in no configuration), while it is still that folder: not one that resolves elsewhere now.
+    let resolved = crate::folders::resolved(scratch.iter());
+    for s in &scratch {
+        let written = reins_policy::effects::normalize(s, "/", &home);
+        if counts_as_scratch(&written, &signed)
+            && resolved.get(s).is_none_or(|r| *r == written)
+            && !scratch_counted.contains(&written)
+        {
+            scratch_counted.push(written);
+        }
+    }
+    Some((counted(&config.workspace.roots, &|f| counts_as_root(f, &signed)), scratch_counted))
 }
 
 /// For `reins status`: where the computer's Auto rules come from.

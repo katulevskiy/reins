@@ -148,6 +148,59 @@ async fn it_is_read_with_the_folders_the_phone_signed_never_this_computers_own()
     assert_eq!((r.roots.as_slice(), r.analysis.level), (&["/home/me/dev".to_owned()][..], Level::L0));
 }
 
+/// A scratch folder the owner confirmed on the phone counts in a reading as it does with a fresh copy, whether this
+/// computer's settings name it or not (a folder the computer only suggested is in no settings): a delete in it is read
+/// as scratch, and the phone, signing the same folder, takes the reading. One the phone didn't sign is still left out.
+#[tokio::test]
+async fn a_scratch_folder_the_phone_signed_counts_without_a_local_entry() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let past = reins_desktop::now_unix() - 3_600;
+    let mut p = SigningPhone::auto_snapshot(&app.identity, 5, &["/home/me/dev"]);
+    p.binding.issued_at = past;
+    p.binding.not_after = past + dp::VALIDITY_SECS;
+    p.scratch = vec!["/home/me/dev/tmp".to_owned(), "/home/me/scratch".to_owned()];
+    let phone = SigningPhone::default();
+    assert_eq!(phone.send_at(&app.paths, &app.identity, &PolicyMessage::Snapshot(Box::new(p)), past).snapshots, 1);
+    let mut config = Config::default();
+    config.workspace.roots = vec!["/home/me/dev".to_owned()];
+    config.workspace.scratch = vec!["/home/me/elsewhere".to_owned()];
+    assert_eq!(
+        policy::effective(&app.paths, &config, reins_desktop::now_unix()).0.gate,
+        Gate::Fallback(Fallback::NoSnapshot)
+    );
+    let command = "rm -rf /home/me/dev/tmp/run-1 /home/me/scratch/run-2";
+    let args = asked(&mock, &app, &config, "/home/me/dev/app", command).await.expect("the guard asks");
+    let r = reading_of(&args).expect("a reading");
+    assert_eq!(r.scratch, ["/home/me/dev/tmp", "/home/me/scratch"], "the signed ones, not its own unsigned one");
+    assert_eq!(
+        deletes(&r),
+        vec![
+            ("/home/me/dev/tmp/run-1".to_owned(), Area::Scratch),
+            ("/home/me/scratch/run-2".to_owned(), Area::Scratch)
+        ]
+    );
+    assert_eq!(r.analysis.level, Level::L0);
+    let (signed_roots, signed_scratch) =
+        (vec!["/home/me/dev".to_owned()], vec!["/home/me/dev/tmp".to_owned(), "/home/me/scratch".to_owned()]);
+    let signed = Folders {
+        home: &r.home,
+        roots: &signed_roots,
+        scratch: &signed_scratch,
+    };
+    assert_eq!(accept(&r, &signed).map(|a| a.analysis.level), Some(Level::L0));
+    // The phone took the folder outside the roots away since: the reading was read with a folder it no longer signs.
+    let signed = Folders {
+        scratch: &signed_scratch[..1],
+        ..signed
+    };
+    assert_eq!(accept(&r, &signed).map(|a| a.analysis.level), None);
+    // The delete in its own unsigned scratch folder is read as the home folder.
+    let args = asked(&mock, &app, &config, "/home/me/dev/app", "rm -rf /home/me/elsewhere/x").await.unwrap();
+    let r = reading_of(&args).expect("a reading");
+    assert!(!deletes(&r).remove(0).1.in_workspace());
+}
+
 /// A phone re-checks every call against its own description of the tool and refuses an argument it doesn't know. So
 /// a reading goes only to a phone whose signed snapshot says it takes them: never to one that signed nothing kept
 /// here, nor to one older than readings.
