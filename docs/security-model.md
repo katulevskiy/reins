@@ -636,7 +636,8 @@ How it travels and is checked:
   `reins tickets --trust-key`.
 - Logged out, nothing kept is used.
 - A stale, missing or invalid snapshot, Auto off on the phone, a mode whose end passed: the computer asks the phone as
-  before. With the phone offline for more than 10 minutes, that means hook requests wait for it.
+  before. With the phone offline for more than 10 minutes, that means hook requests wait for it. Once it is reached,
+  its own matrix answers what it allows (below: "When the computer's copy ran out").
 - A tightening (Lockdown, a new Deny or Review rule, an ended task, anything else stricter) is also sent first as a
   small signed "tighten now". It applies at once, with or without a snapshot and whatever versions came before, until
   a snapshot as new arrives. Lockdown refuses every tool use. The daemon long-polls, so it arrives within seconds.
@@ -693,6 +694,79 @@ pinned on first use from the server, like the tickets' (compare its digits in `r
 that swapped it at first use could already approve `reins ask` questions, so this adds no new power over shell
 commands.
 
+### When the computer's copy ran out: the phone decides with what the computer read
+
+A computer uses a snapshot for 10 minutes, and the phone signs a new one only while it is awake. After a pause, the
+first guarded command of a burst of work used to reach the owner even where their own matrix allows it (on a hook
+question the phone had only the words of the command to go by, and a word list that asks about every `rm -r`). So a
+hook's question now carries what the computer read of the request, and the phone's own matrix decides it the way the
+computer would have with a fresh snapshot. The owner is asked only when the matrix asks.
+
+What travels: one more argument of the question (`reading`, at most 16 KiB of JSON,
+`reins_policy::desktop_reading`), which only `reins hook` sets, for a tool use:
+
+- the effects the engine read, with how sure it is and what it couldn't resolve;
+- the remotes of the repository the command acts in, as the strict reader of git's configuration read them;
+- the paths a safety net keeps, when the hook hands the harness a netted command;
+- the workspace it was read with (the home folder, the roots, the scratch folders), and the computer's own `[auto]`
+  matrix and facts;
+- a digest of the command (or the files), the folder and the netted command.
+
+What the phone takes from it is what a fresh snapshot already trusts the computer for: what the command does, read
+where the working directory, the environment and the git state are. Everything else is the phone's own:
+
+- **Only a hook's own question, about exactly that command.** The phone takes the detail apart the way the hook puts
+  it together (the rule's lines, `Command:` or `Files:`, the netted command, the folder), wants a question line that
+  only says who wants to run, read or change that, and makes the digest again from what it shows. A reading with
+  another digest is not used. `reins ask` is the agent's own words: it has no way to give a reading, and one added by
+  hand to "May I deploy to production?" answers nothing, as that is no hook's question about a command.
+- **The folders.** The reading is used only when every folder of the workspace it was read with counts under what
+  the phone signs for that computer now (a root inside a signed root, a scratch folder signed or strictly inside one,
+  the home folder the one that computer proposed its folders with). The engine reads more than paths with the
+  workspace (whether a script is the project's own, whether a database file is a local one), so one folder the phone
+  didn't sign makes the whole reading unusable. Each path is then placed again by the phone: outside the signed
+  workspace it is the home folder or the system, whatever the computer said; inside it the computer's finer word
+  (scratch, build output, source, "git brings it back") is kept as far as a fresh snapshot would let it. A computer
+  the phone knows no home folder for (it never proposed its folders) has no usable reading.
+- **The level and the floor.** Both are computed again from the effects. The numbers and the labels the computer
+  wrote are dropped. With a net, the phone levels the effects itself from the paths the net keeps.
+- **The policy.** The phone's live matrix, rules, tasks, facts and mode, for that computer's connection. The
+  computer's own `[auto]` is applied on top, stricter only, as the computer does. A target is never taken as seen
+  before (the computer doesn't know either).
+- **What is always asked stays asked.** The phone reads the command itself for the groups about Reins (its state,
+  secrets, payments) and for the questions it words itself; the computer sends no reading where its user's own guard
+  rules ask. A connection paired less than 10 minutes ago waits, and Auto's rate limit holds. In Manual, in Lockdown
+  and while the matrix is in shadow the reading plays no part.
+
+Where the matrix says Auto, the phone approves at once, as an automatic decision: no model reads it (the computer's
+own Auto has none), and the words of the command put it on no floor (the matrix's floor already had its say).
+Activity says so: "Auto · Mine · Undoable — decided for Laptop, as its own copy of your rules had run out". It is
+never learned from. Where the matrix asks, parks or a rule denies, that happens, with the matrix's reason. A pass
+without the model (the notification extension) decides these too, and sends the computer a fresh snapshot right
+after, so its next requests need no round trip.
+
+On the computer: the request is read with the folders of the snapshot it keeps, fresh or not, never with its own
+unsigned ones. A reading goes only to a phone whose signed snapshot says it takes them: a phone re-checks every call
+against its own description of the tool, and one older than readings would refuse the question. A server that
+doesn't know the argument refuses it, and the question is sent again without it.
+
+Trust: as for the snapshot. An agent that rewrites `config.toml` (every folder a root, the home folder scratch, an
+all-Auto matrix) gains nothing: those folders are not signed, and its matrix only tightens. An agent that runs its
+own program with the computer's session can forge a reading, as it can forge a whole hook question. It gets a "yes"
+that only it hears, for a command it could have run without asking. No credential is released on a reading: git
+pushes through the proxy, secrets and SSH signatures never carry one, and stay the phone's own evaluation.
+
+**What's left:**
+
+- Inside signed folders the computer's word is taken for what git can bring back and for its own scratch and
+  generated folders, as with a fresh snapshot (where an agent can plant a `.git` folder, or name a project folder
+  scratch in `config.toml`).
+- The home folder the phone checks folders against is the one the computer proposed its folders with.
+- The reading passes the server in the clear, like the question's detail does (the command and its folder): the
+  effects, the paths and the repository's remotes.
+- Stricter than a fresh snapshot, on purpose: a net of file copies isn't counted (it is taken only once allowed, and
+  may fail), and a signed root that is a link counts as written, not as it resolves.
+
 ## Autopilot
 
 Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It is limited three ways.
@@ -702,6 +776,8 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
   MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions in one of
   the guard's destructive groups, uploaded files that may hold something to run, and anything from a connection
   paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
+  One more, where the matrix decides: a hook question that carries the computer's own reading of the command is
+  decided by the matrix on what the command does, not by these groups (above, "When the computer's copy ran out").
   The phone puts a hook question in a group itself, reading everything it carries with its own copy of the guard's
   built-in rules (`reins_policy::guard`), whatever its layout; the most severe match wins, and the words of a
   destructive command count where a shell runs them (not in the source a heredoc feeds Python). The hook runs where
