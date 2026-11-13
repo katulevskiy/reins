@@ -396,6 +396,7 @@ mod tests {
                 proposal: FolderProposal {
                     home: "/home/me".to_owned(),
                     folders,
+                    suggested_scratch: Vec::new(),
                 },
                 at,
             }],

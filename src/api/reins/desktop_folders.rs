@@ -1,5 +1,6 @@
 //! The folders each paired computer proposes the phone signs for it (Decisions v2, `reins_policy::desktop_folders`):
-//! the computer posts its `[workspace]` roots and scratch folders, canonicalized there (`POST /reins/desktop/folders`);
+//! the computer posts its `[workspace]` roots and scratch folders, canonicalized there, and the scratch folders it
+//! only suggests (`POST /reins/desktop/folders`);
 //! the approval phone reads them with its syncs (`GET /reins/api/desktop/folders`) and shows each as a question card.
 //! Nothing here decides anything: a folder counts on the computer only once the owner confirmed it on the phone and the
 //! phone signed it into that computer's snapshot. No push wakes the phone for a proposal.
@@ -80,6 +81,7 @@ mod tests {
                     kind: FolderKind::Scratch,
                 })
                 .collect(),
+            suggested_scratch: Vec::new(),
         }
     }
 
@@ -105,6 +107,12 @@ mod tests {
         assert!(!f.post("u1", "c1", proposal(&many), 1));
         let long = format!("/home/me/{}", "a".repeat(600));
         assert!(!f.post("u1", "c1", proposal(&[&long]), 1));
+        // The folders a computer only suggests are held to the same limits, and count with the others.
+        let mut suggesting = proposal(&["/home/me/a"]);
+        suggesting.suggested_scratch = many.iter().take(MAX_FOLDERS).map(|p| (*p).to_owned()).collect();
+        assert!(!f.post("u1", "c1", suggesting.clone(), 1));
+        suggesting.suggested_scratch = vec![long];
+        assert!(!f.post("u1", "c1", suggesting, 1));
         assert!(f.of("u1", &["c1".to_owned()]).is_empty());
     }
 }

@@ -1914,15 +1914,23 @@ pub struct Folder {
 pub struct FolderProposal {
     pub home: String,
     pub folders: Vec<Folder>,
+    /// Scratch folders the computer only suggests: they are not in its `[workspace]`; it learned them from what the
+    /// owner approved there (canonicalized like the others). A suggestion counts nowhere, not even inside a signed
+    /// root, until the owner confirms it on the phone and the phone signs it as scratch. An older phone or server
+    /// doesn't read the list, and then nothing is suggested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_scratch: Vec<String>,
 }
 
 impl FolderProposal {
-    /// Within the limits the server and the phone keep to.
+    /// Within the limits the server and the phone keep to (the suggested folders count towards [`MAX_FOLDERS`]).
     #[must_use]
     pub fn fits(&self) -> bool {
-        self.folders.len() <= MAX_FOLDERS
+        let fits = |path: &str| !path.is_empty() && path.len() <= MAX_FOLDER_CHARS;
+        self.folders.len() + self.suggested_scratch.len() <= MAX_FOLDERS
             && self.home.len() <= MAX_FOLDER_CHARS
-            && self.folders.iter().all(|f| !f.path.is_empty() && f.path.len() <= MAX_FOLDER_CHARS)
+            && self.folders.iter().all(|f| fits(&f.path))
+            && self.suggested_scratch.iter().all(|p| fits(p))
     }
 }
 
@@ -2024,6 +2032,41 @@ fn eight_digits(domain: &[u8], key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_proposal_reads_with_and_without_suggestions() {
+        // As a computer with nothing to suggest (or an older one) sends it: no `suggested_scratch` at all.
+        let plain = r#"{"home":"/home/me","folders":[{"path":"/home/me/work","kind":"root"}]}"#;
+        let p: FolderProposal = serde_json::from_str(plain).unwrap();
+        assert!(p.suggested_scratch.is_empty());
+        assert_eq!(serde_json::to_string(&p).unwrap(), plain, "nothing new on the wire without suggestions");
+        let with = FolderProposal {
+            suggested_scratch: vec!["/home/me/Documents/dev/tmp".to_owned()],
+            ..p.clone()
+        };
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains(r#""suggested_scratch":["/home/me/Documents/dev/tmp"]"#), "{json}");
+        assert_eq!(serde_json::from_str::<FolderProposal>(&json).unwrap(), with);
+        // A suggestion is never among the configured folders, whoever reads it.
+        assert_eq!(with.folders, p.folders);
+        // The limits hold for both lists together.
+        assert!(with.fits());
+        let many = FolderProposal {
+            suggested_scratch: (0..MAX_FOLDERS).map(|i| format!("/home/me/{i}")).collect(),
+            ..p.clone()
+        };
+        assert!(!many.fits(), "one configured folder and MAX_FOLDERS suggested ones");
+        let long = FolderProposal {
+            suggested_scratch: vec![format!("/home/me/{}", "a".repeat(MAX_FOLDER_CHARS))],
+            ..p.clone()
+        };
+        assert!(!long.fits());
+        let empty = FolderProposal {
+            suggested_scratch: vec![String::new()],
+            ..p
+        };
+        assert!(!empty.fits());
+    }
 
     const A: &str = "1111111111111111111111111111111111111111";
     const B: &str = "2222222222222222222222222222222222222222";

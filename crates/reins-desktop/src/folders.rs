@@ -113,6 +113,7 @@ pub fn proposal(workspace: &WorkspaceConfig) -> FolderProposal {
     FolderProposal {
         home,
         folders,
+        suggested_scratch: Vec::new(),
     }
 }
 
