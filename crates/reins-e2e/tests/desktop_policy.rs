@@ -320,3 +320,98 @@ async fn the_computer_proposes_its_folders_and_uses_the_ones_confirmed() {
     let (e, _) = policy::effective(&paths, &config, reins_desktop::now_unix());
     assert!(!e.scratch.contains(&resolved), "{:?}", e.scratch);
 }
+
+/// The owner approved deleting in one folder three times. The computer suggests that folder as scratch, though no
+/// configuration names it; the phone shows a card; nothing counts until the owner confirms it there (the owner
+/// check). Then the snapshot signs it and the computer decides deletes in it here, still with no local entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn the_computer_suggests_a_scratch_folder_and_uses_it_once_confirmed() {
+    use reins_core::autopilot::FolderKindChoice;
+    use reins_desktop::{folders, suggest};
+
+    reins_e2e::init_tls();
+    let server = Server::start(20, 10).await;
+    server.register(EMAIL).await;
+    let phone = Phone::sign_in(&server.base, EMAIL).await;
+    let (_state, paths) = logged_in_app(&server, &phone).await;
+    phone.core.finish_auto_setup(Arc::new(Owner)).await.unwrap();
+    // A real folder in the home folder, outside the standard roots (the computer looks at it before suggesting it).
+    let home = reins_desktop::config::home_dir().unwrap();
+    let dir = tempfile::Builder::new().prefix(".reins-e2e-suggested-").tempdir_in(&home).unwrap();
+    let folder = folders::canonical(&dir.path().to_string_lossy(), "").unwrap();
+    let mut config = Config {
+        mode: Mode::Reins,
+        listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+        ..Config::default()
+    };
+    config.guard.timeout_secs = 5;
+    assert!(config.workspace.scratch.is_empty(), "the folder is in no configuration");
+
+    // ---- nothing approved yet: nothing suggested ----
+    let suggested = |paths: &Paths, config: &Config| {
+        let all = suggest::suggestions(paths, config, reins_desktop::now_unix());
+        all.into_iter().filter(|s| s.path == folder).collect::<Vec<_>>()
+    };
+    assert!(suggested(&paths, &config).is_empty());
+
+    // ---- the owner approved three deletes in it on the phone (as the hooks log them) ----
+    let log = journal::Journal::new(&paths);
+    for name in ["unpacked", "old-build", "iso"] {
+        let command = format!("rm -rf {folder}/{name}");
+        let mut entry = journal::Entry::new(journal::Kind::Command, &format!("Claude Code wants to run: {command}"))
+            .detail(Some(&format!("Command:\n{command}\n\nIn: {folder}")));
+        entry.end(journal::Outcome::Approved, None);
+        log.record(&entry);
+    }
+    let found = suggested(&paths, &config);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].proposable, "{found:?}");
+
+    // ---- a suggestion makes nothing count: not here, not in what the computer proposes as its own ----
+    phone.core.sync(0).await.unwrap();
+    pull(&paths).await;
+    let (e, _) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(matches!(e.gate, Gate::Matrix { .. }), "{:?}", e.gate);
+    assert!(!e.scratch.contains(&folder), "{:?}", e.scratch);
+    let proposal = folders::with_suggestions(folders::proposal(&config.workspace), &found);
+    assert!(proposal.folders.iter().all(|f| f.path != folder), "{proposal:?}");
+    assert_eq!(proposal.suggested_scratch, std::slice::from_ref(&folder));
+
+    // ---- the phone shows it as a card; until the owner confirms it, the computer still asks ----
+    folders::propose(&paths, &proposal).await.unwrap();
+    let cards = phone.core.folder_questions().await.unwrap();
+    let card = cards.iter().find(|q| q.path == folder).unwrap_or_else(|| panic!("no card: {cards:?}"));
+    assert_eq!((card.kind, card.computer.as_str()), (FolderKindChoice::Scratch, "Laptop"));
+    pull(&paths).await;
+    let (e, h) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(h.policy.as_ref().is_some_and(|p| !p.scratch.contains(&folder)), "a card signs nothing");
+    assert!(!e.scratch.contains(&folder), "{:?}", e.scratch);
+
+    // ---- the owner confirms it: signed as scratch, and decided here without a local entry ----
+    phone
+        .core
+        .confirm_computer_folder(card.connection_id.clone(), folder.clone(), card.kind, Arc::new(Owner))
+        .await
+        .unwrap();
+    assert!(phone.core.folder_questions().await.unwrap().iter().all(|q| q.path != folder));
+    let applied = pull(&paths).await;
+    assert!(applied.snapshots >= 1, "{applied:?}");
+    let (e, h) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(h.policy.as_ref().is_some_and(|p| p.scratch.contains(&folder)), "signed for this computer");
+    assert!(e.scratch.contains(&folder), "{:?}", e.scratch);
+    assert!(config.workspace.scratch.is_empty());
+    let started = Instant::now();
+    let said = hook(&paths, &config, &format!("rm -rf {folder}/next-build")).await;
+    assert!(said.contains("allowed by Auto"), "{said}");
+    assert!(started.elapsed() < Duration::from_secs(3), "decided here, not asked");
+    // It is scratch now, so it is no longer suggested; the computer proposing it again makes no second card.
+    assert!(suggested(&paths, &config).is_empty());
+    folders::propose(&paths, &proposal).await.unwrap();
+    assert!(phone.core.folder_questions().await.unwrap().iter().all(|q| q.path != folder));
+
+    // ---- removing it on the phone: the computer stops counting it at once ----
+    phone.core.remove_computer_folder(card.connection_id.clone(), folder.clone(), card.kind).await.unwrap();
+    pull(&paths).await;
+    let (e, _) = policy::effective(&paths, &config, reins_desktop::now_unix());
+    assert!(!e.scratch.contains(&folder), "{:?}", e.scratch);
+}
