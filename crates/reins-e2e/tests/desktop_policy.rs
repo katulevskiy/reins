@@ -256,6 +256,158 @@ async fn the_computer_decides_with_the_phones_signed_policy() {
     }
 }
 
+/// How one hook request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ended {
+    /// The computer allowed it itself, with the policy it holds.
+    Here,
+    /// The phone answered yes on its own.
+    Phone,
+    /// The owner was asked (and said no).
+    Owner,
+}
+
+/// Runs the hook for `command` with the phone app open: the phone decides what it may decide on its own, and the
+/// owner (this test) denies whatever reaches them.
+async fn decide(paths: &Paths, config: &Config, phone: &Phone, command: &str) -> Ended {
+    let decided_before = phone.notes.decided.lock().unwrap().len();
+    let mut asked_owner = false;
+    let said = {
+        let mut run = std::pin::pin!(hook(paths, config, command));
+        loop {
+            tokio::select! {
+                said = &mut run => break said,
+                items = phone.core.sync(1) => {
+                    for item in items.expect("sync") {
+                        asked_owner = true;
+                        phone.core.deny(item.id).await.unwrap();
+                    }
+                }
+            }
+        }
+    };
+    // The computer hears the answer before the phone's pass has told its app who decided: give it a moment.
+    let decided = || phone.notes.decided.lock().unwrap().len() > decided_before;
+    let waited = Instant::now();
+    while said.contains("Reins 2FA: approved") && !decided() && waited.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let by_phone = decided();
+    if said.contains("allowed by Auto") {
+        assert!(!asked_owner && !by_phone, "{command}: {said}");
+        Ended::Here
+    } else if said.contains("Reins 2FA: approved") {
+        assert!(by_phone && !asked_owner, "{command}: approved, but not by the phone's own rules: {said}");
+        Ended::Phone
+    } else {
+        assert!(asked_owner && said.contains("denied"), "{command}: {said}");
+        Ended::Owner
+    }
+}
+
+/// The copy of the policy a computer holds no longer decides (here: it still says Manual, the phone moved on to
+/// Auto; the same path as a copy older than its ten minutes). The computer asks the phone, and sends what it read of
+/// the command. The phone's own matrix decides the question exactly as the computer does with a fresh copy, and the
+/// owner is asked only where the matrix asks. A computer whose settings an agent rewrote gets nothing more.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn the_phone_decides_a_hook_question_as_the_computer_would_with_a_fresh_copy() {
+    reins_e2e::init_tls();
+    let server = Server::start(20, 10).await;
+    server.register(EMAIL).await;
+    // (A computer paired less than ten minutes ago waits for its owner in every automatic mode: not this test's.)
+    let phone = Phone::sign_in_with_config(&server.base, EMAIL, |cfg| cfg.new_connection_secs = 0).await;
+    let (_state, paths) = logged_in_app(&server, &phone).await;
+    let mut config = Config {
+        mode: Mode::Reins,
+        listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+        ..Config::default()
+    };
+    config.guard.timeout_secs = 30;
+    phone.core.finish_auto_setup(Arc::new(Owner)).await.unwrap();
+    // The computer says where its home folder is (the daemon's proposal); the phone reads it when it looks.
+    reins_desktop::folders::propose(&paths, &reins_desktop::folders::proposal(&config.workspace)).await.unwrap();
+    phone.core.folder_questions().await.unwrap();
+
+    // What a hook asks about, in a project: build output, a folder of the home, a `.env`, an SSH configuration and a
+    // private key, git history, the project's own sources.
+    let commands = [
+        "rm -rf build dist",
+        "rm -rf ~/reins-e2e-elsewhere/photos",
+        "cat .env",
+        "cat ~/.ssh/config",
+        "cat ~/.ssh/id_ed25519",
+        "git push --force origin main",
+        "rm -rf src",
+    ];
+
+    // ---- a fresh copy: the computer decides, and asks only where the matrix asks ----
+    phone.core.sync(0).await.unwrap();
+    pull(&paths).await;
+    assert!(matches!(gate(&paths, &config), Gate::Matrix { .. }));
+    let mut fresh = Vec::new();
+    for command in commands {
+        fresh.push(decide(&paths, &config, &phone, command).await);
+    }
+    assert_eq!(fresh[0], Ended::Here, "build output is the owner's own, and undoable");
+    assert_eq!(fresh[1], Ended::Owner, "a folder of the home can't be brought back");
+    assert!(fresh.iter().all(|e| *e != Ended::Phone), "with a fresh copy the phone answers nothing itself: {fresh:?}");
+
+    // ---- the copy the computer holds says Manual; the phone is back on Auto, and the computer hasn't heard ----
+    phone.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    pull(&paths).await;
+    assert_eq!(gate(&paths, &config), Gate::Fallback(reins_policy::desktop_policy::Fallback::Manual));
+    phone.core.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await.unwrap();
+    assert!(matches!(gate(&paths, &config), Gate::Fallback(_)), "it decides nothing itself");
+    let mut asked = Vec::new();
+    for command in commands {
+        asked.push(decide(&paths, &config, &phone, command).await);
+    }
+    // The same decisions: what the computer allowed itself, the phone now answers without the owner.
+    let expected: Vec<Ended> = fresh
+        .iter()
+        .map(|e| match e {
+            Ended::Here => Ended::Phone,
+            other => *other,
+        })
+        .collect();
+    assert_eq!(asked, expected, "{commands:?}");
+    for ((command, here), there) in commands.iter().zip(&fresh).zip(&asked) {
+        eprintln!("{command}: a fresh copy {here:?}, a copy that no longer decides {there:?}");
+    }
+    let by: Vec<String> = phone.notes.decided.lock().unwrap().iter().map(|d| d.decided_by.clone()).collect();
+    assert!(!by.is_empty() && by.iter().all(|b| b == "autopilot"), "{by:?}");
+    // The computer's own log: the phone answered, and what the request does is kept as before.
+    let entry = journal::read(&paths, 50, 3_600)
+        .into_iter()
+        .find(|e| e.what.ends_with("rm -rf build dist") && e.outcome == journal::Outcome::Approved)
+        .expect("the phone's yes is logged");
+    assert_eq!(entry.effects.as_ref().map(|e| e.level), Some(Level::L0), "{entry:?}");
+    assert!(entry.matrix.is_some(), "{entry:?}");
+
+    // ---- an agent rewrites this computer's settings: everything a root, the home folder scratch, Auto everywhere ----
+    let mut edited = config.clone();
+    for z in Zone::ALL {
+        for l in [Level::L0, Level::L1, Level::L2, Level::L3] {
+            edited.auto.matrix.set(z, l, Cell::Auto);
+        }
+    }
+    edited.auto.facts.set(FactKind::Owner, "evil", Zone::Mine);
+    edited.auto.matrix_decides = true;
+    edited.auto.setup_done = true;
+    edited.workspace.roots.push("/".to_owned());
+    edited.workspace.scratch = vec!["~".to_owned()];
+    for command in ["rm -rf ~/reins-e2e-elsewhere/photos", "cat ~/.ssh/id_ed25519", "git push --force origin main"] {
+        assert_eq!(decide(&paths, &edited, &phone, command).await, Ended::Owner, "{command}");
+    }
+    // What the owner's own rules allow is still answered.
+    assert_eq!(decide(&paths, &edited, &phone, "rm -rf build dist").await, Ended::Phone);
+
+    // ---- the phone sent a fresh copy meanwhile: once the computer has it, it decides itself again ----
+    pull(&paths).await;
+    assert!(matches!(gate(&paths, &config), Gate::Matrix { .. }));
+    assert_eq!(decide(&paths, &config, &phone, "rm -rf build dist").await, Ended::Here);
+}
+
 /// The computer proposes its `[workspace]` folders; the owner confirms one on the phone (the owner check); the
 /// phone's signed snapshot then carries it, and the computer decides with it here. Removing it applies at once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
