@@ -152,6 +152,12 @@ impl Engine {
             .map_or_else(|| (standard_roots(), Vec::new()), Computer::signed))
     }
 
+    /// The home folder `connection_id`'s computer last said it has (what its `~` is); `None` when it never proposed
+    /// its folders.
+    pub(crate) fn ap_computer_home(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
+        Ok(self.ap_folder_book()?.computers.get(connection_id).map(|c| c.home.clone()).filter(|h| !h.is_empty()))
+    }
+
     /// Fetches what the paired computers propose (at most every [`FETCH_EVERY_SECS`] with the syncs), and keeps it for
     /// the cards. Only the phone that decides fetches; a failure (offline, an older server) waits for the next sync.
     pub(crate) async fn fetch_desktop_folders(&self, session: &Session) {

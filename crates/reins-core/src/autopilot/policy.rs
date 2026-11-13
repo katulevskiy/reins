@@ -132,6 +132,9 @@ pub struct Reading {
     pub bare_host: Option<&'static str>,
 }
 
+/// A computer's reading of its own hook question, as far as the phone takes it ([`Engine::ap_hook_reading`]).
+pub(crate) type HookReading = reins_policy::desktop_reading::Accepted;
+
 /// The host a git service's bare `owner/name` is on.
 fn service_host(service: &str) -> Option<&'static str> {
     use reins_proto::connector::{BITBUCKET, CODEBERG, GITHUB, GITLAB};
@@ -145,9 +148,10 @@ fn service_host(service: &str) -> Option<&'static str> {
 }
 
 /// What a request does, as the consequence engine reads it on the phone. `Ok(None)` for what the phone doesn't
-/// evaluate: a hook's question from a computer (the computer evaluates those, where the facts are: 08 R1) and an
-/// upload. `Err` for a request it should read and can't (a push without a readable summary, a tool without a spec):
-/// where the matrix decides, that waits for the owner.
+/// evaluate: a hook's question from a computer (the computer evaluates those, where the facts are: 08 R1; when it
+/// sends its own reading with the question, the matrix decides on that: [`Engine::ap_hook_reading`]) and an upload.
+/// `Err` for a request it should read and can't (a push without a readable summary, a tool without a spec): where
+/// the matrix decides, that waits for the owner.
 pub fn request_analysis(request: &RelayRequest) -> Result<Option<Reading>, String> {
     use reins_proto::connector::DESKTOP;
     use reins_proto::desktop::{GIT_FETCH_OP, GIT_PUSH_OP, GIT_TAG_PUSH_OP};
@@ -545,12 +549,81 @@ impl Engine {
         now: i64,
         overnight: bool,
     ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
-        let Some(reading) = request_analysis(request).map_err(CoreError::invalid)? else {
-            return Ok(None);
+        self.ap_evaluate_read(request, None, github_ids, seen, now, overnight)
+    }
+
+    /// A computer's own reading of the hook question in `request` (`reins_policy::desktop_reading`), as far as this
+    /// phone takes it. `None`, and the question is asked as it was before readings: no reading, one too large, of
+    /// another format or not JSON; a question that isn't a hook's own, or isn't about exactly what the reading
+    /// describes (`reins ask`, whose words are the agent's, never is); something in it that is asked whatever the
+    /// matrix says (Reins's own state, secrets, payments); a connection that isn't a paired computer; a workspace the
+    /// phone didn't sign for that computer.
+    pub(crate) fn ap_hook_reading(&self, request: &RelayRequest) -> Option<HookReading> {
+        use reins_policy::desktop_reading::{Folders, Reading as Sent, accept};
+        let ToolCall::Connector(call) = &request.call else {
+            return None;
         };
-        let analysis = reading.analysis;
+        let asked = crate::connector::desktop::hook_asked(call)?;
+        let sent = Sent::from_wire(call.str_arg("reading")?)?;
+        if asked.always_asked || asked.about != sent.about {
+            return None;
+        }
+        let connection = &request.connection_id.0;
+        self.store.desktop_key(connection).ok().flatten()?;
+        // The folders exactly as the phone signs them into that computer's snapshot, and the home it said it has.
+        let (roots, scratch) = self.ap_signed_folders(connection).ok()?;
+        let home = self.ap_computer_home(connection).ok()?.unwrap_or_default();
+        accept(
+            &sent,
+            &Folders {
+                home: &home,
+                roots: &roots,
+                scratch: &scratch,
+            },
+        )
+    }
+
+    /// [`Engine::ap_evaluate_identified`]; with `hook` (a computer's reading of its own hook question,
+    /// [`Engine::ap_hook_reading`]) the request is evaluated as that computer would have with a fresh copy of the
+    /// policy (`reins_policy::desktop_policy::effective`, `reins_desktop::consequences`): against this phone's live
+    /// snapshot, with the computer's own `[auto]` on top where it is stricter, owners read by the logins the owner's
+    /// facts are shown as, the target never taken as seen before, and, when the request as it is would wait and the
+    /// computer runs a safety net first, on the netted request.
+    pub(crate) fn ap_evaluate_read(
+        &self,
+        request: &RelayRequest,
+        hook: Option<&HookReading>,
+        github_ids: &BTreeMap<String, String>,
+        seen: bool,
+        now: i64,
+        overnight: bool,
+    ) -> Result<Option<(MatrixNote, Vec<Unknown>)>, CoreError> {
+        let reading = match hook {
+            Some(h) => Reading {
+                analysis: h.analysis.clone(),
+                base: h.remotes.as_ref().and_then(|r| r.get("origin")).cloned(),
+                bare_host: None,
+            },
+            None => match request_analysis(request).map_err(CoreError::invalid)? {
+                Some(reading) => reading,
+                None => return Ok(None),
+            },
+        };
+        let seen = seen && hook.is_none();
+        let mut analysis = reading.analysis;
         let mut snap = self.ap_snapshot()?;
         snap.facts.github_ids.clone_from(github_ids);
+        if let Some(h) = hook {
+            let (_, logins) = reins_policy::desktop_policy::desktop_facts(&snap.facts);
+            for (login, id) in logins {
+                snap.facts.github_ids.entry(login).or_insert(id);
+            }
+            reins_policy::desktop_policy::tighten_with_local(
+                &mut snap,
+                h.facts.as_ref().unwrap_or(&Facts::default()),
+                h.matrix.as_ref().unwrap_or(&matrix::Matrix::default()),
+            );
+        }
         // The live tasks are part of what the request is evaluated against (and of the snapshot's hash).
         self.ap_tasks_into(&mut snap, now);
         let resolved = graph::request_zone(
@@ -558,23 +631,37 @@ impl Engine {
             &snap.facts,
             &graph::Base {
                 repo: reading.base.as_deref(),
-                remotes: None,
+                remotes: hook.and_then(|h| h.remotes.as_ref()),
                 bare_host: reading.bare_host,
             },
         );
-        let e = matrix::evaluate(
-            &Input {
-                analysis: &analysis,
-                resolved: &resolved,
-                connection: &request.connection_id.0,
-                seen_resource: seen,
-                now,
-                overnight,
-                // The phone plans no safety nets for its own requests (P3's are the computer's).
-                netted: false,
-            },
-            &snap,
-        );
+        let evaluate = |analysis: &Analysis, netted: bool| {
+            matrix::evaluate(
+                &Input {
+                    analysis,
+                    resolved: &resolved,
+                    connection: &request.connection_id.0,
+                    seen_resource: seen,
+                    now,
+                    overnight,
+                    // The phone plans no safety nets for its own requests (P3's are the computer's).
+                    netted,
+                },
+                &snap,
+            )
+        };
+        let mut e = evaluate(&analysis, false);
+        // What would wait as it is, but is Auto with the net the computer runs before the command: decided on the
+        // netted request, as the computer does (the same effects, so the same zone).
+        let mut netted = false;
+        if e.outcome.reviews()
+            && let Some(after) = hook.and_then(|h| h.netted.as_ref())
+        {
+            let with_net = evaluate(after, true);
+            if with_net.outcome == Outcome::Auto {
+                (analysis, e, netted) = (after.clone(), with_net, true);
+            }
+        }
         let by_rule = e.why.iter().any(|w| matches!(w, matrix::Why::Rule(_)));
         let input = super::preview::PreviewInput {
             analysis: analysis.clone(),
@@ -602,6 +689,7 @@ impl Engine {
                 }),
                 chat: None,
                 input: Some(Box::new(input)),
+                netted,
             },
             resolved.unknown,
         )))

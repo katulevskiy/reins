@@ -5235,3 +5235,5 @@ async fn an_automatic_send_is_held_and_a_failed_hold_never_sends_it() {
     assert_eq!(held.hold.map(|h| (h.id, h.state)), Some(("h1".to_owned(), crate::HoldState::Waiting)));
     assert_eq!(held.decided_by, "bypass");
 }
+
+mod hook_readings;

@@ -547,6 +547,90 @@ pub(crate) fn reported_head(detail: &str) -> (Option<String>, Option<String>) {
     (branch, default)
 }
 
+/// A harness hook's question, as the phone reads it before it takes a computer's reading of the request
+/// (`reins_policy::desktop_reading`).
+pub(crate) struct HookAsked {
+    /// `desktop_reading::about` of what the question shows: the command (or the files), the folder, the netted
+    /// command. A reading is used only when it is about exactly that.
+    pub about: String,
+    /// Asked whatever the matrix says: something in it is in a built-in group about Reins itself (its own state,
+    /// secrets, payments: `reins_policy::guard::ALWAYS_ASKED`), or the phone words the question itself.
+    pub always_asked: bool,
+}
+
+/// Reads `call` as the question a harness hook writes, and nothing else: the lines the hook puts first (the rule it
+/// matched, or what the matrix said), then `Command:` or `Files:`, the netted command and the folder, and a question
+/// line that only says who wants to run, read or change exactly that. `None` for anything else: `reins ask` (its words
+/// are the agent's own: "May I deploy?" is no command the engine read), another layout, a question that says more than
+/// its detail.
+///
+/// The detail is taken apart from its end, the way the hook puts it together. A command that holds the layout's own
+/// words (a line `In: …` of its own) is taken apart differently than it was put together: its `about` then matches no
+/// reading, and the question is asked.
+pub(crate) fn hook_asked(call: &ConnectorCall) -> Option<HookAsked> {
+    use reins_policy::desktop_reading::{Asked, about};
+    use reins_policy::guard::{ALWAYS_ASKED, always_asked};
+    if call.service != DESKTOP || call.op != "ask" {
+        return None;
+    }
+    let question = call.str_arg("question")?;
+    let detail = call.str_arg("detail")?;
+    let topic = topic(call).ok()?;
+    // The lines the hook writes first: the rule it matched, or one line of what the matrix said.
+    let (group, rest) = if let Some((rule, rest)) = reported_rule(detail) {
+        (rule.group, rest)
+    } else {
+        let (line, rest) = detail.strip_prefix("Auto: ")?.split_once("\n\n")?;
+        if line.contains('\n') {
+            return None;
+        }
+        (None, rest)
+    };
+    let (body, cwd) = match rest.rsplit_once("\n\nIn: ") {
+        Some((body, cwd)) if !cwd.contains('\n') => (body, Some(cwd)),
+        _ => (rest, None),
+    };
+    // Who asks: a harness's name, never a sentence.
+    let named = |who: &str| {
+        !who.is_empty()
+            && who.chars().count() <= 40
+            && who.chars().all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '.' | '_'))
+    };
+    let (who, about, texts) = if let Some(all) = body.strip_prefix("Command:\n") {
+        let (who, _) = question.split_once(" wants to run: ")?;
+        let (command, netted) = match all.rsplit_once("\n\nNetted command:\n") {
+            Some((command, netted)) => (command, Some(netted)),
+            None => (all, None),
+        };
+        // A netted command comes with the hook's own `net` argument.
+        if netted.is_some() && call.str_arg("net").is_none_or(|n| n.trim().is_empty()) {
+            return None;
+        }
+        (who, about(&Asked::Command(command), cwd, netted), vec![command])
+    } else {
+        let list = body.strip_prefix("Files:\n")?;
+        let (who, write) = match question.split_once(" wants to change ") {
+            Some((who, _)) => (who, true),
+            None => (question.split_once(" wants to read ")?.0, false),
+        };
+        let paths: Vec<&str> = list.split('\n').collect();
+        let asked = Asked::Files {
+            write,
+            paths: &paths,
+        };
+        (who, about(&asked, cwd, None), paths)
+    };
+    if !named(who) || !repeats(question, rest) {
+        return None;
+    }
+    Some(HookAsked {
+        about,
+        always_asked: owned(topic.as_deref()).is_some()
+            || group.is_some_and(|g| ALWAYS_ASKED.contains(&g.as_str()))
+            || !always_asked(&texts).is_empty(),
+    })
+}
+
 /// What in a command or a question means it deletes, rewrites history or wipes something: never routine. Matched in
 /// lower case anywhere in the topic, the question and the detail (the command), whatever else the phone reads in the
 /// question (`read_ask`). Finding, moving or reading secrets on the computer (`reins secrets scan`, `import`, `get`) is
@@ -764,6 +848,91 @@ mod tests {
             op: "ask".to_owned(),
             args: args.as_object().unwrap().clone(),
         }
+    }
+
+    /// A hook's question is taken apart the way `reins hook` puts it together, so the phone's `about` is the
+    /// computer's; anything that isn't a hook's own question about one command (or its files) is none.
+    #[test]
+    fn a_hooks_question_is_about_exactly_what_it_shows() {
+        use reins_policy::desktop_reading::{Asked, about};
+        let rule = "Rule: Recursive deletes · rm -r\nMatched: rm -rf notes\nGroup: deletes (destructive)\n";
+        let ask = |question: &str, detail: &str, net: Option<&str>| {
+            let mut args = json!({"question": question, "detail": detail, "client_key": "k", "nonce": "n"});
+            if let Some(n) = net {
+                args["net"] = json!(n);
+            }
+            hook_asked(&call(&args))
+        };
+        let run = "Claude Code wants to run: rm -rf notes";
+        let cwd = "/home/me/app";
+        // A guard question, with the folder; with the repository's lines; without a folder.
+        let got = ask(run, &format!("{rule}\nCommand:\nrm -rf notes\n\nIn: {cwd}"), None).unwrap();
+        assert_eq!(got.about, about(&Asked::Command("rm -rf notes"), Some(cwd), None));
+        assert!(!got.always_asked);
+        let branches = format!("{rule}Branch: feature/x\nDefault branch: main\n\nCommand:\nrm -rf notes\n\nIn: {cwd}");
+        assert_eq!(ask(run, &branches, None).unwrap().about, got.about);
+        let bare = ask(run, &format!("{rule}\nCommand:\nrm -rf notes"), None).unwrap();
+        assert_eq!(bare.about, about(&Asked::Command("rm -rf notes"), None, None));
+        // The matrix's own question (no guard rule matched).
+        let auto = format!("Auto: Ask · Mine · Can't be undone\n\nCommand:\nrm -rf notes\n\nIn: {cwd}");
+        assert_eq!(ask(run, &auto, None).unwrap().about, got.about);
+        // With the netted command, which comes with the hook's own `net` argument.
+        let netted = "'/usr/bin/reins' net run --plan n1 -- rm -rf notes";
+        let detail = format!("{rule}\nCommand:\nrm -rf notes\n\nNetted command:\n{netted}\n\nIn: {cwd}");
+        let with_net = ask(run, &detail, Some("Keeps 1 deleted path in the Reins trash for 7 days")).unwrap();
+        assert_eq!(with_net.about, about(&Asked::Command("rm -rf notes"), Some(cwd), Some(netted)));
+        assert!(ask(run, &detail, None).is_none(), "a netted command without the hook's net argument");
+        // A command of several lines, whole.
+        let script = "cd build &&\nrm -rf notes";
+        let lines = ask(
+            "Claude Code wants to run: cd build && rm -rf notes",
+            &format!("{rule}\nCommand:\n{script}\n\nIn: {cwd}"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(lines.about, about(&Asked::Command(script), Some(cwd), None));
+        // Files: read or changed, in order.
+        let files =
+            "Rule: .env files · .env\nMatched: .env\nGroup: env-files\n\nFiles:\n/home/me/app/.env\n/home/me/app/b";
+        let read = ask("Cursor wants to read /home/me/app/.env and 1 more file(s)", files, None).unwrap();
+        let paths = ["/home/me/app/.env", "/home/me/app/b"];
+        let asked = |write| Asked::Files {
+            write,
+            paths: &paths,
+        };
+        assert_eq!(read.about, about(&asked(false), None, None));
+        let change = ask("Cursor wants to change /home/me/app/.env and 1 more file(s)", files, None).unwrap();
+        assert_eq!(change.about, about(&asked(true), None, None));
+        // What is about Reins itself, whatever the rest of the command is.
+        for command in ["cat ~/.config/reins/session.json", "ls; reins secrets get token", "reins payments-trust k"] {
+            let got = ask(
+                &format!("Claude Code wants to run: {command}"),
+                &format!("{rule}\nCommand:\n{command}\n\nIn: {cwd}"),
+                None,
+            )
+            .unwrap();
+            assert!(got.always_asked, "{command}");
+        }
+        let reins = "Rule: Reins's own sign-in · reins/session.json\nMatched: x\nGroup: reins\n\nCommand:\nls\n\nIn: /";
+        assert!(ask("Claude Code wants to run: ls", reins, None).unwrap().always_asked, "as the computer reports it");
+        // `reins ask` and everything else that isn't a hook's question about that very command.
+        for (question, detail) in [
+            ("May I deploy to production?", "make deploy".to_owned()),
+            ("May I deploy to production?", "Command:\nmake deploy".to_owned()),
+            ("May I deploy to production?", format!("{rule}\nCommand:\nrm -rf notes\n\nIn: {cwd}")),
+            ("Deploy? Claude Code wants to run: rm -rf notes", format!("{rule}\nCommand:\nrm -rf notes\n\nIn: {cwd}")),
+            ("Claude Code wants to run: make deploy", format!("{rule}\nCommand:\nrm -rf notes\n\nIn: {cwd}")),
+            (run, "Auto: Ask\nCommand:\nrm -rf notes".to_owned()),
+            (run, format!("{rule}\nSomething else:\nrm -rf notes")),
+            ("Claude Code wants to read notes", format!("{rule}\nCommand:\nrm -rf notes")),
+        ] {
+            assert!(ask(question, &detail, None).is_none(), "{question} / {detail}");
+        }
+        let other = ConnectorCall {
+            op: "session".to_owned(),
+            ..call(&json!({"question": run, "detail": format!("{rule}\nCommand:\nrm -rf notes")}))
+        };
+        assert!(hook_asked(&other).is_none());
     }
 
     /// The safety net the desktop app reports is its own argument beside a reported rule: a `Net:` line anywhere in

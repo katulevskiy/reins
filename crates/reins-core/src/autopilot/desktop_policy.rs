@@ -363,6 +363,13 @@ impl Engine {
         }
     }
 
+    /// Whether the copy of the policy `connection_id`'s computer was last sent has run out at `now` (it is used for
+    /// [`VALIDITY_SECS`] after it was signed), or none was ever sent: why that computer asks the phone what it would
+    /// otherwise decide itself.
+    pub(crate) fn ap_desktop_copy_ran_out(&self, connection_id: &str, now: i64) -> bool {
+        self.ap_desktop_sent_state().to.get(connection_id).is_none_or(|sent| now - sent.at >= VALIDITY_SECS)
+    }
+
     /// Reserves `n` versions, the first above every one used and at least `now_ms`: the first is returned.
     fn ap_reserve_versions(&self, n: u64, now_ms: u64) -> Result<u64, CoreError> {
         self.store.meta_update_sealed(SENT_KEY, |current| {
@@ -704,6 +711,8 @@ mod tests {
         let bytes = data_encoding::BASE64URL_NOPAD.decode(item.sealed.as_bytes()).unwrap();
         assert!(other.unseal(&bytes).is_err());
         let signed: Signed = serde_json::from_slice(&env.computer.unseal(&bytes).unwrap()).unwrap();
+        // It says this phone takes hook readings, so the computer may send one with a question.
+        assert_eq!(signed::reading_format(&signed.body), reins_policy::desktop_reading::FORMAT);
         let mut not_ours = [9u8; 32];
         not_ours[0] = 1;
         let not_ours = reins_proto::desktop::encode_key(&not_ours);

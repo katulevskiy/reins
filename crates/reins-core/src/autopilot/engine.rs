@@ -143,6 +143,9 @@ struct PassCtx {
     created: Option<HashMap<String, i64>>,
     /// Profile id → the profile and its memory.
     profiles: HashMap<String, (StoredProfile, Vec<MemoryRow>)>,
+    /// Hook questions approved for a computer whose copy of the policy ran out ([`Engine::ap_allow_hook`]): that
+    /// computer is sent a fresh copy right after the pass.
+    hooks_allowed: u32,
 }
 
 fn verb(v: Verdict) -> &'static str {
@@ -647,16 +650,21 @@ impl Engine {
     /// at once, as they need no model; everything else is left unevaluated for the app's next pass.
     pub(crate) async fn autopilot_pass_without_model(&self) {
         let _one = self.autopilot.pass.lock().await;
-        if let Err(e) = self.ap_pass(false).await {
-            log::warn!("Autopilot could not look at the waiting items: {e}");
+        match self.ap_pass(false).await {
+            // A computer asked what it would have decided itself with a fresh copy of the policy: it is sent one now
+            // (the pass with the model does so with its modes report), so its next requests need no round trip.
+            Ok(hooks_allowed) if hooks_allowed > 0 => self.publish_desktop_policy_now().await,
+            Ok(_) => {}
+            Err(e) => log::warn!("Autopilot could not look at the waiting items: {e}"),
         }
     }
 
-    async fn ap_pass(&self, model: bool) -> Result<(), CoreError> {
+    /// One pass over what waits; the hook questions it approved for computers ([`Engine::ap_allow_hook`]).
+    async fn ap_pass(&self, model: bool) -> Result<u32, CoreError> {
         // A viewer's (or a removed phone's) own Bypass, Overnight or Auto decides nothing: its items wait for the
         // primary, which runs its own Autopilot.
         if !self.decides() {
-            return Ok(());
+            return Ok(0);
         }
         let now = unix_now();
         self.ap_expire_bypasses(now)?;
@@ -670,7 +678,7 @@ impl Engine {
                 .filter(|r| r.kind != PendingKind::Join && !evaluated.contains(&r.id))
                 .collect();
         if rows.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         rows.reverse();
         let mut ctx = PassCtx {
@@ -678,6 +686,7 @@ impl Engine {
             model,
             created: None,
             profiles: HashMap::new(),
+            hooks_allowed: 0,
         };
         for row in rows {
             let Some(_claim) = self.claim(&row.id) else {
@@ -708,7 +717,7 @@ impl Engine {
                 }
             }
         }
-        Ok(())
+        Ok(ctx.hooks_allowed)
     }
 
     /// Whether a parked item waits for its owner now, rather than for an automatic decider that has still to look at
@@ -990,6 +999,16 @@ impl Engine {
             // Before anything that could fail or wait (the profile, the connection list): nothing a bypass covers is
             // left waiting.
             return Box::pin(self.ap_bypass_item(subject, now)).await;
+        }
+        // A computer's hook question that carries what the computer read of the request (08 R1: its copy of the
+        // owner's rules ran out, so it asks): where the matrix decides, it decides this too, as that computer would
+        // have with a fresh copy. It needs no model, so it is answered in a pass without one. (Boxed: kept out of
+        // this future.)
+        if row.kind == PendingKind::Request
+            && matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight)
+            && Box::pin(self.ap_hook_item(row, &subject, mode, ctx)).await?
+        {
+            return Ok(());
         }
         if !ctx.model && matches!(mode, AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight) {
             // Judged by the app's next pass, which has the model.
@@ -1405,6 +1424,148 @@ impl Engine {
             }
         }
         self.ap_wait(&subject, &s)
+    }
+
+    /// A computer's hook question that carries what the computer read of the request
+    /// ([`Engine::ap_hook_reading`]), in Auto or Overnight (`mode`): where the matrix decides, it decides this too, the
+    /// way that computer would have with a fresh copy of the owner's rules (08 R1).
+    ///
+    /// - A rule denies: denied, as any request a rule denies.
+    /// - The matrix asks (or parks, in Overnight): the owner's, with the matrix's reason.
+    /// - The matrix allows: approved at once ([`Engine::ap_allow_hook`]).
+    ///
+    /// `Ok(false)`: not such a question (no usable reading, the matrix in shadow, nothing evaluated). It then goes on
+    /// as it did before readings, untouched.
+    async fn ap_hook_item(
+        &self,
+        row: &PendingRow,
+        subject: &Subject,
+        mode: AutopilotMode,
+        ctx: &mut PassCtx,
+    ) -> Result<bool, CoreError> {
+        use reins_policy::matrix::Outcome;
+        if !self.ap_matrix_deciding() {
+            return Ok(false);
+        }
+        let Ok(parked) = serde_json::from_slice::<ParkedRequest>(&row.payload) else {
+            return Ok(false);
+        };
+        let Some(hook) = self.ap_hook_reading(&parked.request) else {
+            return Ok(false);
+        };
+        let now = ctx.now;
+        // Read as the computer reads it: no service is asked who its parties are.
+        let no_ids = std::collections::BTreeMap::new();
+        let overnight = mode == AutopilotMode::Overnight;
+        let (mut note, unknown) =
+            match self.ap_evaluate_read(&parked.request, Some(&hook), &no_ids, false, now, overnight) {
+                Ok(Some(evaluated)) => evaluated,
+                Ok(None) => return Ok(false),
+                Err(e) => {
+                    log::warn!("Autopilot could not evaluate a computer's reading: {e}");
+                    return Ok(false);
+                }
+            };
+        if let Err(e) = self.ap_note_unknowns(&unknown, &subject.connection_label, &subject.id, now) {
+            log::warn!("Autopilot could not keep a question: {e}");
+        }
+        note.shadow = false;
+        let (outcome, level, line) = (note.outcome, note.level, note.line.clone());
+        let stored = self.ap_profile_of(&subject.connection_id)?;
+        let target_key = self.store.ap_target_key(
+            &subject.connection_id,
+            &subject.described.class_key,
+            &subject.described.facts.target,
+        )?;
+        let mut s = Self::ap_asks(subject, mode, now, String::new(), None);
+        (s.profile_id, s.profile_name) = (stored.id, stored.profile.name);
+        s.novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
+        s.target_key = target_key;
+        s.matrix = Some(note);
+        match outcome {
+            // Only an explicit rule denies.
+            Outcome::Deny => {
+                s.verdict = Verdict::Deny;
+                s.reason = line;
+                Box::pin(self.ap_conclude(subject, s, Verdict::Deny, By::Rule)).await?;
+            }
+            Outcome::Auto => Box::pin(self.ap_allow_hook(ctx, subject, s)).await?,
+            o @ (Outcome::Ask {
+                ..
+            }
+            | Outcome::Park {
+                ..
+            }) => {
+                s.reason = format!("Asks: {line}");
+                // "Approve all" may cover what the matrix asked softly, below L3: never a question the phone itself
+                // reads as one asked every time.
+                s.batchable = !o.hard() && level < reins_policy::effects::Level::L3 && subject.floor.is_none();
+                self.ap_wait(subject, &s)?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Approves a computer's hook question the matrix allows (`s.matrix`: Auto, from the computer's own reading of the
+    /// request, [`Engine::ap_hook_reading`]), at once and as an automatic decision, the way that computer would have
+    /// allowed it itself with a fresh copy of the owner's rules.
+    ///
+    /// No model reads it (the computer's own Auto has none either), and the words of the command put it on no floor:
+    /// what it does was levelled from its effects, and what always asks is the matrix's own floor, which already had
+    /// its say. What stays of Auto: a connection paired less than 10 minutes ago waits, Auto's rate limit holds (over
+    /// it the owner is asked, and told once that Auto paused), and a task's use is spent before it runs. Never learned
+    /// from: it is no decision of the owner's.
+    async fn ap_allow_hook(&self, ctx: &mut PassCtx, subject: &Subject, mut s: Suggestion) -> Result<(), CoreError> {
+        let now = ctx.now;
+        let age = Box::pin(self.ap_age(ctx, &subject.connection_id)).await;
+        if gates::young(age, self.cfg.new_connection_secs) {
+            let floor = "a connection paired less than 10 minutes ago".to_owned();
+            s.reason = format!("Always asks: {floor}");
+            s.floor = Some(floor);
+            return self.ap_wait(subject, &s);
+        }
+        let (line, netted, task) =
+            s.matrix.as_ref().map(|m| (m.line.clone(), m.netted, m.by_task.clone())).unwrap_or_default();
+        // The computer by the name the owner knows it by: the one they gave it, else the one it was paired with.
+        let computer = self
+            .names()
+            .get(&subject.connection_id)
+            .map(str::to_owned)
+            .or_else(|| self.store.desktop_pairing(&subject.connection_id).ok().flatten().map(|(name, _)| name))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "this computer".to_owned());
+        let net = if netted {
+            " with its safety net"
+        } else {
+            ""
+        };
+        // Why the computer asked: its copy of the rules ran out (the usual case, the phone was asleep), or it holds a
+        // fresh one and asked all the same (it reads the request more strictly than the phone's rules alone).
+        let why = if self.ap_desktop_copy_ran_out(&subject.connection_id, now) {
+            "as its own copy of your rules had run out"
+        } else {
+            "which asked instead of deciding it"
+        };
+        s.reason = format!("{line} — decided for {computer}{net}, {why}");
+        if !self.ap_rate_ok(&subject.connection_id, now)? {
+            s.reason = format!("{line} — paused: unusual volume from this connection");
+            self.ap_pause_notice(subject, now, "unusual volume");
+            return self.ap_wait(subject, &s);
+        }
+        if needs_closer_look(subject) {
+            CLOSER_LOOK.clone_into(&mut s.reason);
+            return self.ap_wait(subject, &s);
+        }
+        // A task's envelope made it Auto: one of its uses is spent before it runs; none left, it waits.
+        if let Some(task) = task
+            && let Err(e) = self.ap_task_count(&task, super::tasks::Count::Auto)
+        {
+            s.reason = format!("Asks: {e}");
+            return self.ap_wait(subject, &s);
+        }
+        s.verdict = Verdict::Approve;
+        ctx.hooks_allowed += 1;
+        Box::pin(self.ap_conclude(subject, s, Verdict::Approve, By::Autopilot)).await
     }
 
     /// Bypass approves everything, every kind and every item of it, at once: that is what it is for. Only a new
