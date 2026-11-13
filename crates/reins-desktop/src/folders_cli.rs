@@ -327,13 +327,22 @@ fn held(paths: &Paths, config: &Config, now: i64) -> (Option<Signed>, BTreeMap<S
     (signed, canonical)
 }
 
-/// `reins folders` and `reins folders list`.
+/// `reins folders` and `reins folders list`. Without a policy from the phone, the last line says why (as `reins
+/// status` does).
 pub fn list(paths: &Paths, config: &Config, now: i64) -> Result<Vec<String>, String> {
     let here = Here::find()?;
     let (signed, canonical) = held(paths, config, now);
     let rows = rows(&config.workspace, &here.home, &canonical, signed.as_ref());
     let suggested = crate::suggest::suggestions(paths, config, now);
-    Ok(lines(&rows, &suggested, &here.home))
+    let mut out = lines(&rows, &suggested, &here.home);
+    if signed.is_none() {
+        out.push(if crate::server::oauth::logged_in_server(paths).is_some() {
+            format!("Auto rules: {}.", crate::policy::status_line(paths, config, now))
+        } else {
+            "This computer is not paired with a phone yet (`reins setup`).".to_owned()
+        });
+    }
+    Ok(out)
 }
 
 fn what(list: WorkspaceList) -> &'static str {
