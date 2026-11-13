@@ -647,13 +647,15 @@ impl Engine {
     }
 
     /// The pass for a process that cannot run the model (the iOS notification extension): Bypass and Lockdown decide
-    /// at once, as they need no model; everything else is left unevaluated for the app's next pass.
+    /// at once, as they need no model, and so does the matrix for a computer's hook question that carries the
+    /// computer's own reading ([`Engine::ap_hook_item`]); everything else is left unevaluated for the app's next pass.
     pub(crate) async fn autopilot_pass_without_model(&self) {
         let _one = self.autopilot.pass.lock().await;
         match self.ap_pass(false).await {
             // A computer asked what it would have decided itself with a fresh copy of the policy: it is sent one now
             // (the pass with the model does so with its modes report), so its next requests need no round trip.
-            Ok(hooks_allowed) if hooks_allowed > 0 => self.publish_desktop_policy_now().await,
+            // (Boxed: kept out of the callers' futures.)
+            Ok(hooks_allowed) if hooks_allowed > 0 => Box::pin(self.publish_desktop_policy_now()).await,
             Ok(_) => {}
             Err(e) => log::warn!("Autopilot could not look at the waiting items: {e}"),
         }
