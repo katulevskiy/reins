@@ -408,6 +408,62 @@ pub fn effective(paths: &Paths, config: &Config, now: i64) -> (dp::Effective, He
     (dp::effective(h.policy.as_ref(), &h.tightens, &local, &h.spent, now), h)
 }
 
+/// The folders the phone signed in the snapshot kept here, whatever its age, when that phone takes hook readings
+/// (`dp::reading_format`): signed by the pinned key, for this app and the Personal profile; only its freshness isn't
+/// looked at. `None`: logged out, nothing kept, it doesn't check, or its signer is a phone older than readings.
+fn kept_folders(paths: &Paths) -> Option<(Vec<String>, Vec<String>)> {
+    crate::server::oauth::logged_in_server(paths)?;
+    let identity = Identity::load_or_create(&paths.identity_file()).ok()?;
+    let (key, disputed) = pinned(paths);
+    if disputed {
+        return None;
+    }
+    let store = PolicyStore::load(paths);
+    let signed = store.snapshot.as_ref()?;
+    let PolicyMessage::Snapshot(p) = dp::open(signed, key.as_deref(), &verify).ok()? else {
+        return None;
+    };
+    // As of its own issue time: the key and the profile it names are checked, its age is not.
+    dp::check(&p.binding, &identity.public_key(), p.binding.issued_at).ok()?;
+    (dp::reading_format(&signed.body) == reins_policy::desktop_reading::FORMAT).then_some((p.roots, p.scratch))
+}
+
+/// The workspace a hook reads a request with for the phone to decide it (`reins_policy::desktop_reading`): this
+/// computer's own roots and scratch folders (as written and as they resolve now), as far as the phone signed them
+/// in the snapshot kept here, fresh or not. `None`: no reading is sent. The phone never said it takes one (a phone
+/// older than readings refuses a question that carries one), or nothing it signed is kept.
+///
+/// Nothing here counts by itself: the phone uses a reading only when each of these folders counts under what it signs
+/// now, so a folder it took away since makes it ask.
+#[must_use]
+pub fn reading_folders(paths: &Paths, config: &Config) -> Option<(Vec<String>, Vec<String>)> {
+    use reins_policy::desktop_reading::{Folders, counts_as_root, counts_as_scratch};
+    let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+    let (roots, scratch) = kept_folders(paths)?;
+    let signed = Folders {
+        home: &home,
+        roots: &roots,
+        scratch: &scratch,
+    };
+    let canonical = crate::folders::resolved(config.workspace.roots.iter().chain(&config.workspace.scratch));
+    let counted = |entries: &[String], counts: &dyn Fn(&str) -> bool| {
+        let mut out: Vec<String> = Vec::new();
+        for entry in entries {
+            let written = reins_policy::effects::normalize(entry, "/", &home);
+            for form in std::iter::once(&written).chain(canonical.get(entry)) {
+                if counts(form) && !out.contains(form) {
+                    out.push(form.clone());
+                }
+            }
+        }
+        out
+    };
+    Some((
+        counted(&config.workspace.roots, &|f| counts_as_root(f, &signed)),
+        counted(&config.workspace.scratch, &|f| counts_as_scratch(f, &signed)),
+    ))
+}
+
 /// For `reins status`: where the computer's Auto rules come from.
 #[must_use]
 pub fn status_line(paths: &Paths, config: &Config, now: i64) -> String {

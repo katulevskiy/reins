@@ -209,6 +209,14 @@ fn shadow_of(
     now: i64,
     netted: bool,
 ) -> Shadow {
+    let head = request_head(cwd, command);
+    shadow_net(config, basis, a, head.as_ref(), connection, now, netted)
+}
+
+/// What is known of the repository a request run in `cwd` acts in (`command`: its text, when a command): its remotes,
+/// as the hook's strict reader of git's configuration read them. `None` when not known: the command may act on
+/// another repository, the environment points git elsewhere, or `origin` isn't where git would push.
+fn request_head(cwd: Option<&str>, command: Option<&str>) -> Option<GitHead> {
     let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
     let at = match (cwd, command) {
         (Some(c), Some(cmd)) => graph::repo_at_in(cmd, c, git_top(c).as_deref(), &home, &real_path),
@@ -229,14 +237,13 @@ fn shadow_of(
             || k.starts_with("GIT_CONFIG")
             || (k == "CDPATH" && !v.is_empty())
     });
-    let head = dir.filter(|_| !env_redirects).and_then(|d| {
+    dir.filter(|_| !env_redirects).and_then(|d| {
         let head = crate::hooks::git_head(Path::new(&d))?;
         // `origin` as the strict reader read it must be where git itself would push (its push URL, after
         // `pushurl` and `insteadOf`); any difference or error and it isn't known.
         let read = head.remotes.get("origin");
         (read.is_none() || read == git_push_url(&d).as_ref()).then_some(head)
-    });
-    shadow_net(config, basis, a, head.as_ref(), connection, now, netted)
+    })
 }
 
 /// `path`'s real place: the deepest folder of it that exists, with symlinks resolved, and the rest as written.
@@ -453,6 +460,109 @@ pub fn evaluate_netted_with(
             shadow_of(&config, &basis, &after, cwd.as_deref(), command.as_deref(), &connection, now, true)
         }))
         .ok();
+        let _sent = tx.send(result);
+    });
+    if spawned.is_err() {
+        return None;
+    }
+    rx.recv_timeout(DEADLINE).ok().flatten()
+}
+
+/// What a hook read of the request it is about to ask the phone about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookRead {
+    /// The reading as the question carries it (`reins_policy::desktop_reading::Reading`, as JSON); `None` when it is
+    /// too large for its argument.
+    pub wire: Option<String>,
+    /// What Activity keeps of the request, as [`evaluate_action`] reads it (this computer's own workspace and
+    /// `[auto]`), when asked for.
+    pub journal: Option<(Summary, Shadow)>,
+}
+
+/// The reading a hook sends the phone with its question (Decisions v2, 08 R1), so the phone's own matrix can decide
+/// it when no fresh copy of the policy decides here. Under the same deadline as [`evaluate_action`] (`None`: no reading
+/// in time, or nothing to read; the question then goes without one).
+///
+/// - `folders`: the roots and scratch folders it is read with ([`crate::policy::reading_folders`]: the ones the phone
+///   will find it signed), not this computer's own unsigned ones.
+/// - `net`: the netted command a harness takes back with an allow, and the paths its net keeps.
+/// - `journal`: also read it as Activity keeps it, so nothing is read again after the answer.
+#[must_use]
+pub fn hook_reading(
+    config: &Config,
+    folders: (Vec<String>, Vec<String>),
+    call: &crate::hooks::HookCall,
+    head: Option<&GitHead>,
+    net: Option<(&str, &[String])>,
+    connection: &str,
+    journal: bool,
+) -> Option<HookRead> {
+    use reins_policy::desktop_reading::{Asked, FORMAT, Reading, about};
+    let (config, call, head, connection) = (config.clone(), call.clone(), head.cloned(), connection.to_owned());
+    let net = net.map(|(rewritten, paths)| (rewritten.to_owned(), paths.to_vec()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("reins-reading".to_owned()).stack_size(STACK).spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let cwd = call.cwd.as_deref();
+            let paths: Vec<&str>;
+            let (asked, command) = match &call.action {
+                Action::Command(c) => (Asked::Command(c), Some(c.as_str())),
+                Action::Files {
+                    write,
+                    paths: p,
+                } => {
+                    paths = p.iter().map(String::as_str).collect();
+                    (
+                        Asked::Files {
+                            write: *write,
+                            paths: &paths,
+                        },
+                        None,
+                    )
+                }
+                Action::Other => return None,
+            };
+            let home = crate::config::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+            let mut read_with = config.clone();
+            (read_with.workspace.roots, read_with.workspace.scratch) = folders;
+            let a = analysis_of(&read_with, &call.action, cwd, head.as_ref())?;
+            let repo = request_head(cwd, command);
+            let local = &config.auto;
+            let own_facts = reins_policy::context::Facts {
+                owners: local.facts.owners.clone(),
+                repos: local.facts.repos.clone(),
+                hosts: local.facts.hosts.clone(),
+                ..reins_policy::context::Facts::default()
+            };
+            let reading = Reading {
+                v: FORMAT,
+                about: about(&asked, cwd, net.as_ref().map(|(rewritten, _)| rewritten.as_str())),
+                analysis: a,
+                netted: net.map(|(_, paths)| paths),
+                remotes: repo.as_ref().map(|h| h.remotes.clone()),
+                home,
+                roots: read_with.workspace.roots,
+                scratch: read_with.workspace.scratch,
+                matrix: (local.matrix != matrix::Matrix::default()).then(|| local.matrix.clone()),
+                facts: (own_facts != reins_policy::context::Facts::default()).then_some(own_facts),
+            };
+            let journal = journal
+                .then(|| {
+                    let a = analysis_of(&config, &call.action, cwd, head.as_ref())?;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+                    let sh = shadow_net(&config, &Basis::local(&config), &a, repo.as_ref(), &connection, now, false);
+                    Some((a.summary(), sh))
+                })
+                .flatten();
+            Some(HookRead {
+                wire: reading.to_wire(),
+                journal,
+            })
+        }))
+        .ok()
+        .flatten();
         let _sent = tx.send(result);
     });
     if spawned.is_err() {

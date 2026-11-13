@@ -1111,7 +1111,7 @@ pub async fn run(
     } else {
         decided.as_ref().and_then(|(_, shadow)| matrix_question(&call, &shadow.line, net.as_ref()))
     };
-    let Some((m, q)) = question else {
+    let Some((m, mut q)) = question else {
         let (out, code) = render_with(&call, &Verdict::Unmatched, &news);
         return (out, code, None);
     };
@@ -1130,6 +1130,8 @@ pub async fn run(
     };
     // stderr: the harness's log, and its transcript where it shows hook output.
     let tell = |line: &str| eprintln!("{line}");
+    // What Activity keeps of the request, when it was read before asking (below).
+    let mut read_before = None;
     let (mut v, entry) = if let Some(pass) = pass {
         log::info!("hook {}: `{}` approved earlier ({})", harness.id(), m.pattern, pass.ticket);
         let reason = format!("Approved earlier (ticket {})", pass.ticket);
@@ -1138,6 +1140,38 @@ pub async fn run(
         (Verdict::Allow(reason), entry)
     } else {
         log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
+        // The phone decides, and nothing here must ask (none of the user's own rules, nothing about Reins itself): the
+        // question carries what this computer read of the request, so the phone's own matrix can decide it as this
+        // computer would have with a fresh copy of the policy, and the owner is asked only when the matrix asks. Read
+        // with the folders the phone signed, never this computer's own unsigned ones. A phone that never said it takes
+        // readings gets none, and without a reading in time the question goes without one.
+        let folders = (phone && tool_use && !must_ask(&call, &config.guard, head.as_ref()))
+            .then(|| crate::policy::reading_folders(paths, config))
+            .flatten();
+        if let Some(folders) = folders {
+            // The netted command the question shows, and the paths its net keeps: the harness takes it back with the
+            // allow, so the phone may count on the net. (File copies are taken only once allowed, and may fail: the
+            // phone decides those on the request as it is.)
+            let netted = net.as_ref().and_then(|n| Some((n.rewritten.as_deref()?, n.plan.netted_paths.as_slice())));
+            let takes_it_back = crate::nets::hook::rewrites(call.harness, call.event);
+            let read = (netted.is_none() || takes_it_back)
+                .then(|| {
+                    crate::consequences::hook_reading(
+                        config,
+                        folders,
+                        &call,
+                        head.as_ref(),
+                        netted,
+                        harness.label(),
+                        decided.is_none(),
+                    )
+                })
+                .flatten();
+            if let Some(read) = read {
+                q.reading = read.wire;
+                read_before = read.journal;
+            }
+        }
         let timeout = Duration::from_secs(config.guard.timeout_secs);
         // Overnight (signed): parked for the morning at once, the agent carries on.
         let ticketing = digest.as_deref().map(|digest| crate::ask::Ticketing {
@@ -1174,7 +1208,7 @@ pub async fn run(
     let (out, code) = render_with_netted(&call, &v, rewritten, &tool_input, &news);
     // What it does and what the matrix says of it, for Activity: read only once the verdict is fixed (in shadow), on
     // its own thread with a deadline; whatever happens there, the answer above is what the harness gets.
-    let reading = decided.or_else(|| {
+    let reading = decided.or(read_before).or_else(|| {
         crate::consequences::evaluate_action(config, &call.action, call.cwd.as_deref(), head.as_ref(), harness.label())
     });
     if let Some((effects, shadow)) = reading {
