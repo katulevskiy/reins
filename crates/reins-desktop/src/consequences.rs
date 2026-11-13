@@ -350,7 +350,7 @@ pub fn proposals(config: &Config) -> Vec<(FactKind, String)> {
 pub const DEADLINE: std::time::Duration = std::time::Duration::from_millis(200);
 /// The engine's thread stack: its recursion is bounded well below this (`reins-policy`'s totality tests run it at a
 /// quarter of it).
-const STACK: usize = 64 << 20;
+pub(crate) const STACK: usize = 64 << 20;
 
 /// Runs `f` on its own thread with a large stack, catching a panic, for at most [`DEADLINE`]. `None` on a panic, a
 /// missed deadline or a thread that could not start: the reading is dropped, nothing else changes.

@@ -52,6 +52,7 @@ pub mod settings;
 pub mod setup;
 pub mod ssh_agent;
 pub mod stats;
+pub mod suggest;
 pub mod task_cli;
 pub mod tickets;
 pub mod told;

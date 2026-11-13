@@ -7,6 +7,9 @@
 //! Reins' own state). The owner sees each exactly as resolved, as a question card on the phone, and confirms it there
 //! (the owner check); only then is it signed for this computer. Nothing here makes anything count.
 //!
+//! With them go the scratch folders this computer only suggests ([`crate::suggest`], [`with_suggestions`]): folders in
+//! no configuration, learned from what the owner approved here. They are cards too, and count only once confirmed.
+//!
 //! The proposal goes to the server (`POST /reins/desktop/folders`) when it changed, and again every
 //! [`FOLDERS_RESEND_SECS`] (the server keeps it in memory only).
 
@@ -117,12 +120,33 @@ pub fn proposal(workspace: &WorkspaceConfig) -> FolderProposal {
     }
 }
 
+/// `proposal` with the scratch folders this computer only suggests ([`crate::suggest`]): those the phone can sign as
+/// they are, after the configured folders and within [`MAX_FOLDERS`] in all (the configured ones win). One the
+/// configuration names already, or `refusal` refuses, is left out. A suggestion makes nothing count: the phone shows it
+/// as a card, and the folder counts here once the owner confirmed it there.
+#[must_use]
+pub fn with_suggestions(mut proposal: FolderProposal, suggested: &[crate::suggest::Suggestion]) -> FolderProposal {
+    for s in suggested.iter().filter(|s| s.proposable) {
+        let configured = proposal.folders.iter().any(|f| f.kind == FolderKind::Scratch && f.path == s.path);
+        if proposal.folders.len() + proposal.suggested_scratch.len() < MAX_FOLDERS
+            && !configured
+            && !proposal.suggested_scratch.contains(&s.path)
+            && refusal(&s.path, &proposal.home).is_none()
+        {
+            proposal.suggested_scratch.push(s.path.clone());
+        }
+    }
+    proposal
+}
+
 /// Sends the proposal (logged in only).
 pub async fn propose(paths: &Paths, proposal: &FolderProposal) -> Result<(), LinkError> {
     DesktopClient::new(paths).map_err(LinkError::Failed)?.post_folders(proposal).await
 }
 
-/// The daemon's proposer: the configuration's folders, sent when they changed and every [`FOLDERS_RESEND_SECS`].
+/// The daemon's proposer: the configuration's folders and the scratch folders it suggests, sent when they changed and
+/// every [`FOLDERS_RESEND_SECS`]. The configuration is read again each time, so a folder added with `reins folders`
+/// is proposed within [`LOOK_EVERY`] without a restart.
 pub async fn proposer(paths: Paths, start: WorkspaceConfig) {
     let mut last: Option<(FolderProposal, i64)> = None;
     loop {
@@ -131,9 +155,17 @@ pub async fn proposer(paths: Paths, start: WorkspaceConfig) {
             tokio::time::sleep(LOOK_EVERY).await;
             continue;
         }
-        let workspace = Config::load(&paths).map_or_else(|_| start.clone(), |c| c.workspace);
+        let config = Config::load(&paths).ok();
+        let workspace = config.as_ref().map_or_else(|| start.clone(), |c| c.workspace.clone());
         let now = crate::now_unix();
-        let p = proposal(&workspace);
+        let mut p = proposal(&workspace);
+        if let Some(config) = config {
+            // Reading the activity log again takes a moment: off the daemon's own threads.
+            let state = paths.clone();
+            let suggested =
+                tokio::task::spawn_blocking(move || crate::suggest::suggestions(&state, &config, now)).await;
+            p = with_suggestions(p, &suggested.unwrap_or_default());
+        }
         let due = last.as_ref().is_none_or(|(sent, at)| *sent != p || now - at >= FOLDERS_RESEND_SECS);
         if due {
             match propose(&paths, &p).await {
@@ -186,6 +218,48 @@ mod tests {
         assert_eq!(canonical("~/.claude/projects/*/../..", &home), None);
         assert_eq!(canonical("~", &home), Some(home.clone()));
         assert_eq!(canonical("/", &home), Some("/".to_owned()));
+    }
+
+    #[test]
+    fn suggestions_go_after_the_configured_folders_and_never_among_them() {
+        use crate::suggest::{Suggestion, Why};
+        let suggestion = |path: &str, proposable: bool| Suggestion {
+            path: path.to_owned(),
+            why: Why::Approved(3),
+            proposable,
+        };
+        let folder = |path: &str, kind| Folder {
+            path: path.to_owned(),
+            kind,
+        };
+        let configured = FolderProposal {
+            home: "/home/me".to_owned(),
+            folders: vec![
+                folder("/home/me/Documents/dev", FolderKind::Root),
+                folder("/home/me/Documents/dev/tmp", FolderKind::Scratch),
+            ],
+            suggested_scratch: Vec::new(),
+        };
+        let p = with_suggestions(
+            configured.clone(),
+            &[
+                suggestion("/home/me/Downloads/tmp", true),
+                // In the configuration already; reached through a link; refused; twice.
+                suggestion("/home/me/Documents/dev/tmp", true),
+                suggestion("/home/me/linked", false),
+                suggestion("/home/me/.ssh", true),
+                suggestion("/home/me", true),
+                suggestion("/home/me/Downloads/tmp", true),
+            ],
+        );
+        assert_eq!(p.folders, configured.folders, "a suggestion is never a configured folder");
+        assert_eq!(p.suggested_scratch, ["/home/me/Downloads/tmp"]);
+        // The configured folders win the room there is.
+        let mut full = configured;
+        full.folders = (0..MAX_FOLDERS - 1).map(|i| folder(&format!("/home/me/work/{i}"), FolderKind::Root)).collect();
+        let p = with_suggestions(full, &[suggestion("/home/me/a/tmp", true), suggestion("/home/me/b/tmp", true)]);
+        assert_eq!(p.suggested_scratch, ["/home/me/a/tmp"]);
+        assert!(p.fits());
     }
 
     #[test]

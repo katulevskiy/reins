@@ -537,17 +537,23 @@ fn append(file: &Path, entry: &Entry) -> std::io::Result<()> {
     options.open(file)?.write_all(&line)
 }
 
-/// The requests in the log, newest first, at most `limit`. A `waiting` entry older than `stale_after` seconds whose
-/// end was never written (the process asking was killed) reads as failed.
+/// The log as written, oldest line first: the generation moved aside, then the current one (empty when there is none).
 #[must_use]
-pub fn read(paths: &Paths, limit: usize, stale_after: i64) -> Vec<Entry> {
+pub fn text(paths: &Paths) -> String {
     let file = Journal::file(paths);
     let mut old = file.as_os_str().to_owned();
     old.push(".old");
     let mut text = std::fs::read_to_string(PathBuf::from(old)).unwrap_or_default();
     text.push('\n');
     text.push_str(&std::fs::read_to_string(&file).unwrap_or_default());
-    let mut entries = parse(&text, limit, stale_after, crate::now_unix());
+    text
+}
+
+/// The requests in the log, newest first, at most `limit`. A `waiting` entry older than `stale_after` seconds whose
+/// end was never written (the process asking was killed) reads as failed.
+#[must_use]
+pub fn read(paths: &Paths, limit: usize, stale_after: i64) -> Vec<Entry> {
+    let mut entries = parse(&text(paths), limit, stale_after, crate::now_unix());
     // Whether each net was applied: the netted command really ran through the net (or the copies were taken).
     let store = crate::nets::Store::open(paths);
     for n in entries.iter_mut().filter_map(|e| e.nets.as_mut()) {
