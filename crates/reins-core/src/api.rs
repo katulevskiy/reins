@@ -2302,6 +2302,26 @@ impl ReinsCore {
         .await
     }
 
+    /// Exports the decision history kept on this device as a file's contents (nothing is sent anywhere): every entry
+    /// matching `query` (`None`: all of them), newest first, with no page limit. Metadata only: no message or email
+    /// bodies, subjects, queries or full requests (see `activity_export`). Reads and formats thousands of entries, so
+    /// call it off the main thread (like every method here); the app saves `contents` under `file_name`.
+    pub async fn export_activity(
+        &self,
+        format: crate::types::ActivityExportFormat,
+        query: Option<crate::types::ActivityQuery>,
+    ) -> Result<crate::types::ActivityExport, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.export_activity(format, query) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
     /// by day (in the phone's time zone) and count each day without loading the entries.
     pub async fn activity_stamps(

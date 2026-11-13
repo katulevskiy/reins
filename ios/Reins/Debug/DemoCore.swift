@@ -1215,6 +1215,21 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    func exportActivity(format: ActivityExportFormat, query: ActivityQuery?) async throws -> ActivityExport {
+        locked { s in
+            let terms = DemoSearch.terms(query?.text ?? "")
+            let all = s.activity.filter { query == nil || DemoSearch.keeps($0, query!, terms) }.sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+            switch format {
+            case .csv:
+                let rows = all.map { "\($0.id),\($0.service),\($0.action)\r\n" }.joined()
+                return ActivityExport(fileName: "reins-decisions.csv", mimeType: "text/csv", contents: "id,service,action\r\n" + rows, entries: UInt32(all.count))
+            case .json:
+                let ids = all.map { String($0.id) }.joined(separator: ",")
+                return ActivityExport(fileName: "reins-decisions.json", mimeType: "application/json", contents: "[\(ids)]", entries: UInt32(all.count))
+            }
+        }
+    }
+
     func activityFacets() async throws -> ActivityFacets {
         locked { s in
             func mostUsed(_ values: [String]) -> [String] {

@@ -1552,6 +1552,28 @@ impl Engine {
         })
     }
 
+    /// Every entry matching `query` (`None`: every entry this device keeps), newest first, formatted as a file
+    /// (`crate::activity_export`). Pages through [`Self::search_activity`], so it filters exactly as the search does.
+    pub fn export_activity(
+        &self,
+        format: crate::types::ActivityExportFormat,
+        query: Option<crate::types::ActivityQuery>,
+    ) -> Result<crate::types::ActivityExport, CoreError> {
+        let query = query.unwrap_or_default();
+        let mut entries = Vec::new();
+        let mut after = None;
+        // The store keeps at most AUDIT_RETENTION entries; the bound only guards against a cursor that never advances.
+        for _ in 0..=(crate::store::AUDIT_RETENTION / i64::from(crate::store::PAGE_MAX) + 2) {
+            let page = self.search_activity(&query, after, crate::store::PAGE_MAX)?;
+            entries.extend(page.hits.into_iter().map(|h| h.entry));
+            match page.next {
+                Some(next) if after != Some(next) => after = Some(next),
+                _ => break,
+            }
+        }
+        Ok(crate::activity_export::export(format, &entries, unix_now()))
+    }
+
     /// When each entry matching `query` was logged and how it ended, newest first.
     pub fn activity_stamps(
         &self,

@@ -30,6 +30,8 @@ import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import dev.reins.core.ActivityCursor
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityExport
+import dev.reins.core.ActivityExportFormat
 import dev.reins.core.ActivityFacets
 import dev.reins.core.ActivityPage
 import dev.reins.core.ActivityQuery
@@ -113,6 +115,9 @@ class MainSafeCore(
 
     override suspend fun searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt): ActivityPage =
         io { searchActivity(query, after, limit) }
+
+    override suspend fun exportActivity(format: ActivityExportFormat, query: ActivityQuery?): ActivityExport =
+        io { exportActivity(format, query) }
 
     override suspend fun activityStamps(query: ActivityQuery): List<ActivityStamp> = io { activityStamps(query) }
 

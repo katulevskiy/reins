@@ -1192,6 +1192,28 @@ pub struct ActivityQuery {
     pub until: Option<i64>,
 }
 
+/// The file format of an exported decision history (`export_activity`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ActivityExportFormat {
+    /// RFC 4180 CSV for spreadsheets: a header row, one row per entry.
+    Csv,
+    /// Pretty-printed JSON, versioned (`format: "reins.decision-history"`).
+    Json,
+}
+
+/// An exported decision history, ready to be saved as a file by the app.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityExport {
+    /// A suggested file name, `reins-decisions-YYYY-MM-DD.csv` / `.json` (the date in UTC).
+    pub file_name: String,
+    /// `text/csv` or `application/json`.
+    pub mime_type: String,
+    /// The whole file, UTF-8 text.
+    pub contents: String,
+    /// How many entries it holds.
+    pub entries: u32,
+}
+
 /// Where a page of results ends: pass it back for the next page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ActivityCursor {

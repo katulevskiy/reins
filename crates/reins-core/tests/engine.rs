@@ -494,6 +494,50 @@ async fn items_and_activity_carry_the_connector_account_counts_and_details() {
 }
 
 #[tokio::test]
+async fn exporting_the_decision_history_as_csv_and_json() {
+    use reins_core::{ActivityExportFormat, ActivityOutcome, ActivityQuery};
+    let env = env().await;
+    let empty = env.core.export_activity(ActivityExportFormat::Csv, None).await.unwrap();
+    assert_eq!(empty.entries, 0);
+    assert_eq!(empty.contents.lines().count(), 1, "a header only");
+
+    serve_gmail_search(&env, &[("m1", "Bank <alerts@bank.com>")]).await;
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "s1", "threadId": "t1"})))
+        .mount(&env.gmail)
+        .await;
+    serve_pending(&env, &[search_request("r1", "c1", "Claude", "in:inbox")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("r1".to_owned(), choice(&["m1"], None)).await.unwrap();
+    serve_pending(&env, &[send_request("r2", "c1", "boss@work.com")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("r2".to_owned(), choice(&[], None)).await.unwrap();
+    let shown = env.core.activity(10).await.unwrap();
+
+    let all = env.core.export_activity(ActivityExportFormat::Json, None).await.unwrap();
+    assert_eq!((all.entries as usize, all.mime_type.as_str()), (shown.len(), "application/json"));
+    let doc: Value = serde_json::from_str(&all.contents).unwrap();
+    assert_eq!(doc["format"], "reins.decision-history");
+    let ids: Vec<i64> = doc["entries"].as_array().unwrap().iter().map(|e| e["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, shown.iter().map(|e| e.id).collect::<Vec<_>>(), "what the screen shows, newest first");
+    for leak in ["in:inbox", "Subject m1", "boss@work.com", "Hello", "Body"] {
+        assert!(!all.contents.contains(leak), "{leak} leaked into the export");
+    }
+
+    let only_sends = ActivityQuery {
+        actions: vec!["send".to_owned()],
+        outcomes: vec![ActivityOutcome::Approved],
+        ..ActivityQuery::default()
+    };
+    let csv = env.core.export_activity(ActivityExportFormat::Csv, Some(only_sends)).await.unwrap();
+    assert!(csv.file_name.starts_with("reins-decisions-") && csv.file_name.rsplit('.').next() == Some("csv"));
+    let sends = shown.iter().filter(|e| e.action == "send").count();
+    assert!(sends >= 1 && (csv.entries as usize) == sends);
+    assert_eq!(csv.contents.lines().count(), sends + 1);
+}
+
+#[tokio::test]
 async fn reading_one_email_is_counted_as_one_everywhere() {
     let env = env().await;
     serve_gmail_search(&env, &[("m1", "Bank <alerts@bank.com>")]).await;

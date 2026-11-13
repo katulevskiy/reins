@@ -45,6 +45,7 @@ pub use audit::{
 };
 pub use audit_fold::EXECUTION_UNKNOWN_AFTER;
 pub use audit_push::{AuditPush, SYNCED_PUSH_MAX, SYNCED_PUSH_TARGET, has_diffs};
+pub(crate) use audit_search::outcome_of as activity_outcome_of;
 pub use audit_search::{MAX_INDEXED, PAGE_MAX, STAMPS_MAX};
 pub use authorization::AuthorizationState;
 pub use grants::StoredGrant;

@@ -12,11 +12,14 @@ import dev.reins.android.platform.Authenticator
 import dev.reins.android.platform.update.UpdateController
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
+import dev.reins.core.ActivityExportFormat
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class SettingsUi(val busy: Boolean = false, val message: String? = null, val error: String? = null)
 
@@ -128,6 +131,99 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 _ui.value = SettingsUi(error = e.userMessage())
             }
         }
+    }
+
+    /** Whether the "Export decision history" choice is open. */
+    private val _exportChoice = MutableStateFlow(false)
+    val exportChoice: StateFlow<Boolean> = _exportChoice.asStateFlow()
+
+    /** The exported file's contents while the save picker is up; dropped as soon as it is written or backed out of. */
+    private val _pendingExport = MutableStateFlow<PendingExport?>(null)
+    internal val pendingExport: StateFlow<PendingExport?> = _pendingExport.asStateFlow()
+
+    private var exporting = false
+
+    fun openExportChoice() {
+        _exportChoice.value = true
+    }
+
+    fun closeExportChoice() {
+        _exportChoice.value = false
+    }
+
+    /**
+     * A format chosen: the phone's screen lock first (the file is plain text), then the core's export, then, unless
+     * there is nothing to export, the save picker (the screen reacts to [pendingExport]).
+     */
+    fun export(format: ActivityExportFormat, authenticator: Authenticator) {
+        _exportChoice.value = false
+        if (exporting || _pendingExport.value != null) return
+        exporting = true
+        _ui.value = SettingsUi()
+        viewModelScope.launch {
+            try {
+                when (authenticator.authenticate(ActivityExportText.AUTH_TITLE, ActivityExportText.AUTH_SUBTITLE)) {
+                    AuthResult.Success -> Unit
+                    AuthResult.Cancelled -> return@launch
+                    AuthResult.Unavailable -> {
+                        container.feedback.play(Event.Error)
+                        _ui.value = SettingsUi(error = ActivityExportText.AUTH_UNAVAILABLE)
+                        return@launch
+                    }
+                }
+                val export = container.core.exportActivity(format, null)
+                if (export.entries == 0u) {
+                    container.state.flash(ActivityExportText.EMPTY)
+                } else {
+                    _pendingExport.value = PendingExport(format, export)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.value = SettingsUi(error = e.userMessage())
+            } finally {
+                exporting = false
+            }
+        }
+    }
+
+    /** The picker is up for the held export: do not raise it again (a rotation recomposes the screen). */
+    internal fun exportPickerLaunched() {
+        _pendingExport.value = _pendingExport.value?.copy(launched = true)
+    }
+
+    /** The picker was dismissed without a place: nothing is written and nothing is kept. */
+    fun exportCancelled() {
+        _pendingExport.value = null
+    }
+
+    /**
+     * The person picked [uri]: writes the held contents there as UTF-8 (replacing what a file of that name held),
+     * off the main thread, then forgets them. Nothing goes to this app's own storage.
+     */
+    fun exportTo(uri: android.net.Uri, resolver: android.content.ContentResolver) {
+        val held = _pendingExport.value ?: return
+        _pendingExport.value = null
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val out = resolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("no stream")
+                    out.use { it.write(held.export.contents.toByteArray(Charsets.UTF_8)) }
+                }
+                container.state.flash(ActivityExportText.exported(held.export.entries))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("Reins", "export write failed: ${e.javaClass.simpleName}")
+                container.feedback.play(Event.Error)
+                _ui.value = SettingsUi(error = ActivityExportText.WRITE_FAILED)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        _pendingExport.value = null
     }
 
     fun hideRecoveryCode() {
