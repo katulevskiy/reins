@@ -2,6 +2,10 @@
 //! `[workspace]` roots and scratch folders, canonicalized there (`POST /reins/desktop/folders`); the phone fetches the
 //! proposals with its syncs (never a push, never a notification) and lists what isn't signed yet as question cards.
 //!
+//! A computer may also suggest scratch folders that are in no configuration (it learned them from what the owner
+//! approved there). A suggestion is a card like the others, and is one even inside a signed root: it counts only once
+//! the owner confirmed it and it is signed as scratch.
+//!
 //! - **Confirming** a folder loosens (the computer decides more without the phone): it needs the owner check, and only
 //!   a folder the computer itself proposed, exactly as it resolved it, can be confirmed.
 //! - **Removing** one only tightens: it applies at once (the computer is told to stop deciding until the new snapshot
@@ -44,6 +48,9 @@ struct Computer {
     /// What it proposes now (refused ones never kept).
     #[serde(default)]
     proposed: Vec<Folder>,
+    /// The scratch folders it only suggests now (in no configuration there; refused ones never kept).
+    #[serde(default)]
+    suggested: Vec<String>,
     /// Unix seconds: when it last proposed.
     #[serde(default)]
     at: i64,
@@ -104,10 +111,17 @@ impl Computer {
         (roots, scratch)
     }
 
-    /// What it proposes that isn't signed yet (dismissed ones too).
+    /// What it proposes or suggests that isn't signed yet (dismissed ones too). A folder is the same folder whether
+    /// the computer's configuration names it or the computer only suggests it: once here.
     fn open(&self) -> Vec<Folder> {
         let (roots, scratch) = self.signed();
-        folders::open(&self.proposed, &roots, &scratch, &self.home)
+        let mut open = folders::open(&self.proposed, &roots, &scratch, &self.home);
+        for f in folders::open_suggested(&self.suggested, &self.proposed, &roots, &scratch, &self.home) {
+            if !open.contains(&f) {
+                open.push(f);
+            }
+        }
+        open
     }
 }
 
@@ -195,8 +209,15 @@ impl Engine {
                         proposed.push(f.clone());
                     }
                 }
+                let mut suggested: Vec<String> = Vec::new();
+                for path in item.proposal.suggested_scratch.iter().take(MAX_FOLDERS) {
+                    if refusal(path, &home).is_none() && !suggested.contains(path) {
+                        suggested.push(path.clone());
+                    }
+                }
                 c.home = home;
                 c.proposed = proposed;
+                c.suggested = suggested;
                 c.at = item.at;
             }
             book.computers.retain(|id, _| paired.contains(id));
@@ -243,8 +264,9 @@ impl Engine {
         })
     }
 
-    /// Confirms a folder the computer proposed, after the owner check (it loosens): it is signed into the computer's
-    /// snapshot from the next publish. Only a folder the computer proposes now, exactly as it named it.
+    /// Confirms a folder the computer proposed or suggested, after the owner check (it loosens): it is signed into the
+    /// computer's snapshot from the next publish. Only a folder the computer proposes or suggests now, exactly as it
+    /// named it.
     pub async fn confirm_computer_folder(
         &self,
         connection_id: &str,
@@ -390,17 +412,26 @@ mod tests {
     }
 
     fn proposal(at: i64, folders: Vec<Folder>) -> FolderProposals {
+        suggesting(at, folders, &[])
+    }
+
+    /// A proposal that also suggests `suggested` as scratch folders.
+    fn suggesting(at: i64, folders: Vec<Folder>, suggested: &[&str]) -> FolderProposals {
         FolderProposals {
             items: vec![ProposedFolders {
                 connection_id: DESK.to_owned(),
                 proposal: FolderProposal {
                     home: "/home/me".to_owned(),
                     folders,
-                    suggested_scratch: Vec::new(),
+                    suggested_scratch: suggested.iter().map(|p| (*p).to_owned()).collect(),
                 },
                 at,
             }],
         }
+    }
+
+    fn cards(engine: &Engine) -> Vec<(String, FolderKindChoice)> {
+        engine.folder_questions().unwrap().into_iter().map(|q| (q.path, q.kind)).collect()
     }
 
     const MEMORY: &str = "/home/me/.claude/projects/*/memory";
@@ -485,5 +516,104 @@ mod tests {
         engine.store.remove_desktop_key(DESK).unwrap();
         engine.ap_keep_folder_proposals(&FolderProposals::default()).unwrap();
         assert!(engine.computer_folders(DESK).unwrap().suggested.is_empty());
+    }
+
+    const TMP: &str = "/home/me/Documents/dev/tmp";
+
+    /// A scratch folder the computer only suggests is in no configuration there, so being inside a signed root makes
+    /// it count nowhere: it is a card, and confirming it (the owner check) signs it as scratch.
+    #[tokio::test]
+    async fn a_suggested_folder_inside_a_root_is_a_card_and_confirming_signs_it() {
+        let (_d, core) = core();
+        let engine = core.engine();
+        engine.store.pin_desktop_key(DESK, "key", "Laptop", 1).unwrap();
+        engine.ap_keep_folder_proposals(&suggesting(100, Vec::new(), &[TMP])).unwrap();
+        assert_eq!(cards(&engine), [(TMP.to_owned(), FolderKindChoice::Scratch)]);
+        assert!(engine.ap_signed_folders(DESK).unwrap().1.is_empty(), "a suggestion signs nothing");
+        assert!(engine.ap_desktop_policy(DESK, "key", 1_000).unwrap().scratch.is_empty());
+        // The owner check refused, or a root asked for instead: nothing is signed.
+        let no = FakeOwner::new(Ok(false));
+        assert!(engine.confirm_computer_folder(DESK, TMP, FolderKindChoice::Scratch, no.as_ref()).await.is_err());
+        let yes = FakeOwner::new(Ok(true));
+        assert!(engine.confirm_computer_folder(DESK, TMP, FolderKindChoice::Root, yes.as_ref()).await.is_err());
+        assert!(yes.asked.lock().unwrap().is_empty(), "never asked for what was not suggested");
+        assert!(engine.ap_signed_folders(DESK).unwrap().1.is_empty());
+        // Confirmed with the owner check: signed as scratch, like any confirmed scratch folder.
+        engine.confirm_computer_folder(DESK, TMP, FolderKindChoice::Scratch, yes.as_ref()).await.unwrap();
+        assert_eq!(yes.asked.lock().unwrap().len(), 1);
+        assert_eq!(engine.ap_signed_folders(DESK).unwrap().1, [TMP]);
+        assert_eq!(engine.ap_desktop_policy(DESK, "key", 1_000).unwrap().scratch, [TMP]);
+        assert!(cards(&engine).is_empty());
+        let f = engine.computer_folders(DESK).unwrap();
+        assert_eq!(f.confirmed.iter().map(|v| v.path.as_str()).collect::<Vec<_>>(), [TMP]);
+        assert!(f.suggested.is_empty());
+        // The computer stops suggesting it (it counts there now), or puts it in its configuration: no second card,
+        // and it stays signed.
+        engine.ap_keep_folder_proposals(&suggesting(200, Vec::new(), &[])).unwrap();
+        assert!(cards(&engine).is_empty());
+        engine.ap_keep_folder_proposals(&suggesting(300, vec![folder(TMP, FolderKind::Scratch)], &[TMP])).unwrap();
+        assert!(cards(&engine).is_empty());
+        assert_eq!(engine.ap_signed_folders(DESK).unwrap().1, [TMP]);
+        // Removing it applies at once; it is not a card again while the computer goes on suggesting it.
+        engine.remove_computer_folder(DESK, TMP, FolderKindChoice::Scratch).unwrap();
+        assert!(engine.ap_signed_folders(DESK).unwrap().1.is_empty());
+        engine.ap_keep_folder_proposals(&suggesting(400, Vec::new(), &[TMP])).unwrap();
+        assert!(cards(&engine).is_empty());
+        assert_eq!(engine.computer_folders(DESK).unwrap().suggested.len(), 1, "still confirmable under Folders");
+    }
+
+    /// As before suggestions: a scratch folder of the computer's configuration that lies inside a signed root counts
+    /// there already, so it is no card. The same folder both configured and suggested is the configured one.
+    #[tokio::test]
+    async fn a_configured_folder_inside_a_root_still_counts_without_a_card() {
+        let (_d, core) = core();
+        let engine = core.engine();
+        engine.store.pin_desktop_key(DESK, "key", "Laptop", 1).unwrap();
+        engine.ap_keep_folder_proposals(&proposal(100, vec![folder(TMP, FolderKind::Scratch)])).unwrap();
+        assert!(cards(&engine).is_empty());
+        assert!(engine.computer_folders(DESK).unwrap().suggested.is_empty());
+        let yes = FakeOwner::new(Ok(true));
+        assert!(engine.confirm_computer_folder(DESK, TMP, FolderKindChoice::Scratch, yes.as_ref()).await.is_err());
+        engine.ap_keep_folder_proposals(&suggesting(200, vec![folder(TMP, FolderKind::Scratch)], &[TMP])).unwrap();
+        assert!(cards(&engine).is_empty(), "configured wins: it counts on the computer as that");
+        // Dismissing a suggestion keeps it off the cards, and signs nothing.
+        engine.ap_keep_folder_proposals(&suggesting(300, Vec::new(), &[TMP])).unwrap();
+        assert_eq!(cards(&engine).len(), 1);
+        engine.dismiss_computer_folder(DESK, TMP, FolderKindChoice::Scratch).unwrap();
+        assert!(cards(&engine).is_empty());
+        assert!(engine.ap_signed_folders(DESK).unwrap().1.is_empty(), "dismissing signs nothing");
+    }
+
+    /// What a lying computer (or the server in its name) may suggest: never a card, never confirmable.
+    #[tokio::test]
+    async fn refused_and_root_holding_suggestions_are_never_cards() {
+        let (_d, core) = core();
+        let engine = core.engine();
+        engine.store.pin_desktop_key(DESK, "key", "Laptop", 1).unwrap();
+        let hostile = [
+            "/",
+            "/home/me",
+            "/home/me/.ssh",
+            "/home/me/.config/reins",
+            "/home/me/Documents/dev",
+            "/home/me/Documents",
+            "/home/me/Documents/dev/*",
+            "~/Documents/dev/tmp",
+        ];
+        engine.ap_keep_folder_proposals(&suggesting(100, Vec::new(), &hostile)).unwrap();
+        assert!(cards(&engine).is_empty(), "{:?}", cards(&engine));
+        assert!(engine.computer_folders(DESK).unwrap().suggested.is_empty());
+        let yes = FakeOwner::new(Ok(true));
+        for path in hostile {
+            let r = engine.confirm_computer_folder(DESK, path, FolderKindChoice::Scratch, yes.as_ref()).await;
+            assert!(r.is_err(), "{path}");
+        }
+        assert!(yes.asked.lock().unwrap().is_empty());
+        assert!(engine.ap_signed_folders(DESK).unwrap().1.is_empty());
+        // A proposal with more suggestions than fit is not kept at all.
+        let many: Vec<String> = (0..=MAX_FOLDERS).map(|i| format!("/home/me/Downloads/{i}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        engine.ap_keep_folder_proposals(&suggesting(200, Vec::new(), &many)).unwrap();
+        assert!(cards(&engine).is_empty());
     }
 }
