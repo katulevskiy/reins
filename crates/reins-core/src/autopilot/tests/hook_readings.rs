@@ -28,6 +28,7 @@ fn pair(env: &Env, connection: &str) -> String {
             proposal: FolderProposal {
                 home: HOME.to_owned(),
                 folders: Vec::new(),
+                suggested_scratch: Vec::new(),
             },
             at: unix_now(),
         }],
