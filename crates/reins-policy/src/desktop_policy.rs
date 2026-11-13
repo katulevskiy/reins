@@ -136,6 +136,29 @@ struct Body {
     v: u32,
     #[serde(flatten)]
     message: PolicyMessage,
+    /// The format of the hook readings the signing phone takes (`crate::desktop_reading`); 0, or left out: none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    reading: u32,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde's signature")]
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// The format of the hook readings the phone that signed `body` takes (`crate::desktop_reading::FORMAT`); 0: none.
+///
+/// A phone re-checks every call it is relayed against its own description of the tool, and refuses one with an
+/// argument it doesn't know: a phone older than readings would refuse a hook's question that carries one. So a
+/// computer sends a reading only to a phone whose signed snapshot says it takes them. Only meaningful for a body whose
+/// signature was checked ([`open`]).
+#[must_use]
+pub fn reading_format(body: &str) -> u32 {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("reading").and_then(serde_json::Value::as_u64))
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
 }
 
 impl PolicyMessage {
@@ -173,12 +196,17 @@ pub fn signing_bytes(body: &str) -> Vec<u8> {
 }
 
 /// Signs `message` with `key` (the signer's public key, base64url) through `sign` (the bytes → a base64url
-/// signature).
+/// signature). A snapshot also says that its signer takes hook readings ([`reading_format`]): whoever signs with
+/// this code does.
 #[must_use]
 pub fn sign(message: &PolicyMessage, key: &str, sign: &dyn Fn(&[u8]) -> String) -> Signed {
     let body = serde_json::to_string(&Body {
         v: FORMAT,
         message: message.clone(),
+        reading: match message {
+            PolicyMessage::Snapshot(_) => crate::desktop_reading::FORMAT,
+            PolicyMessage::Tighten(_) => 0,
+        },
     })
     .unwrap_or_default();
     Signed {
@@ -756,6 +784,32 @@ mod tests {
     fn signed_bytes_are_domain_separated() {
         assert!(signing_bytes("{}").starts_with(b"reins/desktop-policy/v1\n"));
         assert_ne!(signing_bytes("{}"), b"{}".to_vec());
+    }
+
+    #[test]
+    fn a_snapshot_says_whether_its_signer_takes_readings() {
+        let m = PolicyMessage::Snapshot(Box::new(policy(3, 1_000)));
+        let s = sign(&m, &phone_key(), &fake_sign);
+        assert_eq!(reading_format(&s.body), crate::desktop_reading::FORMAT);
+        // The mark stands beside the message: the message reads as it did, also for a build that doesn't know it.
+        assert_eq!(open(&s, Some(&phone_key()), &fake_verify).as_ref(), Ok(&m));
+        // A phone older than readings signs no mark: it would refuse a question that carries one.
+        let older = s.body.replace(",\"reading\":1", "");
+        assert_ne!(older, s.body);
+        assert_eq!(reading_format(&older), 0);
+        assert_eq!(serde_json::from_str::<Body>(&older).map(|b| b.message).ok().as_ref(), Some(&m));
+        // A tightening says nothing of it.
+        let tighten = PolicyMessage::Tighten(Tighten {
+            binding: policy(4, 1_000).binding,
+            tightening: Tightening {
+                lockdown: true,
+                ..Tightening::default()
+            },
+        });
+        assert_eq!(reading_format(&sign(&tighten, &phone_key(), &fake_sign).body), 0);
+        for odd in ["", "[]", "{\"reading\":\"1\"}", "{\"reading\":-1}", "{\"reading\":99999999999}"] {
+            assert_eq!(reading_format(odd), 0, "{odd}");
+        }
     }
 
     #[test]
