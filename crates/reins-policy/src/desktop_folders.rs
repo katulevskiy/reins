@@ -219,9 +219,9 @@ pub fn open(proposed: &[Folder], roots: &[String], scratch: &[String], home: &st
 /// suggested one is named nowhere. So it is shown, and the owner confirms it like any other.
 ///
 /// Left out: refused ones; one with a `*` part (a suggestion names one folder); one signed as scratch already, or
-/// inside a signed scratch folder; one that is a signed root or holds one (a root's projects are never scratch); and
-/// one the computer also proposes from its configuration (`proposed`: it is then shown, or counted, as that). Without
-/// the computer's home folder nothing is suggested: a `~` root could not be compared.
+/// inside a signed scratch folder; one that is a root or holds one, signed or proposed (a root's projects are never
+/// scratch); and one the computer also proposes as scratch from its configuration (`proposed`: it is then shown, or
+/// counted, as that). Without the computer's home folder nothing is suggested: a `~` root could not be compared.
 #[must_use]
 pub fn open_suggested(
     suggested: &[String],
@@ -236,7 +236,8 @@ pub fn open_suggested(
     }
     for path in suggested {
         let covered = scratch.iter().any(|s| holds(&normalize(s, "/", home), path));
-        let over_a_root = roots.iter().any(|r| inside(path, r, home));
+        let over_a_root = roots.iter().any(|r| inside(path, r, home))
+            || proposed.iter().any(|f| f.kind == FolderKind::Root && inside(path, &f.path, home));
         let configured = proposed.iter().any(|f| f.kind == FolderKind::Scratch && same(&f.path, path, home));
         let f = Folder {
             path: path.clone(),
@@ -382,11 +383,16 @@ mod tests {
         assert!(open_suggested(&inside_signed, &[], &roots, &signed, HOME).is_empty());
         // The computer also has it in its configuration: that proposal stands, not the suggestion.
         assert!(open_suggested(std::slice::from_ref(&tmp), &[scratch(&tmp)], &roots, &[], HOME).is_empty());
-        assert_eq!(
-            open_suggested(std::slice::from_ref(&tmp), &[root(&tmp)], &roots, &[], HOME),
-            [scratch(&tmp)],
-            "a root of the same name is another proposal"
-        );
+        // The computer proposes the folder, or one inside it, as a root: confirmed, its projects would be scratch.
+        let outside = "/work/shared".to_owned();
+        assert_eq!(open_suggested(std::slice::from_ref(&outside), &[], &roots, &[], HOME), [scratch(&outside)]);
+        for proposed_root in ["/work/shared", "/work/shared/projects"] {
+            let proposed = [root(proposed_root)];
+            assert!(open_suggested(std::slice::from_ref(&outside), &proposed, &roots, &[], HOME).is_empty());
+        }
+        // A proposed root elsewhere, or around it, changes nothing.
+        let proposed = [root("/work"), root("/data/dev")];
+        assert_eq!(open_suggested(std::slice::from_ref(&outside), &proposed, &roots, &[], HOME), [scratch(&outside)]);
     }
 
     /// What a lying or confused computer may suggest: never shown.
