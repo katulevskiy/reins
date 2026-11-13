@@ -86,15 +86,22 @@ async fn a_hook_question_carries_what_this_computer_read() {
     // About exactly the command and the folder the phone is shown.
     assert_eq!(r.about, about(&Asked::Command("rm -rf build dist"), Some(&cwd), None));
     assert!(args["detail"].as_str().unwrap().ends_with(&format!("Command:\nrm -rf build dist\n\nIn: {cwd}")));
-    // Read with the roots the phone signed, as absolute folders.
-    let standard: Vec<String> = STANDARD.iter().map(|r| r.replacen('~', &home, 1)).collect();
-    assert_eq!((r.home.as_str(), &r.roots, r.scratch.len()), (home.as_str(), &standard, 0));
-    assert_eq!(deletes(&r), vec![(format!("{cwd}/build"), Area::Generated), (format!("{cwd}/dist"), Area::Generated)]);
-    assert_eq!((r.netted, r.matrix, r.facts), (None, None, None), "no net, and nothing of its own to tighten with");
+    assert_eq!((r.home.as_str(), r.scratch.len()), (home.as_str(), 0));
+    assert_eq!((&r.netted, &r.matrix, &r.facts), (&None, &None, &None), "no net, nothing of its own to tighten with");
     // Activity keeps the effects and the matrix's line, as before (read once, before asking).
     let entry = journal::read(&app.paths, 1, 3_600).remove(0);
-    assert_eq!(entry.effects.as_ref().map(|e| e.level), Some(Level::L0), "{entry:?}");
     assert!(entry.matrix.as_ref().is_some_and(|m| !m.decided), "{entry:?}");
+    // Read with the roots the phone signed, as absolute folders. (Where folders are written as the engine reads
+    // them: on Windows a folder is no `/` path, and the engine places nothing.)
+    if cfg!(unix) {
+        let standard: Vec<String> = STANDARD.iter().map(|r| r.replacen('~', &home, 1)).collect();
+        assert_eq!(r.roots, standard);
+        assert_eq!(
+            deletes(&r),
+            vec![(format!("{cwd}/build"), Area::Generated), (format!("{cwd}/dist"), Area::Generated)]
+        );
+        assert_eq!(entry.effects.as_ref().map(|e| e.level), Some(Level::L0), "{entry:?}");
+    }
 }
 
 #[tokio::test]
